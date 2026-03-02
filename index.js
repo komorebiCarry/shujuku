@@ -2852,7 +2852,8 @@
     $apiConfigAreaDiv_ACU,
     $customApiUrlInput_ACU,
     $customApiKeyInput_ACU,
-    $customApiModelSelect_ACU,
+    $customApiModelInput_ACU,
+    $customApiModelDatalist_ACU,
     $maxTokensInput_ACU,
     $temperatureInput_ACU,
     $loadModelsButton_ACU,
@@ -8240,17 +8241,19 @@
           if ($customApiKeyInput_ACU) $customApiKeyInput_ACU.val(settings_ACU.apiConfig.apiKey);
           if ($maxTokensInput_ACU) $maxTokensInput_ACU.val(settings_ACU.apiConfig.max_tokens);
           if ($temperatureInput_ACU) $temperatureInput_ACU.val(settings_ACU.apiConfig.temperature);
-          if ($customApiModelSelect_ACU) {
+          if ($customApiModelInput_ACU) {
               if (settings_ACU.apiConfig.model) {
-                  $customApiModelSelect_ACU
-                      .empty()
-                      .append(
-                          `<option value="${escapeHtml_ACU(settings_ACU.apiConfig.model)}">${escapeHtml_ACU(
-                              settings_ACU.apiConfig.model,
-                          )} (已保存)</option>`,
-                      );
+                  $customApiModelInput_ACU.val(settings_ACU.apiConfig.model);
+                  // 同时将已保存的模型添加到datalist中
+                  if ($customApiModelDatalist_ACU) {
+                      const model = settings_ACU.apiConfig.model;
+                      // 检查是否已存在，避免重复
+                      if ($customApiModelDatalist_ACU.find(`option[value="${model}"]`).length === 0) {
+                          $customApiModelDatalist_ACU.append(`<option value="${escapeHtml_ACU(model)}">${escapeHtml_ACU(model)}</option>`);
+                      }
+                  }
               } else {
-                  $customApiModelSelect_ACU.empty().append('<option value="">请先加载并选择模型</option>');
+                  $customApiModelInput_ACU.val('');
               }
           }
           updateApiStatusDisplay_ACU();
@@ -8439,13 +8442,13 @@
   }
 
   function saveApiConfig_ACU() {
-    if (!$popupInstance_ACU || !$customApiUrlInput_ACU || !$customApiKeyInput_ACU || !$customApiModelSelect_ACU) {
+    if (!$popupInstance_ACU || !$customApiUrlInput_ACU || !$customApiKeyInput_ACU || !$customApiModelInput_ACU) {
       logError_ACU('保存API配置失败：UI元素未初始化。');
       return;
     }
     const url = $customApiUrlInput_ACU.val().trim();
     const apiKey = $customApiKeyInput_ACU.val();
-    const model = $customApiModelSelect_ACU.val();
+    const model = $customApiModelInput_ACU.val().trim();
     const max_tokens = parseInt($maxTokensInput_ACU.val(), 10);
     const temperature = parseFloat($temperatureInput_ACU.val());
 
@@ -8454,8 +8457,9 @@
       showToastr_ACU('warning', 'API URL 不能为空。');
       return;
     }
-    if (!model && $customApiModelSelect_ACU.children('option').length > 1 && $customApiModelSelect_ACU.children('option:selected').val() === '') {
-      showToastr_ACU('warning', '请选择一个模型，或先加载模型列表。');
+    if (!model) {
+      showToastr_ACU('warning', '请输入或选择一个模型。');
+      return;
     }
 
     Object.assign(settings_ACU.apiConfig, {
@@ -8465,6 +8469,10 @@
         max_tokens: isNaN(max_tokens) ? 120000 : max_tokens,
         temperature: isNaN(temperature) ? 0.9 : temperature,
     });
+    // 将新保存的模型添加到datalist中（如果不存在）
+    if ($customApiModelDatalist_ACU && $customApiModelDatalist_ACU.find(`option[value="${model}"]`).length === 0) {
+        $customApiModelDatalist_ACU.append(`<option value="${escapeHtml_ACU(model)}">${escapeHtml_ACU(model)}</option>`);
+    }
     saveSettings_ACU();
     showToastr_ACU('success', 'API配置已保存！');
     loadSettings_ACU();
@@ -9043,7 +9051,7 @@
       !$popupInstance_ACU ||
       !$customApiUrlInput_ACU ||
       !$customApiKeyInput_ACU ||
-      !$customApiModelSelect_ACU ||
+      !$customApiModelInput_ACU ||
       !$apiStatusDisplay_ACU
     ) {
       logError_ACU('加载模型列表失败：UI元素未初始化。');
@@ -9090,7 +9098,7 @@
 
       const data = await response.json();
       logDebug_ACU('获取到的模型数据:', data);
-      $customApiModelSelect_ACU.empty();
+      $customApiModelDatalist_ACU.empty();
       let modelsFound = false;
       let modelsList = [];
       if (data && data.models && Array.isArray(data.models)) {
@@ -9109,28 +9117,25 @@
         modelsList.forEach(model => {
           const modelName = typeof model === 'string' ? model : model.id;
           if (modelName) {
-            $customApiModelSelect_ACU.append(jQuery_API_ACU('<option>', { value: modelName, text: modelName }));
+            $customApiModelDatalist_ACU.append(`<option value="${escapeHtml_ACU(modelName)}">${escapeHtml_ACU(modelName)}</option>`);
           }
         });
       }
 
       if (modelsFound) {
-        if (
-          settings_ACU.apiConfig.model &&
-          $customApiModelSelect_ACU.find(`option[value="${settings_ACU.apiConfig.model}"]`).length > 0
-        )
-          $customApiModelSelect_ACU.val(settings_ACU.apiConfig.model);
-        else $customApiModelSelect_ACU.prepend('<option value="" selected disabled>请选择一个模型</option>');
-        showToastr_ACU('success', '模型列表加载成功！');
+        // 如果当前input中有值且不在datalist中，将其也添加进去
+        const currentInputValue = $customApiModelInput_ACU.val().trim();
+        if (currentInputValue && $customApiModelDatalist_ACU.find(`option[value="${currentInputValue}"]`).length === 0) {
+            $customApiModelDatalist_ACU.prepend(`<option value="${escapeHtml_ACU(currentInputValue)}">${escapeHtml_ACU(currentInputValue)}</option>`);
+        }
+        showToastr_ACU('success', `模型列表加载成功！共加载 ${modelsList.length} 个模型。`);
       } else {
-        $customApiModelSelect_ACU.append('<option value="">未能解析模型数据或列表为空</option>');
         showToastr_ACU('warning', '未能解析模型数据或列表为空。');
         $apiStatusDisplay_ACU.text('状态: 未能解析模型数据或列表为空。').css('color', 'orange');
       }
     } catch (error) {
       logError_ACU('加载模型列表时出错:', error);
       showToastr_ACU('error', `加载模型列表失败: ${error.message}`);
-      $customApiModelSelect_ACU.empty().append('<option value="">加载模型失败</option>');
       $apiStatusDisplay_ACU.text(`状态: 加载模型失败 - ${error.message}`).css('color', '#ff6b6b');
     }
     updateApiStatusDisplay_ACU();
@@ -14876,8 +14881,9 @@
                                     </div>
                                 </div>
                                 <button id="${SCRIPT_ID_PREFIX_ACU}-load-models" style="margin-top: 15px; width: 100%;">加载模型列表</button>
-                                <label for="${SCRIPT_ID_PREFIX_ACU}-api-model" style="margin-top: 10px;">选择模型:</label>
-                                <select id="${SCRIPT_ID_PREFIX_ACU}-api-model"><option value="">请先加载模型</option></select>
+                                <label for="${SCRIPT_ID_PREFIX_ACU}-api-model" style="margin-top: 10px;">选择或输入模型:</label>
+                                <input type="text" id="${SCRIPT_ID_PREFIX_ACU}-api-model" list="${SCRIPT_ID_PREFIX_ACU}-api-model-list" placeholder="选择模型或手动输入">
+                                <datalist id="${SCRIPT_ID_PREFIX_ACU}-api-model-list"></datalist>
                             </div>
                             <div id="${SCRIPT_ID_PREFIX_ACU}-api-status" class="notes" style="margin-top:15px;">状态: 未配置</div>
                             <div class="button-group">
@@ -15492,7 +15498,8 @@
       $apiConfigAreaDiv_ACU = $popupInstance_ACU.find(`#${SCRIPT_ID_PREFIX_ACU}-api-config-area-div`);
       $customApiUrlInput_ACU = $popupInstance_ACU.find(`#${SCRIPT_ID_PREFIX_ACU}-api-url`);
       $customApiKeyInput_ACU = $popupInstance_ACU.find(`#${SCRIPT_ID_PREFIX_ACU}-api-key`);
-      $customApiModelSelect_ACU = $popupInstance_ACU.find(`#${SCRIPT_ID_PREFIX_ACU}-api-model`);
+      $customApiModelInput_ACU = $popupInstance_ACU.find(`#${SCRIPT_ID_PREFIX_ACU}-api-model`);
+      $customApiModelDatalist_ACU = $popupInstance_ACU.find(`#${SCRIPT_ID_PREFIX_ACU}-api-model-list`);
       $maxTokensInput_ACU = $popupInstance_ACU.find(`#${SCRIPT_ID_PREFIX_ACU}-max-tokens`);
       $temperatureInput_ACU = $popupInstance_ACU.find(`#${SCRIPT_ID_PREFIX_ACU}-temperature`);
       $loadModelsButton_ACU = $popupInstance_ACU.find(`#${SCRIPT_ID_PREFIX_ACU}-load-models`);
