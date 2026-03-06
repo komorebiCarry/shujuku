@@ -4098,7 +4098,121 @@
       try {
           let cleanTemplate = TABLE_TEMPLATE_ACU.trim();
           cleanTemplate = cleanTemplate.replace(/\/\/.*$/gm, '').replace(/\/\*[\s\S]*?\*\//g, '');
-          const obj = JSON.parse(cleanTemplate);
+          
+          // [调试] 输出模板字符串的前100个字符，帮助诊断问题
+          logDebug_ACU('[模板解析] cleanTemplate前100字符:', cleanTemplate.substring(0, 100));
+          logDebug_ACU('[模板解析] cleanTemplate长度:', cleanTemplate.length);
+          logDebug_ACU('[模板解析] 首字符:', JSON.stringify(cleanTemplate[0]));
+          logDebug_ACU('[模板解析] 尾字符:', JSON.stringify(cleanTemplate[cleanTemplate.length - 1]));
+          
+          // [修复2026-03-06] 处理DEFAULT_TABLE_TEMPLATE_ACU的双重JSON编码问题
+          // DEFAULT_TABLE_TEMPLATE_ACU 使用模板字符串定义，格式是：`"{...}"`
+          // 问题：模板字符串中的 \n 会被解释为实际换行符，\t 被解释为制表符等
+          // 而JSON规范不允许字符串中包含未转义的控制字符
+          // 解决方案：先将实际的控制字符转义回JSON兼容格式
+          
+          function escapeStringForJson_ACU(str) {
+              // 将字符串中的控制字符转义为JSON兼容格式
+              // 注意顺序很重要：先转义反斜杠，再转义双引号，最后转义控制字符
+              return str
+                  .replace(/\\/g, '\\\\')  // 先转义反斜杠
+                  .replace(/"/g, '\\"')    // 转义双引号
+                  .replace(/\n/g, '\\n')   // 换行符
+                  .replace(/\r/g, '\\r')   // 回车符
+                  .replace(/\t/g, '\\t');  // 制表符
+          }
+          
+          let obj = null;
+          
+          // 如果模板字符串以双引号开头和结尾，说明是被引号包围的JSON字符串
+          if (cleanTemplate.startsWith('"') && cleanTemplate.endsWith('"')) {
+              logDebug_ACU('[模板解析] 检测到双引号包围格式');
+              try {
+                  // 方案1：尝试直接解析（如果模板字符串中的转义序列正确）
+                  try {
+                      logDebug_ACU('[模板解析] 尝试方案1：直接解析...');
+                      const unquoted = JSON.parse(cleanTemplate);
+                      logDebug_ACU('[模板解析] 方案1第一次解析成功，类型:', typeof unquoted);
+                      if (typeof unquoted === 'string') {
+                          obj = safeJsonParse_ACU(unquoted, null);
+                          logDebug_ACU('[模板解析] 方案1第二次解析结果:', obj ? '成功' : '失败');
+                          if (obj) {
+                              logDebug_ACU('[模板解析] 方案1成功！');
+                              return stripSeedRows ? stripSeedRowsFromTemplate_ACU(obj) : obj;
+                          }
+                      } else if (typeof unquoted === 'object' && unquoted !== null) {
+                          logDebug_ACU('[模板解析] 方案1直接得到对象！');
+                          return stripSeedRows ? stripSeedRowsFromTemplate_ACU(unquoted) : unquoted;
+                      }
+                  } catch (e1) {
+                      logDebug_ACU('[模板解析] 方案1失败:', e1.message);
+                  }
+                  
+                  // 方案2：转义控制字符后再解析
+                  logDebug_ACU('[模板解析] 尝试方案2：转义后解析...');
+                  // 去掉首尾引号，转义内部的控制字符，然后解析
+                  const innerContent = cleanTemplate.slice(1, -1);
+                  const escapedContent = escapeStringForJson_ACU(innerContent);
+                  const rewrapped = '"' + escapedContent + '"';
+                  
+                  try {
+                      const unquoted = JSON.parse(rewrapped);
+                      logDebug_ACU('[模板解析] 方案2第一次解析成功，类型:', typeof unquoted);
+                      if (typeof unquoted === 'string') {
+                          obj = safeJsonParse_ACU(unquoted, null);
+                          logDebug_ACU('[模板解析] 方案2第二次解析结果:', obj ? '成功' : '失败');
+                          if (obj) {
+                              logDebug_ACU('[模板解析] 方案2成功！');
+                              return stripSeedRows ? stripSeedRowsFromTemplate_ACU(obj) : obj;
+                          }
+                          // 如果safeJsonParse失败，尝试直接JSON.parse
+                          try {
+                              obj = JSON.parse(unquoted);
+                              if (obj) {
+                                  logDebug_ACU('[模板解析] 方案2（fallback）成功！');
+                                  return stripSeedRows ? stripSeedRowsFromTemplate_ACU(obj) : obj;
+                              }
+                          } catch (e3) {
+                              logDebug_ACU('[模板解析] 方案2 fallback失败:', e3.message);
+                          }
+                      } else if (typeof unquoted === 'object' && unquoted !== null) {
+                          logDebug_ACU('[模板解析] 方案2直接得到对象！');
+                          return stripSeedRows ? stripSeedRowsFromTemplate_ACU(unquoted) : unquoted;
+                      }
+                  } catch (e2) {
+                      logDebug_ACU('[模板解析] 方案2失败:', e2.message);
+                  }
+              } catch (e) {
+                  logDebug_ACU('[模板解析] 双引号格式处理失败:', e.message);
+              }
+          } else {
+              logDebug_ACU('[模板解析] 不是双引号包围格式，尝试常规解析...');
+          }
+          
+          // 如果上述处理失败，尝试常规解析
+          if (!obj) {
+              logDebug_ACU('[模板解析] 尝试safeJsonParse_ACU...');
+              obj = safeJsonParse_ACU(cleanTemplate, null);
+              logDebug_ACU('[模板解析] safeJsonParse_ACU结果:', obj ? '成功' : '失败');
+          }
+          
+          // 如果还是失败，尝试转义后解析
+          if (!obj && typeof cleanTemplate === 'string') {
+              logDebug_ACU('[模板解析] 尝试转义后解析...');
+              try {
+                  const escaped = escapeStringForJson_ACU(cleanTemplate);
+                  obj = safeJsonParse_ACU(escaped, null);
+                  logDebug_ACU('[模板解析] 转义后解析结果:', obj ? '成功' : '失败');
+              } catch (e) {
+                  logDebug_ACU('[模板解析] 转义后解析异常:', e.message);
+              }
+          }
+          
+          if (!obj) {
+              logError_ACU('Failed to parse TABLE_TEMPLATE_ACU: safeJsonParse returned null');
+              return null;
+          }
+          logDebug_ACU('[模板解析] 最终成功！');
           return stripSeedRows ? stripSeedRowsFromTemplate_ACU(obj) : obj;
       } catch (e) {
           logError_ACU('Failed to parse TABLE_TEMPLATE_ACU.', e);
@@ -10047,6 +10161,23 @@
                 await TavernHelper_API_ACU.deleteLorebookEntries(primaryLorebookName, [existingEntry.uid]);
                 logDebug_ACU('Deleted outline table entry as there is no data.');
             }
+            // [修复] 即使没有outlineTable数据，也要同步更新"纪要索引"条目的enabled状态
+            // 这样0TK模式切换时，纪要索引条目也会被正确禁用/启用
+            try {
+                // [修复] 使用endsWith匹配，因为条目名称可能带有隔离前缀
+                const existingIndexEntry = allEntries.find(e => e.comment && e.comment.endsWith('TavernDB-ACU-CustomExport-纪要索引'));
+                if (existingIndexEntry) {
+                    if (existingIndexEntry.enabled !== outlineEntryEnabled) {
+                        await TavernHelper_API_ACU.setLorebookEntries(primaryLorebookName, [{
+                            uid: existingIndexEntry.uid,
+                            enabled: outlineEntryEnabled
+                        }]);
+                        logDebug_ACU(`Successfully updated 纪要索引 entry (no outline data). enabled=${outlineEntryEnabled}`);
+                    }
+                }
+            } catch (indexError) {
+                logWarn_ACU('Failed to update 纪要索引 entry enabled state (no outline data):', indexError);
+            }
             return;
         }
 
@@ -10107,8 +10238,8 @@
 
         // [新增] 同步更新"纪要索引"条目的enabled状态
         try {
-            const OUTLINE_INDEX_COMMENT = isoPrefix + 'TavernDB-ACU-CustomExport-纪要索引';
-            const existingIndexEntry = allEntries.find(e => e.comment === OUTLINE_INDEX_COMMENT);
+            // [修复] 使用endsWith匹配，因为条目名称可能带有隔离前缀
+            const existingIndexEntry = allEntries.find(e => e.comment && e.comment.endsWith('TavernDB-ACU-CustomExport-纪要索引'));
             if (existingIndexEntry) {
                 if (existingIndexEntry.enabled !== outlineEntryEnabled) {
                     await TavernHelper_API_ACU.setLorebookEntries(primaryLorebookName, [{
@@ -10469,110 +10600,125 @@
 
             // [新增] 创建或更新 MemoryStart 条目（整合总结表表头）
             const MEMORY_START_COMMENT = isoPrefix + (isImport ? `${IMPORT_PREFIX}TavernDB-ACU-MemoryStart` : 'TavernDB-ACU-MemoryStart');
+            const MEMORY_END_COMMENT = isoPrefix + (isImport ? `${IMPORT_PREFIX}TavernDB-ACU-MemoryEnd` : 'TavernDB-ACU-MemoryEnd');
             const memoryStartEntry = entries.find(e => e.comment === MEMORY_START_COMMENT);
-            // 准备总结表表头内容
-            let summaryHeaderContent = '';
-            if (summaryTable && summaryTable.content && summaryTable.content.length > 0) {
+            const memoryEndEntry = entries.find(e => e.comment === MEMORY_END_COMMENT);
+
+            // [修复] 检查总结表是否有数据（至少有一行非表头数据）
+            const hasSummaryData = summaryTable && summaryTable.content && summaryTable.content.length > 1;
+            
+            if (!hasSummaryData) {
+                // [修复] 没有总结表数据时，删除已存在的 MemoryStart/MemoryEnd 条目
+                const memoryEntriesToDelete = [];
+                if (memoryStartEntry) memoryEntriesToDelete.push(memoryStartEntry.uid);
+                if (memoryEndEntry) memoryEntriesToDelete.push(memoryEndEntry.uid);
+                
+                if (memoryEntriesToDelete.length > 0) {
+                    await TavernHelper_API_ACU.deleteLorebookEntries(primaryLorebookName, memoryEntriesToDelete);
+                    logDebug_ACU(`Deleted ${memoryEntriesToDelete.length} MemoryStart/MemoryEnd entries because summary table is empty.`);
+                }
+            } else {
+                // 有总结表数据时，正常创建或更新 MemoryStart/MemoryEnd 条目
+                // 准备总结表表头内容
+                let summaryHeaderContent = '';
                 const summaryHeaders = summaryTable.content[0].slice(1);
                 if (summaryHeaders.length > 0) {
                     summaryHeaderContent = `# ${summaryTable.name}\n\n| ${summaryHeaders.join(' | ')} |\n|${summaryHeaders.map(() => '---').join('|')}|`;
                 }
-            }
-            
-            // 构建 MemoryStart 条目内容
-            let memoryStartContent = '<过往记忆>\n\n以下是你回忆起的跟当前剧情有关的过往的记忆，你要特地注意该记忆所标注的时间，以及分析与当前剧情的相关性，完美地将其融入本轮的剧情编写中：\n\n';
-            if (summaryHeaderContent) {
-                memoryStartContent += summaryHeaderContent + '\n\n';
-            }
+                
+                // 构建 MemoryStart 条目内容
+                let memoryStartContent = '<过往记忆>\n\n以下是你回忆起的跟当前剧情有关的过往的记忆，你要特地注意该记忆所标注的时间，以及分析与当前剧情的相关性，完美地将其融入本轮的剧情编写中：\n\n';
+                if (summaryHeaderContent) {
+                    memoryStartContent += summaryHeaderContent + '\n\n';
+                }
 
-            // =========================
-            // [总结表] 3-depth 成组对齐：
-            // - MemoryStart / 总结行条目 / MemoryEnd 只占用连续 3 个 order(深度)
-            // - 这 3 个深度不能与任何已有条目重合，且必须紧挨在一起
-            // =========================
-            const baseSummaryPrefix2 = isImport ? `${IMPORT_PREFIX}总结条目` : '总结条目';
-            const baseSmallSummaryPrefix2 = isImport ? `${IMPORT_PREFIX}小总结条目` : '小总结条目';
-            const SUMMARY_ENTRY_PREFIX2 = isoPrefix + baseSummaryPrefix2;
-            const SMALL_SUMMARY_PREFIX2 = isoPrefix + baseSmallSummaryPrefix2;
-            const summaryOrderBlockBase = allocConsecutiveOrderBlock_ACU(usedOrders, 3, Math.max(1, summaryFixedEntryPlacement.order - 1), 1, 99999);
-            const memoryStartOrder = summaryOrderBlockBase;
-            const summaryDataOrder = summaryOrderBlockBase + 1;
-            const memoryEndOrder = summaryOrderBlockBase + 2;
+                // =========================
+                // [总结表] 3-depth 成组对齐：
+                // - MemoryStart / 总结行条目 / MemoryEnd 只占用连续 3 个 order(深度)
+                // - 这 3 个深度不能与任何已有条目重合，且必须紧挨在一起
+                // =========================
+                const baseSummaryPrefix2 = isImport ? `${IMPORT_PREFIX}总结条目` : '总结条目';
+                const baseSmallSummaryPrefix2 = isImport ? `${IMPORT_PREFIX}小总结条目` : '小总结条目';
+                const SUMMARY_ENTRY_PREFIX2 = isoPrefix + baseSummaryPrefix2;
+                const SMALL_SUMMARY_PREFIX2 = isoPrefix + baseSmallSummaryPrefix2;
+                const summaryOrderBlockBase = allocConsecutiveOrderBlock_ACU(usedOrders, 3, Math.max(1, summaryFixedEntryPlacement.order - 1), 1, 99999);
+                const memoryStartOrder = summaryOrderBlockBase;
+                const summaryDataOrder = summaryOrderBlockBase + 1;
+                const memoryEndOrder = summaryOrderBlockBase + 2;
 
-            // 将“总结条目/小总结条目”统一挪到 summaryDataOrder（多条共用同一深度）
-            const summaryEntriesToReorder = entries.filter(e => {
-                const c = e?.comment || '';
-                return c.startsWith(SUMMARY_ENTRY_PREFIX2) || c.startsWith(SMALL_SUMMARY_PREFIX2);
-            });
-            if (summaryEntriesToReorder.length > 0) {
-                await TavernHelper_API_ACU.setLorebookEntries(
-                    primaryLorebookName,
-                    summaryEntriesToReorder.map(e => applyPlacementToEntry_ACU({ uid: e.uid, order: summaryDataOrder }, summaryFixedEntryPlacement))
-                );
-            }
-            
-            if (!memoryStartEntry) {
-                // 创建新条目
-                await TavernHelper_API_ACU.createLorebookEntries(primaryLorebookName, [applyPlacementToEntry_ACU({
-                        comment: MEMORY_START_COMMENT,
-                        content: memoryStartContent,
-                        keys: ['AM'],
-                        enabled: true,
-                        type: 'keyword',
-                        order: memoryStartOrder,
-                        prevent_recursion: true,
-                    }, summaryFixedIndexPlacement)]);
-            } else {
-                // 更新现有条目（内容/深度）
-                const needsUpdate =
-                    (memoryStartEntry.content !== memoryStartContent) ||
-                    (getEntryOrderNumber_ACU(memoryStartEntry) !== memoryStartOrder) ||
-                    !isEntryPlacementMatched_ACU(memoryStartEntry, summaryFixedIndexPlacement);
-                if (needsUpdate) {
-                    await TavernHelper_API_ACU.setLorebookEntries(primaryLorebookName, [{
-                        ...applyPlacementToEntry_ACU({
-                            uid: memoryStartEntry.uid,
+                // 将"总结条目/小总结条目"统一挪到 summaryDataOrder（多条共用同一深度）
+                const summaryEntriesToReorder = entries.filter(e => {
+                    const c = e?.comment || '';
+                    return c.startsWith(SUMMARY_ENTRY_PREFIX2) || c.startsWith(SMALL_SUMMARY_PREFIX2);
+                });
+                if (summaryEntriesToReorder.length > 0) {
+                    await TavernHelper_API_ACU.setLorebookEntries(
+                        primaryLorebookName,
+                        summaryEntriesToReorder.map(e => applyPlacementToEntry_ACU({ uid: e.uid, order: summaryDataOrder }, summaryFixedEntryPlacement))
+                    );
+                }
+                
+                if (!memoryStartEntry) {
+                    // 创建新条目
+                    await TavernHelper_API_ACU.createLorebookEntries(primaryLorebookName, [applyPlacementToEntry_ACU({
+                            comment: MEMORY_START_COMMENT,
                             content: memoryStartContent,
+                            keys: ['AM'],
+                            enabled: true,
+                            type: 'keyword',
                             order: memoryStartOrder,
-                            enabled: true,
-                            type: 'keyword',
                             prevent_recursion: true,
-                            keys: memoryStartEntry.keys || memoryStartEntry.key || ['AM'],
-                        }, summaryFixedIndexPlacement)
-                    }]);
+                        }, summaryFixedIndexPlacement)]);
+                } else {
+                    // 更新现有条目（内容/深度）
+                    const needsUpdate =
+                        (memoryStartEntry.content !== memoryStartContent) ||
+                        (getEntryOrderNumber_ACU(memoryStartEntry) !== memoryStartOrder) ||
+                        !isEntryPlacementMatched_ACU(memoryStartEntry, summaryFixedIndexPlacement);
+                    if (needsUpdate) {
+                        await TavernHelper_API_ACU.setLorebookEntries(primaryLorebookName, [{
+                            ...applyPlacementToEntry_ACU({
+                                uid: memoryStartEntry.uid,
+                                content: memoryStartContent,
+                                order: memoryStartOrder,
+                                enabled: true,
+                                type: 'keyword',
+                                prevent_recursion: true,
+                                keys: memoryStartEntry.keys || memoryStartEntry.key || ['AM'],
+                            }, summaryFixedIndexPlacement)
+                        }]);
+                    }
                 }
-            }
 
-            // [新增] 创建 MemoryEnd 条目
-            const MEMORY_END_COMMENT = isoPrefix + (isImport ? `${IMPORT_PREFIX}TavernDB-ACU-MemoryEnd` : 'TavernDB-ACU-MemoryEnd');
-            const memoryEndEntry = entries.find(e => e.comment === MEMORY_END_COMMENT);
-            if (!memoryEndEntry) {
-                await TavernHelper_API_ACU.createLorebookEntries(primaryLorebookName, [applyPlacementToEntry_ACU({
-                        comment: MEMORY_END_COMMENT,
-                        content: '</过往记忆>',
-                        keys: ['AM'],
-                        enabled: true,
-                        type: 'keyword',
-                        order: memoryEndOrder,
-                        prevent_recursion: true,
-                    }, summaryFixedIndexPlacement)]);
-            } else {
-                const needsUpdate =
-                    (getEntryOrderNumber_ACU(memoryEndEntry) !== memoryEndOrder) ||
-                    !isEntryPlacementMatched_ACU(memoryEndEntry, summaryFixedIndexPlacement);
-                if (needsUpdate) {
-                    await TavernHelper_API_ACU.setLorebookEntries(primaryLorebookName, [{
-                        ...applyPlacementToEntry_ACU({
-                            uid: memoryEndEntry.uid,
-                            order: memoryEndOrder,
+                // [新增] 创建 MemoryEnd 条目
+                if (!memoryEndEntry) {
+                    await TavernHelper_API_ACU.createLorebookEntries(primaryLorebookName, [applyPlacementToEntry_ACU({
+                            comment: MEMORY_END_COMMENT,
+                            content: '</过往记忆>',
+                            keys: ['AM'],
                             enabled: true,
                             type: 'keyword',
+                            order: memoryEndOrder,
                             prevent_recursion: true,
-                            keys: memoryEndEntry.keys || memoryEndEntry.key || ['AM'],
-                        }, summaryFixedIndexPlacement)
-                    }]);
+                        }, summaryFixedIndexPlacement)]);
+                } else {
+                    const needsUpdate =
+                        (getEntryOrderNumber_ACU(memoryEndEntry) !== memoryEndOrder) ||
+                        !isEntryPlacementMatched_ACU(memoryEndEntry, summaryFixedIndexPlacement);
+                    if (needsUpdate) {
+                        await TavernHelper_API_ACU.setLorebookEntries(primaryLorebookName, [{
+                            ...applyPlacementToEntry_ACU({
+                                uid: memoryEndEntry.uid,
+                                order: memoryEndOrder,
+                                enabled: true,
+                                type: 'keyword',
+                                prevent_recursion: true,
+                                keys: memoryEndEntry.keys || memoryEndEntry.key || ['AM'],
+                            }, summaryFixedIndexPlacement)
+                        }]);
+                    }
                 }
-            }
+            } // end of hasSummaryData
 
             // [新增] 创建 WrapperEnd 条目
             const wrapperEndEntry = entries.find(e => e.comment === WRAPPER_END_COMMENT);
@@ -10628,6 +10774,12 @@
       // [修改] 定义旧版前缀用于清理
       const baseLegacyPrefix = isImport ? `${IMPORT_PREFIX}TavernDB-ACU-CustomExport` : 'TavernDB-ACU-CustomExport';
       const LEGACY_EXPORT_PREFIX = isoPrefix + baseLegacyPrefix;
+      
+      // [新增] 获取0TK占用模式状态，用于控制"纪要索引"条目的enabled
+      const worldbookConfig = getCurrentWorldbookConfig_ACU();
+      const zeroTkOccupyMode = worldbookConfig?.zeroTkOccupyMode === true;
+      const extraIndexEntryEnabled = !zeroTkOccupyMode; // 0TK模式启用=条目禁用
+      logDebug_ACU(`[CustomExport] 0TK模式=${zeroTkOccupyMode}, 纪要索引条目enabled=${extraIndexEntryEnabled}`);
 
       try {
           const allEntries = await TavernHelper_API_ACU.getLorebookEntries(primaryLorebookName);
@@ -10802,7 +10954,7 @@
               };
           };
 
-          const buildExtraIndexEntryBlock_ACU = ({ exportPrefix, extraIndexSpec, templateStr, startOrder, placement, usedOrderSet }) => {
+          const buildExtraIndexEntryBlock_ACU = ({ exportPrefix, extraIndexSpec, templateStr, startOrder, placement, usedOrderSet, enabled = true }) => {
               if (!extraIndexSpec) return { entries: [], names: [], plans: [], nextOrder: startOrder, span: 0 };
               const cursor = allocOrder_ACU(usedOrderSet || usedOrders, startOrder, 1, 99999);
               const names = [];
@@ -10810,7 +10962,7 @@
               const entries = [];
               const fullTable = buildMarkdownTableFromRows_ACU(extraIndexSpec.indexCols, extraIndexSpec.indexRows);
               const fallbackTemplate = `# ${extraIndexSpec.entryName}\n\n$1`;
-              // 自定义表格导出的附加索引条目：在注释名中加入统一标记，便于在世界书 UI 中识别为“数据库生成条目”并默认隐藏
+              // 自定义表格导出的附加索引条目：在注释名中加入统一标记，便于在世界书 UI 中识别为"数据库生成条目"并默认隐藏
               const mainComment = `${exportPrefix}TavernDB-ACU-CustomExport-${extraIndexSpec.entryName}`;
               const mainContent = buildEntryContent(
                   extraIndexSpec.entryName,
@@ -10826,7 +10978,7 @@
                   comment: mainComment,
                   content: mainContent,
                   keys: [],
-                  enabled: true,
+                  enabled: enabled, // [修复] 使用传入的enabled参数，支持0TK模式控制
                   type: 'constant',
                   prevent_recursion: true,
                   order: cursor
@@ -11013,6 +11165,7 @@
                           startOrder: toIntOrFallback_ACU(extraIndexPlacement.order, orderCursor),
                           placement: extraIndexPlacement,
                           usedOrderSet: usedOrders,
+                          enabled: extraIndexEntryEnabled, // [修复] 传递0TK模式控制的enabled状态
                       });
                       newGeneratedNames.push(...extraBlock.names);
                       postCreateOrderFixPlan.push(...extraBlock.plans);
@@ -11116,6 +11269,7 @@
                           startOrder: toIntOrFallback_ACU(extraIndexPlacement.order, cursor),
                           placement: extraIndexPlacement,
                           usedOrderSet: usedOrders,
+                          enabled: extraIndexEntryEnabled, // [修复] 传递0TK模式控制的enabled状态
                       });
                       newGeneratedNames.push(...extraBlock.names);
                       postCreateOrderFixPlan.push(...extraBlock.plans);
@@ -15416,6 +15570,25 @@
                   if (currentJsonTableData_ACU) {
                       const { outlineTable } = formatJsonToReadable_ACU(currentJsonTableData_ACU);
                       await updateOutlineTableEntry_ACU(outlineTable, false);
+                  }
+                  // [修复] 额外直接更新"纪要索引"条目的enabled状态
+                  // 因为该条目可能由updateCustomTableExports_ACU创建，不在updateOutlineTableEntry_ACU控制范围内
+                  const primaryLorebookName = await getInjectionTargetLorebook_ACU();
+                  if (primaryLorebookName && TavernHelper_API_ACU) {
+                      const isoPrefix = getIsolationPrefix_ACU();
+                      const allEntries = await TavernHelper_API_ACU.getLorebookEntries(primaryLorebookName);
+                      // [修复] 使用endsWith匹配，因为条目名称可能带有隔离前缀
+                      const existingIndexEntry = allEntries.find(e => e.comment && e.comment.endsWith('TavernDB-ACU-CustomExport-纪要索引'));
+                      if (existingIndexEntry) {
+                          const outlineEntryEnabled = !modeEnabled; // 0TK模式启用=条目禁用
+                          if (existingIndexEntry.enabled !== outlineEntryEnabled) {
+                              await TavernHelper_API_ACU.setLorebookEntries(primaryLorebookName, [{
+                                  uid: existingIndexEntry.uid,
+                                  enabled: outlineEntryEnabled
+                              }]);
+                              logDebug_ACU(`0TK mode toggle: updated 纪要索引 entry. enabled=${outlineEntryEnabled}`);
+                          }
+                      }
                   }
               } catch (e) {
                   logWarn_ACU('Failed to sync outline entry enabled state immediately:', e);

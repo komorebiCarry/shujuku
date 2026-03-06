@@ -13,6 +13,66 @@
 
 ## 更新日志
 
+### 2026-03-06 恢复默认模板解析错误修复
+
+#### 修复问题
+- **恢复默认模板后报错**：修复了点击"恢复默认模板"按钮后，控制台报错 `Failed to parse TABLE_TEMPLATE_ACU: safeJsonParse returned null` 的问题。
+
+#### 问题原因
+1. **模板字符串中的控制字符问题**：`DEFAULT_TABLE_TEMPLATE_ACU` 常量使用模板字符串（反引号）定义，格式为 `` `"{...}"` ``。
+2. **JavaScript解释器的行为**：在模板字符串中，`\n` 会被解释为实际的换行符，`\"` 会被解释为双引号。这导致模板字符串的实际值包含了未转义的控制字符。
+3. **JSON解析失败**：`JSON.parse()` 不允许字符串中包含未转义的换行符等控制字符，因此直接解析会失败，报错 `Bad control character in string literal in JSON`。
+4. **具体流程**：
+   - 恢复默认模板时，`TABLE_TEMPLATE_ACU = DEFAULT_TABLE_TEMPLATE_ACU`
+   - 模板字符串的值是 `"{\n  \"key\": ...}"`（包含实际换行符）
+   - `JSON.parse()` 因为控制字符而失败
+   - 触发错误日志
+
+#### 修改内容
+
+| 文件 | 代码行数区间 | 修改说明 |
+|------|-------------|----------|
+| `index.js` | 4097-4193 | 修改 `parseTableTemplateJson_ACU()` 函数，添加 `escapeStringForJson_ACU()` 辅助函数，用于将控制字符转义为JSON兼容格式。解析流程：1) 去掉首尾引号；2) 转义反斜杠、双引号、换行符等控制字符；3) 重新包装引号；4) 解析得到JSON字符串；5) 再次解析得到对象 |
+
+#### 修复后的效果
+- 恢复默认模板时不再报错
+- 正确解析包含控制字符的模板字符串
+- 保持对标准JSON格式模板的兼容性
+
+---
+
+### 2026-03-06 0TK模式与世界书条目优化
+
+#### 修复问题
+1. **0TK模式开启后未关闭"纪要索引"条目**：修复了0TK占用模式启用时，世界书中的"TavernDB-ACU-CustomExport-纪要索引"条目没有被同步禁用的问题。
+2. **没有总结表时仍出现MemoryStart/MemoryEnd条目**：修复了即使总结表没有数据，也会在世界书中创建TavernDB-ACU-MemoryStart和TavernDB-ACU-MemoryEnd条目的问题。
+
+#### 问题原因
+1. **问题1原因**：`updateOutlineTableEntry_ACU()`函数在没有outlineTable数据时会提前返回，导致不会执行"纪要索引"条目的enabled状态同步逻辑。
+2. **问题2原因**：`updateReadableLorebookEntry_ACU()`函数在创建MemoryStart/MemoryEnd条目时，没有检查总结表是否存在实际数据（只检查了表头），导致空表也会创建这两个包裹条目。
+
+#### 修改内容
+
+| 文件 | 代码行数区间 | 修改说明 |
+|------|-------------|----------|
+| `index.js` | 10050-10066 | 在`updateOutlineTableEntry_ACU()`函数中，当outlineTable为空时也执行"纪要索引"条目的enabled状态同步，使用`endsWith`匹配条目名称 |
+| `index.js` | 10125-10139 | 在`updateOutlineTableEntry_ACU()`函数中，使用`endsWith`匹配"纪要索引"条目名称 |
+| `index.js` | 10486-10507 | 添加`hasSummaryData`检查，判断总结表是否有实际数据（至少有一行非表头数据） |
+| `index.js` | 10508-10518 | 没有总结表数据时，删除已存在的MemoryStart/MemoryEnd条目 |
+| `index.js` | 10519-10607 | 有总结表数据时，正常创建或更新MemoryStart/MemoryEnd条目（原有逻辑移入此条件分支） |
+| `index.js` | 10664-10668 | 在`updateCustomTableExports_ACU()`函数中获取0TK模式状态，用于控制"纪要索引"条目的enabled |
+| `index.js` | 10842-10870 | 修改`buildExtraIndexEntryBlock_ACU()`函数，添加`enabled`参数支持0TK模式控制 |
+| `index.js` | 11045-11058 | 调用`buildExtraIndexEntryBlock_ACU`时传递`extraIndexEntryEnabled`参数 |
+| `index.js` | 11150-11158 | 调用`buildExtraIndexEntryBlock_ACU`时传递`extraIndexEntryEnabled`参数 |
+| `index.js` | 15458-15477 | 0TK模式切换时，使用`endsWith`匹配"纪要索引"条目并更新enabled状态 |
+| `index.js` | 4097-4115 | 修改`parseTableTemplateJson_ACU()`函数，使用`safeJsonParse_ACU`代替`JSON.parse`，避免控制字符导致的解析失败 |
+
+#### 修复后的效果
+1. **0TK模式**：启用0TK占用模式时，会同时禁用"总体大纲"和"纪要索引"两个世界书条目，即使总体大纲表没有数据也能正常工作
+2. **MemoryStart/MemoryEnd条目**：只有在总结表有实际数据时才会创建这两个条目，空表时会自动清理已存在的条目
+
+---
+
 ### 2026-03-06 模板加载错误提示优化
 
 #### 修复问题
