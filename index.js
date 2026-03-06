@@ -54,7 +54,7 @@
   // !!! 请将下面的 'biaozhunbanv2_v1' 更改为一个【全新的、唯一的】英文名称。
   // !!! 例如: 'my_sci_fi_db', 'fantasy_world_db' 等。
   // !!! 同时，请务必修改上面的 @name 以便在菜单中区分它们。
-  const UNIQUE_SCRIPT_ID = 'shujuku_v299'; // <--- 为每个副本修改这里
+  const UNIQUE_SCRIPT_ID = 'shujuku_v120'; // <--- 为每个副本修改这里
   const SCRIPT_ID_PREFIX_ACU = UNIQUE_SCRIPT_ID;
 
   const POPUP_ID_ACU = `${SCRIPT_ID_PREFIX_ACU}-popup`;
@@ -5979,9 +5979,11 @@
       for (const bookName of bookNames) {
         try {
           const entries = await TavernHelper_API_ACU.getLorebookEntries(bookName);
-          const indexEntry = entries?.find(e => e.comment === targetComment && e.enabled);
+          // [修复] 移除&& e.enabled检查，让$5占位符在0TK模式下仍能读取被禁用的纪要索引条目内容
+          // 该函数仅被用于$5占位符，不影响其他逻辑的enabled状态检查
+          const indexEntry = entries?.find(e => e.comment === targetComment);
           if (indexEntry?.content) {
-            logDebug_ACU('[剧情推进] $5 从世界书纪要索引条目获取成功');
+            logDebug_ACU('[剧情推进] $5 从世界书纪要索引条目获取成功' + (indexEntry.enabled ? '' : '(条目已禁用)'));
             return indexEntry.content;
           }
         } catch (e) {
@@ -10974,11 +10976,13 @@
               names.push(mainComment);
               const normalizedPlacement = normalizePlacementConfig_ACU(placement, DEFAULT_EXTRA_INDEX_PLACEMENT_ACU);
               plans.push({ comment: mainComment, order: cursor, placement: normalizedPlacement });
+              // [修复] 0TK模式只控制"纪要索引"条目，其他表格的索引条目始终启用
+              const finalEnabled = extraIndexSpec.entryName === '纪要索引' ? enabled : true;
               entries.push(applyPlacementToEntry_ACU({
                   comment: mainComment,
                   content: mainContent,
                   keys: [],
-                  enabled: enabled, // [修复] 使用传入的enabled参数，支持0TK模式控制
+                  enabled: finalEnabled,
                   type: 'constant',
                   prevent_recursion: true,
                   order: cursor
