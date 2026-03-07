@@ -54,7 +54,7 @@
   // !!! 请将下面的 'biaozhunbanv2_v1' 更改为一个【全新的、唯一的】英文名称。
   // !!! 例如: 'my_sci_fi_db', 'fantasy_world_db' 等。
   // !!! 同时，请务必修改上面的 @name 以便在菜单中区分它们。
-  const UNIQUE_SCRIPT_ID = 'shujuku_v299'; // <--- 为每个副本修改这里
+  const UNIQUE_SCRIPT_ID = 'shujuku_v120'; // <--- 为每个副本修改这里
   const SCRIPT_ID_PREFIX_ACU = UNIQUE_SCRIPT_ID;
 
   const POPUP_ID_ACU = `${SCRIPT_ID_PREFIX_ACU}-popup`;
@@ -17808,8 +17808,8 @@ insertRow(1, ["时间2", "大纲事件2...", "关键词"]);
             let rowsToProcess = effectiveAllRows;
             let startIndex = 0;
 
-            // [新增] 如果是总结表并且行数超过10，则只提取最新的10条
-            if (table.name.trim() === '总结表' && effectiveAllRows.length > 10) {
+            // [新增] 如果是纪要表/总结表并且行数超过10，则只提取最新的10条（减少TK压力）
+            if ((table.name.trim() === '纪要表' || table.name.trim() === '总结表') && effectiveAllRows.length > 10) {
                 startIndex = effectiveAllRows.length - 10;
                 rowsToProcess = effectiveAllRows.slice(-10);
                 tableDataText += `  - Note: Showing last ${rowsToProcess.length} of ${effectiveAllRows.length} entries.\n`;
