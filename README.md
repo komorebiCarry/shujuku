@@ -13,6 +13,358 @@
 
 ## 更新日志
 
+### 2026-03-15 流式传输开关修复
+
+#### 修复问题
+- **流式传输开关不生效问题**：修复了即使关闭流式传输开关，各功能仍尝试解析流式响应导致失败的问题
+- 根本原因：部分代码中 `stream` 参数硬编码为 `true`，且响应处理未根据开关状态切换解析方式
+
+#### 修改内容
+
+| 文件 | 代码行数区间 | 修改说明 |
+|------|-------------|----------|
+| `index.js` | 4703-4720 | 新增 [`parseNonStreamResponse_ACU()`](index.js:4703) 函数，解析非流式JSON响应 |
+| `index.js` | 4722-4731 | 新增 [`handleApiResponse_ACU()`](index.js:4722) 函数，根据开关自动选择响应解析方式 |
+| `index.js` | 4582 | `callAI()` 函数 fetch 调用：`stream: true` → `stream: settings_ACU.streamingEnabled \|\| false` |
+| `index.js` | 4610 | `callAI()` 函数响应处理：`streamToText_ACU(res)` → `handleApiResponse_ACU(res)` |
+| `index.js` | 4814 | `callAI()` 函数（位置2）fetch 调用：`stream: true` → `stream: settings_ACU.streamingEnabled \|\| false` |
+| `index.js` | 4842 | `callAI()` 函数（位置2）响应处理：`streamToText_ACU(res)` → `handleApiResponse_ACU(res)` |
+| `index.js` | 7156 | 剧情推进功能响应处理：`streamToText_ACU(response, abortSignal)` → `handleApiResponse_ACU(response, abortSignal)` |
+| `index.js` | 20368 | 自动填表功能响应处理：`streamToText_ACU(response, abortSignal)` → `handleApiResponse_ACU(response, abortSignal)` |
+| `index.js` | 21385 | 自动填表功能（纪要合并）fetch 调用：`stream: true` → `stream: settings_ACU.streamingEnabled \|\| false` |
+| `index.js` | 21392 | 自动填表功能（纪要合并）响应处理：`streamToText_ACU(res)` → `handleApiResponse_ACU(res)` |
+| `index.js` | 22044 | 纪要合并功能响应处理：`streamToText_ACU(res)` → `handleApiResponse_ACU(res)` |
+| `index.js` | 25587 | 其他 AI 调用响应处理：`streamToText_ACU(res)` → `handleApiResponse_ACU(res)` |
+
+#### 技术细节
+- **新增函数 [`parseNonStreamResponse_ACU()`](index.js:4703)**：解析标准OpenAI格式的非流式JSON响应，提取 `choices[0].message.content`
+- **新增函数 [`handleApiResponse_ACU()`](index.js:4722)**：统一响应处理入口，根据 `settings_ACU.streamingEnabled` 自动选择使用 `streamToText_ACU()` 或 `parseNonStreamResponse_ACU()`
+- **修复策略**：将所有直接的 `streamToText_ACU()` 调用替换为 `handleApiResponse_ACU()`，确保响应解析方式与请求的 `stream` 参数一致
+
+---
+
+### 2026-03-15 流式传输开关控制
+
+#### 新增功能
+- **流式传输开关**：在API设置界面新增"启用流式传输 (Streaming)"复选框，用于控制所有AI调用功能是否使用流式传输
+- 开关默认关闭，用户可根据需要开启
+- 开启后可减少首字节响应时间（TTFT），避免长时间等待无响应
+
+#### 修改内容
+
+| 文件 | 代码行数区间 | 修改说明 |
+|------|-------------|----------|
+| `index.js` | 2298-2299 | 新增 `$streamingEnabledCheckbox_ACU` jQuery变量声明 |
+| `index.js` | 2330-2331 | `settings_ACU` 对象：新增 `streamingEnabled: false` 默认设置 |
+| `index.js` | 9672-9674 | `buildDefaultSettings_ACU()` 函数：新增 `streamingEnabled: false` 默认设置 |
+| `index.js` | 16615-16620 | API设置界面：新增流式传输开关复选框UI元素 |
+| `index.js` | 17305-17306 | 初始化流式传输开关jQuery对象 |
+| `index.js` | 9993-9997 | `loadSettings_ACU()` 函数：加载流式传输开关状态 |
+| `index.js` | 17855-17861 | 流式传输开关 change 事件监听器 |
+| `index.js` | 4558 | `callAI()` 函数：`should_stream: true` → `settings_ACU.streamingEnabled \|\| false` |
+| `index.js` | 4749 | `callAI()` 函数（位置2）：`should_stream: true` → `settings_ACU.streamingEnabled \|\| false` |
+| `index.js` | 4886 | `callAI()` 函数（位置3）：`should_stream: true` → `settings_ACU.streamingEnabled \|\| false` |
+| `index.js` | 4910 | `callAI()` 函数 fetch 调用：`stream: true` → `settings_ACU.streamingEnabled \|\| false` |
+| `index.js` | 7070 | 剧情推进功能：`should_stream: true` → `settings_ACU.streamingEnabled \|\| false` |
+| `index.js` | 7088 | 剧情推进功能 fetch 调用：`stream: true` → `settings_ACU.streamingEnabled \|\| false` |
+| `index.js` | 20264 | 自动填表功能：`should_stream: true` → `settings_ACU.streamingEnabled \|\| false` |
+| `index.js` | 20283 | 自动填表功能（回退）：`should_stream: true` → `settings_ACU.streamingEnabled \|\| false` |
+| `index.js` | 20304 | 自动填表功能 fetch 调用：`stream: true` → `settings_ACU.streamingEnabled \|\| false` |
+| `index.js` | 21337 | 纪要合并功能：`should_stream: true` → `settings_ACU.streamingEnabled \|\| false` |
+| `index.js` | 21989 | 纪要合并功能（位置2）：`should_stream: true` → `settings_ACU.streamingEnabled \|\| false` |
+| `index.js` | 21996 | 纪要合并功能 fetch 调用：`stream: true` → `settings_ACU.streamingEnabled \|\| false` |
+| `index.js` | 25530 | 其他 AI 调用：`should_stream: true` → `settings_ACU.streamingEnabled \|\| false` |
+| `index.js` | 25537 | 其他 AI 调用 fetch：`stream: true` → `settings_ACU.streamingEnabled \|\| false` |
+
+#### 技术细节
+- **设置存储**：`settings_ACU.streamingEnabled` 布尔值，默认为 `false`
+- **UI控件**：复选框控件，位于API设置界面"使用主API"复选框下方
+- **实时生效**：开关状态变更后立即保存并生效，无需重启
+- **统一控制**：所有使用 `TavernHelper.generateRaw` 和 `fetch` 的AI调用均受此开关控制
+
+---
+
+### 2026-03-14 AI大模型流式传输支持
+
+#### 新增功能
+- **流式传输（Streaming）支持**：所有使用 AI 大模型的功能现在都支持流式传输，可以减少首字节响应时间（TTFT），避免长时间等待无响应
+- 新增通用流式响应处理函数 [`streamToText_ACU()`](index.js:4518)，用于处理 SSE（Server-Sent Events）流并累积返回完整文本
+
+#### 修改内容
+
+| 文件 | 代码行数区间 | 修改说明 |
+|------|-------------|----------|
+| `index.js` | 4518-4559 | 新增 `streamToText_ACU()` 函数，处理流式响应 |
+| `index.js` | 4601-4663 | `callAI()` 函数：`should_stream: false` → `true`，`stream: false` → `true`，使用流式处理 |
+| `index.js` | 6777-6835 | 剧情推进功能：`should_stream: false` → `true`，`stream: false` → `true`，使用流式处理 |
+| `index.js` | 19890-19958 | 自动填表功能：`should_stream: false` → `true`，`stream: false` → `true`，使用流式处理 |
+| `index.js` | 20969-20985 | 纪要合并功能（位置1）：`should_stream: false` → `true`，`stream: false` → `true`，使用流式处理 |
+| `index.js` | 21616-21635 | 纪要合并功能（位置2）：`should_stream: false` → `true`，`stream: false` → `true`，使用流式处理 |
+| `index.js` | 25155-25180 | 其他 AI 调用：`should_stream: false` → `true`，`stream: false` → `true`，使用流式处理 |
+
+#### 技术细节
+- **TavernHelper.generateRaw 调用**：`should_stream: false` → `should_stream: true`
+- **fetch API 调用**：`stream: false` → `stream: true`
+- **响应处理**：使用 `streamToText_ACU()` 函数处理 SSE 流，累积所有 chunk 中的 content 并返回完整文本
+- **中止信号支持**：`streamToText_ACU()` 函数支持 AbortSignal 参数，可以在需要时中止流式传输
+
+---
+
+### 2026-03-11 酒馆提示词模板支持$6上轮规划数据
+
+#### 新增功能
+- 酒馆提示词（正文、世界书）的条件模板 `<if seed="关键词">` 现在可以在上轮规划数据（$6）中查找关键词
+- 修改内容：
+  1. [`handleChatCompletionReady_ACU()`](index.js:7100) 函数：获取上轮规划数据（$6）并添加到context中
+  2. [`parseConditionalTemplate_ACU()`](index.js:6847) 函数：添加 `plotContent` 参数
+  3. [`evaluateSeedExpression_ACU()`](index.js:6499) 函数：添加 `plotContent` 参数，将表格内容和上轮规划数据拼接进行关键词匹配
+  4. [`parseSingleIfBlock_ACU()`](index.js:7007) 函数：在评估seed条件时传入 `context.plotContent`
+
+#### 修复内容
+- 修复浏览器环境中 `global is not defined` 错误：将 `global._parenResults` 改为局部变量 `_parenResults`
+- 修复位置：[`index.js:6543-6590`](index.js:6543) - `evaluateSeedExpression_ACU` 函数
+- 修复酒馆提示词模板功能不生效的问题：`buildDefaultSettings_ACU()` 函数缺少 `promptTemplateSettings` 默认值
+- 修复位置：[`index.js:8772-8780`](index.js:8772) - `buildDefaultSettings_ACU` 函数
+- 修复 `getAllTablesJson_ACU is not defined` 错误：`getTableDataForPrompt_ACU()` 和 `getSeedContentForPrompt_ACU()` 函数参数问题
+- 修复位置：[`index.js:7084-7086`](index.js:7084) - `getTableDataForPrompt_ACU` 函数、[`index.js:7093`](index.js:7093) - `getSeedContentForPrompt_ACU` 函数
+
+---
+
+### 2026-03-11 条件模板语法说明文档
+
+#### 新增文档
+- 创建 [`docs/条件模板语法说明.md`](docs/条件模板语法说明.md)，详细说明数据库条件模板的语法和使用方法
+
+---
+
+### 2026-03-11 UI开关与提示词处理优化
+
+#### 新增功能
+- **UI界面开关**：在"数据库更新"设置区域新增"启用条件模板功能"复选框，用户可在界面上直接控制条件模板功能的开启/关闭
+- **提示词处理顺序优化**：数据库提示词现在先经过 st-prompt-template 插件处理，再由数据库自身的条件模板处理，实现两层模板处理的协同工作
+
+#### 修改内容
+
+| 文件 | 代码行数区间 | 修改说明 |
+|------|-------------|----------|
+| `index.js` | 2291-2293 | 新增 `$promptTemplateEnabledCheckbox_ACU` jQuery变量声明 |
+| `index.js` | 15524-15527 | 新增"启用条件模板功能"复选框UI元素 |
+| `index.js` | 16324-16325 | 初始化复选框jQuery对象 |
+| `index.js` | 8985-8986 | 加载设置时同步复选框状态 |
+| `index.js` | 17094-17106 | 新增复选框change事件监听器 |
+| `index.js` | 19149-19174 | 填表提示词处理：先调用st-prompt-template（含prepareContext），再调用数据库条件模板 |
+
+#### 执行流程
+1. 用户在UI界面勾选/取消"启用条件模板功能"
+2. 填表/推进提示词构建时：
+   - 先调用 `globalThis.EjsTemplate.prepareContext()` 获取上下文（包含 getvar 等函数）
+   - 再调用 `globalThis.EjsTemplate.evalTemplate(content, context)` 让 st-prompt-template 处理 EJS 语法
+   - 最后调用 `parseIfBlocksInContent_ACU()` 处理数据库自身的 `<if>` 条件模板语法
+3. 两层处理完成后，提示词发送给AI
+
+#### Bug修复
+- 修复了 st-prompt-template 调用时缺少 `prepareContext()` 导致 `getvar is not defined` 错误的问题
+
+---
+
+### 2026-03-11 酒馆提示词模板功能
+
+#### 新增功能
+- **酒馆提示词模板**：数据库插件现在可以独立处理酒馆提示词中的条件模板语法
+- **支持 else 分支**：条件不满足时显示备选内容
+- **支持嵌套条件**：在条件内部再嵌套另一个条件判断
+- **设置总开关**：可通过 `promptTemplateSettings.enabled` 控制功能开启/关闭
+
+#### 执行机制
+- 监听 `CHAT_COMPLETION_SETTINGS_READY` 事件
+- 使用 `eventSource.makeLast()` 确保在 st-prompt-template 插件之后执行
+- 处理 `data.messages` 数组中的所有消息内容
+
+#### 语法格式
+
+**基本语法**
+```
+<if seed="关键词表达式">条件内容</if>
+<if cell="表格名/行名/列名 > 数值">条件内容</if>
+```
+
+**带 else 的语法**
+```
+<if seed="战斗">
+战斗场景内容
+<else>
+非战斗场景内容
+</if>
+```
+
+**嵌套语法**
+```
+<if seed="战斗">
+  <if cell="状态表/主角/魔力值 > 30">
+    有足够魔力施放高级魔法。
+  <else>
+    魔力不足，只能使用普通攻击。
+  </if>
+<else>
+  <if seed="对话">
+    可以进行和平对话。
+  </if>
+</if>
+```
+
+#### 作用范围
+- 角色卡描述（Character Description）
+- 角色卡场景（Scenario）
+- 世界书条目（World Info Entries）
+- 预设提示词（Preset Prompts）
+- 消息内容（Messages）
+
+#### 兼容性说明
+- 与 st-prompt-template 插件共存
+- 条件模板语法 `<if ...>` 与 EJS 语法 `<% ... %>` 不冲突
+- 执行顺序：SillyTavern 构建提示词 → st-prompt-template 处理 → 数据库插件处理 → 发送给 LLM
+
+#### 修改内容
+
+| 文件 | 代码行数区间 | 修改说明 |
+|------|-------------|----------|
+| `index.js` | 2385-2391 | 新增 `promptTemplateSettings` 设置选项 |
+| `index.js` | 6903-7143 | 新增 `parseIfBlockRecursive_ACU()` 等条件模板解析函数（支持 else 和嵌套） |
+| `index.js` | 13094-13113 | 新增 `CHAT_COMPLETION_SETTINGS_READY` 事件监听 |
+
+---
+
+### 2026-03-11 剧情推进条件模板功能
+
+#### 新增功能
+- **条件模板语法**：为剧情推进提示词新增条件模板功能，支持两种条件判断方式：
+  1. **关键词匹配**：根据内容中是否包含关键词来决定是否包含提示词
+  2. **表格数值比较**：根据表格中指定单元格的数值比较结果来决定是否包含提示词
+
+#### 语法格式
+
+**1. 关键词匹配**
+```
+<if seed="关键词表达式">条件提示词内容</if>
+```
+
+**2. 表格数值比较**
+```
+<if cell="表格名/行名/列名 比较运算符 数值">条件提示词内容</if>
+```
+
+#### 关键词匹配 - 支持的逻辑类型
+
+| 语法 | 逻辑类型 | 说明 |
+|------|---------|------|
+| `战斗` | 简单匹配 | 检测内容包含"战斗"即生效 |
+| `战斗,打架` | 或逻辑（OR） | 包含"战斗"或"打架"任一即生效 |
+| `战斗&主角` | 与逻辑（AND） | 同时包含"战斗"和"主角"才生效 |
+| `!战斗` | 非逻辑（NOT） | 不包含"战斗"时才生效 |
+| `(战斗&主角),感情` | 组合逻辑 | 同时包含"战斗"和"主角"，或者包含"感情" |
+
+#### 表格数值比较 - 支持的格式
+
+| 格式 | 说明 | 示例 |
+|------|------|------|
+| 精确匹配 | `表格名/行名/列名` | `重要人物表/威尔逊/好感度 > 50` |
+| 模糊匹配（行） | `表格名/行名` - 检查该行所有数值列 | `重要人物表/威尔逊 > 50` |
+| 模糊匹配（列） | `表格名/列名` - 检查该列所有数值行 | `重要人物表/好感度 > 50` |
+
+**特性说明：**
+- **模糊匹配**：只需指定表格名和行名（或列名），会自动检查该行/列的所有数值
+- **行列颠倒**：精确匹配时，如果行名和列名写反了，会自动尝试颠倒匹配
+- **任一匹配即生效**：模糊匹配时，只要有一个数值满足条件就生效
+
+#### 表格数值比较 - 支持的比较运算符
+
+| 运算符 | 说明 | 示例 |
+|--------|------|------|
+| `>` | 大于 | `重要人物表/威尔逊/好感度 > 50` |
+| `<` | 小于 | `重要人物表/威尔逊/好感度 < 30` |
+| `>=` | 大于等于 | `全局数据表/当前状态/危险等级 >= 3` |
+| `<=` | 小于等于 | `全局数据表/当前状态/金钱 <= 100` |
+| `==` | 等于 | `重要人物表/威尔逊/状态 == 活跃` |
+| `!=` | 不等于 | `重要人物表/威尔逊/状态 != 死亡` |
+
+#### 检测范围
+- **关键词匹配**：除纪要表以外的所有数据库表格内容 + $6 上轮剧情规划数据
+- **表格数值比较**：所有数据库表格（包括纪要表）
+
+#### 使用示例
+```text
+你是一个剧情推进AI。
+
+<!-- 关键词匹配：或逻辑 -->
+<if seed="战斗,打架,打斗,搏斗">
+当检测到战斗场景时，请特别注意战斗动作的流畅性。
+</if>
+
+<!-- 关键词匹配：与逻辑 -->
+<if seed="主角&战斗">
+主角参与战斗时，请重点描写主角的心理活动和战斗策略。
+</if>
+
+<!-- 关键词匹配：非逻辑 -->
+<if seed="!战斗,!打斗">
+日常场景中，请注重角色互动和氛围描写。
+</if>
+
+<!-- 表格数值比较：精确匹配 -->
+<if cell="重要人物表/威尔逊/好感度 > 50">
+威尔逊对主角的好感度较高，可以在剧情中加入更多互动机会。
+</if>
+
+<!-- 表格数值比较：模糊匹配（检查威尔逊行所有数值列） -->
+<if cell="重要人物表/威尔逊 > 80">
+威尔逊的某项属性超过80，可以触发特殊剧情。
+</if>
+
+<!-- 表格数值比较：模糊匹配（检查好感度列所有数值行） -->
+<if cell="重要人物表/好感度 < 20">
+有人的好感度低于20，可能会产生冲突。
+</if>
+
+请根据上述指引推进剧情。
+```
+
+#### 修改内容
+
+| 文件 | 代码行数区间 | 修改说明 |
+|------|-------------|----------|
+| `index.js` | 6449-6489 | `formatNonSummaryTablesForSeed_ACU()` 函数，获取除纪要表外的表格内容用于关键词检测 |
+| `index.js` | 6503-6590 | `evaluateSeedExpression_ACU()` 函数，解析关键词表达式（支持与、或、非逻辑） |
+| `index.js` | 6592-6665 | `getCellValue_ACU()` 函数，从表格中获取指定单元格的值 |
+| `index.js` | 6667-6810 | `evaluateCellExpression_ACU()` 函数，解析表格数值比较表达式（支持斜杠分隔、模糊匹配、行列颠倒） |
+| `index.js` | 6812-6870 | `parseConditionalTemplate_ACU()` 函数，统一处理 seed 和 cell 两种条件模板 |
+| `index.js` | 7920-7930 | 在剧情推进提示词处理流程中集成条件模板解析 |
+
+---
+
+### 2026-03-08 全局包裹条目顺序修复
+
+#### 修复问题
+- **全局包裹条目顺序错误**：修复了全局条目注入配置中，包裹条目无法正确包裹全局数据条目的问题。
+
+#### 问题原因
+1. **默认顺序配置错误**：`buildDefaultGlobalInjectionConfig_ACU()` 函数中 `wrapperPlacement.order` 默认值为 99982，而 `readableEntryPlacement.order` 为 99981。
+2. **WrapperEnd 顺序计算错误**：WrapperEnd 的 order 使用 `wrapperPlacement.order + 1`（即 99983），导致顺序变成：数据(99981) → 上包裹(99982) → 下包裹(99983)，无法正确包裹。
+
+#### 修改内容
+
+| 文件 | 代码行数区间 | 修改说明 |
+|------|-------------|----------|
+| `index.js` | 10055-10060 | 修改 `buildDefaultGlobalInjectionConfig_ACU()` 函数，将 `wrapperPlacement.order` 默认值从 99982 改为 99980 |
+| `index.js` | 11126-11143 | 修改 WrapperEnd 的 order 计算逻辑，从 `wrapperPlacement.order + 1` 改为 `wrapperPlacement.order + 2` |
+
+#### 修复后的效果
+- 上包裹条目（WrapperStart）：Order = 99980
+- 全局可读条目（ReadableDataTable）：Order = 99981
+- 下包裹条目（WrapperEnd）：Order = 99982
+- 顺序正确：上包裹 → 数据 → 下包裹，实现正确包裹
+
+---
+
 ### 2026-03-08 纪要索引优化与重试延时调整
 
 #### 修改内容

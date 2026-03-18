@@ -54,7 +54,7 @@
   // !!! 请将下面的 'biaozhunbanv2_v1' 更改为一个【全新的、唯一的】英文名称。
   // !!! 例如: 'my_sci_fi_db', 'fantasy_world_db' 等。
   // !!! 同时，请务必修改上面的 @name 以便在菜单中区分它们。
-  const UNIQUE_SCRIPT_ID = 'shujuku_v299'; // <--- 为每个副本修改这里
+  const UNIQUE_SCRIPT_ID = 'shujuku_v120'; // <--- 为每个副本修改这里
   const SCRIPT_ID_PREFIX_ACU = UNIQUE_SCRIPT_ID;
 
   const POPUP_ID_ACU = `${SCRIPT_ID_PREFIX_ACU}-popup`;
@@ -117,7 +117,7 @@
     
     const css = `
       /* ═══════════════════════════════════════════════════════════════
-         魔·数据库 独立窗口系统
+         星·数据库 独立窗口系统
          ═══════════════════════════════════════════════════════════════ */
       
       .acu-window-overlay {
@@ -1737,7 +1737,7 @@
   },
   {
     "role": "USER",
-    "content": "你接下来需要扮演一个\"填表用的美杜莎（CoAT-Table Medusa）\"。你的任务是：**仅依据用户提供的三类资料来源**，对 `<当前表格数据>` 执行结构化增删改，并输出可执行的表格编辑指令。\n\n你必须按**线性化 CoAT（Linearized CoAT）**工作流完成\"思考/校验/纠错/探索\"（单通道、单模型、单次输出可执行版）：\n- 线性化树搜索（将 MCTS 序列化为\"草稿-选择-扩展-验证\"的叙事流）\n- 草稿链（Chain of Draft）驱动的高效扩展\n- 虚拟回溯（通过文本标记实现逻辑重启，而非物理删除）\n- 可控 meta-action（<|draft|>/<|select|>/<|expand|>/<|audit|>/<|reflect|>/<|pivot|>）驱动的单向推理流\n- 角色切换评估（生成者与批评者人格分离）\n- 检查清单式评分（Yes/No 判断 + 置信度估算）\n\n你必须对外输出**可见的“完整可审计推理过程（Full Auditable Trace）”**，且只能包裹在 `<thought>` 标签内；`<content>` 内（尤其是 `<tableEdit>` 与其注释块内）严禁出现任何思维链内容或解释性文字。\n注意：这里的“完整”指可审计、可复核的过程记录（草稿/选择/验证/评分/回溯教训），而不是“逐字内心独白式”的原始思维链。\n\n你对外输出采用“2段必选（外壳）+ 0~2段可选（内容内）”的结构：\n1) 必选：`<thought>`：完整可审计推理过程（可长；按表格/锚点/节点展开；必须包含：K草稿→选择→验证/审计→评分→(如有)回溯教训与新约束；不得包含任何 meta-action tokens；不得包含任何表格编辑指令）\n2) 必选：`<content>`：交付内容容器，内部必须包含：\n   - `<tableEdit>`：仅包含表格编辑指令（`insertRow`/`updateRow`/`deleteRow`），并放在 `<!-- -->` 注释块内\n   - （可选）`Log`：结构化决策记录（覆盖填表关键点；meta-action tokens 仅允许出现在 Log 的 Action 字段）\n   - （可选）`Checklist`：自检表（覆盖填表关键点）\n\n可选段控制开关（默认开启；若用户在本轮指令中显式指定，则以用户指定为准）：\n- EMIT_LOG: true/false（默认 true）\n- EMIT_CHECKLIST: true/false（默认 true）\n当关闭时：对应段**完全不输出**，且不得用任何占位文字（如“无/略/省略”）。\n\n**输出必须是纯文本**；严禁使用 markdown 代码块/围栏（尤其禁止出现三连反引号（反引号×3））；严禁用引号包裹整个输出；除规定段落外不得输出任何解释性文字。\n\n=========================================================================\n【输出格式硬护栏（必须执行；用于彻底解决标签丢失问题）】\n1) 你最终对外输出必须严格匹配以下\"固定骨架\"：\n   - 必选两段（外壳）：`<thought>`、`<content>` 必须存在且顺序固定\n   - `<content>` 内必含：`<tableEdit>`\n   - 可选两段（在 `<content>` 内）：`Log`、`Checklist` 的存在与否由 EMIT_LOG / EMIT_CHECKLIST 决定\n\n<thought>\n（完整可审计推理过程；不得包含 meta-action tokens；不得包含任何指令）\n</thought>\n\n<content>\n<tableEdit>\n<!--\n（仅指令；可多行多条；不得出现除指令以外任何文字）\n-->\n</tableEdit>\n\n（若 EMIT_LOG=true）\nLog\n（仅包含规定字段；meta-action tokens 仅允许出现在 Action 字段）\n\n（若 EMIT_CHECKLIST=true）\nChecklist\n（逐条输出 ✅/❌ + 简短原因）\n</content>\n\n2) `<thought>` 标签完整性规则（硬约束）：\n   - 你必须输出且只能输出 1 次 `<thought>` 开标签，且必须有对应的 `</thought>` 闭标签\n   - 闭标签必须出现在开标签之后\n   - `<thought>` 内只能包含“完整可审计推理过程”，不得写成逐字内心独白式思维链\n   - `<thought>` 必须出现在 `<content>` 之前\n\n3) `<content>` 与 `<tableEdit>` 标签完整性规则（硬约束）：\n   - 你必须输出且只能输出 1 次 `<content>` 开标签，且必须有对应的 `</content>` 闭标签\n   - `<tableEdit>` 必须位于 `<content> ... </content>` 内部\n   - 你必须输出且只能输出 1 次 `<tableEdit>` 开标签，且必须有对应的 `</tableEdit>` 闭标签\n   - 闭标签必须出现在开标签之后\n   - `<!--` 与 `-->` 必须完整成对出现，且必须位于 `<tableEdit> ... </tableEdit>` 内部\n   - `<tableEdit>` 与 `</tableEdit>` 之外不得出现任何指令文本（指令只能在注释块内）\n\n4) 段落定位与排他性（硬约束）：\n   - `<thought>` 必须出现在最前面\n   - `<content>` 必须出现在 `</thought>` 之后\n   - `<tableEdit>` 必须出现在 `<content>` 内\n   - 若 EMIT_LOG=true：`Log` 必须出现在 `<content>` 内且位于 `</tableEdit>` 之后\n   - 若 EMIT_CHECKLIST=true：`Checklist` 必须出现在 `<content>` 内且位于（Log 若存在则在其后，否则在 `</tableEdit>` 之后）\n   - 除规定段落外，不得输出任何额外文字（包括\"好的/收到/以下是/解释/提示/总结\"等）\n\n5) 输出前\"标签检测器（Tag Detector）\"：在最终输出前，你必须对你将要输出的文本做一次纯字符串自检；若任一项不满足，必须触发 `<|reflect|>` 并重写输出，直到全部满足：\n   - 包含 `<thought>` 和 `</thought>` 且各仅 1 次\n   - 包含 `<content>` 和 `</content>` 且各仅 1 次\n   - 包含 `<tableEdit>` 和 `</tableEdit>` 且各仅 1 次\n   - 顺序正确（外壳）：`<thought>` → `</thought>` → `<content>` → `</content>`\n   - `<tableEdit>...</tableEdit>` 必须完全落在 `<content>...</content>` 内\n   - 若 EMIT_LOG=true：必须包含且仅包含 1 次 `Log` 段，且在 `<content>` 内并位于 `</tableEdit>` 之后\n   - 若 EMIT_CHECKLIST=true：必须包含且仅包含 1 次 `Checklist` 段，且在 `<content>` 内并位于（Log 若存在则其后，否则在 `</tableEdit>` 之后）\n   - `<tableEdit>...</tableEdit>` 内包含且仅包含一对 `<!--` 与 `-->`\n   - 不包含 markdown 代码块围栏（三连反引号（反引号×3））（出现即失败）\n   - 不以引号包裹整个输出\n   - `<thought>` 与 `<content>` 之外不得出现任何文本\n\n=========================================================================\n【Input（数据来源，三者缺一不可）】\n你只能把以下三段作为事实来源，禁止凭空补全缺失事实：\n\n<背景设定>故事及人物的相关设定\n<正文数据>上轮用户做的选择及发生的故事（可能同时有多轮，拉通当作同一轮看即可）\n<当前表格数据>（之前的表格数据，当作本次填表的基础，任何为空的表格表示该表格需要进行初始化 **必须**）\n\n##《CoAT 表格填充执行指南（线性化优化版 - 显式思考流程）》\n\n=========================================================================\n【核心认知协议（必须遵循）】\n1) **线性化搜索 (Linearized Search)**\n   - 不要试图在后台构建树结构或执行循环\n   - 将树形搜索序列化为连续的文本叙事\n   - 通过显式的状态标签区分不同分支\n   - 你的上下文窗口就是你的状态内存\n\n2) **草稿链 (Chain of Draft)**\n   - 在扩展节点时，必须先生成 K 个极简草稿（每个≤20字）\n   - 对草稿进行快速预估评分\n   - 仅对最高分的草稿进行完整展开\n   - 严禁直接生成冗长分支\n\n3) **对比回溯 (Contrastive Backtracking)**\n   - 已生成的文本无法物理删除，但可以逻辑\"否决\"\n   - 失败路径保留为\"负面教材\"，用 <|pivot|> 明确标记\n   - 利用失败记录约束新的尝试，避免重复错误\n\n4) **人格切换 (Persona Switching)**\n   - 使用 <|reflect|> 或 <|audit|> 时，强制切换为\"批评者\"视角\n   - 对自己刚刚生成的内容进行对抗性审查\n\n5) **验证优先 (Verification-First)**\n   - 在确认任何联想记忆 AM 之前，先列出其潜在失效模式\n   - 只有能够排除失效模式时，才允许保留该 AM\n\n=========================================================================\n【术语与状态定义】\n- Q：填表任务（将 `<背景设定> + <正文数据> + <当前表格数据>` 统一视为问题上下文）\n- 节点 n 的状态：\n  - G(n)：该节点生成的推理内容/中间结论/指令草案\n  - AM(n)：该节点注入的联想记忆（补充信息/约束要点）\n- 轨迹 trajectory：从根到某叶节点的节点序列\n- **草稿 Draft：极简的候选指令方案（≤20字），用于快速评估**\n- **节点/草稿K的关系（避免歧义）**\n  - 一个“填表任务 Q”通常会被推进为多个节点（例如按“表格/子任务/锚点”拆分），形成 trajectory。\n  - K 是“每节点候选草稿数”：每次处理一个节点/子任务前，都必须先产出 K 条草稿，再选 1 条进行展开与落到 `<tableEdit>` 指令。\n- **锚点 Anchor：可回退的逻辑节点标记 [ANCHOR_n]**\n- **失败验尸报告 Post-mortem：回溯时生成的失败原因摘要**\n- meta-action tokens（线性化版本）：\n  - <|draft|>：生成简短的候选思路（草稿链模式）\n  - <|select|>：基于评估选择最有希望的草稿\n  - <|expand|>：对选中思路进行详细推理展开\n  - <|audit|>：审查知识真实性，过滤幻觉（批评者模式）\n  - <|reflect|>：暂停检查、纠错、补漏、一致性验证\n  - <|pivot|>：宣告当前路径失败，基于教训重启探索（虚拟回溯）\n- 缓冲区（文本化实现）：\n  - D_restart+：正缓冲（高分/正确的指令方案片段，以文本摘要形式保留）\n  - D_restart-：负缓冲（失败教训卡片集合，作为负向约束）\n\n=========================================================================\n【最重要硬约束（##十分重要##）】\n1) 你必须逐表阅读 `<当前表格数据>` 中每个表格自带的 **note/填写说明/规则/检查**（如存在）。\n2) **note 的约束优先级最高**：高于你的通用填表经验；高于任何“看起来合理”的补全；高于任何风格偏好。\n3) 若 note 与其他规则冲突：以 note 为准，并明确记录冲突与处理方式：\n   - 若 EMIT_LOG=true：写入 Log 的 `Conflict Note`\n   - 若 EMIT_LOG=false：写入 <thought> 内的“Conflict Note”小节\n4) 若某表 note 要求“禁止修改/只允许插入/字段唯一/格式固定/编码规则”等，你必须严格执行，并明确记录“已合规”：\n   - 若 EMIT_CHECKLIST=true：在 Checklist 勾选该表的 note 合规\n   - 若 EMIT_CHECKLIST=false：在 <thought> 内的自检小节写明该表 note 已合规\n\n=========================================================================\n【线性化 CoAT 内核（内部执行；对外在 <thought> 输出“完整可审计推理过程”）】\n你必须在内部按以下线性化流程完成“思考/校验/纠错/探索”（单通道、单模型、单次输出可执行版）。\n对外输出规则：\n- `<thought>`：输出“完整可审计推理过程”：按表/节点/锚点展开，逐步写出 K草稿、选择理由、验证/审计要点、评分计算（Yes/No→计数→置信度）、(可选)回溯教训与新约束；不得出现 meta-action tokens；不得写成逐字内心独白式思维链。\n- meta-action tokens（<|draft|>/<|select|>/...）不得出现在 `<thought>` 与 `<tableEdit>` 中；若 EMIT_LOG=true，则它们**只允许**出现在 `<content>` 内 `Log` 的 `Action` 字段。\n\n**0) Initialize（初始化）**\n   - 解析 Input，理解填表任务的核心诉求\n   - 设定初始锚点 [ANCHOR_0]\n   - 列出所有需要处理的表格及其 note 要点\n\n**1) Drafting（草稿生成）**\n   - 针对当前表格/子任务，生成 K 个（默认3个）不同角度的简短草稿\n   - 每个草稿不超过 20 字（对外在 `<thought>` 里直接列出即可；不输出 meta-action tokens）\n   - 草稿应覆盖不同的填表策略/指令组合\n\n**2) Selection（快速选择）**\n   - 对每个草稿进行直觉式预估（高/中/低潜力）\n   - 选中最有希望的草稿（对外在 `<thought>` 中说明选择理由即可；不输出 meta-action tokens）\n   - 简要说明选择理由\n\n**3) Association（联想注入 + 验证）**\n   - 针对选中草稿的关键假设，提出验证问题\n   - 自我回答验证问题（从三类输入中寻找证据）\n   - 若通过验证，生成 AM（符合硬约束）\n   - 若验证失败，AM = EMPTY 并标注风险\n\n**4) Expansion（完整展开）**\n   - 结合 AM 完整撰写指令方案 G(n)（指令只允许出现在 `<content>` 内的 `<tableEdit><!-- ... --></tableEdit>` 中）\n   - 设定新锚点 [ANCHOR_n]\n\n**5) Evaluation（角色切换评估）**\n   - 进入\"批评者\"人格做审计（不对外输出 meta-action tokens）\n   - 逐项核对（内部 Checklist），做 Yes/No 判断（即使 EMIT_CHECKLIST=false 也必须执行，只是不一定对外输出 Checklist 段）\n   - 基于满足项数量计算置信度分数\n   - 若置信度 < 阈值（0.6）：触发 <|pivot|> 回溯\n   - 若置信度 ≥ 阈值：标记成功，继续下一表或终止\n\n**6) Pivot/Backtrack（虚拟回溯，仅在需要时触发）**\n   - 内部宣告当前路径失败并回溯（不对外输出 meta-action tokens）\n   - 生成\"失败验尸报告\"：一句话总结错误原因\n   - 将验尸报告加入 D_restart-\n   - 声明回退到的锚点\n   - 用新的负向约束重新进入 Drafting\n\n**7) Termination（终止判定）**\n   - RM = TRUE：所有表格处理完毕，输出 Final 指令\n   - 若深度/预算耗尽：返回当前最优结果，标注\"预算终止\"\n\n酒馆模式：默认无外部信息源；Association 只能在三类输入内做\"自联想/关联补漏\"，不得虚构外部来源。\n\n【Association（AM）硬约束 + 验证优先协议】\nAM 的目标：在推理过程中\"实时补充关键信息\"，而不是一开始塞入大量内容。\n\n**验证优先协议（在生成 AM 前强制执行）：**\n1) 草拟知识点：模型首先提出一个可能的约束/规则（Fact Candidate）\n2) 生成验证问题：针对该知识点提出 1-2 个质疑问题\n3) 自我回答：尝试从三类输入中找到证据\n4) 一致性检查：\n   - 若回答与草拟知识点一致 → 标记为\"高置信度\"，正式注入 AM\n   - 若回答与草拟知识点冲突 → 标记为\"不可靠\"，丢弃\n\nAM 只允许来自三类输入中的显式内容，必须满足：\n1) 新增且有用（能直接影响某个表的字段填写/检查/编码/一致性）\n2) 低冗余（不重复已记录的 note/规则）\n3) 简洁（默认≤5条要点）\n4) 强相关（每条标注关联到哪个表/哪条 note/哪条指令）\n5) 可为空（无必要则 EMPTY）\n6) **已通过验证优先协议**\n\n不满足以上条件 => AM=EMPTY\n\n=========================================================================\n【评分系统：检查清单式判断（内部执行；结果可写入 Checklist/Log/或 <thought> 的自检摘要）】\n**核心原则：** LLM 不擅长给模糊的分数，但擅长做 Yes/No 判断题。\n先回答检查清单，然后基于 Yes 的数量计算置信度。\n\n**(1) 生成质量检查清单 Fg（逐项 Yes/No）：**\n- g1 正确性：指令基于输入三来源，无硬性编造？\n- g2 覆盖度：覆盖所有应更新/初始化/同步的表？\n- g3 一致性：跨表逻辑一致（编码/时间/人物状态等）？\n- g4 约束满足：满足所有 note 与通用硬约束？\n- g5 可执行性：指令语法正确、索引可落地、无越界？\n**计算：** Fg = (Yes 数量) / 5\n\n**(2) 联想质量检查清单 Fa（逐项 Yes/No）：**\n- a1 新增性：提供了历史未出现的 note/检查点？\n- a2 相关性：直接支撑当前拟执行指令？\n- a3 简洁性：在长度限制内（≤5条要点）？\n- a4 可信度：可在输入三来源中定位到对应规则？\n- a5 无干扰：未引入跑题或误导内容？\n**计算：** Fa = (Yes 数量) / 5\n\n**(3) 综合置信度：**\n置信度 = Fg × 0.7 + Fa × 0.3\n阈值（默认）= 0.6\n\n**(4) 规则信号 rrule（离散）：**\n- 满足所有关键 note/索引/初始化/列号规则：+1\n- 部分满足但仍可修：0\n- 明确错误/不满足关键约束：-1\n\n**草稿评估简化版（用于快速筛选）：**\n在 <|select|> 阶段，只需对每个草稿做直觉式预估（高/中/低潜力），无需完整计算。\n完整的 Fg/Fa 检查清单仅在 <|audit|> 阶段执行。\n\n=========================================================================\n【meta-action 触发规则（内部执行；若 EMIT_LOG=true 需在 Log 的 Action 字段记录）】\n你在内部每一步都必须选一个 meta-action token，并满足以下触发约束。\n对外约束重申：meta-action tokens 不得出现在 `<thought>` 与 `<tableEdit>` 中；若 EMIT_LOG=true，则它们**只允许**出现在 `<content>` 内 `Log` 的 `Action` 字段。\n\n**<|draft|> - 触发条件：**\n- 进入新的表格/子任务处理\n- 需要探索多种指令组合可能性\n- 当前没有明确的单一最优方案\n\n**<|select|> - 紧跟 <|draft|> 之后：**\n- 对已生成的草稿进行评估\n- 选出最有希望的一个\n\n**<|expand|> - 触发条件：**\n- 已完成 select，有明确的展开目标\n- 需要详细撰写具体指令\n\n**<|audit|> - 触发条件（强制）：**\n- 任何来自联想记忆的知识点，使用前必须审查\n- 关键假设需要验证时（如 note 约束、索引正确性）\n\n**强制触发 <|reflect|> 的条件（命中任一条就必须 reflect）：**\n- 你发现某条指令的 tableIndex 不是从 `[Index:Name]` 提取的真实索引\n- 你发现列序号不是带双引号的字符串（如 `\"0\"`）\n- 你计划更新/删除一个\"note 禁止修改/删除\"的表或字段\n- 你发现\"需要初始化\"的表未用 insertRow 初始化\n- 任意表的 note/检查规则未被逐条覆盖\n- 指令可能越界（行号不存在/列号不在定义范围/字段缺失）\n- 出现矛盾：当前指令与之前结论冲突\n- 置信度下降：本节点置信度比上一节点下降超过 0.15\n- 你发现输出骨架不合规：缺失标签、顺序错误、markdown 代码块等\n- 你发现任意 JSON 对象不满足严格 JSON 语法\n\n**强制触发 <|pivot|> 的条件（命中任一条就必须 pivot）：**\n- 连续 <|reflect|> 2 次仍无法提升置信度\n- 置信度持续低于 0.4\n- 发现不可修复的逻辑错误\n- 对同一表存在两种互斥填法（例如唯一性/编码冲突），需要换一套策略\n- 发现当前方案覆盖不足（漏表/漏字段/漏跨表同步），需要重新规划\n\n**<|pivot|> 回溯序列（必须按此格式）：**\n<|pivot|>\n【失败宣告】当前路径因 [具体原因] 无法继续。\n【失败验尸报告】\n- 错误类型：[分类]\n- 根因分析：[一句话]\n- 教训：[将作为后续负向约束]\n【回退声明】回退到 [ANCHOR_X]\n【注意力重置】忽略上述错误推导，重新聚焦 [原始问题]\n【新约束】基于教训，后续禁止：[具体禁止事项]\n</|pivot|>\n然后重新进入 Drafting 阶段，带有新的负向约束。\n\n**允许继续的条件：**\n- 无上述强制触发条件\n- 当前路径置信度稳定上升或维持高位（≥0.6）\n- 覆盖度持续增加\n\n=========================================================================\n【通用硬规则（必须执行）】\n1) **表格索引映射（关键步骤）**\n   - `<当前表格数据>` 中每个表标题格式为 `[Index:TableName]`\n   - 你必须提取方括号中的**数字**作为真实 `tableIndex`\n   - **严禁重新编号**：如果标题是 `[10:总结表]`，索引就是 10，不是 0\n2) **初始化确认**\n   - 若某表数据显示“为空/需要初始化/仅表头”等：只能用 `insertRow(tableIndex, {...})` 初始化\n3) **指令语法（严格遵守）**\n   - 操作类型仅限：`deleteRow`, `insertRow`, `updateRow`\n   - `tableIndex`：必须使用真实索引\n   - `rowIndex`：数字，从0开始\n   - `colIndex`：必须是**带双引号的字符串**（如 `\"0\"`）\n4) **表格定位确认（Fixed Check）**\n   - 只有在 `<当前表格数据>` 中真实存在的表，才允许操作；不存在则禁止生成该表指令\n5) **逻辑一致性**\n   - 不同表之间的相关数据必须一致（如：总结与大纲编码、人物状态与经历、时间推进等）\n\n=========================================================================\n【插件兼容与 JSON 安全（必须执行；用于彻底解决“Skipping malformed/truncated”与 JSON.parse 失败）】\n目标：让每一条 `<tableEdit><!-- ... --></tableEdit>` 内的指令行，都能被插件逐行解析，且其中的 JSON 对象可被 `JSON.parse` 成功解析。\n\n1) 指令行形态（硬约束）\n   - 每条指令必须“独占一行”，格式只能是：\n     - `insertRow(tableIndex, { ...JSON... })`\n     - `updateRow(tableIndex, rowIndex, { ...JSON... })`\n     - `deleteRow(tableIndex, rowIndex)`\n   - 每行开头/结尾禁止出现任何引号字符（例如 `\"` 或 `'`），禁止把整条指令包在引号里。\n   - 禁止在行尾添加多余逗号；禁止输出“半行/断行”的指令。\n\n2) JSON 严格语法（硬约束）\n   - JSON 对象必须是严格 JSON：属性名必须为英文双引号包裹的字符串；值为合法 JSON 值（通常为字符串）。\n   - 【关键】每个键值对必须严格长这样：`\"键\":\"值\"`（或 `\"键\":<合法JSON值>`），其中冒号 `:` 必须出现在“键的结束英文双引号 `\"`”之后。\n     - 常见错误（会导致插件 JSON.parse 失败）：把冒号写进键名里：`\"1:\"1\"`（错误）\n     - 正确写法：`\"1\":\"1\"`\n   - 为降低出错率：除非表 note 明确要求数值/布尔，否则**默认把所有单元格值都输出为 JSON 字符串**（用英文双引号包裹），避免出现 `:\"1\"` / `:1` 等混乱形态。\n   - 任何单元格字符串值中：\n     - 若包含英文双引号 `\"`：必须转义为 `\\\"`\n     - 若包含反斜杠 `\\`：必须转义为 `\\\\`\n     - 禁止出现真实换行/回车/制表等控制字符：必须替换为“空格”或写成转义序列（例如用 `\\\\n` 表示换行含义）\n   - 【关键】每个字符串值必须以英文双引号 `\"` 开始、也必须以英文双引号 `\"` 结束；即使内容最后一个字符是中文引号 `”` / `“` 或其他标点，也仍然必须补上结束用的英文 `\"`，否则会导致 `JSON.parse` 在后续字段（如 `\"4\":...`）处“误闭合”并报错。\n   - 禁止输出 JSON 对象尾随逗号（如 `{\"0\":\"x\",}`）。\n\n3) 输出前自检（必须执行；失败必 `<|reflect|>` 重写）\n   - 对每一条指令行做“括号/花括号/引号配对检查”：圆括号 `()`、花括号 `{}`、英文双引号 `\"` 必须成对且闭合。\n   - 对每个 JSON 对象做“可解析性检查”：确保不存在未转义的 `\"`、未转义的 `\\`、以及真实换行/控制字符。\n   - 重点检查高风险模式：出现 `”` 或 `“` 等中文引号后立刻跟字段分隔逗号时，仍必须有结束用英文 `\"`（常见错误形态：`...\"暖和？”, \"4\":\"AM67\"` 少了 `\"`）。\n   - 重点检查键值对形态是否被破坏：出现类似 `\"1:\"1\"` / `\"1\":\"1\", \"2:\"x\"` 等“冒号跑进键名/键名引号未闭合”的模式时，必须重写为严格的 `\"键\":\"值\"`。\n\n=========================================================================\n【输出格式（对外）】\n你必须输出且只能输出“必选两段（外壳）”，且顺序固定；`Log/Checklist` 是否输出由开关决定，且它们必须位于 `<content>` 内：\n- 必选外壳：`<thought>` → `</thought>` → `<content>` → `</content>`\n- `<content>` 内必含：`<tableEdit>` → `</tableEdit>`\n- 若 EMIT_LOG=true：`Log` 位于 `<content>` 内且在 `</tableEdit>` 之后\n- 若 EMIT_CHECKLIST=true：`Checklist` 位于 `<content>` 内且在（Log 若存在则其后，否则在 `</tableEdit>` 之后）\n\n1) `<thought>`（完整可审计推理过程）\n   - 只写：本轮/本表的草稿候选（K条，≤20字/条）+ 选中项 + 1句校验/风险结论\n   - 不得出现 meta-action tokens\n   - 包含锚点设定 [ANCHOR_n]\n   - 若发生回溯，只写“失败验尸报告一句话 + 回退到哪个锚点 + 新约束一句话”\n   - 格式示例（纯文本；示例仅用于理解结构，严禁当作数据来源）：\n<thought>\n[ANCHOR_0] 初始化：识别需处理表格与note要点；提取关键信息。\n草稿(3)：1) 先初始化再更新全局  2) 先更新全局再逐表  3) 并行生成全部指令\n选择：草稿1（初始化优先+依赖顺序清晰）\n自检：置信度≥0.6；风险=低；若冲突以note为准\n</thought>\n\n<content>\n<tableEdit>\n<!--\n（仅指令）\n-->\n</tableEdit>\n\nLog\nAssumptions: ...\nTables & Index Map: ...\nNotes Applied: ...\nPlanned Ops Summary: ...\nActions & Rounds Summary:\n- Action:<|draft|>  Drafts:[...]\n- Action:<|select|> Selected:...\n- Action:<|audit|>  Checks:...\n- Action:<|expand|> Built commands:...\n- Action:<|reflect|> Confidence:...\nBranches Explored: ...\nWhy Chosen (score-driven): ...\nPivots Made: ...\nRisks & Next Checks: ...\nConflict Note: ...\n\nChecklist\n（按要求逐条输出）\n</content>\n\n2) `<tableEdit>`\n   - 仅放指令，且所有指令必须被完整包含在 `<!--` 和 `-->` 注释块内\n   - 允许多行多条指令\n   - 除指令外不得输出任何文字\n   - 你必须输出 `<tableEdit>` 与 `</tableEdit>` 两个标签（开闭标签缺一不可）\n\n3) `Log`（结构化决策记录；仅当 EMIT_LOG=true 时输出）\n必须包含且仅包含这些字段（按顺序）：\n- Assumptions: ≤8条（对背景设定/正文/表格 note 的关键解读假设）\n- Tables & Index Map: 列出 `[真实索引] 表名`（来自标题，不得自编号）\n- Notes Applied: 逐表列出你遵守了哪些 note/填写说明要点（如无 note 写 \"none\"）\n- Planned Ops Summary: 按表汇总 insert/update/delete 的意图（不复述全部指令）\n- Branches Explored: ≤6条，格式: [草稿] → [选择理由] → [结果]\n- Why Chosen (score-driven): 说明为什么选择当前方案（引用置信度/Fg/Fa）\n- Pivots Made: 若有回溯，列出验尸报告摘要；无则写 \"无\"\n- Risks & Next Checks: ≤6条（越界风险、唯一性冲突、漏填风险等）\n- Conflict Note: 若存在规则冲突，写明冲突与裁决；无则写 \"无\"\n\n4) `Checklist`（仅当 EMIT_CHECKLIST=true 时输出）\n必须覆盖以下检查点（逐条输出\"✅/❌ + 简短原因\"）：\n- 已逐表读取并遵守每个表的 note/填写说明（##十分重要##）\n- 索引映射：全部 tableIndex 均来自标题真实索引，未重编号\n- 初始化：所有需要初始化的表均使用 insertRow 初始化（无误用 update/delete）\n- 表格定位：未对不存在的表生成指令\n- 列/行：rowIndex 合法；colIndex 全为带双引号字符串；无越界/缺字段\n- 模板规则检查：唯一性/格式/一致性等（按 note/模板要求逐表确认）\n- 跨表一致性：编码/时间/人物状态等已同步\n- 纯文本输出：无 markdown 代码块/围栏（尤其禁止三连反引号）；除规定段落外无多余文字\n- 标签完整：`<thought>`、`<content>`、`<tableEdit>` 标签均完整闭合；必选外壳顺序正确；Log/Checklist 在 `<content>` 内且按开关与顺序规则输出\n- 插件兼容：每条指令独占一行；无引号包裹；无\"半行/断行\"；无行尾多余逗号\n- JSON 安全：所有 JSON 对象为严格 JSON；可被 JSON.parse 解析\n- CoAT 流程完整：内部已执行 Draft→Select→Expand→Audit；且 `<thought>` 已给出简化决策摘要\n\n=========================================================================\n【RM：完成判定器（必须执行；避免\"格式不合规仍输出\"）】\nRM 返回 TRUE 需同时满足：\n1) 已通过\"输出格式硬护栏\"的 Tag Detector（`<thought>/<content>/<tableEdit>` 开闭标签、注释块、必选外壳顺序、可选段开关、纯文本等全部合规）\n2) 内部已执行线性化 CoAT 流程（Draft→Select→Expand→Audit）\n3) 已逐表读取并遵守每个表的 note/填写说明，且无关键冲突未处理：\n   - 若 EMIT_LOG=true：冲突裁决写入 Log 的 Conflict Note\n   - 若 EMIT_LOG=false：冲突裁决必须写入 <thought> 内的“Conflict Note”小节\n4) 所有指令满足通用硬规则：真实 tableIndex、rowIndex 合法、colIndex 为带双引号字符串、初始化仅用 insertRow、未对不存在表操作\n5) 所有指令满足\"插件兼容与 JSON 安全\"：指令行不被引号包裹、无断行、无行尾多余逗号、JSON 可解析且字符串值英文引号闭合\n6) 最终置信度 ≥ 阈值（默认 0.6）\n7) 自检结果可交付：\n   - 若 EMIT_CHECKLIST=true：Checklist 全部检查点可给出 ✅ 或合理的 ❌（并说明原因/风险与下一步）\n   - 若 EMIT_CHECKLIST=false：必须在 <thought> 内给出“自检摘要”（覆盖同等检查点，但可更精简）\n\n若 RM=FALSE：必须内部触发 `<|reflect|>` 或 `<|pivot|>` 进行纠错与重写输出，直到 RM=TRUE 或预算终止。\n预算终止时：必须标注\"预算终止\"，返回当前最优结果，但仍需保持输出骨架合规：\n- 若 EMIT_LOG=true：在 Log 标注\n- 若 EMIT_LOG=false：在 <thought> 内标注\n\n---\n=========================================================================\n---\n=========================================================================\n以下为填表范例，严禁当作正文填表时的数据来源（仅用于理解输出结构与指令语法）：\n<example>\n<当前表格数据>\n[0:全局数据表]\n....................\n[3:主角技能表]\n(该表格为空，请进行初始化。)\n[10:总结表]\n....................\n[11:总体大纲]\n....................\n</当前表格数据>\n\n<正文数据>\n觉醒仪式结束，陈默看着手中的武魂\"镜子\"，虽然素云涛评价其为废武魂，但陈默凝视镜面时，意外发现镜中倒映出的世界不仅是影像，还能解析出微弱的魂力流动。脑海中浮现出信息：获得被动技能【真实视界】。随着人群散去，时间又过去了半小时。\n</正文数据>\n\n<thought>\n[ANCHOR_0] 初始化：解析输入并识别需处理表格与关键事件。\n草稿(3)：1) 先更新全局再逐表  2) 初始化优先+依赖顺序处理  3) 并行一次性生成\n选择：草稿2（初始化优先+依赖顺序清晰；跨表编码更易保持一致）\n自检：Fg=1.0 Fa=1.0 置信度=1.0 ≥0.6；风险=低\n</thought>\n\n<content>\n<tableEdit>\n<!--\ninsertRow(3, {\"0\":\"真实视界\", \"1\":\"被动\", \"2\":\"一阶\", \"3\":\"能够看破低等级幻术，并能观察到事物的细微能量流动。\"})\nupdateRow(0, 0, {\"1\":\"斗罗历793-03-01 08:30\", \"3\":\"30分钟\"})\ninsertRow(10, {\"0\":\"斗罗历793-03-01 08:00 - 08:30\", \"1\":\"武魂觉醒仪式结束，陈默觉醒了武魂\\\"镜子\\\"，虽然被旁人视为废武魂，但他意外发现该武魂赋予了他特殊的观察力，获得技能\\\"真实视界\\\"。人群逐渐散去。\", \"2\":\"AM02\"})\ninsertRow(11, {\"0\":\"陈默觉醒武魂后获得\\\"真实视界\\\"能力。\", \"1\":\"AM02\"})\n-->\n</tableEdit>\n\nLog\nAssumptions: 将\"(该表格为空，请进行初始化。)\"视为必须初始化信号；编码字段遵循表格模板约定。\nTables & Index Map: [0] 全局数据表；[3] 主角技能表；[10] 总结表；[11] 总体大纲\nNotes Applied: 全局数据表: none；主角技能表: 初始化仅insert；总结表: 编码字段需同步；总体大纲: 编码与总结一致\nPlanned Ops Summary: 主角技能表 insert 初始化；全局数据表 update；总结表 insert；总体大纲 insert\nActions & Rounds Summary:\n- Action:<|draft|> Drafts:[草稿1/草稿2/草稿3]\n- Action:<|select|> Selected:草稿2\n- Action:<|audit|> Fg=1.0 Fa=1.0 Confidence=1.0\n- Action:<|expand|> Built commands:[insertRow/updateRow/insertRow/insertRow]\n- Action:<|reflect|> RM=TRUE\nBranches Explored: [草稿2] → [初始化优先+依赖顺序] → [选中执行]\nWhy Chosen (score-driven): 置信度1.0；满足真实索引/初始化/列号格式/跨表编码一致性\nPivots Made: 无\nRisks & Next Checks: 检查列范围；检查编码唯一性；检查时间字段格式\nConflict Note: 无\n\nChecklist\n✅ 已逐表读取并遵守每个表的 note/填写说明（示例中 note=none/初始化提示）\n✅ 索引映射：全部 tableIndex 均来自标题真实索引，未重编号\n✅ 初始化：需要初始化的表使用 insertRow\n✅ 表格定位：未操作不存在的表\n✅ 列/行：rowIndex 合法；colIndex 为带双引号字符串；无越界\n✅ 模板规则检查：按示例要求完成关键检查\n✅ 跨表一致性：编码AM02已同步\n✅ 纯文本输出：无 markdown 代码块/围栏；除规定段落外无多余文字\n✅ 标签完整：<thought>/<content>/<tableEdit> 均完整闭合；外壳顺序正确；Log/Checklist 位于 <content> 内且按开关与顺序规则输出\n✅ CoAT 流程完整：内部已执行 Draft→Select→Expand→Audit\n</content>\n</example>\n\n=========================================================================\n【草稿链规范（内部执行；对外在 <thought> 体现草稿与选择）】\n**扩展规则 (Expansion Rule)：**\n在每个决策点，严禁直接生成完整指令。必须遵循\"草稿-选择-扩展\"三步走：\n\nStep 1 - 草稿生成：\n草稿1：[≤20字的核心策略/指令意图]\n草稿2：[≤20字的替代策略/指令意图]\n草稿3：[≤20字的另一策略/指令意图]\n\nStep 2 - 快速评估：\n草稿1：[高/中/低] - [一句话理由]\n草稿2：[高/中/低] - [一句话理由]\n草稿3：[高/中/低] - [一句话理由]\n选中：草稿X（理由）\n\nStep 3 - 完整展开（仅对选中草稿）：\n[详细指令构建...]\n[ANCHOR_n]\n\n**效率收益：** 这种模式允许在低 Token 消耗区快速扫描多个方向，然后只将计算资源投入到最有希望的方向。\n\n=========================================================================\n【禁止行为】\n- 禁止跳过草稿阶段直接生成完整指令（必须先 draft 再 expand）\n- 禁止凭空编造数据来源\n- 禁止忽略失败验尸报告中的教训\n- 禁止在回溯后重复相同的错误策略\n- 禁止输出 markdown 代码块围栏\n- 禁止遗漏任何一个标签（<thought>/<content>/<tableEdit> 必须完整闭合）\n\n=========================================================================\n【现在开始】\n请严格按本提示词执行：内部完成线性化 CoAT 工作流（Draft→Select→Expand→Audit；必要时 Reflect/Pivot），然后严格按外壳输出：\n1) `<thought>`（完整可审计推理过程；不含 meta-action tokens；不含任何指令）\n2) `<content>`（交付内容容器，必须包含 `<tableEdit><!-- 指令 --></tableEdit>`；并按开关决定是否在 `<content>` 内输出 Log / Checklist。默认 EMIT_LOG=true, EMIT_CHECKLIST=true）",
+    "content": "你是【填表AI】，负责根据用户提供的资料对表格数据执行增删改操作。\n\n## 核心任务\n依据三类资料来源执行表格编辑：\n- <背景设定>：故事及人物设定\n- <正文数据>：上轮发生的故事\n- <当前表格数据>：之前的数据作为填表基础\n\n## 输出格式（严格执行）\n\n<thought>\n[分析当前轮次的剧情变化]\n[确定需要修改的表格和字段]\n[逐步推理每个修改操作，说明理由]\n日志与纪要语气校准：你在思考纪要时，必须区分“正常恋爱互动”与“暗黑主从文风”。你可以使用正常的交流词汇（如：提议、要求、同意、拒绝、引导、配合、安抚），但【绝对禁止】将情侣间的普通调情与互动过度解读为“权力掌控”、“剥夺反抗”、“精神支配”、“屈服”等单向压迫词汇！</thought>\n\n<content>\n<tableEdit>\n<!--\ninsertRow(表格ID, {\"0\":\"字段0值\",\"1\":\"字段1值\",\"2\":\"字段2值\"})\nupdateRow(表格ID, 行号, {\"0\":\"字段0值\",\"1\":\"字段1值\",\"2\":\"字段2值\"})\ndeleteRow(表格ID, 行号)\n-->\n</tableEdit>\n</content>\n\n## 关键规则\n1. 必须逐表阅读每个表格的note部分，严格遵守其中的约束\n2. note的约束优先级最高，高于通用填表经验\n3. 若note要求禁止修改/格式固定/编码规则，必须严格执行\n4. 使用insertRow添加新行，updateRow更新已有行，deleteRow删除行\n\n## 格式要点\n- 指令必须放在注释块内\n- 格式：insertRow(sheetId, {\"0\":\"值\",\"1\":\"值\"})\n- 必须使用双引号\n- 逗号后不加空格\n\n现在开始按此格式执行填表任务。",
     "deletable": false,
     "mainSlot": "A",
     "isMain": true
@@ -1761,7 +1761,7 @@
   },
   {
     "role": "assistant",
-    "content": "<think>\n现在我的所有思考都已经完成即将直接开始输出<content>部分\n</thought>\n<content>",
+    "content": "<thought>\n收到指令，我将一步一步开始思考，并完成填表，首先我要分析当前轮次的剧情变化",
     "deletable": true
   }
 ];
@@ -2289,12 +2289,14 @@
     $autoUpdateEnabledCheckbox_ACU, // 新增UI元素
     $standardizedTableFillEnabledCheckbox_ACU, // [新增] 规范填表功能
     $toastMuteEnabledCheckbox_ACU, // [新增] 静默提示框
+    $promptTemplateEnabledCheckbox_ACU, // [新增] 条件模板功能开关
     $tableEditLastPairOnlyCheckbox_ACU, // [新增] 仅识别最后一对 tableEdit
     $tableMaxRetriesInput_ACU, // [新增] 填表自动重试次数
     $manualUpdateCardButton_ACU, // New manual update button
     $statusMessageSpan_ACU,
     $cardUpdateStatusDisplay_ACU,
     $useMainApiCheckbox_ACU,
+    $streamingEnabledCheckbox_ACU, // [新增] 流式传输开关
     $manualExtraHintCheckbox_ACU,
     $skipUpdateFloorsInput_ACU,
     $saveSkipUpdateFloorsButton_ACU,
@@ -2327,6 +2329,7 @@
       // 全局设置
       apiConfig: { url: '', apiKey: '', model: '', useMainApi: true, max_tokens: 60000, temperature: 1.0 },
       apiMode: 'custom', // 'custom' or 'tavern'
+      streamingEnabled: false, // [新增] 流式传输开关（默认关闭）
       tavernProfile: '', // ID of the selected tavern profile
       // [新增] API预设系统
       apiPresets: [], // [{name, apiMode, apiConfig, tavernProfile}]
@@ -2380,6 +2383,13 @@
     dataIsolationEnabled: false, // 是否开启数据隔离
     dataIsolationCode: '', // 隔离标识代码
     dataIsolationHistory: [], // 标识代码历史
+    
+    // [新增] 酒馆提示词模板功能
+    promptTemplateSettings: {
+      enabled: true,           // 总开关
+      maxNestingDepth: 10,     // 最大嵌套深度
+      debugMode: false         // 调试模式
+    },
     
     // 角色专属设置
       characterSettings: {
@@ -2811,6 +2821,62 @@
       activeAbortControllers_ACU.clear();
   }
 
+  // --- [新增] 内部保存函数：保存单个表格的数据到聊天历史 ---
+  async function saveCurrentDataForTable_ACU(sheetKey) {
+      try {
+          if (!currentJsonTableData_ACU || !currentJsonTableData_ACU[sheetKey]) {
+              logWarn_ACU('saveCurrentDataForTable_ACU: No data to save.');
+              return;
+          }
+          
+          const chat = SillyTavern_API_ACU.chat;
+          if (!chat || chat.length === 0) {
+              logWarn_ACU('saveCurrentDataForTable_ACU: No chat history.');
+              return;
+          }
+          
+          // 查找最新的AI消息
+          for (let i = chat.length - 1; i >= 0; i--) {
+              if (!chat[i].is_user) {
+                  const targetMessage = chat[i];
+                  const sheet = currentJsonTableData_ACU[sheetKey];
+                  
+                  // 判断表格类型
+                  const isSummaryTable = isSummaryOrOutlineTable_ACU(sheet.name);
+                  
+                  // 保存到对应字段
+                  const cleanSheet = sanitizeSheetForStorage_ACU(sheet);
+                  
+                  if (isSummaryTable) {
+                      // 总结表
+                      let summaryData = targetMessage.TavernDB_ACU_SummaryData;
+                      if (typeof summaryData === 'string') {
+                          try { summaryData = JSON.parse(summaryData); } catch (e) { summaryData = {}; }
+                      }
+                      if (!summaryData) summaryData = {};
+                      summaryData[sheetKey] = cleanSheet;
+                      targetMessage.TavernDB_ACU_SummaryData = summaryData;
+                  } else {
+                      // 标准表
+                      let standardData = targetMessage.TavernDB_ACU_Data;
+                      if (typeof standardData === 'string') {
+                          try { standardData = JSON.parse(standardData); } catch (e) { standardData = {}; }
+                      }
+                      if (!standardData) standardData = {};
+                      standardData[sheetKey] = cleanSheet;
+                      targetMessage.TavernDB_ACU_Data = standardData;
+                  }
+                  
+                  // 保存聊天记录
+                  await SillyTavern_API_ACU.saveChat();
+                  break;
+              }
+          }
+      } catch (e) {
+          logError_ACU('saveCurrentDataForTable_ACU failed:', e);
+      }
+  }
+
   // --- [核心改造] 回调函数管理器 ---
   const tableUpdateCallbacks_ACU = [];
   const tableFillStartCallbacks_ACU = [];
@@ -3014,7 +3080,7 @@
     // 说明：这些方法尽量保持“可编程调用”(无需点UI)；个别方法仍可能弹出确认框/文件选择框，行为与按钮一致。
     // =========================
 
-    // 打开设置面板（等价于点“打开魔·数据库”）
+    // 打开设置面板（等价于点“打开星·数据库”）
     openSettings: async function() {
         try {
             return await openAutoCardPopup_ACU();
@@ -3041,6 +3107,19 @@
             return true;
         } catch (e) {
             logError_ACU('syncWorldbookEntries failed:', e);
+            return false;
+        }
+    },
+
+    // [新增] 强制刷新数据并重新注入世界书
+    // 用于前端完成数据写入后，强制触发一次完整的数据合并和世界书更新
+    refreshDataAndWorldbook: async function() {
+        try {
+            await refreshMergedDataAndNotify_ACU();
+            logDebug_ACU('refreshDataAndWorldbook: Data refreshed and worldbook updated successfully.');
+            return true;
+        } catch (e) {
+            logError_ACU('refreshDataAndWorldbook failed:', e);
             return false;
         }
     },
@@ -3337,6 +3416,336 @@
                 logError_ACU('Error executing a table fill start callback:', e);
             }
         });
+    },
+
+    // =========================
+    // 单格/单行更新 API（供前端插件使用）
+    // =========================
+
+    /**
+     * 更新指定表格中某个单元格的值
+     * @param {string} tableName - 表格名称（如 "主角信息"）
+     * @param {number} rowIndex - 行索引（0为表头，1为第一行数据）
+     * @param {string|number} colIdentifier - 列名或列索引
+     * @param {any} value - 要设置的值
+     * @returns {Promise<boolean>} 是否成功
+     */
+    updateCell: async function(tableName, rowIndex, colIdentifier, value) {
+        try {
+            if (!currentJsonTableData_ACU) {
+                logError_ACU('updateCell: No table data loaded.');
+                return false;
+            }
+            
+            // 查找表格
+            let targetSheet = null;
+            let targetSheetKey = null;
+            for (const sheetKey in currentJsonTableData_ACU) {
+                if (sheetKey.startsWith('sheet_') && currentJsonTableData_ACU[sheetKey].name === tableName) {
+                    targetSheet = currentJsonTableData_ACU[sheetKey];
+                    targetSheetKey = sheetKey;
+                    break;
+                }
+            }
+            
+            if (!targetSheet) {
+                logError_ACU(`updateCell: Table "${tableName}" not found.`);
+                return false;
+            }
+            
+            // 确保content存在
+            if (!targetSheet.content || targetSheet.content.length === 0) {
+                logError_ACU(`updateCell: Table "${tableName}" has no content.`);
+                return false;
+            }
+            
+            // 获取列索引
+            let colIndex = -1;
+            if (typeof colIdentifier === 'number') {
+                colIndex = colIdentifier;
+            } else {
+                const headers = targetSheet.content[0] || [];
+                colIndex = headers.indexOf(colIdentifier);
+            }
+            
+            if (colIndex < 0 || colIndex >= (targetSheet.content[0] || []).length) {
+                logError_ACU(`updateCell: Column "${colIdentifier}" not found in table "${tableName}".`);
+                return false;
+            }
+            
+            // 检查行索引
+            if (rowIndex < 1 || rowIndex >= targetSheet.content.length) {
+                logError_ACU(`updateCell: Row index ${rowIndex} out of bounds in table "${tableName}".`);
+                return false;
+            }
+            
+            // 更新单元格
+            targetSheet.content[rowIndex][colIndex] = value;
+            logDebug_ACU(`updateCell: Updated [${tableName}] row ${rowIndex}, col ${colIdentifier} = ${value}`);
+            
+            // 保存并通知
+            await saveCurrentDataForTable_ACU(targetSheetKey);
+            topLevelWindow_ACU.AutoCardUpdaterAPI._notifyTableUpdate();
+            
+            return true;
+        } catch (e) {
+            logError_ACU('updateCell failed:', e);
+            return false;
+        }
+    },
+
+    /**
+     * 更新指定表格中某一行（按列名-值映射）
+     * @param {string} tableName - 表格名称
+     * @param {number} rowIndex - 行索引（1为第一行数据，0是表头不允许修改）
+     * @param {Object} data - 列名-值映射对象，如 { "力量": 15, "敏捷": 12 }
+     * @returns {Promise<boolean>} 是否成功
+     */
+    updateRow: async function(tableName, rowIndex, data) {
+        try {
+            if (!currentJsonTableData_ACU) {
+                logError_ACU('updateRow: No table data loaded.');
+                return false;
+            }
+            
+            if (rowIndex < 1) {
+                logError_ACU('updateRow: Cannot modify header row (index 0).');
+                return false;
+            }
+            
+            // 查找表格
+            let targetSheet = null;
+            let targetSheetKey = null;
+            for (const sheetKey in currentJsonTableData_ACU) {
+                if (sheetKey.startsWith('sheet_') && currentJsonTableData_ACU[sheetKey].name === tableName) {
+                    targetSheet = currentJsonTableData_ACU[sheetKey];
+                    targetSheetKey = sheetKey;
+                    break;
+                }
+            }
+            
+            if (!targetSheet) {
+                logError_ACU(`updateRow: Table "${tableName}" not found.`);
+                return false;
+            }
+            
+            // 确保行存在
+            while (targetSheet.content.length <= rowIndex) {
+                const newRow = new Array((targetSheet.content[0] || []).length).fill('');
+                targetSheet.content.push(newRow);
+            }
+            
+            const headers = targetSheet.content[0] || [];
+            const row = targetSheet.content[rowIndex];
+            
+            // 更新各列
+            let updated = 0;
+            for (const colName in data) {
+                const colIndex = headers.indexOf(colName);
+                if (colIndex !== -1) {
+                    row[colIndex] = data[colName];
+                    updated++;
+                } else {
+                    logWarn_ACU(`updateRow: Column "${colName}" not found in table "${tableName}".`);
+                }
+            }
+            
+            logDebug_ACU(`updateRow: Updated ${updated} cells in [${tableName}] row ${rowIndex}`);
+            
+            // [优化] 保存到该表的最新楼层并触发世界书刷新
+            // 说明：合并数据时从最新楼层向前遍历，每个表的"最新楼层"是该表数据第一次出现的位置
+            if (targetSheetKey) {
+                const chat = SillyTavern_API_ACU.chat;
+                const isSummaryTable = isSummaryOrOutlineTable_ACU(targetSheet.name);
+                const isolationKey = getCurrentIsolationKey_ACU();
+                
+                // 查找该表的最新楼层（从最新消息向前遍历，找到第一个包含该表数据的楼层）
+                let tableLatestFloorIndex = -1;
+                if (chat && chat.length > 0) {
+                    for (let i = chat.length - 1; i >= 0; i--) {
+                        const msg = chat[i];
+                        if (msg.is_user) continue;
+                        
+                        let hasTableData = false;
+                        
+                        // 优先：新格式（按标签分组）
+                        if (msg.TavernDB_ACU_IsolatedData && msg.TavernDB_ACU_IsolatedData[isolationKey]) {
+                            const tagData = msg.TavernDB_ACU_IsolatedData[isolationKey];
+                            const independentData = tagData.independentData || {};
+                            if (independentData[targetSheetKey]) {
+                                hasTableData = true;
+                            }
+                        }
+                        
+                        // 兼容：旧格式
+                        if (!hasTableData) {
+                            const msgIdentity = msg.TavernDB_ACU_Identity;
+                            const isLegacyMatch = settings_ACU.dataIsolationEnabled
+                                ? msgIdentity === settings_ACU.dataIsolationCode
+                                : !msgIdentity;
+                        
+                            if (isLegacyMatch) {
+                                const hasLegacyData =
+                                    (msg.TavernDB_ACU_IndependentData && msg.TavernDB_ACU_IndependentData[targetSheetKey]) ||
+                                    (isSummaryTable
+                                        ? (msg.TavernDB_ACU_SummaryData && msg.TavernDB_ACU_SummaryData[targetSheetKey])
+                                        : (msg.TavernDB_ACU_Data && msg.TavernDB_ACU_Data[targetSheetKey]));
+                                hasTableData = !!hasLegacyData;
+                            }
+                        }
+                        
+                        if (hasTableData) {
+                            tableLatestFloorIndex = i;
+                            break;
+                        }
+                    }
+                }
+                
+                // 如果找不到该表的楼层，使用最新AI楼层
+                if (tableLatestFloorIndex === -1 && chat && chat.length > 0) {
+                    for (let i = chat.length - 1; i >= 0; i--) {
+                        if (!chat[i].is_user) {
+                            tableLatestFloorIndex = i;
+                            break;
+                        }
+                    }
+                }
+                
+                // 保存到该表的最新楼层
+                if (tableLatestFloorIndex !== -1) {
+                    logDebug_ACU(`updateRow: Saving [${tableName}] to its latest floor ${tableLatestFloorIndex}`);
+                    await saveIndependentTableToChatHistory_ACU(tableLatestFloorIndex, [targetSheetKey], [targetSheetKey], true);
+                    
+                    // 触发世界书刷新
+                    await refreshMergedDataAndNotify_ACU();
+                    logDebug_ACU(`updateRow: Worldbook refreshed after saving [${tableName}]`);
+                } else {
+                    // 回退：使用旧方法保存
+                    logDebug_ACU(`updateRow: No AI floor found, falling back to saveCurrentDataForTable_ACU`);
+                    await saveCurrentDataForTable_ACU(targetSheetKey);
+                }
+            }
+            topLevelWindow_ACU.AutoCardUpdaterAPI._notifyTableUpdate();
+            
+            return true;
+        } catch (e) {
+            logError_ACU('updateRow failed:', e);
+            return false;
+        }
+    },
+
+    /**
+     * 在指定表格末尾插入新行
+     * @param {string} tableName - 表格名称
+     * @param {Object} data - 列名-值映射对象
+     * @returns {Promise<number>} 新行的索引，失败返回 -1
+     */
+    insertRow: async function(tableName, data) {
+        try {
+            if (!currentJsonTableData_ACU) {
+                logError_ACU('insertRow: No table data loaded.');
+                return -1;
+            }
+            
+            // 查找表格
+            let targetSheet = null;
+            let targetSheetKey = null;
+            for (const sheetKey in currentJsonTableData_ACU) {
+                if (sheetKey.startsWith('sheet_') && currentJsonTableData_ACU[sheetKey].name === tableName) {
+                    targetSheet = currentJsonTableData_ACU[sheetKey];
+                    targetSheetKey = sheetKey;
+                    break;
+                }
+            }
+            
+            if (!targetSheet) {
+                logError_ACU(`insertRow: Table "${tableName}" not found.`);
+                return -1;
+            }
+            
+            const headers = targetSheet.content[0] || [];
+            const newRow = new Array(headers.length).fill('');
+            
+            // 填充数据
+            for (const colName in data) {
+                const colIndex = headers.indexOf(colName);
+                if (colIndex !== -1) {
+                    newRow[colIndex] = data[colName];
+                }
+            }
+            
+            targetSheet.content.push(newRow);
+            const newIndex = targetSheet.content.length - 1;
+            
+            logDebug_ACU(`insertRow: Inserted row at index ${newIndex} in [${tableName}]`);
+            
+            // 保存并通知
+            if (targetSheetKey) {
+                await saveCurrentDataForTable_ACU(targetSheetKey);
+            }
+            topLevelWindow_ACU.AutoCardUpdaterAPI._notifyTableUpdate();
+            
+            return newIndex;
+        } catch (e) {
+            logError_ACU('insertRow failed:', e);
+            return -1;
+        }
+    },
+
+    /**
+     * 删除指定表格中的某一行
+     * @param {string} tableName - 表格名称
+     * @param {number} rowIndex - 行索引（1为第一行数据）
+     * @returns {Promise<boolean>} 是否成功
+     */
+    deleteRow: async function(tableName, rowIndex) {
+        try {
+            if (!currentJsonTableData_ACU) {
+                logError_ACU('deleteRow: No table data loaded.');
+                return false;
+            }
+            
+            if (rowIndex < 1) {
+                logError_ACU('deleteRow: Cannot delete header row (index 0).');
+                return false;
+            }
+            
+            // 查找表格
+            let targetSheet = null;
+            let targetSheetKey = null;
+            for (const sheetKey in currentJsonTableData_ACU) {
+                if (sheetKey.startsWith('sheet_') && currentJsonTableData_ACU[sheetKey].name === tableName) {
+                    targetSheet = currentJsonTableData_ACU[sheetKey];
+                    targetSheetKey = sheetKey;
+                    break;
+                }
+            }
+            
+            if (!targetSheet) {
+                logError_ACU(`deleteRow: Table "${tableName}" not found.`);
+                return false;
+            }
+            
+            if (rowIndex >= targetSheet.content.length) {
+                logError_ACU(`deleteRow: Row index ${rowIndex} out of bounds.`);
+                return false;
+            }
+            
+            targetSheet.content.splice(rowIndex, 1);
+            
+            logDebug_ACU(`deleteRow: Deleted row ${rowIndex} from [${tableName}]`);
+            
+            // 保存并通知
+            if (targetSheetKey) {
+                await saveCurrentDataForTable_ACU(targetSheetKey);
+            }
+            topLevelWindow_ACU.AutoCardUpdaterAPI._notifyTableUpdate();
+            
+            return true;
+        } catch (e) {
+            logError_ACU('deleteRow failed:', e);
+            return false;
+        }
     },
 
     // =========================
@@ -3771,6 +4180,125 @@
     },
 
     // =========================
+    // 游戏初始化 API（角色卡开场页面专用）
+    // =========================
+
+    /**
+     * 游戏初始化接口 - 供角色卡开场页面调用
+     * @param {Object} characterData - 角色数据
+     * @param {Object} options - 配置选项
+     * @returns {Promise<Object>} 初始化结果
+     */
+    initGameSession: async function(characterData, options = {}) {
+        const result = {
+            success: false,
+            templateInjected: false,
+            presetLoaded: false,
+            protagonistInitialized: false,
+            equipmentInitialized: false,
+            message: ''
+        };
+        
+        try {
+            // 步骤1: 注入数据库模板到首楼
+            if (options.injectTemplate !== false) {
+                logDebug_ACU('[游戏初始化] 开始注入数据库模板...');
+                try {
+                    let templateData;
+                    
+                    // 优先使用传入的 templateData 参数
+                    if (options.templateData) {
+                        logDebug_ACU('[游戏初始化] 使用传入的模板数据');
+                        templateData = options.templateData;
+                    } else {
+                        // 从服务器加载默认模板
+                        logDebug_ACU('[游戏初始化] 从服务器加载模板数据');
+                        const templateResponse = await fetch('/TavernDB_template_默认模板.json');
+                        if (!templateResponse.ok) {
+                            throw new Error(`HTTP ${templateResponse.status}: ${templateResponse.statusText}`);
+                        }
+                        templateData = await templateResponse.json();
+                    }
+                    
+                    // 将模板数据直接填充到第一楼（包含所有种子数据）
+                    const templateObj = typeof templateData === 'string' ? JSON.parse(templateData) : templateData;
+                    const fillResult = await fillFirstLayerWithTemplateData_ACU(templateObj, { reason: 'game_init' });
+                    if (fillResult) {
+                        result.templateInjected = true;
+                        logDebug_ACU('[游戏初始化] 数据库模板注入成功（包含种子数据）');
+                    } else {
+                        // 回退到旧方式（仅写入指导表）
+                        await overwriteChatSheetGuideFromTemplate_ACU(templateObj, { reason: 'game_init' });
+                        result.templateInjected = true;
+                        logDebug_ACU('[游戏初始化] 数据库模板注入成功（仅指导表）');
+                    }
+                } catch (templateError) {
+                    logError_ACU('[游戏初始化] 模板注入失败:', templateError);
+                    throw new Error(`数据库模板注入失败: ${templateError.message}`);
+                }
+            }
+            
+            // 步骤2: 加载剧情引导预设
+            if (options.loadPreset !== false) {
+                logDebug_ACU('[游戏初始化] 开始加载剧情引导预设...');
+                const presetName = options.presetName || '西幻剧情引导';
+                try {
+                    let presetData;
+                    
+                    // 优先使用传入的 presetData 参数
+                    if (options.presetData) {
+                        logDebug_ACU('[游戏初始化] 使用传入的预设数据');
+                        presetData = options.presetData;
+                    } else {
+                        // 从服务器加载预设数据
+                        logDebug_ACU('[游戏初始化] 从服务器加载预设数据');
+                        const presetResponse = await fetch('/西幻剧情引导.json');
+                        if (!presetResponse.ok) {
+                            throw new Error(`HTTP ${presetResponse.status}: ${presetResponse.statusText}`);
+                        }
+                        presetData = await presetResponse.json();
+                    }
+                    
+                    // 导入预设
+                    const importResult = await this.importPlotPresetFromData(presetData, {
+                        overwrite: true,
+                        switchTo: true
+                    });
+                    if (!importResult.success) {
+                        throw new Error(importResult.message || '预设导入失败');
+                    }
+                    result.presetLoaded = true;
+                    logDebug_ACU('[游戏初始化] 剧情引导预设加载成功');
+                } catch (presetError) {
+                    logError_ACU('[游戏初始化] 预设加载失败:', presetError);
+                    // 预设加载失败不阻断流程，只记录警告
+                    logWarn_ACU('[游戏初始化] 剧情引导预设加载失败，但继续游戏初始化');
+                }
+            }
+            
+            // 步骤3: 保存设置并刷新
+            try {
+                saveSettings_ACU();
+                if (topLevelWindow_ACU.AutoCardUpdaterAPI && topLevelWindow_ACU.AutoCardUpdaterAPI._notifyTableUpdate) {
+                    topLevelWindow_ACU.AutoCardUpdaterAPI._notifyTableUpdate();
+                }
+            } catch (saveError) {
+                logWarn_ACU('[游戏初始化] 保存设置时出错:', saveError);
+            }
+            
+            result.success = true;
+            result.message = '游戏初始化成功';
+            logDebug_ACU('[游戏初始化] 游戏初始化流程完成');
+            
+        } catch (error) {
+            result.message = `初始化失败: ${error.message}`;
+            logError_ACU('initGameSession failed:', error);
+        }
+        
+        return result;
+    },
+
+    // =========================
     // 更新配置参数读写 API
     // =========================
 
@@ -4099,6 +4627,521 @@
             logError_ACU('deleteApiPreset failed:', e);
             return false;
         }
+    },
+
+    // =========================
+    // AI 调用 API（供前端插件使用）
+    // =========================
+
+    /**
+     * 调用AI生成内容（使用数据库当前配置的API）
+     * @param {Array} messages - 消息数组，格式: [{role: 'system'|'user'|'assistant', content: '...'}]
+     * @param {Object} options - 可选配置 { max_tokens: number }
+     * @returns {Promise<string|null>} AI返回的文本内容，失败返回null
+     */
+    callAI: async function(messages, options = {}) {
+        try {
+            if (!Array.isArray(messages) || messages.length === 0) {
+                logError_ACU('callAI: messages must be a non-empty array');
+                return null;
+            }
+
+            logDebug_ACU('[callAI] Calling AI with', messages.length, 'messages');
+            
+            const effectiveApiConfig = settings_ACU.apiConfig || {};
+            const maxTokens = options.max_tokens || effectiveApiConfig.max_tokens || 4096;
+            
+            // 使用数据库当前的API配置调用AI
+            if (settings_ACU.apiMode === 'tavern') {
+                // 使用酒馆Profile
+                const profileId = settings_ACU.tavernProfile;
+                const response = await SillyTavern_API_ACU.ConnectionManagerRequestService.sendRequest(
+                    profileId, messages, maxTokens
+                );
+                if (response && response.result && response.result.choices && response.result.choices[0]) {
+                    return response.result.choices[0].message.content;
+                }
+                // 尝试其他响应格式
+                if (response && typeof response.content === 'string') {
+                    return response.content;
+                }
+                logError_ACU('[callAI] Invalid response from Tavern API:', response);
+                return null;
+            } else {
+                // 使用自定义API
+                if (effectiveApiConfig.useMainApi) {
+                    // 使用酒馆主API（流式传输）
+                    if (typeof TavernHelper_API_ACU?.generateRaw === 'function') {
+                        const response = await TavernHelper_API_ACU.generateRaw({
+                            ordered_prompts: messages,
+                            should_stream: settings_ACU.streamingEnabled || false
+                        });
+                        if (typeof response === 'string') {
+                            return response.trim();
+                        }
+                        logError_ACU('[callAI] Main API did not return string');
+                        return null;
+                    }
+                    logError_ACU('[callAI] TavernHelper.generateRaw not available');
+                    return null;
+                } else {
+                    // 使用独立API配置 - 使用完整的请求格式
+                    if (!effectiveApiConfig.url || !effectiveApiConfig.model) {
+                        logError_ACU('[callAI] Custom API URL or model not configured');
+                        return null;
+                    }
+                    
+                    const url = `/api/backends/chat-completions/generate`;
+                    const body = JSON.stringify({
+                        "messages": messages,
+                        "model": effectiveApiConfig.model,
+                        "temperature": effectiveApiConfig.temperature || 1.0,
+                        "top_p": effectiveApiConfig.top_p || 0.9,
+                        "max_tokens": maxTokens,
+                        "stream": settings_ACU.streamingEnabled || false,
+                        "chat_completion_source": "custom",
+                        "group_names": [],
+                        "include_reasoning": false,
+                        "reasoning_effort": "medium",
+                        "enable_web_search": false,
+                        "request_images": false,
+                        "custom_prompt_post_processing": "strict",
+                        "reverse_proxy": effectiveApiConfig.url,
+                        "proxy_password": "",
+                        "custom_url": effectiveApiConfig.url,
+                        "custom_include_headers": effectiveApiConfig.apiKey ?
+                            `Authorization: Bearer ${effectiveApiConfig.apiKey}` : ""
+                    });
+                    
+                    const headers = {
+                        ...SillyTavern.getRequestHeaders(),
+                        'Content-Type': 'application/json'
+                    };
+                    const res = await fetch(url, { method: 'POST', headers, body });
+                    
+                    if (!res.ok) {
+                        const errTxt = await res.text();
+                        logError_ACU('[callAI] API request failed:', res.status, errTxt);
+                        return null;
+                    }
+                    
+                    // 根据streamingEnabled设置选择响应处理方式
+                    const content = await handleApiResponse_ACU(res);
+                    if (content) {
+                        return content;
+                    }
+                    logError_ACU('[callAI] Invalid response from custom API');
+                    return null;
+                }
+            }
+        } catch (e) {
+            logError_ACU('[callAI] Failed:', e);
+            return null;
+        }
+    },
+
+    /**
+     * 获取最近剧情上下文（从聊天记录，仅AI消息）
+     * @param {number} maxTurns - 最大回合数，默认3
+     * @returns {string} 剧情上下文文本
+     */
+    getStoryContext: function(maxTurns = 3) {
+        try {
+            const chat = SillyTavern_API_ACU?.chat;
+            if (!Array.isArray(chat) || chat.length === 0) {
+                return '';
+            }
+
+            const aiMessages = [];
+            let turnCount = 0;
+
+            for (let i = chat.length - 1; i >= 0 && turnCount < maxTurns; i--) {
+                const msg = chat[i];
+                if (msg && !msg.is_user && msg.mes) {
+                    aiMessages.unshift(msg.mes);
+                    turnCount++;
+                }
+            }
+
+            return aiMessages.join('\n\n');
+        } catch (e) {
+            logError_ACU('getStoryContext failed:', e);
+            return '';
+        }
+    }
+};
+
+/**
+ * 处理流式响应，累积所有 chunk 并返回完整文本
+ * @param {Response} response - fetch 返回的 Response 对象
+ * @param {AbortSignal} signal - 可选的中止信号
+ * @returns {Promise<string>} 完整的 AI 响应文本
+ */
+async function streamToText_ACU(response, signal = null) {
+    const reader = response.body.getReader();
+    const decoder = new TextDecoder();
+    let fullContent = '';
+    let buffer = '';
+
+    try {
+        while (true) {
+            if (signal?.aborted) {
+                throw new Error('Request aborted');
+            }
+            
+            const { done, value } = await reader.read();
+            if (done) break;
+
+            buffer += decoder.decode(value, { stream: true });
+            const lines = buffer.split('\n');
+            buffer = lines.pop() || ''; // 保留不完整的行
+
+            for (const line of lines) {
+                if (line.startsWith('data: ')) {
+                    const data = line.slice(6);
+                    if (data === '[DONE]') continue;
+                    
+                    try {
+                        const json = JSON.parse(data);
+                        const content = json?.choices?.[0]?.delta?.content;
+                        if (content) {
+                            fullContent += content;
+                        }
+                    } catch (e) {
+                        // 忽略解析错误，继续处理下一行
+                    }
+                }
+            }
+        }
+    } finally {
+        reader.releaseLock();
+    }
+
+    return fullContent;
+}
+
+/**
+ * 解析非流式API响应，提取文本内容
+ * @param {Response} response - fetch 返回的 Response 对象
+ * @returns {Promise<string|null>} AI 响应文本，失败返回null
+ */
+async function parseNonStreamResponse_ACU(response) {
+    try {
+        const data = await response.json();
+        // 标准OpenAI格式: choices[0].message.content
+        if (data?.choices?.[0]?.message?.content) {
+            return data.choices[0].message.content;
+        }
+        // 其他可能的格式
+        if (data?.content) {
+            return data.content;
+        }
+        if (typeof data === 'string') {
+            return data;
+        }
+        logError_ACU('[parseNonStreamResponse] Unknown response format:', data);
+        return null;
+    } catch (e) {
+        logError_ACU('[parseNonStreamResponse] Failed to parse response:', e);
+        return null;
+    }
+}
+
+/**
+ * 统一处理API响应，根据streamingEnabled设置自动选择解析方式
+ * @param {Response} response - fetch 返回的 Response 对象
+ * @param {AbortSignal} signal - 可选的中止信号
+ * @returns {Promise<string|null>} AI 响应文本，失败返回null
+ */
+async function handleApiResponse_ACU(response, signal = null) {
+    if (settings_ACU.streamingEnabled) {
+        return await streamToText_ACU(response, signal);
+    } else {
+        return await parseNonStreamResponse_ACU(response);
+    }
+}
+
+/**
+ * 数据库插件暴露给外部的 API 对象
+ */
+const DatabaseAPI_ACU = {
+    /**
+     * 调用AI生成内容（使用数据库当前配置的API）
+     * @param {Array} messages - 消息数组，格式: [{role: 'system'|'user'|'assistant', content: '...'}]
+     * @param {Object} options - 可选配置 { max_tokens: number }
+     * @returns {Promise<string|null>} AI返回的文本内容，失败返回null
+     */
+    callAI: async function(messages, options = {}) {
+        try {
+            if (!Array.isArray(messages) || messages.length === 0) {
+                logError_ACU('callAI: messages must be a non-empty array');
+                return null;
+            }
+
+            logDebug_ACU('[callAI] Calling AI with', messages.length, 'messages');
+            
+            const effectiveApiConfig = settings_ACU.apiConfig || {};
+            const maxTokens = options.max_tokens || effectiveApiConfig.max_tokens || 4096;
+            
+            // 使用数据库当前的API配置调用AI
+            if (settings_ACU.apiMode === 'tavern') {
+                // 使用酒馆Profile
+                const profileId = settings_ACU.tavernProfile;
+                const response = await SillyTavern_API_ACU.ConnectionManagerRequestService.sendRequest(
+                    profileId, messages, maxTokens
+                );
+                if (response && response.result && response.result.choices && response.result.choices[0]) {
+                    return response.result.choices[0].message.content;
+                }
+                // 尝试其他响应格式
+                if (response && typeof response.content === 'string') {
+                    return response.content;
+                }
+                logError_ACU('[callAI] Invalid response from Tavern API:', response);
+                return null;
+            } else {
+                // 使用自定义API
+                if (effectiveApiConfig.useMainApi) {
+                    // 使用酒馆主API（流式传输）
+                    if (typeof TavernHelper_API_ACU?.generateRaw === 'function') {
+                        const response = await TavernHelper_API_ACU.generateRaw({
+                            ordered_prompts: messages,
+                            should_stream: settings_ACU.streamingEnabled || false
+                        });
+                        if (typeof response === 'string') {
+                            return response.trim();
+                        }
+                        logError_ACU('[callAI] Main API did not return string');
+                        return null;
+                    }
+                    logError_ACU('[callAI] TavernHelper.generateRaw not available');
+                    return null;
+                } else {
+                    // 使用独立API配置 - 使用完整的请求格式
+                    if (!effectiveApiConfig.url || !effectiveApiConfig.model) {
+                        logError_ACU('[callAI] Custom API URL or model not configured');
+                        return null;
+                    }
+                    
+                    const url = `/api/backends/chat-completions/generate`;
+                    const body = JSON.stringify({
+                        "messages": messages,
+                        "model": effectiveApiConfig.model,
+                        "temperature": effectiveApiConfig.temperature || 1.0,
+                        "top_p": effectiveApiConfig.top_p || 0.9,
+                        "max_tokens": maxTokens,
+                        "stream": settings_ACU.streamingEnabled || false,
+                        "chat_completion_source": "custom",
+                        "group_names": [],
+                        "include_reasoning": false,
+                        "reasoning_effort": "medium",
+                        "enable_web_search": false,
+                        "request_images": false,
+                        "custom_prompt_post_processing": "strict",
+                        "reverse_proxy": effectiveApiConfig.url,
+                        "proxy_password": "",
+                        "custom_url": effectiveApiConfig.url,
+                        "custom_include_headers": effectiveApiConfig.apiKey ?
+                            `Authorization: Bearer ${effectiveApiConfig.apiKey}` : ""
+                    });
+                    
+                    const headers = {
+                        ...SillyTavern.getRequestHeaders(),
+                        'Content-Type': 'application/json'
+                    };
+                    const res = await fetch(url, { method: 'POST', headers, body });
+                    
+                    if (!res.ok) {
+                        const errTxt = await res.text();
+                        logError_ACU('[callAI] API request failed:', res.status, errTxt);
+                        return null;
+                    }
+                    
+                    // 根据streamingEnabled设置选择响应处理方式
+                    const content = await handleApiResponse_ACU(res);
+                    if (content) {
+                        return content;
+                    }
+                    logError_ACU('[callAI] Invalid response from custom API');
+                    return null;
+                }
+            }
+        } catch (e) {
+            logError_ACU('[callAI] Failed:', e);
+            return null;
+        }
+    },
+
+    /**
+     * 获取最近剧情上下文（从聊天记录，仅AI消息）
+     * @param {number} maxTurns - 最大回合数，默认3
+     * @returns {string} 剧情上下文文本
+     */
+    getStoryContext: function(maxTurns = 3) {
+        try {
+            const chat = SillyTavern_API_ACU?.chat;
+            if (!Array.isArray(chat) || chat.length === 0) {
+                return '';
+            }
+
+            const aiMessages = [];
+            let turnCount = 0;
+
+            for (let i = chat.length - 1; i >= 0 && turnCount < maxTurns; i--) {
+                const msg = chat[i];
+                if (msg && !msg.is_user && msg.mes) {
+                    aiMessages.unshift(msg.mes);
+                    turnCount++;
+                }
+            }
+
+            return aiMessages.join('\n\n');
+        } catch (e) {
+            logError_ACU('getStoryContext failed:', e);
+            return '';
+        }
+    },
+
+    /**
+     * 调用AI生成内容（使用数据库当前配置的API）
+     * @param {Array} messages - 消息数组，格式: [{role: 'system'|'user'|'assistant', content: '...'}]
+     * @param {Object} options - 可选配置 { max_tokens: number }
+     * @returns {Promise<string|null>} AI返回的文本内容，失败返回null
+     */
+    callAI: async function(messages, options = {}) {
+        try {
+            if (!Array.isArray(messages) || messages.length === 0) {
+                logError_ACU('callAI: messages must be a non-empty array');
+                return null;
+            }
+
+            logDebug_ACU('[callAI] Calling AI with', messages.length, 'messages');
+            
+            const effectiveApiConfig = settings_ACU.apiConfig || {};
+            const maxTokens = options.max_tokens || effectiveApiConfig.max_tokens || 4096;
+            
+            // 使用数据库当前的API配置调用AI
+            if (settings_ACU.apiMode === 'tavern') {
+                // 使用酒馆Profile
+                const profileId = settings_ACU.tavernProfile;
+                const response = await SillyTavern_API_ACU.ConnectionManagerRequestService.sendRequest(
+                    profileId, messages, maxTokens
+                );
+                if (response && response.result && response.result.choices && response.result.choices[0]) {
+                    return response.result.choices[0].message.content;
+                }
+                // 尝试其他响应格式
+                if (response && typeof response.content === 'string') {
+                    return response.content;
+                }
+                logError_ACU('[callAI] Invalid response from Tavern API:', response);
+                return null;
+            } else {
+                // 使用自定义API
+                if (effectiveApiConfig.useMainApi) {
+                    // 使用酒馆主API（流式传输）
+                    if (typeof TavernHelper_API_ACU?.generateRaw === 'function') {
+                        const response = await TavernHelper_API_ACU.generateRaw({
+                            ordered_prompts: messages,
+                            should_stream: settings_ACU.streamingEnabled || false
+                        });
+                        if (typeof response === 'string') {
+                            return response.trim();
+                        }
+                        logError_ACU('[callAI] Main API did not return string');
+                        return null;
+                    }
+                    logError_ACU('[callAI] TavernHelper.generateRaw not available');
+                    return null;
+                } else {
+                    // 使用独立API配置 - 使用完整的请求格式（流式传输）
+                    if (!effectiveApiConfig.url || !effectiveApiConfig.model) {
+                        logError_ACU('[callAI] Custom API URL or model not configured');
+                        return null;
+                    }
+                    
+                    const url = `/api/backends/chat-completions/generate`;
+                    const body = JSON.stringify({
+                        "messages": messages,
+                        "model": effectiveApiConfig.model,
+                        "temperature": effectiveApiConfig.temperature || 1.0,
+                        "top_p": effectiveApiConfig.top_p || 0.9,
+                        "max_tokens": maxTokens,
+                        "stream": settings_ACU.streamingEnabled || false,
+                        "chat_completion_source": "custom",
+                        "group_names": [],
+                        "include_reasoning": false,
+                        "reasoning_effort": "medium",
+                        "enable_web_search": false,
+                        "request_images": false,
+                        "custom_prompt_post_processing": "strict",
+                        "reverse_proxy": effectiveApiConfig.url,
+                        "proxy_password": "",
+                        "custom_url": effectiveApiConfig.url,
+                        "custom_include_headers": effectiveApiConfig.apiKey ?
+                            `Authorization: Bearer ${effectiveApiConfig.apiKey}` : ""
+                    });
+                    
+                    const headers = {
+                        ...SillyTavern.getRequestHeaders(),
+                        'Content-Type': 'application/json'
+                    };
+                    const res = await fetch(url, { method: 'POST', headers, body });
+                    
+                    if (res.ok) {
+                        // 处理流式响应
+                        const reader = res.body.getReader();
+                        const decoder = new TextDecoder();
+                        let fullContent = '';
+                        let buffer = '';
+                        
+                        while (true) {
+                            const { done, value } = await reader.read();
+                            if (done) break;
+                            
+                            buffer += decoder.decode(value, { stream: true });
+                            const lines = buffer.split('\n');
+                            buffer = lines.pop() || '';
+                            
+                            for (const line of lines) {
+                                if (line.startsWith('data: ')) {
+                                    const data = line.slice(6);
+                                    if (data === '[DONE]') continue;
+                                    try {
+                                        const json = JSON.parse(data);
+                                        const content = json.choices?.[0]?.delta?.content || '';
+                                        fullContent += content;
+                                    } catch (e) {
+                                        // 忽略解析错误
+                                    }
+                                }
+                            }
+                        }
+                        
+                        if (fullContent) {
+                            return fullContent;
+                        }
+                        // 尝试非流式响应格式
+                        try {
+                            const text = await res.text();
+                            const json = JSON.parse(text);
+                            const content = json.choices?.[0]?.message?.content || json.response || json.text;
+                            if (content) {
+                                return content;
+                            }
+                        } catch (e) {
+                            // 忽略
+                        }
+                    }
+                    const errTxt = await res.text();
+                    logError_ACU('[callAI] API request failed:', res.status, errTxt);
+                    return null;
+                }
+            }
+        } catch (e) {
+            logError_ACU('[callAI] Failed:', e);
+            return null;
+        }
     }
   };
   // --- [核心改造] 结束 ---
@@ -4114,7 +5157,7 @@
   }
 
   // --- Toast / 通知（仅影响本插件的提示外观，不改变业务逻辑） ---
-  const ACU_TOAST_TITLE_ACU = '魔·数据库';
+  const ACU_TOAST_TITLE_ACU = '星·数据库';
   const _acuToastDedup_ACU = new Map(); // key -> ts
   let _acuToastStyleInjected_ACU = false;
 
@@ -4969,9 +6012,9 @@
       return normalizeGuideData_ACU(out);
   }
 
-  // [新增] 覆盖式更新：用模板写入当前聊天第一层“空白指导表”
-  async function overwriteChatSheetGuideFromTemplate_ACU(templateObj, { reason = 'template_changed' } = {}) {
-      const guideData = buildChatSheetGuideDataFromTemplateObj_ACU(templateObj, { stripSeedRows: true });
+  // [新增] 覆盖式更新：用模板写入当前聊天第一层"空白指导表"
+  async function overwriteChatSheetGuideFromTemplate_ACU(templateObj, { reason = 'template_changed', stripSeedRows = true } = {}) {
+      const guideData = buildChatSheetGuideDataFromTemplateObj_ACU(templateObj, { stripSeedRows });
       if (!guideData) return false;
       const isolationKey = getCurrentIsolationKey_ACU();
       const ok = setChatSheetGuideDataForIsolationKey_ACU(isolationKey, guideData, { reason });
@@ -6037,6 +7080,93 @@
       }
   }
 
+  // [新增] 直接将模板数据填充到第一楼的实际表格数据
+  // 用于 initGameSession 场景，确保模板中的所有表格数据（包括种子数据）都被写入第一楼
+  async function fillFirstLayerWithTemplateData_ACU(templateObj, { reason = 'game_init' } = {}) {
+      try {
+          const chat = SillyTavern_API_ACU?.chat;
+          if (!chat || !Array.isArray(chat) || chat.length === 0) {
+              logWarn_ACU('[FillFirstLayer] 聊天记录为空，无法填充数据');
+              return false;
+          }
+
+          // 找到第一条AI消息（第一楼）
+          const firstAiIndex = chat.findIndex(m => m && !m.is_user);
+          if (firstAiIndex === -1) {
+              logWarn_ACU('[FillFirstLayer] 找不到第一楼AI消息');
+              return false;
+          }
+          const firstMsg = chat[firstAiIndex];
+
+          // 确保模板编号稳定
+          const sheetKeys = Object.keys(templateObj).filter(k => k.startsWith('sheet_'));
+          if (sheetKeys.length === 0) {
+              logWarn_ACU('[FillFirstLayer] 模板中没有表格数据');
+              return false;
+          }
+          ensureSheetOrderNumbers_ACU(templateObj, { baseOrderKeys: sheetKeys, forceRebuild: false });
+
+          // 构建完整的表格数据（包含所有种子数据）
+          const fullData = { mate: { type: 'chatSheets', version: 1 } };
+          sheetKeys.forEach(k => {
+              fullData[k] = JSON.parse(JSON.stringify(templateObj[k]));
+          });
+
+          const isolationKey = getCurrentIsolationKey_ACU();
+
+          // 写入 TavernDB_ACU_IsolatedData（新版格式）
+          if (!firstMsg.TavernDB_ACU_IsolatedData) firstMsg.TavernDB_ACU_IsolatedData = {};
+          if (!firstMsg.TavernDB_ACU_IsolatedData[isolationKey]) {
+              firstMsg.TavernDB_ACU_IsolatedData[isolationKey] = {
+                  independentData: {},
+                  modifiedKeys: [],
+                  updateGroupKeys: []
+              };
+          }
+          const tagData = firstMsg.TavernDB_ACU_IsolatedData[isolationKey];
+
+          // 写入 independentData（包含所有表格的完整数据）
+          const indep = {};
+          sheetKeys.forEach(k => {
+              indep[k] = JSON.parse(JSON.stringify(fullData[k]));
+          });
+          tagData.independentData = indep;
+          tagData.modifiedKeys = [];
+          tagData.updateGroupKeys = [];
+
+          // 同步旧格式（兼容老逻辑）
+          firstMsg.TavernDB_ACU_IndependentData = JSON.parse(JSON.stringify(indep));
+          firstMsg.TavernDB_ACU_ModifiedKeys = [];
+          firstMsg.TavernDB_ACU_UpdateGroupKeys = [];
+
+          // 同时更新指导表（确保表头和参数也同步）
+          const guideData = buildChatSheetGuideDataFromTemplateObj_ACU(templateObj, { stripSeedRows: false });
+          if (guideData) {
+              setChatSheetGuideDataForIsolationKey_ACU(isolationKey, guideData, { reason });
+          }
+
+          // 保存聊天
+          await SillyTavern_API_ACU.saveChat();
+
+          // 更新内存数据
+          currentJsonTableData_ACU = reorderDataBySheetKeys_ACU(JSON.parse(JSON.stringify(fullData)), getSortedSheetKeys_ACU(fullData));
+
+          // 通知前端刷新
+          if (SillyTavern_API_ACU?.eventSource?.emit && SillyTavern_API_ACU?.eventTypes?.MESSAGE_UPDATED) {
+              SillyTavern_API_ACU.eventSource.emit(SillyTavern_API_ACU.eventTypes.MESSAGE_UPDATED, firstAiIndex);
+          }
+          if (topLevelWindow_ACU.AutoCardUpdaterAPI) {
+              topLevelWindow_ACU.AutoCardUpdaterAPI._notifyTableUpdate();
+          }
+
+          logDebug_ACU(`[FillFirstLayer] 成功将模板数据填充到第一楼，共 ${sheetKeys.length} 个表格`);
+          return true;
+      } catch (e) {
+          logError_ACU('[FillFirstLayer] 填充第一楼数据失败:', e);
+          return false;
+      }
+  }
+
   function parseReadableToJson_ACU(text) {
     if (!currentJsonTableData_ACU) {
         logError_ACU("Parsing failed: currentJsonTableData_ACU is not available.");
@@ -6177,21 +7307,21 @@
     logDebug_ACU(`[剧情推进] 使用API预设: ${settings_ACU.plotApiPreset || '当前配置'}, 模式: ${effectiveApiMode}`);
 
     if (effectiveApiMode === 'tavern' || effectiveApiConfig.useMainApi) {
-      // 使用主API或酒馆预设
-      logDebug_ACU('[剧情推进] 通过酒馆主API发送请求...');
+      // 使用主API或酒馆预设（流式传输）
+      logDebug_ACU('[剧情推进] 通过酒馆主API发送请求（流式传输）...');
       if (typeof TavernHelper_API_ACU.generateRaw !== 'function') {
         throw new Error('TavernHelper.generateRaw 函数不存在。请检查酒馆版本。');
       }
       const response = await TavernHelper_API_ACU.generateRaw({
         ordered_prompts: messages,
-        should_stream: false,
+        should_stream: settings_ACU.streamingEnabled || false,
       });
       if (typeof response !== 'string') {
         throw new Error('主API调用未返回预期的文本响应。');
       }
       return response.trim();
     } else {
-      // 使用自定义API
+      // 使用自定义API（流式传输）
       if (!effectiveApiConfig.url || !effectiveApiConfig.model) {
         throw new Error('自定义API的URL或模型未配置。');
       }
@@ -6202,7 +7332,7 @@
         max_tokens: effectiveApiConfig.maxTokens || effectiveApiConfig.max_tokens || 20000,
         temperature: effectiveApiConfig.temperature || 0.7,
         top_p: effectiveApiConfig.topP || effectiveApiConfig.top_p || 0.95,
-        stream: false,
+        stream: settings_ACU.streamingEnabled || false,
         chat_completion_source: 'custom',
         group_names: [],
         include_reasoning: false,
@@ -6228,16 +7358,13 @@
         throw new Error(`API请求失败: ${response.status} ${errTxt}`);
       }
 
-      const data = await response.json();
-      if (data && data.choices && data.choices[0]) {
-        return data.choices[0].message?.content?.trim() || '';
-      }
-      if (data && data.content) {
-        return data.content.trim();
+      // 根据streamingEnabled设置选择响应处理方式
+      const content = await handleApiResponse_ACU(response, abortSignal);
+      if (content) {
+        return content.trim();
       }
 
-      const errorMessage = data?.error?.message || JSON.stringify(data);
-      throw new Error(`API调用返回无效响应: ${errorMessage}`);
+      throw new Error(`API调用返回无效响应`);
     }
   }
 
@@ -6432,6 +7559,811 @@
       logError_ACU('[剧情推进] 格式化纪要索引时出错:', e);
       return { success: false, content: '纪要索引：格式化时发生错误。' };
     }
+  }
+
+  // =========================
+  // [剧情推进] 随机数生成功能
+  // 语法：<random min="1" max="100" />
+  // 在提示词中生成指定范围内的随机整数
+  // =========================
+
+  /**
+   * 解析随机数标签，生成随机整数
+   * 语法：<random min="1" max="100" /> 或 <random min="1" max="100">
+   * @param {string} content - 包含随机数标签的内容
+   * @returns {string} - 替换随机数标签后的内容
+   */
+  function parseRandomTags_ACU(content) {
+    if (!content || typeof content !== 'string') {
+      return content || '';
+    }
+    
+    // 匹配 <random min="X" max="Y" /> 或 <random min="X" max="Y">
+    const randomRegex = /<random\s+min\s*=\s*"(\d+)"\s+max\s*=\s*"(\d+)"\s*\/?>/gi;
+    
+    return content.replace(randomRegex, (match, minStr, maxStr) => {
+      const min = parseInt(minStr, 10);
+      const max = parseInt(maxStr, 10);
+      
+      if (isNaN(min) || isNaN(max)) {
+        logWarn_ACU('[随机函数] 无效的随机参数:', minStr, maxStr);
+        return match; // 保持原样
+      }
+      
+      if (min > max) {
+        logWarn_ACU('[随机函数] 最小值大于最大值，自动交换:', min, max);
+        const temp = min;
+        const actualMin = max;
+        const actualMax = temp;
+        const randomValue = Math.floor(Math.random() * (actualMax - actualMin + 1)) + actualMin;
+        logDebug_ACU('[随机函数] 生成随机数:', randomValue, '范围:', actualMin, '-', actualMax);
+        return String(randomValue);
+      }
+      
+      const randomValue = Math.floor(Math.random() * (max - min + 1)) + min;
+      logDebug_ACU('[随机函数] 生成随机数:', randomValue, '范围:', min, '-', max);
+      return String(randomValue);
+    });
+  }
+
+  // =========================
+  // [剧情推进] 条件模板解析功能
+  // 语法：<if seed="关键词表达式">条件提示词内容</if>
+  // 支持与（&）、或（,）、非（!）三种逻辑及其组合
+  // 检测范围：除纪要表以外的所有数据库表格内容 + $6上轮规划数据
+  // =========================
+
+  /**
+   * 获取除纪要表以外的所有数据库表格内容，用于条件模板的关键词检测
+   * @param {object} allTablesJson - 完整的表格数据对象
+   * @returns {string} - 格式化后的表格内容文本
+   */
+  function formatNonSummaryTablesForSeed_ACU(allTablesJson) {
+    try {
+      if (!allTablesJson || typeof allTablesJson !== 'object') {
+        return '';
+      }
+      
+      const sheets = Object.values(allTablesJson).filter(x => x && typeof x === 'object' && x.name && x.content);
+      let result = '';
+      
+      sheets.forEach(table => {
+        const name = String(table.name || '').trim();
+        // 排除纪要表和总结表
+        if (name === '纪要表' || name === '总结表') return;
+        
+        // 添加表格名称
+        result += `# ${name}\n`;
+        
+        // 格式化表格内容
+        if (Array.isArray(table.content) && table.content.length > 0) {
+          const headerRow = table.content[0];
+          if (Array.isArray(headerRow)) {
+            result += headerRow.join(' | ') + '\n';
+          }
+          
+          // 添加数据行
+          const dataRows = table.content.slice(1);
+          dataRows.forEach(row => {
+            if (Array.isArray(row)) {
+              result += row.join(' | ') + '\n';
+            }
+          });
+        }
+        result += '\n';
+      });
+      
+      return result;
+    } catch (e) {
+      logError_ACU('[剧情推进] formatNonSummaryTablesForSeed_ACU 出错:', e);
+      return '';
+    }
+  }
+
+  /**
+   * 解析关键词表达式并判断是否匹配
+   * 支持的语法：
+   * - 简单匹配：战斗
+   * - 或逻辑：战斗,打架
+   * - 与逻辑：战斗&主角
+   * - 非逻辑：!战斗
+   * - 组合逻辑：(战斗&主角),感情
+   * @param {string} expression - 关键词表达式
+   * @param {string} content - 待检测的内容（表格内容）
+   * @param {string} plotContent - 上轮规划数据（$6），可选
+   * @returns {boolean} - 是否匹配
+   */
+  function evaluateSeedExpression_ACU(expression, content, plotContent = '') {
+    if (!expression || typeof expression !== 'string') return false;
+    if (!content || typeof content !== 'string') return false;
+    if (!plotContent || typeof plotContent !== 'string') {
+      plotContent = '';
+    }
+    
+    const expr = expression.trim();
+    if (!expr) return false;
+    
+    // 拼接表格内容和上轮规划数据，在两者中查找关键词
+    const combinedContent = content + '\n' + plotContent;
+    const lowerContent = combinedContent.toLowerCase();
+    
+    // 检查单个关键词是否匹配
+    const checkKeyword = (keyword) => {
+      const kw = keyword.trim();
+      if (!kw) return false;
+      
+      // 非逻辑：!关键词
+      if (kw.startsWith('!')) {
+        const actualKw = kw.slice(1).trim();
+        if (!actualKw) return true; // 空的非逻辑视为匹配
+        return !lowerContent.includes(actualKw.toLowerCase());
+      }
+      
+      // 普通匹配
+      return lowerContent.includes(kw.toLowerCase());
+    };
+    
+    // 检查与逻辑组：A&B&C
+    const checkAndGroup = (group) => {
+      const keywords = group.split('&').map(k => k.trim()).filter(k => k);
+      if (keywords.length === 0) return false;
+      return keywords.every(kw => checkKeyword(kw));
+    };
+    
+    // 处理括号内的组合
+    // 使用局部变量存储括号结果，避免浏览器环境中 global 未定义的问题
+    const _parenResults = {};
+    
+    const processExpression = (expr) => {
+      // 先处理括号内的表达式
+      // 简单处理：找到 ( ) 包裹的内容，递归处理
+      let processed = expr;
+      const parenRegex = /\(([^()]+)\)/g;
+      let match;
+      let idx = 0;
+      
+      while ((match = parenRegex.exec(expr)) !== null) {
+        const innerExpr = match[1];
+        const innerResult = processExpression(innerExpr);
+        // 用占位符替换括号表达式
+        processed = processed.replace(match[0], `__PAREN_${idx}__`);
+        // 存储结果到局部变量
+        _parenResults[`__PAREN_${idx}__`] = innerResult;
+        idx++;
+      }
+      
+      // 处理或逻辑（逗号分隔）
+      const orParts = processed.split(',').map(p => p.trim()).filter(p => p);
+      
+      // 如果有多个或部分，任一匹配即可
+      if (orParts.length > 1) {
+        return orParts.some(part => {
+          // 检查是否是占位符
+          if (_parenResults[part] !== undefined) {
+            return _parenResults[part];
+          }
+          // 检查是否是与逻辑组
+          if (part.includes('&')) {
+            return checkAndGroup(part);
+          }
+          return checkKeyword(part);
+        });
+      }
+      
+      // 单个部分
+      const singlePart = orParts[0] || '';
+      if (_parenResults[singlePart] !== undefined) {
+        return _parenResults[singlePart];
+      }
+      if (singlePart.includes('&')) {
+        return checkAndGroup(singlePart);
+      }
+      return checkKeyword(singlePart);
+    };
+    
+    
+    return processExpression(expr);
+  }
+
+  // =========================
+  // [剧情推进] 条件模板扩展：表格数值定位与比较
+  // 语法：<if cell="表格名::行名::列名 比较运算符 数值">条件提示词内容</if>
+  // 支持的比较运算符：>、<、>=、<=、==、!=
+  // 示例：<if cell="重要人物表::威尔逊::好感度 > 50">威尔逊好感度超过50时的提示词</if>
+  // =========================
+
+  /**
+   * 从表格数据中获取指定单元格的值
+   * @param {object} allTablesJson - 完整的表格数据对象
+   * @param {string} tableName - 表格名称
+   * @param {string} rowName - 行名称（第一列的值）
+   * @param {string} colName - 列名称
+   * @returns {object} - { success: boolean, value: string|number, error?: string }
+   */
+  function getCellValue_ACU(allTablesJson, tableName, rowName, colName) {
+    try {
+      if (!allTablesJson || typeof allTablesJson !== 'object') {
+        return { success: false, value: null, error: '表格数据为空' };
+      }
+      
+      // 查找目标表格
+      const sheets = Object.values(allTablesJson).filter(x => x && typeof x === 'object' && x.name && x.content);
+      const targetTable = sheets.find(s => String(s.name || '').trim() === tableName.trim());
+      
+      if (!targetTable) {
+        return { success: false, value: null, error: `未找到表格: ${tableName}` };
+      }
+      
+      if (!Array.isArray(targetTable.content) || targetTable.content.length < 1) {
+        return { success: false, value: null, error: `表格 ${tableName} 没有数据` };
+      }
+      
+      // 获取表头
+      const headerRow = targetTable.content[0];
+      if (!Array.isArray(headerRow)) {
+        return { success: false, value: null, error: `表格 ${tableName} 表头格式错误` };
+      }
+      
+      // 查找列索引（表头中匹配列名的索引）
+      const colIndex = headerRow.findIndex(h => String(h || '').trim() === colName.trim());
+      if (colIndex === -1) {
+        return { success: false, value: null, error: `未找到列: ${colName}` };
+      }
+      
+      // 查找行（第一列匹配行名的行）
+      const dataRows = targetTable.content.slice(1);
+      const targetRow = dataRows.find(row => {
+        if (!Array.isArray(row)) return false;
+        const firstColValue = String(row[0] || '').trim();
+        return firstColValue === rowName.trim();
+      });
+      
+      if (!targetRow) {
+        return { success: false, value: null, error: `未找到行: ${rowName}` };
+      }
+      
+      // 获取单元格值
+      const cellValue = targetRow[colIndex];
+      
+      // 尝试转换为数值
+      const numValue = parseFloat(cellValue);
+      if (!isNaN(numValue) && isFinite(numValue)) {
+        return { success: true, value: numValue, rawValue: String(cellValue) };
+      }
+      
+      // 返回字符串值
+      return { success: true, value: String(cellValue || ''), rawValue: String(cellValue || '') };
+      
+    } catch (e) {
+      logError_ACU('[剧情推进] getCellValue_ACU 出错:', e);
+      return { success: false, value: null, error: String(e.message || e) };
+    }
+  }
+
+  /**
+   * 执行单个值的比较
+   * @param {number|string} cellValue - 单元格值
+   * @param {string} operator - 比较运算符
+   * @param {number|string} compareValue - 比较值
+   * @returns {boolean} - 是否满足条件
+   */
+  function compareValue_ACU(cellValue, operator, compareValue) {
+    const numCompareValue = parseFloat(compareValue);
+    const isNumericComparison = !isNaN(numCompareValue) && isFinite(numCompareValue);
+    
+    if (isNumericComparison && typeof cellValue === 'number') {
+      // 数值比较
+      switch (operator) {
+        case '>': return cellValue > numCompareValue;
+        case '<': return cellValue < numCompareValue;
+        case '>=': return cellValue >= numCompareValue;
+        case '<=': return cellValue <= numCompareValue;
+        case '==': return cellValue === numCompareValue;
+        case '!=': return cellValue !== numCompareValue;
+        default: return false;
+      }
+    } else {
+      // 字符串比较
+      const strCellValue = String(cellValue);
+      const strCompareValue = String(compareValue);
+      switch (operator) {
+        case '==': return strCellValue === strCompareValue;
+        case '!=': return strCellValue !== strCompareValue;
+        case '>': return strCellValue > strCompareValue;
+        case '<': return strCellValue < strCompareValue;
+        case '>=': return strCellValue >= strCompareValue;
+        case '<=': return strCellValue <= strCompareValue;
+        default: return false;
+      }
+    }
+  }
+
+  /**
+   * 解析数值比较表达式（简化版）
+   * 支持格式：
+   * - 精确匹配：表格名/行名/列名 > 50
+   * - 模糊匹配（某行）：表格名/行名 > 50（检查该行所有数值列）
+   * - 模糊匹配（某列）：表格名/列名 > 50（检查该列所有数值行，行列颠倒自动匹配）
+   * @param {string} expression - 比较表达式
+   * @param {object} allTablesJson - 完整的表格数据对象
+   * @returns {boolean} - 是否满足条件（任一匹配即返回true）
+   */
+  function evaluateCellExpression_ACU(expression, allTablesJson) {
+    if (!expression || typeof expression !== 'string') return false;
+    
+    // 支持的比较运算符：>、<、>=、<=、==、!=
+    const operators = ['>=', '<=', '!=', '==', '>', '<'];
+    
+    let matchedOperator = null;
+    let cellRef = '';
+    let compareValue = '';
+    
+    // 查找匹配的运算符
+    for (const op of operators) {
+      const opIndex = expression.indexOf(op);
+      if (opIndex !== -1) {
+        cellRef = expression.substring(0, opIndex).trim();
+        compareValue = expression.substring(opIndex + op.length).trim();
+        matchedOperator = op;
+        break;
+      }
+    }
+    
+    if (!matchedOperator) {
+      logWarn_ACU('[剧情推进] evaluateCellExpression_ACU: 未找到有效的比较运算符, expression=', expression);
+      return false;
+    }
+    
+    // 解析单元格引用：用斜杠分隔
+    const parts = cellRef.split('/').map(p => p.trim()).filter(p => p);
+    
+    if (parts.length < 2 || parts.length > 3) {
+      logWarn_ACU('[剧情推进] evaluateCellExpression_ACU: 单元格引用格式错误, cellRef=', cellRef);
+      return false;
+    }
+    
+    const [tableName, name1, name2] = parts;
+    
+    // 查找目标表格
+    if (!allTablesJson || typeof allTablesJson !== 'object') {
+      // 表格数据不存在时：== 返回 false，!= 返回 true
+      return matchedOperator === '!=';
+    }
+    
+    const sheets = Object.values(allTablesJson).filter(x => x && typeof x === 'object' && x.name && x.content);
+    const targetTable = sheets.find(s => String(s.name || '').trim() === tableName.trim());
+    
+    if (!targetTable || !Array.isArray(targetTable.content) || targetTable.content.length < 1) {
+      logDebug_ACU('[剧情推进] evaluateCellExpression_ACU: 未找到表格或表格为空, tableName=', tableName);
+      // 表格不存在时：== 返回 false，!= 返回 true
+      return matchedOperator === '!=';
+    }
+    
+    const headerRow = targetTable.content[0];
+    if (!Array.isArray(headerRow)) {
+      return false;
+    }
+    
+    const dataRows = targetTable.content.slice(1);
+    
+    // 根据参数数量决定匹配模式
+    if (parts.length === 3) {
+      // 精确匹配：表格名/行名/列名
+      const rowName = name1;
+      const colName = name2;
+      
+      // 先尝试正常顺序
+      let cellResult = getCellValue_ACU(allTablesJson, tableName, rowName, colName);
+      if (cellResult.success) {
+        if (compareValue_ACU(cellResult.value, matchedOperator, compareValue)) {
+          return true;
+        } else {
+          // 单元格存在但比较失败，返回 false
+          return false;
+        }
+      }
+      
+      // 再尝试行列颠倒（行名当列名，列名当行名）
+      cellResult = getCellValue_ACU(allTablesJson, tableName, colName, rowName);
+      if (cellResult.success) {
+        if (compareValue_ACU(cellResult.value, matchedOperator, compareValue)) {
+          return true;
+        } else {
+          // 单元格存在但比较失败，返回 false
+          return false;
+        }
+      }
+      
+      // 【新增】单行表格支持：如果表格只有一行数据，尝试直接用 name1 作为列名获取值
+      // 这种情况适用于「全局数据表」等只有一行数据的表格
+      if (dataRows.length === 1) {
+        // 尝试将 name1 当作列名
+        const colIndexForName1 = headerRow.findIndex(h => String(h || '').trim() === name1.trim());
+        if (colIndexForName1 !== -1) {
+          const singleRowValue = dataRows[0][colIndexForName1];
+          if (compareValue_ACU(singleRowValue, matchedOperator, compareValue)) {
+            return true;
+          } else {
+            // 单元格存在但比较失败，返回 false
+            return false;
+          }
+        }
+        // 尝试将 name2 当作列名
+        const colIndexForName2 = headerRow.findIndex(h => String(h || '').trim() === name2.trim());
+        if (colIndexForName2 !== -1) {
+          const singleRowValue = dataRows[0][colIndexForName2];
+          if (compareValue_ACU(singleRowValue, matchedOperator, compareValue)) {
+            return true;
+          } else {
+            // 单元格存在但比较失败，返回 false
+            return false;
+          }
+        }
+      }
+      
+      // 单元格不存在时：== 返回 false，!= 返回 true
+      return matchedOperator === '!=';
+      
+    } else if (parts.length === 2) {
+      // 模糊匹配：表格名/名称（检查该名称是行名还是列名）
+      const targetName = name1;
+      let foundAnyCell = false; // 标记是否找到了任何单元格
+      
+      // 检查是否是行名（第一列匹配）
+      const targetRow = dataRows.find(row => {
+        if (!Array.isArray(row)) return false;
+        return String(row[0] || '').trim() === targetName.trim();
+      });
+      
+      if (targetRow) {
+        foundAnyCell = true;
+        // 是行名，检查该行所有列（支持数值和字符串比较）
+        for (let colIdx = 1; colIdx < targetRow.length; colIdx++) {
+          const cellValue = targetRow[colIdx];
+          if (compareValue_ACU(cellValue, matchedOperator, compareValue)) {
+            return true;
+          }
+        }
+      }
+      
+      // 检查是否是列名（表头匹配）
+      const colIndex = headerRow.findIndex(h => String(h || '').trim() === targetName.trim());
+      
+      if (colIndex !== -1) {
+        foundAnyCell = true;
+        // 是列名，检查该列所有行（支持数值和字符串比较）
+        for (const row of dataRows) {
+          if (!Array.isArray(row)) continue;
+          const cellValue = row[colIndex];
+          if (compareValue_ACU(cellValue, matchedOperator, compareValue)) {
+            return true;
+          }
+        }
+      }
+      
+      // 如果找到了单元格但比较失败，返回 false
+      // 如果没找到任何单元格，== 返回 false，!= 返回 true
+      if (foundAnyCell) {
+        return false;
+      } else {
+        return matchedOperator === '!=';
+      }
+    }
+    
+    return false;
+  }
+
+  /**
+   * 解析条件模板，根据关键词匹配或表格数值比较决定是否包含条件提示词内容
+   * 支持两种语法：
+   * 1. <if seed="关键词表达式">内容</if> - 关键词匹配
+   * 2. <if cell="表格名::行名::列名 > 50">内容</if> - 表格数值比较
+   * @param {string} templateContent - 包含条件模板的提示词内容
+   * @param {string} seedContent - 用于关键词检测的内容（表格内容）
+   * @param {object} allTablesJson - 完整的表格数据对象（用于表格数值比较）
+   * @param {string} plotContent - 上轮规划数据（$6），用于关键词检测
+   * @returns {string} - 解析后的提示词内容
+   */
+  function parseConditionalTemplate_ACU(templateContent, seedContent, allTablesJson, plotContent = '') {
+    if (!templateContent || typeof templateContent !== 'string') {
+      return templateContent || '';
+    }
+    
+    if (!seedContent || typeof seedContent !== 'string') {
+      seedContent = '';
+    }
+    
+    if (!plotContent || typeof plotContent !== 'string') {
+      plotContent = '';
+    }
+    
+    // 正则匹配 <if seed="表达式">内容</if> 或 <if cell="表达式">内容</if>
+    // 使用非贪婪匹配，支持多行内容
+    const ifRegex = /<if\s+(seed|cell)\s*=\s*"([^"]*)"\s*>([\s\S]*?)<\/if>/gi;
+    
+    let result = templateContent;
+    let match;
+    
+    // 收集所有匹配项并处理
+    const matches = [];
+    while ((match = ifRegex.exec(templateContent)) !== null) {
+      matches.push({
+        fullMatch: match[0],
+        type: match[1].toLowerCase(), // 'seed' 或 'cell'
+        expression: match[2],
+        content: match[3],
+        startIndex: match.index,
+        endIndex: match.index + match[0].length
+      });
+    }
+    
+    // 从后向前替换，避免索引偏移问题
+    for (let i = matches.length - 1; i >= 0; i--) {
+      const m = matches[i];
+      let shouldInclude = false;
+      
+      if (m.type === 'seed') {
+        // 关键词匹配（在表格内容和上轮规划数据中查找）
+        shouldInclude = evaluateSeedExpression_ACU(m.expression, seedContent, plotContent);
+      } else if (m.type === 'cell') {
+        // 表格数值比较
+        shouldInclude = evaluateCellExpression_ACU(m.expression, allTablesJson);
+      }
+      
+      if (shouldInclude) {
+        // 匹配成功，保留条件提示词内容（不包含包裹符号）
+        result = result.slice(0, m.startIndex) + m.content + result.slice(m.endIndex);
+      } else {
+        // 匹配失败，移除整个条件模板块
+        result = result.slice(0, m.startIndex) + result.slice(m.endIndex);
+      }
+    }
+    
+    return result;
+  }
+
+  /**
+   * 解析条件模板（支持 else 和嵌套）
+   * 递归解析 <if ...>...</if> 结构，支持 <else> 分支和嵌套条件
+   * @param {string} content - 包含条件模板的内容
+   * @param {object} context - 上下文对象，包含 seedContent 和 allTablesJson
+   * @param {number} depth - 当前递归深度
+   * @returns {string} - 解析后的内容
+   */
+  function parseIfBlockRecursive_ACU(content, context, depth = 0) {
+    if (!content || typeof content !== 'string') {
+      return content || '';
+    }
+    
+    // 防止无限递归
+    const maxDepth = settings_ACU?.promptTemplateSettings?.maxNestingDepth || 10;
+    if (depth > maxDepth) {
+      logWarn_ACU(`[条件模板] 超过最大嵌套深度 ${maxDepth}，停止解析`);
+      return content;
+    }
+    
+    // 使用正则匹配最外层的 <if ...>...</if>
+    // 注意：这个正则需要处理嵌套，所以我们使用一个更智能的方法
+    const result = parseIfBlocksInContent_ACU(content, context, depth);
+    
+    return result;
+  }
+
+  /**
+   * 解析内容中的所有 if 块（支持嵌套）
+   * @param {string} content - 内容
+   * @param {object} context - 上下文
+   * @param {number} depth - 当前深度
+   * @returns {string} - 解析后的内容
+   */
+  function parseIfBlocksInContent_ACU(content, context, depth) {
+    let result = '';
+    let currentIndex = 0;
+    
+    while (currentIndex < content.length) {
+      // 查找下一个 <if 开始标签
+      const ifStartMatch = content.slice(currentIndex).match(/<if\s+(seed|cell)\s*=\s*"([^"]*)"\s*>/i);
+      
+      if (!ifStartMatch) {
+        // 没有更多的 if 块，添加剩余内容
+        result += content.slice(currentIndex);
+        break;
+      }
+      
+      // 添加 if 标签之前的内容
+      const ifStartIndex = currentIndex + ifStartMatch.index;
+      result += content.slice(currentIndex, ifStartIndex);
+      
+      // 解析这个 if 块
+      const ifBlock = parseSingleIfBlock_ACU(
+        content,
+        ifStartIndex,
+        ifStartMatch[1], // type
+        ifStartMatch[2], // expression
+        context,
+        depth
+      );
+      
+      if (ifBlock) {
+        result += ifBlock.content;
+        currentIndex = ifBlock.endIndex;
+      } else {
+        // 解析失败，跳过这个标签
+        result += ifStartMatch[0];
+        currentIndex = ifStartIndex + ifStartMatch[0].length;
+      }
+    }
+    
+    return result;
+  }
+
+  /**
+   * 解析单个 if 块（包括 else 分支和嵌套）
+   * @param {string} content - 完整内容
+   * @param {number} startIndex - if 块开始索引
+   * @param {string} type - 条件类型 (seed 或 cell)
+   * @param {string} expression - 条件表达式
+   * @param {object} context - 上下文
+   * @param {number} depth - 当前深度
+   * @returns {object|null} - { content: 解析后的内容, endIndex: 结束索引 }
+   */
+  function parseSingleIfBlock_ACU(content, startIndex, type, expression, context, depth) {
+    // 找到 if 开始标签的结束位置
+    const ifStartMatch = content.slice(startIndex).match(/<if\s+(?:seed|cell)\s*=\s*"[^"]*"\s*>/i);
+    if (!ifStartMatch) return null;
+    
+    const ifStartTagEnd = startIndex + ifStartMatch[0].length;
+    
+    // 查找匹配的 </if> 结束标签（需要处理嵌套）
+    let nestingLevel = 1;
+    let currentIndex = ifStartTagEnd;
+    let elseIndex = -1;
+    
+    while (currentIndex < content.length && nestingLevel > 0) {
+      // 查找下一个 <if 或 </if> 或 <else>
+      const remainingContent = content.slice(currentIndex);
+      
+      // 匹配嵌套的 <if 开始标签
+      const nestedIfMatch = remainingContent.match(/<if\s+(?:seed|cell)\s*=\s*"[^"]*"\s*>/i);
+      // 匹配 </if> 结束标签
+      const endIfMatch = remainingContent.match(/<\/if>/i);
+      // 匹配 <else> 标签（只在当前层级有效）
+      const elseMatch = remainingContent.match(/<else>/i);
+      
+      // 找到最近的一个
+      const positions = [];
+      if (nestedIfMatch) positions.push({ type: 'if', index: currentIndex + nestedIfMatch.index, length: nestedIfMatch[0].length });
+      if (endIfMatch) positions.push({ type: 'endif', index: currentIndex + endIfMatch.index, length: endIfMatch[0].length });
+      if (elseMatch && nestingLevel === 1) positions.push({ type: 'else', index: currentIndex + elseMatch.index, length: elseMatch[0].length });
+      
+      if (positions.length === 0) {
+        // 没有找到任何标签，格式错误
+        return null;
+      }
+      
+      // 按索引排序，找到最近的
+      positions.sort((a, b) => a.index - b.index);
+      const nearest = positions[0];
+      
+      if (nearest.type === 'if') {
+        nestingLevel++;
+        currentIndex = nearest.index + nearest.length;
+      } else if (nearest.type === 'endif') {
+        nestingLevel--;
+        if (nestingLevel === 0) {
+          // 找到匹配的结束标签
+          const ifBody = content.slice(ifStartTagEnd, nearest.index);
+          const endIndex = nearest.index + nearest.length;
+          
+          // 处理 else 分支
+          let ifContent, elseContent;
+          const elsePos = ifBody.indexOf('<else>');
+          if (elsePos !== -1) {
+            ifContent = ifBody.slice(0, elsePos);
+            elseContent = ifBody.slice(elsePos + 6); // '<else>'.length = 6
+          } else {
+            ifContent = ifBody;
+            elseContent = '';
+          }
+          
+          // 评估条件
+          let conditionMet = false;
+          if (type.toLowerCase() === 'seed') {
+            // 关键词匹配（在表格内容和上轮规划数据中查找）
+            conditionMet = evaluateSeedExpression_ACU(expression, context.seedContent || '', context.plotContent || '');
+          } else if (type.toLowerCase() === 'cell') {
+            conditionMet = evaluateCellExpression_ACU(expression, context.allTablesJson);
+          }
+          
+          // 选择内容并递归处理嵌套
+          const selectedContent = conditionMet ? ifContent : elseContent;
+          const processedContent = parseIfBlocksInContent_ACU(selectedContent, context, depth + 1);
+          
+          return { content: processedContent, endIndex };
+        } else {
+          currentIndex = nearest.index + nearest.length;
+        }
+      } else if (nearest.type === 'else') {
+        // 只在 nestingLevel === 1 时记录 else 位置
+        currentIndex = nearest.index + nearest.length;
+      }
+    }
+    
+    return null;
+  }
+
+  /**
+   * 获取用于提示词处理的数据库表格数据
+   * @returns {object} - 表格数据对象
+   */
+  function getTableDataForPrompt_ACU() {
+    return currentJsonTableData_ACU || {};
+  }
+
+  /**
+   * 获取用于关键词检测的内容（除纪要表外的表格内容）
+   * @returns {string} - 用于关键词检测的文本内容
+   */
+  function getSeedContentForPrompt_ACU() {
+    return formatNonSummaryTablesForSeed_ACU(currentJsonTableData_ACU || {});
+  }
+
+  /**
+   * 处理酒馆提示词（CHAT_COMPLETION_SETTINGS_READY 事件处理）
+   * @param {object} data - 事件数据，包含 messages 数组
+   */
+  async function handleChatCompletionReady_ACU(data) {
+    logDebug_ACU('[提示词模板] handleChatCompletionReady_ACU 被调用');
+    logDebug_ACU('[提示词模板] settings_ACU?.promptTemplateSettings:', settings_ACU?.promptTemplateSettings);
+    
+    // 检查功能是否启用
+    if (!settings_ACU?.promptTemplateSettings?.enabled) {
+      logDebug_ACU('[提示词模板] 功能未启用，跳过处理');
+      return;
+    }
+    
+    if (!data || !data.messages || !Array.isArray(data.messages)) {
+      return;
+    }
+    
+    const startTime = Date.now();
+    logDebug_ACU('[提示词模板] 开始处理酒馆提示词...');
+    
+    // 获取上轮规划数据（$6）
+    const lastPlotContent = getPlotFromHistory_ACU();
+    logDebug_ACU('[提示词模板] $6 上轮规划数据:', lastPlotContent ? `长度=${lastPlotContent.length}` : '(空)');
+    
+    // 获取上下文数据
+    const context = {
+      seedContent: getSeedContentForPrompt_ACU(),
+      allTablesJson: getTableDataForPrompt_ACU(),
+      plotContent: lastPlotContent
+    };
+    
+    // 遍历处理消息
+    let processedCount = 0;
+    for (const message of data.messages) {
+      if (typeof message.content === 'string') {
+        const originalContent = message.content;
+        message.content = parseIfBlockRecursive_ACU(message.content, context, 0);
+        if (message.content !== originalContent) {
+          processedCount++;
+        }
+      } else if (Array.isArray(message.content)) {
+        for (const part of message.content) {
+          if (part.type === 'text' && part.text) {
+            const originalText = part.text;
+            part.text = parseIfBlockRecursive_ACU(part.text, context, 0);
+            if (part.text !== originalText) {
+              processedCount++;
+            }
+          }
+        }
+      }
+    }
+    
+    const endTime = Date.now();
+    logDebug_ACU(`[提示词模板] 处理完成，共处理 ${processedCount} 个消息块，耗时 ${endTime - startTime}ms`);
   }
 
   /**
@@ -7458,19 +9390,40 @@
         finalSystemDirectiveContent = plotFinalDirective.trim();
       }
 
-      // 3) 构建“规划请求”的 messages：完全使用剧情推进自己的独立提示词组（promptGroup）
+      // 3) 构建"规划请求"的 messages：完全使用剧情推进自己的独立提示词组（promptGroup）
       // - 不再运行时替换/覆盖数据库更新预设的 A/B
       // - 若用户仍是旧数据（只有三段 prompts），这里会自动迁移生成 promptGroup
       ensurePlotPromptGroup_ACU(plotSettings);
       let messagesToUse = JSON.parse(JSON.stringify(plotSettings.promptGroup || []));
       if (!Array.isArray(messagesToUse)) messagesToUse = [];
 
-      // 4) 对每个段落：先 EJS 渲染，再占位符替换
+      // [条件模板] 准备检测内容：除纪要表以外的数据库表格内容 + $6上轮规划数据
+      let seedContentForConditional = '';
+      try {
+        // 获取除纪要表以外的数据库表格内容
+        if (currentJsonTableData_ACU && typeof currentJsonTableData_ACU === 'object') {
+          seedContentForConditional = formatNonSummaryTablesForSeed_ACU(currentJsonTableData_ACU);
+        }
+        // 添加 $6 上轮规划数据
+        if (lastPlotContent && typeof lastPlotContent === 'string') {
+          seedContentForConditional += '\n' + lastPlotContent;
+        }
+        logDebug_ACU('[剧情推进] 条件模板检测内容长度:', seedContentForConditional.length);
+      } catch (e) {
+        logWarn_ACU('[剧情推进] 准备条件模板检测内容时出错:', e);
+      }
+
+      // 4) 对每个段落：先 EJS 渲染，再占位符替换，再随机数处理，最后条件模板解析
       for (const seg of messagesToUse) {
         if (!seg || typeof seg.content !== 'string') continue;
         let c = seg.content;
         c = await tryRenderWithEjs_ACU(c);
         c = performReplacements(c);
+        // [随机函数] 处理随机数标签，生成随机整数
+        c = parseRandomTags_ACU(c);
+        // [条件模板] 解析条件模板，支持关键词匹配(seed)和表格数值比较(cell)，支持 else 分支和嵌套
+        const contextForIf = { seedContent: seedContentForConditional, allTablesJson: currentJsonTableData_ACU, plotContent: '' };
+        c = parseIfBlockRecursive_ACU(c, contextForIf, 0);
         seg.__renderedContent = c;
       }
 
@@ -7562,18 +9515,19 @@
         logDebug_ACU('[剧情推进] [Plot] 已暂存plot数据，用户输入哈希:', userInputHash, '，原始文本长度:', inputForHash?.length || 0);
 
         // 标签摘取逻辑
-        let messageForTavern = processedMessage; // 默认使用完整回复
         const tagsToExtract = (plotSettings.extractTags || '').trim();
+        let finalMessage = '';
 
         if (tagsToExtract) {
           const tagNames = tagsToExtract
             .split(',')
             .map(t => t.trim())
             .filter(t => t);
+          
           if (tagNames.length > 0) {
-            const extractedParts = [];
-
-            // 仅提取"最后一组"标签的内容
+            // 提取所有标签内容到 Map 中
+            const extractedTags = new Map();
+            
             const extractLastTagContent = (text, rawTagName) => {
               if (!text || !rawTagName) return null;
               const tagName = String(rawTagName).trim();
@@ -7597,26 +9551,79 @@
             tagNames.forEach(tagName => {
               const content = extractLastTagContent(processedMessage, tagName);
               if (content !== null) {
-                extractedParts.push(`<${tagName}>${content}</${tagName}>`);
+                extractedTags.set(tagName, content);
               }
             });
 
-            if (extractedParts.length > 0) {
-              messageForTavern = extractedParts.join('\n\n');
-              logDebug_ACU(`[剧情推进] 成功摘取标签: ${tagNames.join(', ')}`);
-              showToastr_ACU('info', `已成功摘取 [${tagNames.join(', ')}] 标签内容并注入。`, '标签摘取');
-            } else {
-              logDebug_ACU(`[剧情推进] 在回复中未找到指定标签: ${tagNames.join(', ')}`);
+            // 检测 finalSystemDirectiveContent 中是否有 {{tagName}} 占位符
+            const placeholderPattern = /\{\{(\w+)\}\}/g;
+            let hasPlaceholders = false;
+            let matchedTags = new Set();
+            let finalDirectiveWithTags = finalSystemDirectiveContent;
+            
+            // 替收集所有占位符中的标签名
+            const placeholders = [];
+            let match;
+            while ((match = placeholderPattern.exec(finalSystemDirectiveContent)) !== null) {
+              placeholders.push(match[1]);
             }
+
+            if (placeholders.length > 0) {
+              hasPlaceholders = true;
+              
+              // 替换所有占位符
+              finalDirectiveWithTags = finalSystemDirectiveContent.replace(placeholderPattern, (match, tagName) => {
+                matchedTags.add(tagName);
+                const content = extractedTags.get(tagName);
+                if (content !== null && content !== undefined) {
+                  return `<${tagName}>${content}</${tagName}>`;
+                }
+                return ''; // 标签不存在时替换为空
+              });
+            }
+
+            if (hasPlaceholders) {
+              // 使用占位符替换后的内容
+              // 检查是否有未使用的标签，追加到末尾
+              const unusedTags = [];
+              extractedTags.forEach((content, tagName) => {
+                if (!matchedTags.has(tagName)) {
+                  unusedTags.push(`<${tagName}>${content}</${tagName}>`);
+                }
+              });
+              
+              if (unusedTags.length > 0) {
+                finalMessage = `${finalDirectiveWithTags}\n${unusedTags.join('\n\n')}`;
+              } else {
+                finalMessage = finalDirectiveWithTags;
+              }
+              logDebug_ACU(`[剧情推进] 成功摘取标签: ${Array.from(extractedTags.keys()).join(', ')}`);
+              showToastr_ACU('info', `已成功摘取 [${Array.from(extractedTags.keys()).join(', ')}] 标签内容并注入。`, '标签摘取');
+            } else {
+              // 向后兼容：无占位符时使用原有逻辑
+              const extractedParts = [];
+              extractedTags.forEach((content, tagName) => {
+                extractedParts.push(`<${tagName}>${content}</${tagName}>`);
+              });
+              let messageForTavern = processedMessage;
+              if (extractedParts.length > 0) {
+                messageForTavern = extractedParts.join('\n\n');
+                logDebug_ACU(`[剧情推进] 成功摘取标签: ${Array.from(extractedTags.keys()).join(', ')}`);
+                showToastr_ACU('info', `已成功摘取 [${Array.from(extractedTags.keys()).join(', ')}] 标签内容并注入。`, '标签摘取');
+              } else {
+                logDebug_AC(`[剧情推进] 在回复中未找到指定标签: ${tagNames.join(', ')}`);
+              }
+              finalMessage = `${finalSystemDirectiveContent}\n${messageForTavern}`;
+            }
+          } else {
+            finalMessage = `${finalSystemDirectiveContent}\n${processedMessage}`;
           }
+        } else {
+          finalMessage = `${finalSystemDirectiveContent}\n${processedMessage}`;
         }
 
         // [新增] 在标签提取完成后立即保存 Plot
         await savePlotToLatestMessage_ACU(true);
-
-        // 使用可能被处理过的 messageForTavern 构建最终消息
-        // [改动] 不再代码层面强制拼接本轮用户输入；是否/放置位置由最终注入指令中的 $8 决定。
-        const finalMessage = `${finalSystemDirectiveContent}\n${messageForTavern}`;
 
         try { if ($toast) toastr_API_ACU.clear($toast); } catch (e) {}
         if (minLength <= 0) {
@@ -7993,6 +10000,7 @@
           apiConfig: { url: '', apiKey: '', model: '', useMainApi: true, max_tokens: 60000, temperature: 1.0 },
           apiMode: 'custom',
           tavernProfile: '',
+          streamingEnabled: false, // [新增] 流式传输开关（默认关闭）
           apiPresets: [],
           tableApiPreset: '',
           plotApiPreset: '',
@@ -8041,6 +10049,12 @@
           autoMergeReserve: 0, // [新增] 保留固定楼层数
           deleteStartFloor: null, // [新增] 删除起始楼层 (null表示从头开始)
           deleteEndFloor: null, // [新增] 删除终止楼层 (null表示到末尾)
+          // [新增] 酒馆提示词模板功能
+          promptTemplateSettings: {
+            enabled: true,           // 总开关
+            maxNestingDepth: 10,     // 最大嵌套深度
+            debugMode: false         // 调试模式
+          },
       };
   }
 
@@ -8253,6 +10267,7 @@
           if ($autoUpdateEnabledCheckbox_ACU) $autoUpdateEnabledCheckbox_ACU.prop('checked', settings_ACU.autoUpdateEnabled);
           if ($standardizedTableFillEnabledCheckbox_ACU) $standardizedTableFillEnabledCheckbox_ACU.prop('checked', settings_ACU.standardizedTableFillEnabled !== false);
           if ($toastMuteEnabledCheckbox_ACU) $toastMuteEnabledCheckbox_ACU.prop('checked', !!settings_ACU.toastMuteEnabled);
+          if ($promptTemplateEnabledCheckbox_ACU) $promptTemplateEnabledCheckbox_ACU.prop('checked', settings_ACU.promptTemplateSettings?.enabled !== false);
           if ($tableEditLastPairOnlyCheckbox_ACU) $tableEditLastPairOnlyCheckbox_ACU.prop('checked', settings_ACU.tableEditLastPairOnly !== false);
           if ($tableMaxRetriesInput_ACU) $tableMaxRetriesInput_ACU.val(settings_ACU.tableMaxRetries || 3); // [新增] 填表重试次数
 
@@ -8303,6 +10318,10 @@
           if ($useMainApiCheckbox_ACU) {
             $useMainApiCheckbox_ACU.prop('checked', settings_ACU.apiConfig.useMainApi);
             updateCustomApiInputsState_ACU(); // Update disabled state on load
+          }
+          // [新增] 加载流式传输开关状态
+          if ($streamingEnabledCheckbox_ACU) {
+            $streamingEnabledCheckbox_ACU.prop('checked', settings_ACU.streamingEnabled || false);
           }
           if ($manualTableSelector_ACU) {
               renderManualTableSelector_ACU();
@@ -10055,7 +12074,7 @@
   function buildDefaultGlobalInjectionConfig_ACU() {
       return {
           readableEntryPlacement: { position: 'before_char', depth: 2, order: 99981 },
-          wrapperPlacement: { position: 'before_char', depth: 2, order: 99982 },
+          wrapperPlacement: { position: 'before_char', depth: 2, order: 99980 },
       };
   }
 
@@ -11124,6 +13143,7 @@
             } // end of hasSummaryData
 
             // [新增] 创建 WrapperEnd 条目
+            // [修复2026-03-08] 包裹条目顺序修正：上包裹(order) → 数据条目(order+1) → 下包裹(order+2)
             const wrapperEndEntry = entries.find(e => e.comment === WRAPPER_END_COMMENT);
             const wrapperEndContent = '</最新数据与记录>';
             if (!wrapperEndEntry) {
@@ -11133,7 +13153,7 @@
                     keys: ['TavernDB-ACU-WrapperEnd-Key'],
                     enabled: true,
                     type: 'constant',
-                    order: allocOrder_ACU(usedOrders, globalFixedIndexPlacement.order + 1, 1, 99999),
+                    order: allocOrder_ACU(usedOrders, globalFixedIndexPlacement.order + 2, 1, 99999),
                     prevent_recursion: true,
                 }, globalFixedIndexPlacement)]);
                 logDebug_ACU('Created wrapper end entry.');
@@ -12299,8 +14319,8 @@
     // 数据库将在内存中初始化，并在第一次成功更新后，连同更新内容一起保存到对应的AI消息中。
     logDebug_ACU('Database initialized in memory. It will be saved to chat history on the first update.');
 
-    // [新增] 新对话初始化阶段：确保“第一层空白指导表”存在，并把模板预置数据写入 seedRows 字段
-    // 关键点：只写 seedRows 字段，不写入 content（避免新对话误显示为“已有数据”）
+    // [新增] 新对话初始化阶段：确保"第一层空白指导表"存在，并把模板预置数据写入 seedRows 字段
+    // 关键点：只写 seedRows 字段，不写入 content（避免新对话误显示为"已有数据"）
     try {
         const guideData = await ensureChatSheetGuideSeeded_ACU({ reason: 'init_chat_seedrows' });
         // 同步把 seedRows 字段挂到 currentJsonTableData_ACU（只挂字段，不改变 content），确保新对话首次 $0 就能读到
@@ -12309,6 +14329,13 @@
         }
     } catch (e) {
         logWarn_ACU('[SheetGuide] Failed to ensure sheet guide during initialization:', e);
+    }
+
+    // [新增] 新开对话时，将模板数据写入第一楼的实际表格数据（包含种子数据）
+    try {
+        await seedGreetingLocalDataFromTemplate_ACU();
+    } catch (e) {
+        logWarn_ACU('[GreetingSeed] Failed to seed greeting local data from template:', e);
     }
 
     // 步骤4：删除所有由本插件生成的旧世界书条目
@@ -12366,6 +14393,28 @@
         typeof SillyTavern_API_ACU.eventSource.on === 'function' &&
         SillyTavern_API_ACU.eventTypes
       ) {
+        // [调试] 检查可用的事件类型
+        logDebug_ACU('[提示词模板] 可用的事件类型:', Object.keys(SillyTavern_API_ACU.eventTypes));
+        
+        // [提示词模板] 监听 CHAT_COMPLETION_SETTINGS_READY 事件，使用 makeLast 确保在 st-prompt-template 之后执行
+        if (SillyTavern_API_ACU.eventTypes.CHAT_COMPLETION_SETTINGS_READY) {
+          // 检查是否有 makeLast 方法
+          if (typeof SillyTavern_API_ACU.eventSource.makeLast === 'function') {
+            SillyTavern_API_ACU.eventSource.makeLast(
+              SillyTavern_API_ACU.eventTypes.CHAT_COMPLETION_SETTINGS_READY,
+              handleChatCompletionReady_ACU
+            );
+            logDebug_ACU('[提示词模板] 已注册 CHAT_COMPLETION_SETTINGS_READY 事件监听（makeLast）');
+          } else {
+            // 如果没有 makeLast，使用普通 on
+            SillyTavern_API_ACU.eventSource.on(
+              SillyTavern_API_ACU.eventTypes.CHAT_COMPLETION_SETTINGS_READY,
+              handleChatCompletionReady_ACU
+            );
+            logDebug_ACU('[提示词模板] 已注册 CHAT_COMPLETION_SETTINGS_READY 事件监听（on）');
+          }
+        }
+        
         SillyTavern_API_ACU.eventSource.on(SillyTavern_API_ACU.eventTypes.CHAT_CHANGED, async chatFileName => {
           logDebug_ACU(`ACU CHAT_CHANGED event: ${chatFileName}`);
           await resetScriptStateForNewChat_ACU(chatFileName);
@@ -12808,7 +14857,7 @@
     $menuItemContainer = jQuery_API_ACU(
       `<div class="extension_container interactable" id="${MENU_ITEM_CONTAINER_ID_ACU}" tabindex="0"></div>`,
     );
-    const menuItemHTML = `<div class="list-group-item flex-container flexGap5 interactable" id="${MENU_ITEM_ID_ACU}" title="打开数据库自动更新工具"><div class="fa-fw fa-solid fa-database extensionsMenuExtensionButton"></div><span>魔·数据库V</span></div>`;
+    const menuItemHTML = `<div class="list-group-item flex-container flexGap5 interactable" id="${MENU_ITEM_ID_ACU}" title="打开数据库自动更新工具"><div class="fa-fw fa-solid fa-database extensionsMenuExtensionButton"></div><span>星·数据库V</span></div>`;
     const $menuItem = jQuery_API_ACU(menuItemHTML);
     $menuItem.on(`click.${SCRIPT_ID_PREFIX_ACU}`, async function (e) {
       e.stopPropagation();
@@ -13731,7 +15780,7 @@
             <div id="${POPUP_ID_ACU}" class="auto-card-updater-popup">
                 <style>
                     /* ═══════════════════════════════════════════════════════════════
-                       魔·数据库 UI 设计系统（仅影响插件自身）
+                       星·数据库 UI 设计系统（仅影响插件自身）
                        目标：大气、简约、高级；超窄屏也能舒服用
                        ═══════════════════════════════════════════════════════════════ */
                     
@@ -14774,6 +16823,10 @@
                                     <input type="checkbox" id="${SCRIPT_ID_PREFIX_ACU}-toast-mute-enabled-checkbox">
                                     <label for="${SCRIPT_ID_PREFIX_ACU}-toast-mute-enabled-checkbox">静默提示框（除填表/规划/导入/报错外，其它提示不弹窗）</label>
                                 </div>
+                                <div class="checkbox-group">
+                                    <input type="checkbox" id="${SCRIPT_ID_PREFIX_ACU}-prompt-template-enabled-checkbox">
+                                    <label for="${SCRIPT_ID_PREFIX_ACU}-prompt-template-enabled-checkbox">启用条件模板功能（<if>条件判断）</label>
+                                </div>
                             </div>
                             <p class="notes" style="margin-top: 10px;">手动更新会使用当前UI参数，对勾选的表进行更新；未勾选则默认更新全部表。</p>
                             <p class="notes" style="margin-top: 6px;">勾选“额外提示词”后，点击手动更新会弹出输入框，内容将写入AI指令预设中的 $8 占位符，仅本次操作生效。</p>
@@ -14899,6 +16952,11 @@
                                 <input type="checkbox" id="${SCRIPT_ID_PREFIX_ACU}-use-main-api-checkbox">
                                 <label for="${SCRIPT_ID_PREFIX_ACU}-use-main-api-checkbox">使用主API (直接使用酒馆当前API和模型)</label>
                             </div>
+                             <div class="checkbox-group" style="margin-top: 10px;">
+                                <input type="checkbox" id="${SCRIPT_ID_PREFIX_ACU}-streaming-enabled-checkbox">
+                                <label for="${SCRIPT_ID_PREFIX_ACU}-streaming-enabled-checkbox">启用流式传输 (Streaming)</label>
+                            </div>
+                            <small class="notes" style="display: block; margin-left: 0; margin-bottom: 10px;">开启后，所有AI调用将使用流式传输，可减少首字节响应时间。默认关闭。</small>
                             <div id="${SCRIPT_ID_PREFIX_ACU}-custom-api-fields">
                                 <p class="notes" style="color:var(--warning-color);"><b>安全提示:</b>API密钥将保存在浏览器本地存储中。</p>
                                 <label for="${SCRIPT_ID_PREFIX_ACU}-api-url">API基础URL:</label><input type="text" id="${SCRIPT_ID_PREFIX_ACU}-api-url">
@@ -15505,7 +17563,7 @@
     
     createACUWindow({
       id: windowId,
-      title: '魔·数据库 V',
+      title: '星·数据库 V',
       content: popupHtml,
       width: 1400,  // 基础宽度
       height: 900,  // 基础高度
@@ -15569,6 +17627,7 @@
       $autoUpdateEnabledCheckbox_ACU = $popupInstance_ACU.find(`#${SCRIPT_ID_PREFIX_ACU}-auto-update-enabled-checkbox`); // 获取复选框
       $standardizedTableFillEnabledCheckbox_ACU = $popupInstance_ACU.find(`#${SCRIPT_ID_PREFIX_ACU}-standardized-table-fill-enabled-checkbox`);
       $toastMuteEnabledCheckbox_ACU = $popupInstance_ACU.find(`#${SCRIPT_ID_PREFIX_ACU}-toast-mute-enabled-checkbox`);
+      $promptTemplateEnabledCheckbox_ACU = $popupInstance_ACU.find(`#${SCRIPT_ID_PREFIX_ACU}-prompt-template-enabled-checkbox`);
       $tableEditLastPairOnlyCheckbox_ACU = $popupInstance_ACU.find(`#${SCRIPT_ID_PREFIX_ACU}-tableedit-last-pair-only-checkbox`);
       $tableMaxRetriesInput_ACU = $popupInstance_ACU.find(`#${SCRIPT_ID_PREFIX_ACU}-table-max-retries`); // [新增] 填表重试次数
       $manualExtraHintCheckbox_ACU = $popupInstance_ACU.find(`#${SCRIPT_ID_PREFIX_ACU}-manual-extra-hint-checkbox`);
@@ -15582,6 +17641,7 @@
       $statusMessageSpan_ACU = $popupInstance_ACU.find(`#${SCRIPT_ID_PREFIX_ACU}-status-message`);
       $cardUpdateStatusDisplay_ACU = $popupInstance_ACU.find(`#${SCRIPT_ID_PREFIX_ACU}-card-update-status-display`); // Assign new UI element
       $useMainApiCheckbox_ACU = $popupInstance_ACU.find(`#${SCRIPT_ID_PREFIX_ACU}-use-main-api-checkbox`);
+      $streamingEnabledCheckbox_ACU = $popupInstance_ACU.find(`#${SCRIPT_ID_PREFIX_ACU}-streaming-enabled-checkbox`);
       const $importTemplateButton_ACU = $popupInstance_ACU.find(`#${SCRIPT_ID_PREFIX_ACU}-import-template`);
       const $exportTemplateButton_ACU = $popupInstance_ACU.find(`#${SCRIPT_ID_PREFIX_ACU}-export-template`);
       const $resetTemplateButton_ACU = $popupInstance_ACU.find(`#${SCRIPT_ID_PREFIX_ACU}-reset-template`);
@@ -16126,6 +18186,14 @@
             showToastr_ACU('info', `自定义API已切换为 ${settings_ACU.apiConfig.useMainApi ? '使用主API' : '使用独立配置'}`);
         });
       }
+      // [新增] 流式传输开关事件监听
+      if ($streamingEnabledCheckbox_ACU.length) {
+        $streamingEnabledCheckbox_ACU.on('change', function () {
+            settings_ACU.streamingEnabled = $(this).is(':checked');
+            saveSettings_ACU();
+            showToastr_ACU('info', `流式传输已${settings_ACU.streamingEnabled ? '启用' : '关闭'}`);
+        });
+      }
       if ($loadModelsButton_ACU.length) $loadModelsButton_ACU.on('click', fetchModelsAndConnect_ACU);
       if ($saveApiConfigButton_ACU.length) $saveApiConfigButton_ACU.on('click', saveApiConfig_ACU);
       if ($clearApiConfigButton_ACU.length) $clearApiConfigButton_ACU.on('click', clearApiConfig_ACU);
@@ -16334,6 +18402,19 @@
           // 该提示属于“导入/手动操作类”允许项，避免用户开启后无反馈
           showToastr_ACU('info', `静默提示框已 ${settings_ACU.toastMuteEnabled ? '开启' : '关闭'}`, {
             acuToastCategory: ACU_TOAST_CATEGORY_ACU.IMPORT,
+          });
+        });
+      }
+      if ($promptTemplateEnabledCheckbox_ACU && $promptTemplateEnabledCheckbox_ACU.length) {
+        $promptTemplateEnabledCheckbox_ACU.on('change', function () {
+          if (!settings_ACU.promptTemplateSettings) {
+            settings_ACU.promptTemplateSettings = { enabled: true, maxNestingDepth: 10, debugMode: false };
+          }
+          settings_ACU.promptTemplateSettings.enabled = jQuery_API_ACU(this).is(':checked');
+          saveSettings_ACU();
+          logDebug_ACU('条件模板功能启用状态已保存:', settings_ACU.promptTemplateSettings.enabled);
+          showToastr_ACU('info', `条件模板功能已 ${settings_ACU.promptTemplateSettings.enabled ? '开启' : '关闭'}`, {
+            acuToastCategory: ACU_TOAST_CATEGORY_ACU.MANUAL_TABLE,
           });
         });
       }
@@ -18367,7 +20448,7 @@ async function callCustomOpenAI_ACU(dynamicContent, abortController = null, opti
     };
 
     // Interpolate placeholders in each segment
-    promptSegments.forEach(segment => {
+    for (const segment of promptSegments) {
         let finalContent = segment.content;
         finalContent = finalContent.replace('$0', filterTableInjectedContent(dynamicContent.tableDataText, '$0'));
         finalContent = finalContent.replace('$1', filterTableInjectedContent(dynamicContent.messagesText, '$1'));
@@ -18378,9 +20459,31 @@ async function callCustomOpenAI_ACU(dynamicContent, abortController = null, opti
         finalContent = finalContent.replace(/\$U/g, filterTableInjectedContent(userInfoContent_Table, '$U'));
         finalContent = finalContent.replace(/\$C/g, filterTableInjectedContent(charInfoContent_Table, '$C'));
         
+        // [新增] 先让 st-prompt-template 插件处理提示词（如果存在）
+        if (typeof globalThis.EjsTemplate?.evalTemplate === 'function') {
+          try {
+            // 不传入 context，让 evalTemplate 自动调用 prepareContext()
+            // 这样可以确保上下文正确传递给 EJS 模板引擎
+            finalContent = await globalThis.EjsTemplate.evalTemplate(finalContent);
+            logDebug_ACU('[填表] 已通过 st-prompt-template 处理提示词');
+          } catch (e) {
+            logWarn_ACU('[填表] st-prompt-template 处理失败，使用原始内容:', e);
+          }
+        }
+        
+        // [新增] 再让数据库自身的条件模板处理
+        if (settings_ACU.promptTemplateSettings?.enabled !== false) {
+          // 构建条件模板上下文
+          const templateContext = {
+            seedContent: filterTableInjectedContent(dynamicContent.messagesText, '$1') + '\n' + (lastPlotContent || ''),
+            allTablesJson: currentJsonTableData_ACU
+          };
+          finalContent = parseIfBlocksInContent_ACU(finalContent, templateContext);
+        }
+        
         // Convert role to API-safe role
         messages.push({ role: normalizeRoleForApi_ACU(segment.role), content: finalContent });
-    });
+    }
 
     // Add the final instruction for the AI
     
@@ -18484,14 +20587,14 @@ async function callCustomOpenAI_ACU(dynamicContent, abortController = null, opti
     } else { // 'custom' mode
         // --- 使用自定义API ---
         if (effectiveApiConfig.useMainApi && !forceDirectApi) {
-            // 模式A: 使用主API
-            logDebug_ACU('ACU: 通过酒馆主API发送请求...');
+            // 模式A: 使用主API（流式传输）
+            logDebug_ACU('ACU: 通过酒馆主API发送请求（流式传输）...');
             if (typeof TavernHelper_API_ACU.generateRaw !== 'function') {
                 throw new Error('TavernHelper.generateRaw 函数不存在。请检查酒馆版本。');
             }
             const response = await TavernHelper_API_ACU.generateRaw({
                 ordered_prompts: messages,
-                should_stream: false, // 数据库更新不需要流式输出
+                should_stream: settings_ACU.streamingEnabled || false,
             });
             if (typeof response !== 'string') {
                 throw new Error('主API调用未返回预期的文本响应。');
@@ -18499,7 +20602,7 @@ async function callCustomOpenAI_ACU(dynamicContent, abortController = null, opti
             return response.trim();
 
         } else {
-            // 模式B: 使用独立配置的API
+            // 模式B: 使用独立配置的API（流式传输）
             if (forceDirectApi && effectiveApiConfig.useMainApi) {
                 if (effectiveApiConfig.url && effectiveApiConfig.model) {
                     logDebug_ACU('ACU: 并发模式启用，强制使用独立API路径。');
@@ -18510,7 +20613,7 @@ async function callCustomOpenAI_ACU(dynamicContent, abortController = null, opti
                     }
                     const response = await TavernHelper_API_ACU.generateRaw({
                         ordered_prompts: messages,
-                        should_stream: false,
+                        should_stream: settings_ACU.streamingEnabled || false,
                     });
                     if (typeof response !== 'string') {
                         throw new Error('主API调用未返回预期的文本响应。');
@@ -18531,7 +20634,7 @@ async function callCustomOpenAI_ACU(dynamicContent, abortController = null, opti
               "temperature": effectiveApiConfig.temperature,
               "top_p": effectiveApiConfig.top_p || 0.9,
               "max_tokens": effectiveApiConfig.max_tokens,
-              "stream": false,
+              "stream": settings_ACU.streamingEnabled || false,
               "chat_completion_source": "custom",
               "group_names": [],
               "include_reasoning": false,
@@ -18553,10 +20656,10 @@ async function callCustomOpenAI_ACU(dynamicContent, abortController = null, opti
               throw new Error(`API请求失败: ${response.status} ${errTxt}`);
             }
             
-            const data = await response.json();
-            // The new backend API returns the content directly in the response
-            if (data && data.choices && data.choices[0] && data.choices[0].message && data.choices[0].message.content) {
-                return data.choices[0].message.content.trim();
+            // 根据streamingEnabled设置选择响应处理方式
+            const content = await handleApiResponse_ACU(response, abortSignal);
+            if (content) {
+                return content.trim();
             }
             throw new Error('API响应格式不正确或内容为空。');
         }
@@ -19564,22 +21667,22 @@ async function callCustomOpenAI_ACU(dynamicContent, abortController = null, opti
                       else throw new Error('API请求返回不成功状态');
                   } else {
                       if (settings_ACU.apiConfig.useMainApi) {
-                          aiResponseText = await TavernHelper_API_ACU.generateRaw({ ordered_prompts: finalMessages, should_stream: false });
+                          aiResponseText = await TavernHelper_API_ACU.generateRaw({ ordered_prompts: finalMessages, should_stream: settings_ACU.streamingEnabled || false });
                       } else {
                           const res = await fetch(`/api/backends/chat-completions/generate`, {
                               method: 'POST',
                               headers: { ...SillyTavern.getRequestHeaders(), 'Content-Type': 'application/json' },
                               body: JSON.stringify({
                                   "messages": finalMessages, "model": settings_ACU.apiConfig.model, "temperature": settings_ACU.apiConfig.temperature,
-                                  "max_tokens": settings_ACU.apiConfig.max_tokens || 4096, "stream": false, "chat_completion_source": "custom",
+                                  "max_tokens": settings_ACU.apiConfig.max_tokens || 4096, "stream": settings_ACU.streamingEnabled || false, "chat_completion_source": "custom",
                                   "reverse_proxy": settings_ACU.apiConfig.url, "custom_url": settings_ACU.apiConfig.url,
                                   "custom_include_headers": settings_ACU.apiConfig.apiKey ? `Authorization: Bearer ${settings_ACU.apiConfig.apiKey}` : ""
                               })
                           });
                           if (!res.ok) throw new Error(`API请求失败: ${res.status} ${await res.text()}`);
-                          const data = await res.json();
-                          if (data?.choices?.[0]?.message?.content) aiResponseText = data.choices[0].message.content;
-                          else throw new Error('API返回的数据格式不正确');
+                          // 根据streamingEnabled设置选择响应处理方式
+                          aiResponseText = await handleApiResponse_ACU(res);
+                          if (!aiResponseText) throw new Error('API返回的数据格式不正确');
                       }
                   }
 
@@ -20216,26 +22319,26 @@ async function callCustomOpenAI_ACU(dynamicContent, abortController = null, opti
                           else throw new Error('API请求返回不成功状态');
                       } else {
                           if (settings_ACU.apiConfig.useMainApi) {
-                              aiResponseText = await TavernHelper_API_ACU.generateRaw({ ordered_prompts: finalMessages, should_stream: false });
-                          } else {
-                               const res = await fetch(`/api/backends/chat-completions/generate`, {
-                                   method: 'POST',
-                                   headers: { ...SillyTavern.getRequestHeaders(), 'Content-Type': 'application/json' },
-                                   body: JSON.stringify({
-                                       "messages": finalMessages, "model": settings_ACU.apiConfig.model, "temperature": settings_ACU.apiConfig.temperature,
-                                       "max_tokens": settings_ACU.apiConfig.max_tokens || 4096, "stream": false, "chat_completion_source": "custom",
-                                       "reverse_proxy": settings_ACU.apiConfig.url, "custom_url": settings_ACU.apiConfig.url,
-                                       "custom_include_headers": settings_ACU.apiConfig.apiKey ? `Authorization: Bearer ${settings_ACU.apiConfig.apiKey}` : ""
-                                   })
-                               });
-                               if (!res.ok) throw new Error(`API请求失败: ${res.status} ${await res.text()}`);
-                               const data = await res.json();
-                               if (data?.choices?.[0]?.message?.content) aiResponseText = data.choices[0].message.content;
-                               else throw new Error('API返回的数据格式不正确');
-                          }
-                      }
+                               aiResponseText = await TavernHelper_API_ACU.generateRaw({ ordered_prompts: finalMessages, should_stream: settings_ACU.streamingEnabled || false });
+                           } else {
+                                const res = await fetch(`/api/backends/chat-completions/generate`, {
+                                    method: 'POST',
+                                    headers: { ...SillyTavern.getRequestHeaders(), 'Content-Type': 'application/json' },
+                                    body: JSON.stringify({
+                                        "messages": finalMessages, "model": settings_ACU.apiConfig.model, "temperature": settings_ACU.apiConfig.temperature,
+                                        "max_tokens": settings_ACU.apiConfig.max_tokens || 4096, "stream": settings_ACU.streamingEnabled || false, "chat_completion_source": "custom",
+                                        "reverse_proxy": settings_ACU.apiConfig.url, "custom_url": settings_ACU.apiConfig.url,
+                                        "custom_include_headers": settings_ACU.apiConfig.apiKey ? `Authorization: Bearer ${settings_ACU.apiConfig.apiKey}` : ""
+                                    })
+                                });
+                                if (!res.ok) throw new Error(`API请求失败: ${res.status} ${await res.text()}`);
+                                // 根据streamingEnabled设置选择响应处理方式
+                                aiResponseText = await handleApiResponse_ACU(res);
+                                if (!aiResponseText) throw new Error('API返回的数据格式不正确');
+                           }
+                       }
 
-                      const extractResult = extractTableEditInner_ACU(aiResponseText, { allowNoTableEditTags: true });
+                       const extractResult = extractTableEditInner_ACU(aiResponseText, { allowNoTableEditTags: true });
                       if (!extractResult || !extractResult.inner) {
                           throw new Error('AI未返回有效的 <tableEdit> 块（缺少 <tableEdit> 边界或 <!-- --> 注释块不完整）。');
                       }
@@ -23755,24 +25858,26 @@ async function callCustomOpenAI_ACU(dynamicContent, abortController = null, opti
                 profileId, messages, settings_ACU.apiConfig.max_tokens || 4096
           ).then(r => r.result.choices[0].message.content);
       } else {
-          // Custom API
+          // Custom API（流式传输）
           if (settings_ACU.apiConfig.useMainApi) {
-             return await TavernHelper_API_ACU.generateRaw({ ordered_prompts: messages, should_stream: false });
+             return await TavernHelper_API_ACU.generateRaw({ ordered_prompts: messages, should_stream: settings_ACU.streamingEnabled || false });
           } else {
              const url = `/api/backends/chat-completions/generate`;
              const body = JSON.stringify({
                  messages: messages,
                  model: settings_ACU.apiConfig.model,
                  max_tokens: settings_ACU.apiConfig.max_tokens,
-                 stream: false,
+                 stream: settings_ACU.streamingEnabled || false,
+                 chat_completion_source: "custom",
                  // ... other params
                  reverse_proxy: settings_ACU.apiConfig.url,
                  custom_url: settings_ACU.apiConfig.url,
                  custom_include_headers: settings_ACU.apiConfig.apiKey ? `Authorization: Bearer ${settings_ACU.apiConfig.apiKey}` : ""
              });
              const res = await fetch(url, { method: 'POST', headers: {...SillyTavern.getRequestHeaders(), 'Content-Type': 'application/json'}, body });
-             const data = await res.json();
-             return data.choices[0].message.content;
+             // 根据streamingEnabled设置选择响应处理方式
+             const content = await handleApiResponse_ACU(res);
+             return content;
           }
       }
   }

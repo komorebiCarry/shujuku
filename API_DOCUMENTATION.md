@@ -20,6 +20,7 @@ if (window.AutoCardUpdaterAPI) {
 
 - [剧情推进预设管理 API](#剧情推进预设管理-api)
 - [数据导入导出 API](#数据导入导出-api)
+- [表格操作 API](#表格操作-api)
 - [设置与更新 API](#设置与更新-api)
 - [世界书操作 API](#世界书操作-api)
 - [TXT导入链路 API](#txt导入链路-api)
@@ -28,6 +29,7 @@ if (window.AutoCardUpdaterAPI) {
 - [更新配置参数 API](#更新配置参数-api)
 - [手动更新表选择 API](#手动更新表选择-api)
 - [API 预设管理 API](#api-预设管理-api)
+- [AI 调用 API](#ai-调用-api)
 
 ---
 
@@ -199,6 +201,126 @@ const success = await window.AutoCardUpdaterAPI.importTableAsJson(jsonData);
 
 ---
 
+### `updateCell(tableName, rowIndex, colIdentifier, value)`
+
+更新指定表格中单个单元格的值。
+
+**参数**:
+| 参数名| 类型 | 必填 | 说明 |
+|--------|------|------|------|
+| tableName | string | 是 | 表格名称 |
+| rowIndex | number | 是 | 行索引（0为表头，1为第一行数据） |
+| colIdentifier | string \| number | 是 | | 列标识（列名或列索引） |
+| value | any | 是 | 新的单元格值 |
+
+**返回值**: `Promise<boolean>` - 成功返回true，失败返回false
+
+**说明**:
+- 使用列名时，会自动查找对应的列索引
+- 更新后会自动保存到聊天历史
+- 如果表格不存在或参数无效，返回false
+
+**示例**:
+```javascript
+// 使用列名更新
+const success = await window.AutoCardUpdaterAPI.updateCell('主角信息', 1, '自由点数', 5);
+
+// 使用列索引更新（假设第3列是自由点数）
+const success2 = await window.AutoCardUpdaterAPI.updateCell('主角信息', 1, 3, 5);
+```
+
+---
+
+### `updateRow(tableName, rowIndex, data)`
+
+更新指定表格中整行的数据（按列名-值映射）。
+
+**参数**:
+| 参数名| 类型 | 必填 | 说明 |
+| -------- | ------ | ------ | ------ |
+| tableName | string | 是 | 表格名称 |
+| rowIndex | number | 是 | 行索引（1为第一行数据） |
+| data | object | 是 | 列名-值映射对象 |
+
+**返回值**: `Promise<boolean>` - 成功返回true，失败返回false
+
+**说明**:
+- data对象中的键值对应于表格的列名和单元格值
+- 只更新data中指定的列，其他列保持不变
+- **表的最新楼层保存**：更新后会自动查找该表数据最后一次出现的楼层，并保存到该楼层
+- **世界书刷新**：保存后会自动触发世界书重新写入，确保前端能读取到最新数据
+- 如果找不到该表的楼层（新表格），会保存到最新AI楼层
+
+**示例**:
+```javascript
+const success = await window.AutoCardUpdaterAPI.updateRow('主角信息', 1, {
+    '力量': 15,
+    '敏捷': 12,
+    '体质': 14,
+    '智力': 8,
+    '感知': 16,
+    '魅力': 10,
+    '自由点数': 2
+});
+```
+
+---
+
+### `insertRow(tableName, data)`
+
+在指定表格的表尾插入新行。
+
+**参数**:
+| 参数名| 类型 | 必填 | 说明 |
+|--------|------|------|------|
+| tableName | string | 是 | 表格名称 |
+| data | object | 是 | 列名-值映射对象 |
+
+**返回值**: `Promise<number>` - 成功返回新行索引，失败返回-1
+
+**说明**:
+- 新行会插入到表头之后（索引为行数）
+- 插入后会自动保存到聊天历史
+
+**示例**:
+```javascript
+const rowIndex = await window.AutoCardUpdaterAPI.insertRow('背包物品', {
+    '物品名称': '治疗药水',
+    '数量': 3,
+    '类别': '消耗品',
+    '描述/效果': '恢复50点生命值'
+});
+
+if (rowIndex !== -1) {
+    console.log("新行索引:", rowIndex);
+}
+```
+
+---
+
+### `deleteRow(tableName, rowIndex)`
+
+删除指定表格中的某行。
+
+**参数**:
+| 参数名| 类型 | 必填 | 说明 |
+|--------|------|------|------|
+| tableName | string | 是 | 表格名称 |
+| rowIndex | number | 是 | 要删除的行索引（1为第一行数据） |
+
+**返回值**: `Promise<boolean>` - 成功返回true，失败返回false
+
+**说明**:
+- 不能删除表头（rowIndex=0）
+- 删除后会自动保存到聊天历史
+
+**示例**:
+```javascript
+const success = await window.AutoCardUpdaterAPI.deleteRow('背包物品', 3);
+```
+
+---
+
 ### `importCombinedSettings()`
 
 导入组合设置（会弹出文件选择对话框）。
@@ -303,6 +425,31 @@ window.AutoCardUpdaterAPI.openVisualizer();
 **示例**:
 ```javascript
 await window.AutoCardUpdaterAPI.syncWorldbookEntries({ createIfNeeded: true });
+```
+
+---
+
+### `refreshDataAndWorldbook()`
+
+强制刷新数据并重新注入世界书。用于前端完成数据写入后，强制触发一次完整的数据合并和世界书更新。
+
+**返回值**: `Promise<boolean>` - 刷新是否成功
+
+**说明**:
+- 重新加载聊天记录中的所有表格数据
+- 合并所有独立表的数据
+- 更新世界书条目
+- 通知前端刷新 UI
+
+**使用场景**:
+- 前端通过 `updateRow`、`insertRow`、`deleteRow` 等 API 修改表格数据后
+- 需要确保世界书中的数据与表格数据同步时
+
+**示例**:
+```javascript
+// 修改表格数据后刷新世界书
+await window.AutoCardUpdaterAPI.updateRow('主角信息', 1, { '力量': 15 });
+await window.AutoCardUpdaterAPI.refreshDataAndWorldbook();
 ```
 
 ---
@@ -1169,6 +1316,91 @@ window.AutoCardUpdaterAPI.deleteApiPreset('测试预设');
 
 ---
 
+## AI 调用 API
+
+### `callAI(messages, options)`
+
+调用 AI 生成内容，使用数据库当前配置的 API。
+
+**参数**:
+| 参数名 | 类型 | 必填 | 说明 |
+|--------|------|------|------|
+| messages | Array | 是 | 消息数组，格式: `[{role: 'system'\|'user'\|'assistant', content: '...'}]` |
+| options.max_tokens | number | 否 | 最大 token 数，默认使用数据库配置或 4096 |
+
+**返回值**: `Promise<string|null>` - AI 返回的文本内容，失败返回 `null`
+
+**说明**:
+- 使用数据库插件中配置的 API 设置（API URL、模型、密钥等）
+- 支持两种 API 模式：
+  - **酒馆 Profile 模式** (`apiMode === 'tavern'`)：使用酒馆的 Connection Manager
+  - **自定义 API 模式** (`apiMode === 'custom'`)：
+    - 如果启用 `useMainApi`，使用酒馆主 API（`TavernHelper.generateRaw`）
+    - 否则使用独立配置的 API（流式传输）
+- 前端插件可以通过此方法直接调用 AI，无需自行配置 API
+
+**使用场景**:
+- 前端插件需要调用 AI 生成内容（如地图生成、剧情分析等）
+- 避免在前端重复配置 API 信息
+- 统一使用数据库插件的 API 配置
+
+**示例**:
+```javascript
+// 检查 API 是否可用
+if (window.AutoCardUpdaterAPI && typeof window.AutoCardUpdaterAPI.callAI === 'function') {
+    const messages = [
+        { role: 'system', content: '你是一个有帮助的助手。' },
+        { role: 'user', content: '请生成一个奇幻场景的描述。' }
+    ];
+    
+    const response = await window.AutoCardUpdaterAPI.callAI(messages, { max_tokens: 2000 });
+    
+    if (response) {
+        console.log('AI 响应:', response);
+    } else {
+        console.error('AI 调用失败');
+    }
+}
+```
+
+---
+
+### `getStoryContext(maxTurns)`
+
+获取最近剧情上下文（从聊天记录，仅 AI 消息）。
+
+**参数**:
+| 参数名 | 类型 | 必填 | 说明 |
+|--------|------|------|------|
+| maxTurns | number | 否 | 最大回合数，默认 3 |
+
+**返回值**: `string` - 剧情上下文文本（多条消息用 `\n\n` 分隔）
+
+**说明**:
+- 从最新的聊天记录向前遍历
+- 只获取 AI 的回复消息（`is_user === false`）
+- 返回的消息按时间顺序排列（旧消息在前）
+
+**使用场景**:
+- 获取最近的剧情内容用于上下文分析
+- 为 AI 调用提供剧情背景
+
+**示例**:
+```javascript
+// 获取最近 5 轮对话的剧情上下文
+const context = window.AutoCardUpdaterAPI.getStoryContext(5);
+console.log('最近剧情:', context);
+
+// 配合 callAI 使用
+const messages = [
+    { role: 'system', content: '你是剧情分析助手。' },
+    { role: 'user', content: `请分析以下剧情的发展趋势：\n\n${context}` }
+];
+const analysis = await window.AutoCardUpdaterAPI.callAI(messages);
+```
+
+---
+
 ## 注意事项
 
 1. **API 可用性检查**: 在调用任何 API 方法前，请先检查 `window.AutoCardUpdaterAPI` 是否存在。
@@ -1195,3 +1427,4 @@ window.AutoCardUpdaterAPI.deleteApiPreset('测试预设');
 | 1.1 | 新增剧情推进预设管理 API：`getPlotPresets()`, `getPlotPresetNames()`, `getCurrentPlotPreset()`, `switchPlotPreset()`, `getPlotPresetDetails()` |
 | 1.2 | 新增前端导入 API：`importTemplateFromData()`, `importPlotPresetFromData()`, `importPlotPresetsFromData()`, `getTableTemplate()`, `exportAllPlotPresets()` |
 | 1.3 | 新增更新配置参数 API：`getUpdateConfigParams()`, `setUpdateConfigParams()`；新增手动更新表选择 API：`getManualSelectedTables()`, `setManualSelectedTables()`, `clearManualSelectedTables()`；新增 API 预设管理 API：`getApiPresets()`, `getTableApiPreset()`, `setTableApiPreset()`, `getPlotApiPreset()`, `setPlotApiPreset()`, `saveApiPreset()`, `loadApiPreset()`, `deleteApiPreset()` |
+| 1.4 | 新增 AI 调用 API：`callAI(messages, options)` 使用数据库配置的 API 调用 AI；`getStoryContext(maxTurns)` 获取最近剧情上下文 |
