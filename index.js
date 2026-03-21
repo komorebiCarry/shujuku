@@ -1949,73 +1949,219 @@
   // --- [正文优化] 核心函数 ---
   
   /**
+   * 获取正文优化使用的占位符内容
+   * @param {string} userMessage - 用户消息（用于$8占位符）
+   * @returns {Promise<object>} 占位符内容映射
+   */
+  async function getOptimizationPlaceholders_ACU(userMessage = '') {
+    const placeholders = {
+      $1: '',   // 世界书内容
+      $5: '',   // 纪要表/总体大纲表内容
+      $6: '',   // 上一轮剧情规划数据
+      $7: '',   // 前文上下文
+      $8: userMessage,  // 本轮用户输入
+      $U: '',   // 用户设定描述
+      $C: ''    // 角色描述
+    };
+
+    try {
+      // $1: 世界书内容（使用剧情推进的世界书读取逻辑）
+      const plotSettings = settings_ACU.plotSettings || {};
+      placeholders.$1 = await getWorldbookContentForPlot_ACU(plotSettings, userMessage, '');
+      logDebug_ACU('[正文优化] $1 世界书内容:', placeholders.$1 ? `长度=${placeholders.$1.length}` : '(空)');
+    } catch (e) {
+      logWarn_ACU('[正文优化] 获取世界书内容失败:', e);
+    }
+
+    try {
+      // $5: 纪要表/总体大纲表内容
+      if (currentJsonTableData_ACU && typeof currentJsonTableData_ACU === 'object') {
+        const summaryIndexResult = formatSummaryIndexForPlot_ACU(currentJsonTableData_ACU);
+        if (summaryIndexResult.success) {
+          placeholders.$5 = summaryIndexResult.content;
+        } else {
+          placeholders.$5 = formatOutlineTableForPlot_ACU(currentJsonTableData_ACU);
+        }
+        logDebug_ACU('[正文优化] $5 纪要表内容:', placeholders.$5 ? `长度=${placeholders.$5.length}` : '(空)');
+      }
+    } catch (e) {
+      logWarn_ACU('[正文优化] 获取纪要表内容失败:', e);
+    }
+
+    try {
+      // $6: 上一轮剧情规划数据
+      placeholders.$6 = getPlotFromHistory_ACU() || '';
+      logDebug_ACU('[正文优化] $6 上轮规划数据:', placeholders.$6 ? `长度=${placeholders.$6.length}` : '(空)');
+    } catch (e) {
+      logWarn_ACU('[正文优化] 获取上轮规划数据失败:', e);
+    }
+
+    try {
+      // $7: 前文上下文（仅AI输出）
+      const chat = SillyTavern_API_ACU.chat || [];
+      const contextMessages = chat
+        .filter(msg => !msg.is_user)
+        .slice(-10) // 最近10条AI消息
+        .map(msg => `assistant："${msg.mes || ''}"`)
+        .join('\n');
+      placeholders.$7 = contextMessages ? `以下是前文的故事发展（AI输出）：\n${contextMessages}` : '';
+      logDebug_ACU('[正文优化] $7 前文上下文:', placeholders.$7 ? `长度=${placeholders.$7.length}` : '(空)');
+    } catch (e) {
+      logWarn_ACU('[正文优化] 获取前文上下文失败:', e);
+    }
+
+    try {
+      // $U: 用户设定描述 (persona_description)
+      const stContext = window.SillyTavern?.getContext?.();
+      placeholders.$U = stContext?.powerUserSettings?.persona_description
+        || window.power_user?.persona_description
+        || SillyTavern_API_ACU?.powerUserSettings?.persona_description
+        || '';
+      logDebug_ACU('[正文优化] $U 用户设定:', placeholders.$U ? '成功' : '(空)');
+    } catch (e) {
+      logWarn_ACU('[正文优化] 获取用户设定失败:', e);
+    }
+
+    try {
+      // $C: 角色描述 (char_description)
+      const stContext = window.SillyTavern?.getContext?.();
+      let character = null;
+      if (TavernHelper_API_ACU?.getCharData) {
+        character = TavernHelper_API_ACU.getCharData('current');
+      }
+      if (!character) {
+        character = SillyTavern_API_ACU?.characters?.[SillyTavern_API_ACU?.this_chid]
+          || stContext?.characters?.[stContext?.characterId]
+          || (typeof characters !== 'undefined' && typeof this_chid !== 'undefined' ? characters[this_chid] : null);
+      }
+      placeholders.$C = character?.description
+        || character?.data?.description
+        || stContext?.name2_description
+        || '';
+      logDebug_ACU('[正文优化] $C 角色描述:', placeholders.$C ? '成功' : '(空)');
+    } catch (e) {
+      logWarn_ACU('[正文优化] 获取角色描述失败:', e);
+    }
+
+    return placeholders;
+  }
+
+  /**
    * 执行正文优化
    * @param {string} content - 需要优化的正文内容
    * @param {object} options - 优化选项
+   * @param {number} options.currentLoop - 当前循环次数
+   * @param {string} options.userMessage - 用户消息（用于占位符）
    * @returns {Promise<object>} 优化结果 { success, optimizations, summary, optimizedContent }
    */
    async function performContentOptimization_ACU(content, options = {}) {
      const config = settings_ACU.contentOptimizationSettings || {};
      const maxLength = config.maxOptimizations || 10;
+     const currentLoop = options.currentLoop || 1;
+     const totalLoops = config.loopCount || 1;
+     const maxRetries = config.retryCount || 3;
+      
+     logDebug_ACU(`[正文优化] 开始执行正文优化，循环 ${currentLoop}/${totalLoops}，原始内容长度:`, content.length);
      
-     logDebug_ACU('[正文优化] 开始执行正文优化，原始内容长度:', content.length);
-    
-    try {
-      // 1. 构建提示词消息
-      const promptGroup = config.promptGroup && config.promptGroup.length > 0
-        ? config.promptGroup
-        : DEFAULT_CONTENT_OPTIMIZATION_PROMPT_GROUP_ACU;
-      
-      // 替换占位符并转换role为小写（某些API如豆包只接受小写role）
-      const messages = JSON.parse(JSON.stringify(promptGroup));
-      messages.forEach(item => {
-        if (item.content && typeof item.content === 'string') {
-          item.content = item.content.replace(/\$CONTENT/g, content);
-        }
-        // 转换role为小写
-        if (item.role && typeof item.role === 'string') {
-          item.role = item.role.toLowerCase();
-        }
-      });
-      
-      // 2. 调用AI API
-      logDebug_ACU('[正文优化] 调用AI API...');
-      // [修复] 传递API预设参数，不再硬编码max_tokens，使用预设配置中的值
-      const apiPreset = config.apiPreset || '';
-      logDebug_ACU(`[正文优化] 使用API预设: ${apiPreset || '当前配置'}`);
-      const responseContent = await topLevelWindow_ACU.AutoCardUpdaterAPI.callAI(messages, {
-        presetName: apiPreset
-      });
-      
-      if (!responseContent) {
-        throw new Error('AI API 返回空响应');
-      }
-      
-      // 4. 解析优化结果
-      const parsed = parseOptimizationResponse_ACU(responseContent, maxLength);
-      
-      if (!parsed.success) {
-        logDebug_ACU('[正文优化] 解析失败或无优化项');
-        return { success: false, error: parsed.error || '解析失败' };
-      }
-      
-      // 5. 应用优化到正文
-      const optimizedContent = applyOptimizations_ACU(content, parsed.optimizations);
-      
-      logDebug_ACU(`[正文优化] 完成，共 ${parsed.optimizations.length} 个优化项`);
-      
-      return {
-        success: true,
-        optimizations: parsed.optimizations,
-        summary: parsed.summary,
-        optimizedContent: optimizedContent
-      };
-      
-    } catch (error) {
-      logError_ACU('[正文优化] 执行失败:', error);
-      return { success: false, error: error.message };
-    }
-  }
+     // 1. 获取占位符内容
+     const placeholders = await getOptimizationPlaceholders_ACU(options.userMessage || '');
+     
+     // 2. 构建提示词消息
+     const promptGroup = config.promptGroup && config.promptGroup.length > 0
+       ? config.promptGroup
+       : DEFAULT_CONTENT_OPTIMIZATION_PROMPT_GROUP_ACU;
+     
+     // 替换占位符并转换role为小写（某些API如豆包只接受小写role）
+     const messages = JSON.parse(JSON.stringify(promptGroup));
+     messages.forEach(item => {
+       if (item.content && typeof item.content === 'string') {
+         // 替换 $CONTENT 占位符
+         item.content = item.content.replace(/\$CONTENT/g, content);
+         // 替换剧情推进占位符
+         for (const [key, value] of Object.entries(placeholders)) {
+           if (value && typeof value === 'string') {
+             const regex = new RegExp(`\\${key}`, 'g');
+             item.content = item.content.replace(regex, value);
+           }
+         }
+       }
+       // 转换role为小写
+       if (item.role && typeof item.role === 'string') {
+         item.role = item.role.toLowerCase();
+       }
+     });
+     
+     // 3. 调用AI API（带自动重试）
+     const apiPreset = config.apiPreset || '';
+     logDebug_ACU(`[正文优化] 使用API预设: ${apiPreset || '当前配置'}`);
+     
+     let lastError = null;
+     let responseContent = null;
+     
+     for (let attempt = 1; attempt <= maxRetries; attempt++) {
+       try {
+         logDebug_ACU(`[正文优化] 调用AI API... (尝试 ${attempt}/${maxRetries})`);
+         responseContent = await topLevelWindow_ACU.AutoCardUpdaterAPI.callAI(messages, {
+           presetName: apiPreset
+         });
+         
+         if (responseContent) {
+           // API调用成功，跳出重试循环
+           break;
+         }
+         
+         // 空响应视为失败
+         lastError = new Error('AI API 返回空响应');
+         logDebug_ACU(`[正文优化] API返回空响应，尝试 ${attempt}/${maxRetries}`);
+       } catch (error) {
+         lastError = error;
+         logError_ACU(`[正文优化] API调用失败 (尝试 ${attempt}/${maxRetries}):`, error);
+         
+         if (attempt < maxRetries) {
+           // 等待一段时间后重试（指数退避：1秒、2秒、4秒...）
+           const delayMs = Math.min(1000 * Math.pow(2, attempt - 1), 10000);
+           logDebug_ACU(`[正文优化] 等待 ${delayMs}ms 后重试...`);
+           await new Promise(resolve => setTimeout(resolve, delayMs));
+         }
+       }
+     }
+     
+     // 检查是否所有重试都失败
+     if (!responseContent) {
+       logError_ACU(`[正文优化] 所有重试均失败 (${maxRetries}次)`);
+       return {
+         success: false,
+         error: lastError ? lastError.message : 'API调用失败，已达到最大重试次数',
+         retryExhausted: true
+       };
+     }
+     
+     try {
+       // 4. 解析优化结果
+       const parsed = parseOptimizationResponse_ACU(responseContent, maxLength);
+       
+       if (!parsed.success) {
+         logDebug_ACU('[正文优化] 解析失败或无优化项');
+         return { success: false, error: parsed.error || '解析失败' };
+       }
+       
+       // 5. 应用优化到正文
+       const optimizedContent = applyOptimizations_ACU(content, parsed.optimizations);
+       
+       logDebug_ACU(`[正文优化] 循环 ${currentLoop}/${totalLoops} 完成，共 ${parsed.optimizations.length} 个优化项`);
+       
+       return {
+         success: true,
+         optimizations: parsed.optimizations,
+         summary: parsed.summary,
+         optimizedContent: optimizedContent
+       };
+       
+     } catch (error) {
+       logError_ACU('[正文优化] 解析/应用失败:', error);
+       return { success: false, error: error.message };
+     }
+   }
   
   /**
    * 获取正文优化使用的API配置
@@ -2241,6 +2387,16 @@
     
     let content = message.mes || '';
     
+    // [新增] 获取用户消息（用于$8占位符）
+    let userMessage = '';
+    // 从当前消息往前找最近的用户消息
+    for (let i = messageIndex - 1; i >= 0; i--) {
+      if (chat[i] && chat[i].is_user) {
+        userMessage = chat[i].mes || '';
+        break;
+      }
+    }
+    
     // [新增] 应用标签筛选规则
     const extractTags = (config.extractTags || '').trim();
     const extractRules = config.extractRules || [];
@@ -2262,38 +2418,85 @@
       return false;
     }
     
-    logDebug_ACU(`[正文优化] 开始优化消息 ${messageIndex}，原始长度 ${content.length}，处理后长度 ${processedContent.length}`);
+    // [新增] 获取循环优化次数
+    const loopCount = config.loopCount || 1;
+    logDebug_ACU(`[正文优化] 开始优化消息 ${messageIndex}，原始长度 ${content.length}，处理后长度 ${processedContent.length}，循环次数: ${loopCount}`);
     
     // 无感模式：显示遮罩
     if (config.seamlessMode) {
-      showOptimizationOverlay_ACU('正在优化正文...');
+      showOptimizationOverlay_ACU(loopCount > 1 ? `正在优化正文 (1/${loopCount})...` : '正在优化正文...');
     }
     
     try {
-      // 执行优化
-      const result = await performContentOptimization_ACU(content);
-      
-      if (!result.success) {
-        logDebug_ACU('[正文优化] 优化失败:', result.error);
-        if (config.seamlessMode) {
-          hideOptimizationOverlay_ACU();
-        }
-        return false;
-      }
-      
-      // 检查是否有实际优化
-      if (!result.optimizations || result.optimizations.length === 0) {
-        logDebug_ACU('[正文优化] 无需优化，原文已足够好');
-        if (config.seamlessMode) {
-          hideOptimizationOverlay_ACU();
-        }
-        return true;
-      }
-      
-      // 应用优化
+      // [修改] 如果是自动应用或无感模式，执行原有逻辑（所有循环完成后统一应用）
+      // 如果是手动确认模式，使用新的逐轮确认逻辑
       if (config.autoApply || config.seamlessMode) {
+        // 自动应用模式：所有循环完成后统一应用
+        let currentContent = content;
+        let totalOptimizations = [];
+        let finalOptimizedContent = content;
+        
+        for (let loop = 1; loop <= loopCount; loop++) {
+          logDebug_ACU(`[正文优化] 执行第 ${loop}/${loopCount} 轮优化`);
+          
+          // 更新遮罩提示
+          if (config.seamlessMode && loopCount > 1) {
+            showOptimizationOverlay_ACU(`正在优化正文 (${loop}/${loopCount})...`);
+          }
+          
+          // 执行优化
+          const result = await performContentOptimization_ACU(currentContent, {
+            currentLoop: loop,
+            userMessage: userMessage
+          });
+          
+          if (!result.success) {
+            logDebug_ACU(`[正文优化] 第 ${loop} 轮优化失败:`, result.error);
+            // 如果是第一轮就失败，直接返回失败
+            if (loop === 1) {
+              if (config.seamlessMode) {
+                hideOptimizationOverlay_ACU();
+              }
+              return false;
+            }
+            // 如果是后续轮次失败，使用之前的结果
+            break;
+          }
+          
+          // 检查是否有实际优化
+          if (!result.optimizations || result.optimizations.length === 0) {
+            logDebug_ACU(`[正文优化] 第 ${loop} 轮无需优化，原文已足够好`);
+            // 如果没有优化项，说明已经足够好，可以提前结束
+            if (loop === 1) {
+              if (config.seamlessMode) {
+                hideOptimizationOverlay_ACU();
+              }
+              return true;
+            }
+            break;
+          }
+          
+          // 累积优化项
+          totalOptimizations = totalOptimizations.concat(result.optimizations);
+          finalOptimizedContent = result.optimizedContent;
+          
+          // 更新当前内容为优化后的内容，用于下一轮优化
+          currentContent = result.optimizedContent;
+          
+          logDebug_ACU(`[正文优化] 第 ${loop} 轮完成，本轮 ${result.optimizations.length} 个优化项，累计 ${totalOptimizations.length} 个`);
+        }
+        
+        // 检查是否有任何优化
+        if (totalOptimizations.length === 0) {
+          logDebug_ACU('[正文优化] 所有轮次均无需优化');
+          if (config.seamlessMode) {
+            hideOptimizationOverlay_ACU();
+          }
+          return true;
+        }
+        
         // 自动应用
-        await replaceChatMessage_ACU(messageIndex, result.optimizedContent);
+        await replaceChatMessage_ACU(messageIndex, finalOptimizedContent);
         
         if (config.seamlessMode) {
           hideOptimizationOverlay_ACU();
@@ -2301,17 +2504,19 @@
         
         // 显示优化结果提示
         if (config.showDiff && !config.seamlessMode) {
-          showOptimizationDiff_ACU(result);
+          showOptimizationDiff_ACU({
+            optimizations: totalOptimizations,
+            summary: `共 ${loopCount} 轮优化，累计 ${totalOptimizations.length} 处改进`,
+            optimizedContent: finalOptimizedContent
+          });
         } else {
-          showToastr_ACU('success', `正文优化完成，共 ${result.optimizations.length} 处改进`);
+          showToastr_ACU('success', `正文优化完成，共 ${loopCount} 轮优化，累计 ${totalOptimizations.length} 处改进`);
         }
         
         return true;
       } else {
-        // 显示对比让用户选择
-        hideOptimizationOverlay_ACU();
-        showOptimizationDiffDialog_ACU(messageIndex, result);
-        return true;
+        // 手动确认模式：逐轮确认
+        return await executeContentOptimizationWithConfirm_ACU(messageIndex, content, userMessage, loopCount);
       }
       
     } catch (error) {
@@ -2324,25 +2529,270 @@
   }
   
   /**
+   * 执行正文优化（手动确认模式，逐轮确认）
+   * @param {number} messageIndex - 消息索引
+   * @param {string} content - 原始内容
+   * @param {string} userMessage - 用户消息
+   * @param {number} totalLoops - 总循环次数
+   * @param {number} currentLoop - 当前循环次数（内部使用）
+   * @param {string} currentContent - 当前内容（内部使用）
+   * @param {Array} totalOptimizations - 累计优化项（内部使用）
+   * @returns {Promise<boolean>} 是否成功
+   */
+  async function executeContentOptimizationWithConfirm_ACU(messageIndex, content, userMessage, totalLoops, currentLoop = 1, currentContent = null, totalOptimizations = []) {
+    // 使用传入的当前内容，或者原始内容
+    let workingContent = currentContent !== null ? currentContent : content;
+    
+    logDebug_ACU(`[正文优化-手动确认] 执行第 ${currentLoop}/${totalLoops} 轮优化`);
+    
+    // 执行优化
+    const result = await performContentOptimization_ACU(workingContent, {
+      currentLoop: currentLoop,
+      userMessage: userMessage
+    });
+    
+    if (!result.success) {
+      logDebug_ACU(`[正文优化-手动确认] 第 ${currentLoop} 轮优化失败:`, result.error);
+      // 如果是第一轮就失败，显示错误
+      if (currentLoop === 1) {
+        showToastr_ACU('error', `正文优化失败: ${result.error}`);
+        return false;
+      }
+      // 如果是后续轮次失败，使用之前的结果触发填表
+      await triggerAutomaticUpdateIfNeeded_ACU();
+      return true;
+    }
+    
+    // 检查是否有实际优化
+    if (!result.optimizations || result.optimizations.length === 0) {
+      logDebug_ACU(`[正文优化-手动确认] 第 ${currentLoop} 轮无需优化，原文已足够好`);
+      // 如果没有优化项，检查是否还有下一轮
+      if (currentLoop < totalLoops) {
+        // 继续下一轮（使用当前内容）
+        return await executeContentOptimizationWithConfirm_ACU(messageIndex, content, userMessage, totalLoops, currentLoop + 1, workingContent, totalOptimizations);
+      } else {
+        // 所有轮次完成，触发填表
+        if (totalOptimizations.length > 0) {
+          showToastr_ACU('success', `正文优化完成，共 ${totalLoops} 轮优化，累计 ${totalOptimizations.length} 处改进`);
+        } else {
+          showToastr_ACU('info', '正文无需优化');
+        }
+        await triggerAutomaticUpdateIfNeeded_ACU();
+        return true;
+      }
+    }
+    
+    // 累积优化项
+    const newTotalOptimizations = totalOptimizations.concat(result.optimizations);
+    
+    // 显示对比对话框
+    return new Promise((resolve) => {
+      showOptimizationDiffDialogForLoop_ACU(messageIndex, {
+        optimizations: result.optimizations,
+        summary: `第 ${currentLoop}/${totalLoops} 轮优化，本轮 ${result.optimizations.length} 处改进`,
+        optimizedContent: result.optimizedContent,
+        currentLoop: currentLoop,
+        totalLoops: totalLoops,
+        totalOptimizations: newTotalOptimizations
+      }, async (action) => {
+        if (action === 'apply') {
+          // 用户确认应用
+          if (currentLoop < totalLoops) {
+            // 还有下一轮，继续优化
+            const nextResult = await executeContentOptimizationWithConfirm_ACU(
+              messageIndex,
+              content,
+              userMessage,
+              totalLoops,
+              currentLoop + 1,
+              result.optimizedContent,
+              newTotalOptimizations
+            );
+            resolve(nextResult);
+          } else {
+            // 所有轮次完成，应用最终结果并触发填表
+            await replaceChatMessage_ACU(messageIndex, result.optimizedContent);
+            showToastr_ACU('success', `正文优化完成，共 ${totalLoops} 轮优化，累计 ${newTotalOptimizations.length} 处改进`);
+            await triggerAutomaticUpdateIfNeeded_ACU();
+            resolve(true);
+          }
+        } else if (action === 'skip') {
+          // 用户跳过本轮，但继续下一轮
+          if (currentLoop < totalLoops) {
+            const nextResult = await executeContentOptimizationWithConfirm_ACU(
+              messageIndex,
+              content,
+              userMessage,
+              totalLoops,
+              currentLoop + 1,
+              workingContent,  // 使用未优化的内容
+              totalOptimizations  // 不累积本轮优化项
+            );
+            resolve(nextResult);
+          } else {
+            // 最后一轮跳过
+            if (totalOptimizations.length > 0) {
+              // 如果有之前的优化，应用之前的结果
+              // 注意：这里需要应用之前累积的优化内容
+              await triggerAutomaticUpdateIfNeeded_ACU();
+              showToastr_ACU('success', `正文优化完成，共 ${totalLoops} 轮优化，累计 ${totalOptimizations.length} 处改进`);
+            } else {
+              showToastr_ACU('info', '正文优化已跳过');
+            }
+            await triggerAutomaticUpdateIfNeeded_ACU();
+            resolve(true);
+          }
+        } else {
+          // 用户取消，结束优化流程
+          await triggerAutomaticUpdateIfNeeded_ACU();
+          resolve(true);
+        }
+      });
+    });
+  }
+  
+  /**
+   * 显示优化对比对话框（支持循环优化）
+   */
+  function showOptimizationDiffDialogForLoop_ACU(messageIndex, result, callback) {
+    const isLastLoop = result.currentLoop >= result.totalLoops;
+    const applyButtonText = isLastLoop ? '应用并完成' : '应用并继续';
+    
+    const dialogHtml = `
+      <div class="acu-optimization-dialog" style="
+        position: fixed;
+        top: 10px;
+        left: 50%;
+        transform: translateX(-50%);
+        background: #1a1d24;
+        border: 1px solid rgba(255, 255, 255, 0.15);
+        border-radius: 12px;
+        padding: 20px;
+        max-width: 800px;
+        width: calc(100% - 20px);
+        max-height: calc(90vh - 20px);
+        overflow-y: auto;
+        z-index: 100000;
+        color: rgba(255, 255, 255, 0.9);
+        font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+        box-sizing: border-box;
+      ">
+        <h3 style="margin: 0 0 8px 0; color: #7bb7ff;">正文替换建议</h3>
+        <p style="margin: 0 0 12px 0; color: rgba(255, 255, 255, 0.7);">${result.summary}</p>
+        ${result.totalLoops > 1 ? `<p style="margin: 0 0 12px 0; color: rgba(255, 255, 255, 0.5); font-size: 12px;">进度: 第 ${result.currentLoop}/${result.totalLoops} 轮</p>` : ''}
+        <div class="optimization-list" style="margin-bottom: 16px; max-height: 400px; overflow-y: auto;">
+          ${result.optimizations.map((opt, i) => `
+            <div class="optimization-item" style="
+              background: rgba(255, 255, 255, 0.05);
+              border-radius: 8px;
+              padding: 12px;
+              margin-bottom: 8px;
+            ">
+              <div style="color: #ff6b6b; margin-bottom: 8px; text-decoration: line-through; opacity: 0.7;">
+                <strong>原文：</strong>${escapeHtml_ACU(opt.original.substring(0, 200))}${opt.original.length > 200 ? '...' : ''}
+              </div>
+              <div style="color: #69db7c; margin-bottom: 8px;">
+                <strong>优化：</strong>${escapeHtml_ACU(opt.optimized.substring(0, 200))}${opt.optimized.length > 200 ? '...' : ''}
+              </div>
+              <div style="color: rgba(255, 255, 255, 0.5); font-size: 12px;">
+                <strong>原因：</strong>${escapeHtml_ACU(opt.reason || '未说明')}
+              </div>
+            </div>
+          `).join('')}
+        </div>
+        <div style="display: flex; gap: 12px; justify-content: flex-end; flex-wrap: wrap;">
+          <button id="acu-opt-cancel" style="
+            padding: 8px 16px;
+            border: 1px solid rgba(255, 255, 255, 0.2);
+            background: transparent;
+            color: rgba(255, 255, 255, 0.7);
+            border-radius: 6px;
+            cursor: pointer;
+          ">取消优化</button>
+          ${!isLastLoop ? `
+          <button id="acu-opt-skip" style="
+            padding: 8px 16px;
+            border: 1px solid rgba(255, 255, 255, 0.2);
+            background: transparent;
+            color: rgba(255, 255, 255, 0.7);
+            border-radius: 6px;
+            cursor: pointer;
+          ">跳过本轮</button>
+          ` : ''}
+          <button id="acu-opt-apply" style="
+            padding: 8px 16px;
+            border: none;
+            background: #7bb7ff;
+            color: #1a1d24;
+            border-radius: 6px;
+            cursor: pointer;
+            font-weight: 600;
+          ">${applyButtonText}</button>
+        </div>
+      </div>
+      <div id="acu-opt-backdrop" style="
+        position: fixed;
+        top: 0; left: 0; right: 0; bottom: 0;
+        background: rgba(0, 0, 0, 0.5);
+        z-index: 99999;
+      "></div>
+    `;
+    
+    jQuery_API_ACU('body').append(dialogHtml);
+    
+    // 绑定取消事件
+    jQuery_API_ACU('#acu-opt-cancel, #acu-opt-backdrop').on('click', function() {
+      jQuery_API_ACU('.acu-optimization-dialog, #acu-opt-backdrop').remove();
+      callback('cancel');
+    });
+    
+    // 绑定跳过事件（仅非最后一轮显示）
+    jQuery_API_ACU('#acu-opt-skip').on('click', function() {
+      jQuery_API_ACU('.acu-optimization-dialog, #acu-opt-backdrop').remove();
+      callback('skip');
+    });
+    
+    // 绑定应用事件
+    jQuery_API_ACU('#acu-opt-apply').on('click', async function() {
+      jQuery_API_ACU(this).prop('disabled', true).text('处理中...');
+      
+      // 如果是最后一轮，先应用优化
+      if (isLastLoop) {
+        const success = await replaceChatMessage_ACU(messageIndex, result.optimizedContent);
+        if (!success) {
+          jQuery_API_ACU(this).prop('disabled', false).text(applyButtonText);
+          showToastr_ACU('error', '应用失败');
+          return;
+        }
+      }
+      
+      jQuery_API_ACU('.acu-optimization-dialog, #acu-opt-backdrop').remove();
+      callback('apply');
+    });
+  }
+  
+  /**
    * 显示优化对比对话框
    */
   function showOptimizationDiffDialog_ACU(messageIndex, result) {
     const dialogHtml = `
       <div class="acu-optimization-dialog" style="
         position: fixed;
-        top: 50%;
+        top: 10px;
         left: 50%;
-        transform: translate(-50%, -50%);
+        transform: translateX(-50%);
         background: #1a1d24;
         border: 1px solid rgba(255, 255, 255, 0.15);
         border-radius: 12px;
         padding: 20px;
         max-width: 800px;
-        max-height: 80vh;
+        width: calc(100% - 20px);
+        max-height: calc(90vh - 20px);
         overflow-y: auto;
         z-index: 100000;
         color: rgba(255, 255, 255, 0.9);
         font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+        box-sizing: border-box;
       ">
         <h3 style="margin: 0 0 16px 0; color: #7bb7ff;">正文替换建议</h3>
         <p style="margin: 0 0 12px 0; color: rgba(255, 255, 255, 0.7);">${result.summary || `共 ${result.optimizations.length} 处替换建议`}</p>
@@ -2954,6 +3404,8 @@
       showDiff: true,                    // 是否显示优化对比（非无感模式下有效）
       minLength: 100,                    // 最小优化长度阈值
       maxOptimizations: 10,              // 单次最大优化项数
+      loopCount: 1,                      // 循环优化次数（1表示不循环，2表示优化2次，以此类推）
+      retryCount: 3,                     // 自动重试次数（API调用失败时自动重试，默认3次）
       promptGroup: [],                   // 提示词组（段落编辑器）
     },
     
@@ -10638,6 +11090,8 @@ const DatabaseAPI_ACU = {
             parallelMode: false,               // 填表与正文替换并行执行（默认关闭）
             minLength: 100,                    // 最小优化长度阈值
             maxOptimizations: 10,              // 单次最大优化项数
+            loopCount: 1,                      // 循环优化次数
+            retryCount: 3,                     // 自动重试次数（API调用失败时自动重试，默认3次）
             extractTags: '',                   // 正文标签提取（从正文中提取指定标签内容进行优化）
             extractRules: [],                  // 正文标签提取规则（结构化）
             excludeTags: '',                   // 标签排除（优化时排除指定标签内容）
@@ -18242,6 +18696,16 @@ const DatabaseAPI_ACU = {
                                     <input id="${SCRIPT_ID_PREFIX_ACU}-optimization-max-items" type="number" class="text_pole" min="1" max="100" step="1" value="10" style="width: 100%; margin-top: 5px;">
                                     <small class="notes">单次优化的最大修改项数（1-100）</small>
                                 </div>
+                                <div class="qrf_settings_block" style="margin-bottom: 0;">
+                                    <label for="${SCRIPT_ID_PREFIX_ACU}-optimization-loop-count" style="font-weight: 500;">循环优化次数</label>
+                                    <input id="${SCRIPT_ID_PREFIX_ACU}-optimization-loop-count" type="number" class="text_pole" min="1" max="10" step="1" value="1" style="width: 100%; margin-top: 5px;">
+                                    <small class="notes">优化完成后再次优化，达到完整优化效果（1-10次）</small>
+                                </div>
+                                <div class="qrf_settings_block" style="margin-bottom: 0;">
+                                    <label for="${SCRIPT_ID_PREFIX_ACU}-optimization-retry-count" style="font-weight: 500;">自动重试次数</label>
+                                    <input id="${SCRIPT_ID_PREFIX_ACU}-optimization-retry-count" type="number" class="text_pole" min="1" max="10" step="1" value="3" style="width: 100%; margin-top: 5px;">
+                                    <small class="notes">API调用失败时自动重试（1-10次，默认3次）</small>
+                                </div>
                             </div>
                         </div>
 
@@ -18332,6 +18796,13 @@ const DatabaseAPI_ACU = {
                                 <small class="notes" style="color: var(--text_secondary);">
                                     <strong>占位符说明：</strong><br>
                                     <code>$CONTENT</code> - 自动替换为需要优化的正文内容<br>
+                                    <code>$1</code> - 世界书内容（剧情推进专用）<br>
+                                    <code>$5</code> - 纪要表/总体大纲表内容<br>
+                                    <code>$6</code> - 上一轮剧情规划数据<br>
+                                    <code>$7</code> - 前文上下文（仅AI输出）<br>
+                                    <code>$8</code> - 本轮用户输入<br>
+                                    <code>$U</code> - 用户设定描述 (persona_description)<br>
+                                    <code>$C</code> - 角色描述 (char_description)<br>
                                     <strong>输出格式：</strong>AI需返回JSON格式的优化指令，包含 optimizations 数组
                                 </small>
                             </div>
@@ -20090,6 +20561,30 @@ insertRow(1, ["时间2", "大纲事件2...", "关键词"]);
         });
       }
 
+      // [新增] 循环优化次数
+      const $optimizationLoopCount = $popupInstance_ACU.find(`#${SCRIPT_ID_PREFIX_ACU}-optimization-loop-count`);
+      if ($optimizationLoopCount.length) {
+        $optimizationLoopCount.on('input change', function() {
+          const val = parseInt($(this).val(), 10);
+          if (!isNaN(val) && val >= 1 && val <= 10) {
+            settings_ACU.contentOptimizationSettings.loopCount = val;
+            saveSettings_ACU();
+          }
+        });
+      }
+
+      // [新增] 自动重试次数
+      const $optimizationRetryCount = $popupInstance_ACU.find(`#${SCRIPT_ID_PREFIX_ACU}-optimization-retry-count`);
+      if ($optimizationRetryCount.length) {
+        $optimizationRetryCount.on('input change', function() {
+          const val = parseInt($(this).val(), 10);
+          if (!isNaN(val) && val >= 1 && val <= 10) {
+            settings_ACU.contentOptimizationSettings.retryCount = val;
+            saveSettings_ACU();
+          }
+        });
+      }
+
       // 无感替换模式
       const $optimizationSeamlessMode = $popupInstance_ACU.find(`#${SCRIPT_ID_PREFIX_ACU}-optimization-seamless-mode`);
       if ($optimizationSeamlessMode.length) {
@@ -20799,6 +21294,8 @@ insertRow(1, ["时间2", "大纲事件2...", "关键词"]);
       // 基础设置
       $popupInstance_ACU.find(`#${SCRIPT_ID_PREFIX_ACU}-optimization-min-length`).val(config.minLength || 100);
       $popupInstance_ACU.find(`#${SCRIPT_ID_PREFIX_ACU}-optimization-max-items`).val(config.maxOptimizations || 10);
+      $popupInstance_ACU.find(`#${SCRIPT_ID_PREFIX_ACU}-optimization-loop-count`).val(config.loopCount || 1);
+      $popupInstance_ACU.find(`#${SCRIPT_ID_PREFIX_ACU}-optimization-retry-count`).val(config.retryCount || 3);
 
       // 优化模式
       $popupInstance_ACU.find(`#${SCRIPT_ID_PREFIX_ACU}-optimization-seamless-mode`).prop('checked', config.seamlessMode !== false);
