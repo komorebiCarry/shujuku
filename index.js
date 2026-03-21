@@ -1980,11 +1980,10 @@
       
       // 2. 调用AI API
       logDebug_ACU('[正文优化] 调用AI API...');
-      // [修复] 传递API预设参数
+      // [修复] 传递API预设参数，不再硬编码max_tokens，使用预设配置中的值
       const apiPreset = config.apiPreset || '';
       logDebug_ACU(`[正文优化] 使用API预设: ${apiPreset || '当前配置'}`);
       const responseContent = await topLevelWindow_ACU.AutoCardUpdaterAPI.callAI(messages, {
-        max_tokens: 4000,
         presetName: apiPreset
       });
       
