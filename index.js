@@ -1954,11 +1954,11 @@
    * @param {object} options - 优化选项
    * @returns {Promise<object>} 优化结果 { success, optimizations, summary, optimizedContent }
    */
-  async function performContentOptimization_ACU(content, options = {}) {
-    const config = settings_ACU.contentOptimizationSettings || {};
-    const maxLength = config.maxOptimizations || 10;
-    
-    logDebug_ACU('[正文优化] 开始执行正文优化...');
+   async function performContentOptimization_ACU(content, options = {}) {
+     const config = settings_ACU.contentOptimizationSettings || {};
+     const maxLength = config.maxOptimizations || 10;
+     
+     logDebug_ACU('[正文优化] 开始执行正文优化，原始内容长度:', content.length);
     
     try {
       // 1. 构建提示词消息
@@ -2236,16 +2236,30 @@
       return false;
     }
     
-    const content = message.mes || '';
+    let content = message.mes || '';
     
-    // 检查最小长度
+    // [新增] 应用标签筛选规则
+    const extractTags = (config.extractTags || '').trim();
+    const extractRules = config.extractRules || [];
+    const excludeTags = (config.excludeTags || '').trim();
+    const excludeRules = config.excludeRules || [];
+    
+    // 应用标签筛选（使用与剧情推进相同的函数）
+    let processedContent = applyContextTagFilters_ACU(content, {
+      extractTags,
+      extractRules,
+      excludeTags,
+      excludeRules
+    });
+    
+    // 检查最小长度（使用处理后的内容）
     const minLength = config.minLength || 100;
-    if (content.length < minLength) {
-      logDebug_ACU(`[正文优化] 正文长度 ${content.length} 小于最小阈值 ${minLength}，跳过优化`);
+    if (processedContent.length < minLength) {
+      logDebug_ACU(`[正文优化] 处理后正文长度 ${processedContent.length} 小于最小阈值 ${minLength}，跳过优化`);
       return false;
     }
     
-    logDebug_ACU(`[正文优化] 开始优化消息 ${messageIndex}，长度 ${content.length}`);
+    logDebug_ACU(`[正文优化] 开始优化消息 ${messageIndex}，原始长度 ${content.length}，处理后长度 ${processedContent.length}`);
     
     // 无感模式：显示遮罩
     if (config.seamlessMode) {
@@ -2392,10 +2406,21 @@
       if (success) {
         jQuery_API_ACU('.acu-optimization-dialog, #acu-opt-backdrop').remove();
         showToastr_ACU('success', '优化已应用');
+        
+        // [新增] 手动确认模式下，应用优化后触发填表
+        logDebug_ACU('[正文优化] 手动确认模式：应用优化后触发填表...');
+        await triggerAutomaticUpdateIfNeeded_ACU();
       } else {
         jQuery_API_ACU(this).prop('disabled', false).text('应用优化');
         showToastr_ACU('error', '应用失败');
       }
+    });
+    
+    // [新增] 取消时也触发填表（使用原文）
+    jQuery_API_ACU('#acu-opt-cancel').on('click', async function() {
+      jQuery_API_ACU('.acu-optimization-dialog, #acu-opt-backdrop').remove();
+      logDebug_ACU('[正文优化] 手动确认模式：用户取消优化，触发填表...');
+      await triggerAutomaticUpdateIfNeeded_ACU();
     });
   }
   
@@ -10600,9 +10625,15 @@ const DatabaseAPI_ACU = {
             seamlessMode: true,                // 无感替换模式：显示遮罩，优化完成后直接显示结果
             autoApply: true,                   // 是否自动应用优化结果（关闭时显示对比让用户选择）
             showDiff: true,                    // 是否显示优化对比（非无感模式下有效）
+            parallelMode: false,               // 填表与正文替换并行执行（默认关闭）
             minLength: 100,                    // 最小优化长度阈值
             maxOptimizations: 10,              // 单次最大优化项数
+            extractTags: '',                   // 正文标签提取（从正文中提取指定标签内容进行优化）
+            extractRules: [],                  // 正文标签提取规则（结构化）
+            excludeTags: '',                   // 标签排除（优化时排除指定标签内容）
+            excludeRules: [],                  // 标签排除规则（结构化）
             promptGroup: buildDefaultContentOptimizationPromptGroup_ACU(), // 提示词组（段落编辑器）
+            promptPresets: [],                 // 提示词组预设列表
           },
       };
   }
@@ -11126,6 +11157,16 @@ const DatabaseAPI_ACU = {
         $plotApiPresetSelect.append(`<option value="${p.name}">${p.name}</option>`);
       });
       $plotApiPresetSelect.val(settings_ACU.plotApiPreset || '');
+    }
+
+    // 刷新正文替换的API预设选择器
+    const $optimizationApiPresetSelect = $popupInstance_ACU.find(`#${SCRIPT_ID_PREFIX_ACU}-optimization-api-preset`);
+    if ($optimizationApiPresetSelect.length) {
+      $optimizationApiPresetSelect.empty().append('<option value="">使用当前API配置</option>');
+      presets.forEach(p => {
+        $optimizationApiPresetSelect.append(`<option value="${p.name}">${p.name}</option>`);
+      });
+      $optimizationApiPresetSelect.val(settings_ACU.contentOptimizationSettings?.apiPreset || '');
     }
   }
 
@@ -11774,10 +11815,27 @@ const DatabaseAPI_ACU = {
       if (config.enabled) {
         const lastMessageIndex = liveChat.length - 1;
         logDebug_ACU('[正文优化] 检测到AI回复，准备执行正文优化...');
-        await executeContentOptimization_ACU(lastMessageIndex);
+        
+        if (config.parallelMode) {
+          // 并行执行：正文优化和填表同时进行
+          logDebug_ACU('[正文优化] 并行模式已启用，正文优化与填表将同时进行...');
+          await Promise.all([
+            executeContentOptimization_ACU(lastMessageIndex),
+            triggerAutomaticUpdateIfNeeded_ACU()
+          ]);
+        } else if (!config.autoApply && !config.seamlessMode) {
+          // 手动确认模式：只执行正文优化，填表在用户点击应用/取消后触发
+          logDebug_ACU('[正文优化] 手动确认模式：等待用户确认后再填表...');
+          await executeContentOptimization_ACU(lastMessageIndex);
+          // 注意：不在这里触发填表，填表在 showOptimizationDiffDialog_ACU 中用户点击应用/取消后触发
+        } else {
+          // 顺序执行：先完成正文优化，再进行填表
+          await executeContentOptimization_ACU(lastMessageIndex);
+          await triggerAutomaticUpdateIfNeeded_ACU();
+        }
+      } else {
+        await triggerAutomaticUpdateIfNeeded_ACU();
       }
-      
-      await triggerAutomaticUpdateIfNeeded_ACU();
     }, NEW_MESSAGE_DEBOUNCE_DELAY_ACU);
   }
 
@@ -18162,7 +18220,7 @@ const DatabaseAPI_ACU = {
                                     <select id="${SCRIPT_ID_PREFIX_ACU}-optimization-api-preset" class="text_pole" style="width: 100%; margin-top: 5px;">
                                         <option value="">使用当前API配置</option>
                                     </select>
-                                    <small class="notes">选择正文优化使用的API配置</small>
+                                    <small class="notes">选择正文替换使用的API配置，留空则使用酒馆当前API</small>
                                 </div>
                                 <div class="qrf_settings_block" style="margin-bottom: 0;">
                                     <label for="${SCRIPT_ID_PREFIX_ACU}-optimization-min-length" style="font-weight: 500;">最小优化长度</label>
@@ -18198,6 +18256,60 @@ const DatabaseAPI_ACU = {
                                     <label for="${SCRIPT_ID_PREFIX_ACU}-optimization-show-diff">显示优化对比</label>
                                     <small class="notes" style="display: block; margin-left: 24px; margin-top: 4px;">优化完成后显示修改摘要（非无感模式下有效）</small>
                                 </div>
+                                <div class="checkbox-group">
+                                    <input type="checkbox" id="${SCRIPT_ID_PREFIX_ACU}-optimization-parallel-mode">
+                                    <label for="${SCRIPT_ID_PREFIX_ACU}-optimization-parallel-mode">填表与正文替换并行执行</label>
+                                    <small class="notes" style="display: block; margin-left: 24px; margin-top: 4px;">勾选后填表不再等待正文替换完成，双方并行进行（默认关闭）</small>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- 标签筛选设置 -->
+                        <div class="settings-section" style="margin-bottom: 25px; padding: 20px; background: var(--background_light); border-radius: 8px; border: 1px solid var(--border_color_light);">
+                            <h4 style="margin: 0 0 15px 0; color: var(--text_primary); display: flex; align-items: center; gap: 8px;">
+                                <i class="fa-solid fa-filter"></i> 标签筛选
+                            </h4>
+                            <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 15px;">
+                                <div class="qrf_settings_block" style="margin-bottom: 0;">
+                                    <label for="${SCRIPT_ID_PREFIX_ACU}-optimization-extract-tags" style="font-weight: 500;">标签提取</label>
+                                    <input id="${SCRIPT_ID_PREFIX_ACU}-optimization-extract-tags" type="text" class="text_pole" placeholder="例如: think,plot" style="width: 100%; margin-top: 5px;">
+                                    <small class="notes">仅提取指定标签内的内容进行优化</small>
+                                </div>
+                                <div class="qrf_settings_block" style="margin-bottom: 0;">
+                                    <label style="font-weight: 500;">正文标签提取规则</label>
+                                    <div id="${SCRIPT_ID_PREFIX_ACU}-optimization-extract-rules"></div>
+                                    <button type="button" id="${SCRIPT_ID_PREFIX_ACU}-optimization-extract-add-rule" class="button" style="margin-top: 6px;">添加规则</button>
+                                    <small class="notes">每条规则填写开始词和结束词，仅提取最后一组匹配内容</small>
+                                </div>
+                                <div class="qrf_settings_block" style="margin-bottom: 0;">
+                                    <label style="font-weight: 500;">标签排除规则</label>
+                                    <div id="${SCRIPT_ID_PREFIX_ACU}-optimization-exclude-rules"></div>
+                                    <button type="button" id="${SCRIPT_ID_PREFIX_ACU}-optimization-exclude-add-rule" class="button" style="margin-top: 6px;">添加规则</button>
+                                    <small class="notes">每条规则填写开始词和结束词，仅移除最后一组匹配内容</small>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- 预设管理区域 -->
+                        <div class="settings-section" style="margin-bottom: 25px; padding: 20px; background: var(--background_light); border-radius: 8px; border: 1px solid var(--border_color_light);">
+                            <h4 style="margin: 0 0 15px 0; color: var(--text_primary); display: flex; align-items: center; gap: 8px;">
+                                <i class="fa-solid fa-bookmark"></i> 预设管理
+                            </h4>
+                            <div class="qrf_settings_block" style="margin-bottom: 0;">
+                                <label for="${SCRIPT_ID_PREFIX_ACU}-optimization-preset-select" style="font-weight: 500;">选择预设</label>
+                                <div class="qrf_preset_selector_wrapper acu-optimization-preset-wrapper" style="display: flex; gap: 8px; align-items: center; margin-top: 5px;">
+                                    <select id="${SCRIPT_ID_PREFIX_ACU}-optimization-preset-select" class="text_pole" style="flex: 1;">
+                                        <option value="">-- 选择一个预设 --</option>
+                                    </select>
+                                    <button id="${SCRIPT_ID_PREFIX_ACU}-optimization-save-preset" class="menu_button" title="覆盖保存当前预设" style="padding: 8px 12px;"><i class="fa-solid fa-save"></i></button>
+                                    <button id="${SCRIPT_ID_PREFIX_ACU}-optimization-save-as-new-preset" class="menu_button" title="另存为新预设" style="padding: 8px 12px;"><i class="fa-solid fa-file-export"></i></button>
+                                    <button id="${SCRIPT_ID_PREFIX_ACU}-optimization-import-presets" class="menu_button" title="导入预设" style="padding: 8px 12px;"><i class="fa-solid fa-upload"></i></button>
+                                    <button id="${SCRIPT_ID_PREFIX_ACU}-optimization-export-presets" class="menu_button" title="导出当前预设" style="padding: 8px 12px;"><i class="fa-solid fa-download"></i></button>
+                                    <button id="${SCRIPT_ID_PREFIX_ACU}-optimization-reset-defaults" class="menu_button" title="恢复默认提示词" style="padding: 8px 12px; background-color: var(--orange); color: white;"><i class="fa-solid fa-undo"></i></button>
+                                    <button id="${SCRIPT_ID_PREFIX_ACU}-optimization-delete-preset" class="menu_button" title="删除当前选中的预设" style="display: none; padding: 8px 12px; background-color: var(--red);"><i class="fa-solid fa-trash-alt"></i></button>
+                                    <input type="file" id="${SCRIPT_ID_PREFIX_ACU}-optimization-preset-file-input" style="display: none;" accept=".json">
+                                </div>
+                                <small class="notes">选择预设应用提示词组设置，或保存当前配置为新预设</small>
                             </div>
                         </div>
 
@@ -19995,6 +20107,284 @@ insertRow(1, ["时间2", "大纲事件2...", "关键词"]);
         });
       }
 
+      // 填表与正文替换并行执行
+      const $optimizationParallelMode = $popupInstance_ACU.find(`#${SCRIPT_ID_PREFIX_ACU}-optimization-parallel-mode`);
+      if ($optimizationParallelMode.length) {
+        $optimizationParallelMode.on('change', function() {
+          settings_ACU.contentOptimizationSettings.parallelMode = $(this).is(':checked');
+          saveSettings_ACU();
+        });
+      }
+
+      // ═══ 正文替换标签筛选规则 ═══
+      // 标签提取输入框
+      const $optimizationExtractTags = $popupInstance_ACU.find(`#${SCRIPT_ID_PREFIX_ACU}-optimization-extract-tags`);
+      if ($optimizationExtractTags.length) {
+        $optimizationExtractTags.on('input', function() {
+          settings_ACU.contentOptimizationSettings.extractTags = $(this).val();
+          saveSettings_ACU();
+        });
+      }
+
+      // 标签提取规则编辑器
+      $popupInstance_ACU.find(`#${SCRIPT_ID_PREFIX_ACU}-optimization-extract-add-rule`).on('click', function() {
+        appendExcludeRuleRow_ACU(
+          `#${SCRIPT_ID_PREFIX_ACU}-optimization-extract-rules`,
+          { startPlaceholder: '开始词（例如：<think）', endPlaceholder: '结束词（例如：</think）' },
+        );
+      });
+      $popupInstance_ACU.on('input', `#${SCRIPT_ID_PREFIX_ACU}-optimization-extract-rules .acu-exclude-rule-start, #${SCRIPT_ID_PREFIX_ACU}-optimization-extract-rules .acu-exclude-rule-end`, function() {
+        settings_ACU.contentOptimizationSettings.extractRules = readExcludeRulesFromRows_ACU(`#${SCRIPT_ID_PREFIX_ACU}-optimization-extract-rules`);
+        saveSettings_ACU();
+      });
+      $popupInstance_ACU.on('click', `#${SCRIPT_ID_PREFIX_ACU}-optimization-extract-rules .acu-exclude-rule-delete`, function() {
+        const $row = $(this).closest('.acu-exclude-rule-row');
+        if ($row.length) $row.remove();
+        settings_ACU.contentOptimizationSettings.extractRules = readExcludeRulesFromRows_ACU(`#${SCRIPT_ID_PREFIX_ACU}-optimization-extract-rules`);
+        saveSettings_ACU();
+      });
+
+      // 标签排除规则编辑器
+      $popupInstance_ACU.find(`#${SCRIPT_ID_PREFIX_ACU}-optimization-exclude-add-rule`).on('click', function() {
+        appendExcludeRuleRow_ACU(
+          `#${SCRIPT_ID_PREFIX_ACU}-optimization-exclude-rules`,
+          { startPlaceholder: '开始词（例如：<think）', endPlaceholder: '结束词（例如：</think）' },
+        );
+      });
+      $popupInstance_ACU.on('input', `#${SCRIPT_ID_PREFIX_ACU}-optimization-exclude-rules .acu-exclude-rule-start, #${SCRIPT_ID_PREFIX_ACU}-optimization-exclude-rules .acu-exclude-rule-end`, function() {
+        settings_ACU.contentOptimizationSettings.excludeRules = readExcludeRulesFromRows_ACU(`#${SCRIPT_ID_PREFIX_ACU}-optimization-exclude-rules`);
+        saveSettings_ACU();
+      });
+      $popupInstance_ACU.on('click', `#${SCRIPT_ID_PREFIX_ACU}-optimization-exclude-rules .acu-exclude-rule-delete`, function() {
+        const $row = $(this).closest('.acu-exclude-rule-row');
+        if ($row.length) $row.remove();
+        settings_ACU.contentOptimizationSettings.excludeRules = readExcludeRulesFromRows_ACU(`#${SCRIPT_ID_PREFIX_ACU}-optimization-exclude-rules`);
+        saveSettings_ACU();
+      });
+
+      // ═══ 正文替换预设管理 ═══
+      const $optimizationPresetSelect = $popupInstance_ACU.find(`#${SCRIPT_ID_PREFIX_ACU}-optimization-preset-select`);
+      const $optimizationImportPresets = $popupInstance_ACU.find(`#${SCRIPT_ID_PREFIX_ACU}-optimization-import-presets`);
+      const $optimizationExportPresets = $popupInstance_ACU.find(`#${SCRIPT_ID_PREFIX_ACU}-optimization-export-presets`);
+      const $optimizationSavePreset = $popupInstance_ACU.find(`#${SCRIPT_ID_PREFIX_ACU}-optimization-save-preset`);
+      const $optimizationSaveAsNewPreset = $popupInstance_ACU.find(`#${SCRIPT_ID_PREFIX_ACU}-optimization-save-as-new-preset`);
+      const $optimizationDeletePreset = $popupInstance_ACU.find(`#${SCRIPT_ID_PREFIX_ACU}-optimization-delete-preset`);
+      const $optimizationResetDefaults = $popupInstance_ACU.find(`#${SCRIPT_ID_PREFIX_ACU}-optimization-reset-defaults`);
+      const $optimizationPresetFileInput = $popupInstance_ACU.find(`#${SCRIPT_ID_PREFIX_ACU}-optimization-preset-file-input`);
+
+      // 预设选择事件
+      if ($optimizationPresetSelect.length) {
+        $optimizationPresetSelect.on('change', function() {
+          const selectedName = $(this).val();
+          if (!selectedName) {
+            $optimizationDeletePreset.hide();
+            return;
+          }
+
+          const presets = settings_ACU.contentOptimizationSettings.promptPresets || [];
+          const selectedPreset = presets.find(p => p.name === selectedName);
+
+          if (selectedPreset) {
+            // 加载预设到UI
+            if (selectedPreset.promptGroup) {
+              settings_ACU.contentOptimizationSettings.promptGroup = selectedPreset.promptGroup;
+              renderOptimizationPromptSegments_ACU(selectedPreset.promptGroup);
+            }
+            $optimizationDeletePreset.show();
+            saveSettings_ACU();
+            showToastr_ACU('success', `已加载预设 "${selectedName}"`);
+          }
+        });
+      }
+
+      // 导入预设
+      if ($optimizationImportPresets.length) {
+        $optimizationImportPresets.on('click', function() {
+          $optimizationPresetFileInput.click();
+        });
+      }
+
+      // 导出预设
+      if ($optimizationExportPresets.length) {
+        $optimizationExportPresets.on('click', function() {
+          const selectedName = $optimizationPresetSelect.val();
+          if (!selectedName) {
+            showToastr_ACU('info', '请先选择要导出的预设。');
+            return;
+          }
+
+          const presets = settings_ACU.contentOptimizationSettings.promptPresets || [];
+          const selectedPreset = presets.find(p => p.name === selectedName);
+
+          if (!selectedPreset) {
+            showToastr_ACU('error', '找不到选中的预设。');
+            return;
+          }
+
+          const dataStr = JSON.stringify([selectedPreset], null, 2);
+          const blob = new Blob([dataStr], { type: 'application/json' });
+          const url = URL.createObjectURL(blob);
+
+          const a = document.createElement('a');
+          a.href = url;
+          a.download = `optimization_preset_${selectedName.replace(/[^a-z0-9]/gi, '_')}.json`;
+          document.body.appendChild(a);
+          a.click();
+          document.body.removeChild(a);
+          URL.revokeObjectURL(url);
+
+          showToastr_ACU('success', `预设 "${selectedName}" 已成功导出。`);
+        });
+      }
+
+      // 保存预设（覆盖）
+      if ($optimizationSavePreset.length) {
+        $optimizationSavePreset.on('click', function() {
+          const selectedName = $optimizationPresetSelect.val();
+          if (!selectedName) {
+            // 如果没有选择预设，则等同于"另存为"
+            saveOptimizationPresetAsNew_ACU();
+            return;
+          }
+
+          if (!confirm(`确定要用当前设置覆盖预设 "${selectedName}" 吗？`)) {
+            return;
+          }
+
+          const presets = settings_ACU.contentOptimizationSettings.promptPresets || [];
+          const existingIndex = presets.findIndex(p => p.name === selectedName);
+
+          if (existingIndex === -1) {
+            showToastr_ACU('error', '找不到要覆盖的预设。');
+            return;
+          }
+
+          const currentPromptGroup = getOptimizationPromptGroupFromUI_ACU();
+          presets[existingIndex] = { name: selectedName, promptGroup: currentPromptGroup };
+          settings_ACU.contentOptimizationSettings.promptPresets = presets;
+          saveSettings_ACU();
+          showToastr_ACU('success', `预设 "${selectedName}" 已被成功覆盖。`);
+        });
+      }
+
+      // 另存为新预设
+      if ($optimizationSaveAsNewPreset.length) {
+        $optimizationSaveAsNewPreset.on('click', function() {
+          saveOptimizationPresetAsNew_ACU();
+        });
+      }
+
+      // 删除预设
+      if ($optimizationDeletePreset.length) {
+        $optimizationDeletePreset.on('click', function() {
+          const selectedName = $optimizationPresetSelect.val();
+          if (!selectedName) {
+            showToastr_ACU('warning', '没有选择任何预设。');
+            return;
+          }
+
+          if (!confirm(`确定要删除预设 "${selectedName}" 吗？`)) {
+            return;
+          }
+
+          const presets = settings_ACU.contentOptimizationSettings.promptPresets || [];
+          const indexToDelete = presets.findIndex(p => p.name === selectedName);
+
+          if (indexToDelete > -1) {
+            presets.splice(indexToDelete, 1);
+            settings_ACU.contentOptimizationSettings.promptPresets = presets;
+            saveSettings_ACU();
+
+            // 刷新预设选择器
+            loadOptimizationPresetSelect_ACU();
+            showToastr_ACU('success', `预设 "${selectedName}" 已被删除。`);
+          } else {
+            showToastr_ACU('error', '找不到要删除的预设。');
+          }
+        });
+      }
+
+      // 恢复默认提示词
+      if ($optimizationResetDefaults.length) {
+        $optimizationResetDefaults.on('click', function() {
+          if (!confirm('确定要恢复默认的正文替换提示词吗？这将覆盖当前的提示词设置。')) {
+            return;
+          }
+          settings_ACU.contentOptimizationSettings.promptGroup = buildDefaultContentOptimizationPromptGroup_ACU();
+          saveSettings_ACU();
+          renderOptimizationPromptSegments_ACU(settings_ACU.contentOptimizationSettings.promptGroup);
+          showToastr_ACU('success', '正文替换提示词已恢复为默认值');
+        });
+      }
+
+      // 预设文件导入
+      if ($optimizationPresetFileInput.length) {
+        $optimizationPresetFileInput.on('change', function(e) {
+          const file = e.target.files[0];
+          if (!file) return;
+
+          const reader = new FileReader();
+          reader.onload = function(e) {
+            try {
+              const importedPresets = JSON.parse(e.target.result);
+
+              if (!Array.isArray(importedPresets)) {
+                throw new Error('JSON文件格式不正确，根节点必须是一个数组。');
+              }
+
+              let currentPresets = settings_ACU.contentOptimizationSettings.promptPresets || [];
+              let importedCount = 0;
+              let overwrittenCount = 0;
+
+              importedPresets.forEach(preset => {
+                if (preset && typeof preset.name === 'string' && preset.name.length > 0) {
+                  const presetData = {
+                    name: preset.name,
+                    promptGroup: preset.promptGroup || buildDefaultContentOptimizationPromptGroup_ACU()
+                  };
+
+                  const existingIndex = currentPresets.findIndex(p => p.name === preset.name);
+
+                  if (existingIndex !== -1) {
+                    currentPresets[existingIndex] = presetData;
+                    overwrittenCount++;
+                  } else {
+                    currentPresets.push(presetData);
+                    importedCount++;
+                  }
+                }
+              });
+
+              if (importedCount > 0 || overwrittenCount > 0) {
+                settings_ACU.contentOptimizationSettings.promptPresets = currentPresets;
+                saveSettings_ACU();
+                loadOptimizationPresetSelect_ACU();
+
+                let messages = [];
+                if (importedCount > 0) messages.push(`成功导入 ${importedCount} 个新预设。`);
+                if (overwrittenCount > 0) messages.push(`成功覆盖 ${overwrittenCount} 个同名预设。`);
+                showToastr_ACU('success', messages.join(' '));
+
+                // 导入后：自动选择第一个有效预设并加载到UI
+                const firstValid = importedPresets.find(p => p && typeof p.name === 'string' && p.name.length > 0);
+                if (firstValid && $optimizationPresetSelect && $optimizationPresetSelect.length) {
+                  setTimeout(() => {
+                    $optimizationPresetSelect.val(firstValid.name).trigger('change');
+                  }, 50);
+                }
+              } else {
+                showToastr_ACU('warning', '未找到有效的预设数据。');
+              }
+            } catch (err) {
+              showToastr_ACU('error', `导入失败：${err.message}`);
+            }
+          };
+          reader.readAsText(file);
+          // 清空文件输入，允许重复导入同一文件
+          e.target.value = '';
+        });
+      }
+
       // 保存提示词组
       const $optimizationSavePromptGroup = $popupInstance_ACU.find(`#${SCRIPT_ID_PREFIX_ACU}-optimization-save-prompt-group`);
       if ($optimizationSavePromptGroup.length) {
@@ -20298,6 +20688,77 @@ insertRow(1, ["时间2", "大纲事件2...", "关键词"]);
     }
 
     /**
+     * 加载正文替换预设选择器
+     */
+    function loadOptimizationPresetSelect_ACU() {
+      if (!$popupInstance_ACU) return;
+
+      const $select = $popupInstance_ACU.find(`#${SCRIPT_ID_PREFIX_ACU}-optimization-preset-select`);
+      const $deleteBtn = $popupInstance_ACU.find(`#${SCRIPT_ID_PREFIX_ACU}-optimization-delete-preset`);
+      if (!$select.length) return;
+
+      const presets = settings_ACU.contentOptimizationSettings?.promptPresets || [];
+      const currentValue = $select.val();
+
+      $select.find('option:not(:first)').remove();
+
+      presets.forEach(preset => {
+        if (preset && preset.name) {
+          $select.append(`<option value="${preset.name}">${preset.name}</option>`);
+        }
+      });
+
+      // 恢复之前选中的值（如果还存在）
+      if (currentValue && presets.find(p => p.name === currentValue)) {
+        $select.val(currentValue);
+        if ($deleteBtn.length) $deleteBtn.show();
+      } else {
+        $select.val('');
+        if ($deleteBtn.length) $deleteBtn.hide();
+      }
+    }
+
+    /**
+     * 另存为新的正文替换预设
+     */
+    function saveOptimizationPresetAsNew_ACU() {
+      const presetName = prompt('请输入新预设的名称：');
+      if (!presetName || !presetName.trim()) {
+        showToastr_ACU('warning', '预设名称不能为空。');
+        return;
+      }
+
+      const name = presetName.trim();
+      const presets = settings_ACU.contentOptimizationSettings.promptPresets || [];
+      const existingIndex = presets.findIndex(p => p.name === name);
+
+      if (existingIndex !== -1) {
+        if (!confirm(`预设 "${name}" 已存在。是否覆盖？`)) {
+          return;
+        }
+        presets[existingIndex] = {
+          name: name,
+          promptGroup: getOptimizationPromptGroupFromUI_ACU()
+        };
+        showToastr_ACU('success', `预设 "${name}" 已被覆盖。`);
+      } else {
+        presets.push({
+          name: name,
+          promptGroup: getOptimizationPromptGroupFromUI_ACU()
+        });
+        showToastr_ACU('success', `预设 "${name}" 已成功创建。`);
+      }
+
+      settings_ACU.contentOptimizationSettings.promptPresets = presets;
+      saveSettings_ACU();
+      loadOptimizationPresetSelect_ACU();
+
+      // 选中新创建的预设
+      $popupInstance_ACU.find(`#${SCRIPT_ID_PREFIX_ACU}-optimization-preset-select`).val(name);
+      $popupInstance_ACU.find(`#${SCRIPT_ID_PREFIX_ACU}-optimization-delete-preset`).show();
+    }
+
+    /**
      * 加载正文替换设置到UI
      */
     function loadOptimizationSettingsToUI_ACU() {
@@ -20333,6 +20794,33 @@ insertRow(1, ["时间2", "大纲事件2...", "关键词"]);
       $popupInstance_ACU.find(`#${SCRIPT_ID_PREFIX_ACU}-optimization-seamless-mode`).prop('checked', config.seamlessMode !== false);
       $popupInstance_ACU.find(`#${SCRIPT_ID_PREFIX_ACU}-optimization-auto-apply`).prop('checked', config.autoApply !== false);
       $popupInstance_ACU.find(`#${SCRIPT_ID_PREFIX_ACU}-optimization-show-diff`).prop('checked', config.showDiff !== false);
+      $popupInstance_ACU.find(`#${SCRIPT_ID_PREFIX_ACU}-optimization-parallel-mode`).prop('checked', config.parallelMode === true);
+
+      // 标签筛选设置
+      $popupInstance_ACU.find(`#${SCRIPT_ID_PREFIX_ACU}-optimization-extract-tags`).val(config.extractTags || '');
+      
+      // 加载标签提取规则
+      renderExcludeRuleRows_ACU(
+        `#${SCRIPT_ID_PREFIX_ACU}-optimization-extract-rules`,
+        config.extractRules || [],
+        {
+          startPlaceholder: '开始词（例如：<think）',
+          endPlaceholder: '结束词（例如：</think）',
+        },
+      );
+      
+      // 加载标签排除规则
+      renderExcludeRuleRows_ACU(
+        `#${SCRIPT_ID_PREFIX_ACU}-optimization-exclude-rules`,
+        config.excludeRules || [],
+        {
+          startPlaceholder: '开始词（例如：<think）',
+          endPlaceholder: '结束词（例如：</think）',
+        },
+      );
+
+      // 加载预设选择器
+      loadOptimizationPresetSelect_ACU();
 
       // 提示词组
       const promptGroup = config.promptGroup && config.promptGroup.length > 0
