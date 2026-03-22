@@ -1917,7 +1917,7 @@
     },
     {
       "role": "USER",
-      "content": "---BEGIN PROMPT---\n[System]\n你是文本优化执行AI，专注于正文质量分析与优化建议生成。\n必须按\"分析(analysis) + 优化(optimization)\"双系统架构工作。\n\n[Input]\n- CONTENT: <正文内容>（需要优化的正文）\n- REQUIREMENTS: <优化要求>（用户定义的优化标准）\n\n============================================================\n【核心规则 - HARD GATE】\n============================================================\n\n**一、优化原则**\n1. **保持风格**：优化后的内容必须保持原文的写作风格、语气和人物性格\n2. **最小改动**：只修改确实需要改进的部分，不要过度优化\n3. **逻辑连贯**：确保优化后的内容与上下文逻辑一致\n4. **细节增强**：可以适当增加感官描写、情感描写等细节\n5. **避免冗余**：删除重复、啰嗦的表达\n\n**二、输出格式（JSON）**\n必须输出以下JSON格式：\n```json\n{\n  \"optimizations\": [\n    {\n      \"type\": \"replace\",\n      \"original\": \"原文中需要优化的句子或段落\",\n      \"optimized\": \"优化后的句子或段落\",\n      \"reason\": \"优化原因简述\"\n    }\n  ],\n  \"summary\": \"本次优化的总体说明\"\n}\n```\n\n**三、优化类型说明**\n- `replace`: 替换原文内容（最常用）\n- 每个优化项必须包含完整的原文片段（用于定位）和优化后内容\n- `original` 必须是原文中的完整句子或段落，不能是片段\n\n**四、数量限制**\n- 优化项数量：1-10个\n- 只输出确实需要优化的部分，不要为了凑数量而强行优化\n- 如果原文已经很好，可以输出空的optimizations数组\n\n============================================================\n【常见错误（绝对禁止）】\n============================================================\n- 输出非JSON格式\n- original与原文不匹配\n- 改变原文风格和语气\n- 过度优化导致内容失真\n- 优化项缺少reason字段\n\n---END PROMPT---\n\n以下是需要优化的正文内容：\n<正文内容>\n$CONTENT\n</正文内容>\n\n请按照上述要求分析正文并生成优化建议。",
+      "content": "---BEGIN PROMPT---\n[System]\n你是文本优化执行AI，专注于正文质量分析与优化建议生成。\n必须按\"分析(analysis) + 优化(optimization)\"双系统架构工作。\n\n[Input]\n- CONTENT: <正文内容>（需要优化的正文）\n- REQUIREMENTS: <优化要求>（用户定义的优化标准）\n\n============================================================\n【核心规则 - HARD GATE】\n============================================================\n\n**一、优化原则**\n1. **保持风格**：优化后的内容必须保持原文的写作风格、语气和人物性格\n2. **最小改动**：只修改确实需要改进的部分，不要过度优化\n3. **逻辑连贯**：确保优化后的内容与上下文逻辑一致\n4. **细节增强**：可以适当增加感官描写、情感描写等细节\n5. **避免冗余**：删除重复、啰嗦的表达\n\n**二、输出格式（JSON）**\n必须输出以下JSON格式：\n```json\n{\n  \"optimizations\": [\n    {\n      \"type\": \"replace\",\n      \"original\": \"原文中需要优化的句子或段落\",\n      \"plan\": \"修改方案说明\",\n      \"optimized\": \"优化后的句子或段落\"\n    }\n  ],\n  \"summary\": \"本次优化的总体说明\"\n}\n```\n\n**三、字段顺序说明**\n- `type`: 优化类型，固定为 \"replace\"\n- `original`: 原文中需要优化的完整句子或段落（用于定位）\n- `plan`: 修改方案说明，简要描述如何修改及原因\n- `optimized`: 优化后的句子或段落\n- 字段顺序必须严格按照上述顺序：original → plan → optimized\n\n**四、数量限制**\n- 优化项数量：1-10个\n- 只输出确实需要优化的部分，不要为了凑数量而强行优化\n- 如果原文已经很好，可以输出空的optimizations数组\n\n============================================================\n【常见错误（绝对禁止）】\n============================================================\n- 输出非JSON格式\n- original与原文不匹配\n- 改变原文风格和语气\n- 过度优化导致内容失真\n- 优化项缺少plan字段\n- 字段顺序错误\n\n---END PROMPT---\n\n以下是需要优化的正文内容：\n<正文内容>\n$CONTENT\n</正文内容>\n\n请按照上述要求分析正文并生成优化建议。",
       "deletable": false,
       "mainSlot": "A",
       "isMain": true
@@ -2691,42 +2691,48 @@
               <div style="color: #ff6b6b; margin-bottom: 8px; text-decoration: line-through; opacity: 0.7;">
                 <strong>原文：</strong>${escapeHtml_ACU(opt.original.substring(0, 200))}${opt.original.length > 200 ? '...' : ''}
               </div>
-              <div style="color: #69db7c; margin-bottom: 8px;">
-                <strong>优化：</strong>${escapeHtml_ACU(opt.optimized.substring(0, 200))}${opt.optimized.length > 200 ? '...' : ''}
+              <div style="color: rgba(255, 255, 255, 0.7); font-size: 12px; margin-bottom: 8px; padding: 8px; background: rgba(123, 183, 255, 0.1); border-radius: 4px;">
+                <strong>修改方案：</strong>${escapeHtml_ACU(opt.plan || opt.reason || '未说明')}
               </div>
-              <div style="color: rgba(255, 255, 255, 0.5); font-size: 12px;">
-                <strong>原因：</strong>${escapeHtml_ACU(opt.reason || '未说明')}
+              <div style="color: #69db7c;">
+                <strong>优化：</strong>${escapeHtml_ACU(opt.optimized.substring(0, 200))}${opt.optimized.length > 200 ? '...' : ''}
               </div>
             </div>
           `).join('')}
         </div>
-        <div style="display: flex; gap: 12px; justify-content: flex-end; flex-wrap: wrap;">
+        <div style="display: flex; gap: 8px; justify-content: flex-end; flex-wrap: wrap; padding-bottom: 10px;">
           <button id="acu-opt-cancel" style="
-            padding: 8px 16px;
+            padding: 10px 16px;
             border: 1px solid rgba(255, 255, 255, 0.2);
             background: transparent;
             color: rgba(255, 255, 255, 0.7);
             border-radius: 6px;
             cursor: pointer;
+            min-width: 80px;
+            flex-shrink: 0;
           ">取消优化</button>
           ${!isLastLoop ? `
           <button id="acu-opt-skip" style="
-            padding: 8px 16px;
+            padding: 10px 16px;
             border: 1px solid rgba(255, 255, 255, 0.2);
             background: transparent;
             color: rgba(255, 255, 255, 0.7);
             border-radius: 6px;
             cursor: pointer;
+            min-width: 80px;
+            flex-shrink: 0;
           ">跳过本轮</button>
           ` : ''}
           <button id="acu-opt-apply" style="
-            padding: 8px 16px;
+            padding: 10px 16px;
             border: none;
             background: #7bb7ff;
             color: #1a1d24;
             border-radius: 6px;
             cursor: pointer;
             font-weight: 600;
+            min-width: 100px;
+            flex-shrink: 0;
           ">${applyButtonText}</button>
         </div>
       </div>
@@ -2807,32 +2813,36 @@
               <div style="color: #ff6b6b; margin-bottom: 8px; text-decoration: line-through; opacity: 0.7;">
                 <strong>原文：</strong>${escapeHtml_ACU(opt.original.substring(0, 200))}${opt.original.length > 200 ? '...' : ''}
               </div>
-              <div style="color: #69db7c; margin-bottom: 8px;">
-                <strong>优化：</strong>${escapeHtml_ACU(opt.optimized.substring(0, 200))}${opt.optimized.length > 200 ? '...' : ''}
+              <div style="color: rgba(255, 255, 255, 0.7); font-size: 12px; margin-bottom: 8px; padding: 8px; background: rgba(123, 183, 255, 0.1); border-radius: 4px;">
+                <strong>修改方案：</strong>${escapeHtml_ACU(opt.plan || opt.reason || '未说明')}
               </div>
-              <div style="color: rgba(255, 255, 255, 0.5); font-size: 12px;">
-                <strong>原因：</strong>${escapeHtml_ACU(opt.reason || '未说明')}
+              <div style="color: #69db7c;">
+                <strong>优化：</strong>${escapeHtml_ACU(opt.optimized.substring(0, 200))}${opt.optimized.length > 200 ? '...' : ''}
               </div>
             </div>
           `).join('')}
         </div>
-        <div style="display: flex; gap: 12px; justify-content: flex-end;">
+        <div style="display: flex; gap: 8px; justify-content: flex-end; flex-wrap: wrap; padding-bottom: 10px;">
           <button id="acu-opt-cancel" style="
-            padding: 8px 16px;
+            padding: 10px 16px;
             border: 1px solid rgba(255, 255, 255, 0.2);
             background: transparent;
             color: rgba(255, 255, 255, 0.7);
             border-radius: 6px;
             cursor: pointer;
+            min-width: 80px;
+            flex-shrink: 0;
           ">取消</button>
           <button id="acu-opt-apply" style="
-            padding: 8px 16px;
+            padding: 10px 16px;
             border: none;
             background: #7bb7ff;
             color: #1a1d24;
             border-radius: 6px;
             cursor: pointer;
             font-weight: 600;
+            min-width: 100px;
+            flex-shrink: 0;
           ">应用优化</button>
         </div>
       </div>
@@ -20956,7 +20966,7 @@ insertRow(1, ["时间2", "大纲事件2...", "关键词"]);
               outputText += `摘要：${result.summary || '无'}\n\n`;
               outputText += `=== 优化详情 ===\n\n`;
               result.optimizations.forEach((opt, i) => {
-                outputText += `[${i + 1}] ${opt.reason || '未说明原因'}\n`;
+                outputText += `[${i + 1}] 修改方案：${opt.plan || opt.reason || '未说明'}\n`;
                 outputText += `原文：${opt.original.substring(0, 100)}${opt.original.length > 100 ? '...' : ''}\n`;
                 outputText += `优化：${opt.optimized.substring(0, 100)}${opt.optimized.length > 100 ? '...' : ''}\n\n`;
               });
