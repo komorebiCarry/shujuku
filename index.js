@@ -2250,22 +2250,150 @@
    * @param {array} optimizations - 优化项数组
    * @returns {string} 优化后的正文
    */
-  function applyOptimizations_ACU(originalContent, optimizations) {
-    let result = originalContent;
-    
-    for (const opt of optimizations) {
-      if (opt.type === 'replace' && opt.original && opt.optimized) {
-        // 使用精确匹配替换
-        // 注意：只替换第一次出现，避免重复替换
-        const index = result.indexOf(opt.original);
-        if (index !== -1) {
-          result = result.substring(0, index) + opt.optimized + result.substring(index + opt.original.length);
-        }
-      }
-    }
-    
-    return result;
-  }
+ function applyOptimizations_ACU(originalContent, optimizations) {
+   let result = originalContent;
+   let appliedCount = 0;
+   let failedCount = 0;
+   const failedItems = [];
+   
+   for (let i = 0; i < optimizations.length; i++) {
+     const opt = optimizations[i];
+     if (opt.type === 'replace' && opt.original && opt.optimized) {
+       // 策略1：精确匹配
+       let index = result.indexOf(opt.original);
+       
+       // 策略2：如果精确匹配失败，尝试去除首尾空白后匹配
+       if (index === -1) {
+         const trimmedOriginal = opt.original.trim();
+         const trimmedResult = result;
+         const trimmedIndex = trimmedResult.indexOf(trimmedOriginal);
+         
+         if (trimmedIndex !== -1) {
+           // 找到匹配，但需要调整位置（保留原文的首尾空白）
+           const actualStart = trimmedIndex;
+           const actualEnd = trimmedIndex + trimmedOriginal.length;
+           const actualOriginal = result.substring(actualStart, actualEnd);
+           
+           // 使用实际找到的文本进行替换
+           result = result.substring(0, actualStart) + opt.optimized + result.substring(actualEnd);
+           index = actualStart; // 标记为成功
+           logDebug_ACU(`[正文优化] 优化项 ${i + 1} 使用trim匹配成功`);
+         }
+       }
+       
+       // 策略3：如果仍然失败，尝试忽略多余空白匹配
+       if (index === -1) {
+         // 将连续空白（包括换行）压缩为单个空格进行匹配
+         const normalizeText = (text) => text.replace(/\s+/g, ' ').trim();
+         const normalizedOriginal = normalizeText(opt.original);
+         const normalizedResult = normalizeText(result);
+         
+         if (normalizedResult.includes(normalizedOriginal)) {
+           // 找到规范化后的匹配，但这很难定位原始位置
+           // 尝试找到最接近的原始位置
+           const firstChar = opt.original.trim()[0];
+           const possibleStarts = [];
+           
+           for (let j = 0; j < result.length; j++) {
+             if (result[j] === firstChar || (result[j].match(/\s/) && result[j+1] === firstChar)) {
+               possibleStarts.push(j);
+             }
+           }
+           
+           // 尝试每个可能的位置
+           for (const startPos of possibleStarts) {
+             const testText = result.substring(startPos, startPos + opt.original.length + 50);
+             if (normalizeText(testText).startsWith(normalizedOriginal)) {
+               // 找到大致位置，尝试精确匹配
+               const endPos = Math.min(result.length, startPos + opt.original.length + 100);
+               const searchArea = result.substring(startPos, endPos);
+               
+               // 在搜索区域内找到最佳匹配
+               let bestMatch = null;
+               let bestMatchScore = 0;
+               
+               for (let len = opt.original.length - 20; len <= opt.original.length + 50; len++) {
+                 if (startPos + len > result.length) break;
+                 const candidate = result.substring(startPos, startPos + len);
+                 const score = calculateSimilarity_ACU(opt.original, candidate);
+                 if (score > bestMatchScore && score > 0.8) {
+                   bestMatchScore = score;
+                   bestMatch = { start: startPos, end: startPos + len, text: candidate };
+                 }
+               }
+               
+               if (bestMatch) {
+                 result = result.substring(0, bestMatch.start) + opt.optimized + result.substring(bestMatch.end);
+                 index = bestMatch.start;
+                 logDebug_ACU(`[正文优化] 优化项 ${i + 1} 使用模糊匹配成功，相似度: ${(bestMatchScore * 100).toFixed(1)}%`);
+                 break;
+               }
+             }
+           }
+         }
+       }
+       
+       if (index !== -1) {
+         appliedCount++;
+       } else {
+         failedCount++;
+         failedItems.push({
+           index: i + 1,
+           original: opt.original.substring(0, 100) + (opt.original.length > 100 ? '...' : ''),
+           plan: opt.plan || opt.reason || '未说明'
+         });
+         logDebug_ACU(`[正文优化] 优化项 ${i + 1} 匹配失败，原文片段: "${opt.original.substring(0, 50)}..."`);
+       }
+     }
+   }
+   
+   // 输出替换统计
+   logDebug_ACU(`[正文优化] 替换统计: 成功 ${appliedCount}/${optimizations.length}，失败 ${failedCount}`);
+   
+   if (failedItems.length > 0) {
+     console.warn('[正文优化] 以下优化项未能应用:', failedItems);
+   }
+   
+   return result;
+ }
+ 
+ /**
+  * 计算两个字符串的相似度（0-1）
+  */
+ function calculateSimilarity_ACU(str1, str2) {
+   if (!str1 || !str2) return 0;
+   
+   const s1 = str1.toLowerCase();
+   const s2 = str2.toLowerCase();
+   
+   if (s1 === s2) return 1;
+   
+   // 使用Levenshtein距离计算相似度
+   const len1 = s1.length;
+   const len2 = s2.length;
+   const maxLen = Math.max(len1, len2);
+   
+   if (maxLen === 0) return 1;
+   
+   const dp = Array(len1 + 1).fill(null).map(() => Array(len2 + 1).fill(0));
+   
+   for (let i = 0; i <= len1; i++) dp[i][0] = i;
+   for (let j = 0; j <= len2; j++) dp[0][j] = j;
+   
+   for (let i = 1; i <= len1; i++) {
+     for (let j = 1; j <= len2; j++) {
+       const cost = s1[i - 1] === s2[j - 1] ? 0 : 1;
+       dp[i][j] = Math.min(
+         dp[i - 1][j] + 1,
+         dp[i][j - 1] + 1,
+         dp[i - 1][j - 1] + cost
+       );
+     }
+   }
+   
+   const distance = dp[len1][len2];
+   return 1 - distance / maxLen;
+ }
   
   /**
    * 显示无感替换遮罩
