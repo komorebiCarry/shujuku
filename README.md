@@ -2,6 +2,173 @@
 
 ## 2026-03-23 更新
 
+### 随机数功能增强
+
+#### 功能描述
+增强随机数功能，支持随机数变量存储和内联随机条件判断。
+
+#### 新增语法
+
+**1. 随机数变量（id 属性）**
+```
+<!-- 生成随机数并存储为变量 -->
+<random id="dice" min="1" max="6" />
+<random id="event" min="1" max="100" />
+
+<!-- 在文本中引用随机数变量 -->
+🎲 骰子结果：$random:dice
+📊 事件随机数：$random:event
+
+<!-- 在条件中引用随机数变量 -->
+<if cond="random:dice > 4">
+  骰子点数大于4，触发特殊事件！
+</if>
+```
+
+**2. 内联随机条件**
+```
+<!-- 直接在条件中生成随机数并判断 -->
+<if cond="random:1-100 <= 10">
+  ⚠️ 触发重大意外事件！
+</if>
+
+<!-- 与其他条件组合 -->
+<if cond="seed:战斗 & random:1-6 > 3">
+  战斗中，骰子点数大于3，攻击成功！
+</if>
+```
+
+#### 条件表达式语法更新
+| 元素 | 说明 | 示例 |
+|------|------|------|
+| `random:id` | 引用随机数变量 | `random:dice > 3` |
+| `random:min-max` | 内联随机数 | `random:1-100 <= 10` |
+
+#### 使用示例
+```
+<!-- 完整的随机事件系统 -->
+<random id="event" min="1" max="100" />
+
+🎲 **本轮随机数**：$random:event
+
+<if cond="random:event <= 10">
+  ⚠️ 触发重大意外事件（如敌人突袭、自然灾害）
+<else>
+  <if cond="random:event <= 30">
+    📊 触发小波折（如物品损坏、NPC拒绝）
+  <else>
+    <if cond="random:event >= 90">
+      🌟 触发重大机遇（如意外收获、关键线索）
+    <else>
+      ✨ 平稳推进，无特殊事件
+    </if>
+  </if>
+</if>
+
+<!-- 战斗骰子判定 -->
+<random id="attack" min="1" max="20" />
+<random id="damage" min="1" max="6" />
+
+⚔️ 攻击检定：$random:attack
+💥 伤害骰：$random:damage
+
+<if cond="random:attack >= 15">
+  命中！造成 $random:damage 点伤害。
+<else>
+  攻击未命中。
+</if>
+```
+
+#### 处理顺序
+提示词处理的完整顺序：
+1. **EJS 渲染**（st-prompt-template）
+2. **占位符替换**（$变量）
+3. **随机数生成**（`<random>` 标签，存储变量）
+4. **随机数变量替换**（`$random:id` 引用）
+5. **条件模板解析**（`<if>` 标签，支持 `random:` 条件）
+
+#### 修改位置
+- **修改函数**：[`parseRandomTags_ACU()`](index.js:8907) - 支持 id 属性存储随机数变量
+- **新增函数**：[`replaceRandomVariables_ACU()`](index.js:8965) - 替换随机数变量引用
+- **新增函数**：[`getRandomVariable_ACU()`](index.js:8980) - 获取随机数变量值
+- **新增函数**：[`evaluateRandomExpression_ACU()`](index.js:9520) - 解析随机数条件表达式
+- **修改函数**：[`evaluateSubCondition_ACU()`](index.js:9454) - 支持 random: 前缀
+- **修改位置**：[`index.js:11056-11060`](index.js:11056) - 添加随机数变量替换步骤
+
+---
+
+### 条件模板新增统一条件表达式（cond属性）
+
+#### 功能描述
+新增 `<if cond="条件表达式">` 语法，支持多条件组合和括号分组，解决之前需要嵌套多个 `<if>` 标签才能实现的多条件判断问题。
+
+#### 新增语法
+```
+<if cond="条件表达式">
+  条件满足时显示的内容
+<else>
+  条件不满足时显示的内容
+</if>
+```
+
+#### 条件表达式语法
+| 元素 | 说明 | 示例 |
+|------|------|------|
+| `seed:关键词` | 关键词匹配 | `seed:战斗` |
+| `cell:表格条件` | 表格数值比较 | `cell:状态表/主角/魔力值 > 30` |
+| `random:随机条件` | 随机数条件 | `random:dice > 3` |
+| `&` | AND（与） | `seed:战斗 & cell:魔力 > 30` |
+| `,` | OR（或） | `seed:战斗 , seed:休息` |
+| `()` | 括号分组 | `(seed:战斗 & cell:魔力 > 30) , cell:好感度 > 80` |
+| `!` | 取反 | `!seed:安全` |
+
+#### 运算优先级
+1. 括号 `()` - 最高优先级
+2. `&` (AND) - 次高优先级
+3. `,` (OR) - 最低优先级
+
+#### 使用示例
+```
+<!-- 两个表格值共同约束 -->
+<if cond="cell:关系表/陈默/好感度 > 50 & cell:资产表/陈默/财富值 > 1000">
+  陈默对你有好感且富有。
+</if>
+
+<!-- seed 和 cell 混合条件 -->
+<if cond="seed:战斗 & cell:状态表/主角/魔力值 > 30">
+  战斗中且魔力充足。
+</if>
+
+<!-- 括号分组控制优先级 -->
+<if cond="(seed:战斗 & cell:魔力 > 30) , cell:好感度 > 80">
+  (战斗且魔力充足) 或 好感度很高
+</if>
+
+<!-- 取反条件 -->
+<if cond="!seed:安全 & cell:生命值 <= 30">
+  危险！不在安全区域且生命值很低！
+</if>
+```
+
+#### else 的含义
+`else` 表示整个条件表达式不满足时显示的内容：
+- `A & B` 的 else = 不满足A **或** 不满足B
+- `A , B` 的 else = 不满足A **且** 不满足B
+
+#### 向后兼容
+原有语法保持不变，可继续使用：
+- `<if seed="关键词表达式">` - 关键词匹配
+- `<if cell="表格条件">` - 表格数值比较
+
+#### 修改位置
+- **新增函数**：[`evaluateSubCondition_ACU()`](index.js:9454) - 解析单个子条件（seed:、cell: 或 random:）
+- **新增函数**：[`evaluateCondExpression_ACU()`](index.js:9497) - 解析统一条件表达式（支持括号分组）
+- **修改函数**：[`parseConditionalTemplate_ACU()`](index.js:9600) - 支持 cond 属性
+- **修改函数**：[`parseIfBlocksInContent_ACU()`](index.js:9700) - 支持 cond 属性
+- **修改函数**：[`parseSingleIfBlock_ACU()`](index.js:9757) - 支持 cond 类型条件评估
+
+---
+
 ### 表格数据发送行数控制（新功能）
 
 #### 功能描述

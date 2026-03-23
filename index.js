@@ -8890,11 +8890,17 @@ const DatabaseAPI_ACU = {
   // [剧情推进] 随机数生成功能
   // 语法：<random min="1" max="100" />
   // 在提示词中生成指定范围内的随机整数
+  // 新增：支持 id 属性存储随机数变量，可用 $random:id 引用
   // =========================
+
+  // 随机数变量存储（每次处理时重置）
+  let randomVariables_ACU = {};
 
   /**
    * 解析随机数标签，生成随机整数
-   * 语法：<random min="1" max="100" /> 或 <random min="1" max="100">
+   * 语法：
+   * - <random min="1" max="100" /> - 生成随机数并替换标签
+   * - <random id="dice" min="1" max="6" /> - 生成随机数并存储为变量
    * @param {string} content - 包含随机数标签的内容
    * @returns {string} - 替换随机数标签后的内容
    */
@@ -8902,33 +8908,85 @@ const DatabaseAPI_ACU = {
     if (!content || typeof content !== 'string') {
       return content || '';
     }
-    
-    // 匹配 <random min="X" max="Y" /> 或 <random min="X" max="Y">
-    const randomRegex = /<random\s+min\s*=\s*"(\d+)"\s+max\s*=\s*"(\d+)"\s*\/?>/gi;
-    
-    return content.replace(randomRegex, (match, minStr, maxStr) => {
-      const min = parseInt(minStr, 10);
-      const max = parseInt(maxStr, 10);
-      
-      if (isNaN(min) || isNaN(max)) {
-        logWarn_ACU('[随机函数] 无效的随机参数:', minStr, maxStr);
+
+    // 重置随机数变量存储
+    randomVariables_ACU = {};
+
+    // 匹配 <random id="xxx" min="X" max="Y" /> 或 <random min="X" max="Y" id="xxx" />
+    // 也支持不带 id 的传统格式
+    const randomRegex = /<random\s+([^>]*?)\s*\/?>/gi;
+
+    return content.replace(randomRegex, (match, attrs) => {
+      // 解析属性
+      const idMatch = attrs.match(/id\s*=\s*"([^"]*)"/i);
+      const minMatch = attrs.match(/min\s*=\s*"(\d+)"/i);
+      const maxMatch = attrs.match(/max\s*=\s*"(\d+)"/i);
+
+      if (!minMatch || !maxMatch) {
+        logWarn_ACU('[随机函数] 缺少 min 或 max 参数:', attrs);
         return match; // 保持原样
       }
-      
+
+      const id = idMatch ? idMatch[1].trim() : null;
+      const min = parseInt(minMatch[1], 10);
+      const max = parseInt(maxMatch[1], 10);
+
+      if (isNaN(min) || isNaN(max)) {
+        logWarn_ACU('[随机函数] 无效的随机参数:', minMatch[1], maxMatch[1]);
+        return match; // 保持原样
+      }
+
+      let randomValue;
       if (min > max) {
         logWarn_ACU('[随机函数] 最小值大于最大值，自动交换:', min, max);
-        const temp = min;
-        const actualMin = max;
-        const actualMax = temp;
-        const randomValue = Math.floor(Math.random() * (actualMax - actualMin + 1)) + actualMin;
-        logDebug_ACU('[随机函数] 生成随机数:', randomValue, '范围:', actualMin, '-', actualMax);
+        randomValue = Math.floor(Math.random() * (min - max + 1)) + max;
+      } else {
+        randomValue = Math.floor(Math.random() * (max - min + 1)) + min;
+      }
+
+      // 如果有 id，存储到变量中
+      if (id) {
+        randomVariables_ACU[id] = randomValue;
+        logDebug_ACU('[随机函数] 生成随机数变量:', id, '=', randomValue, '范围:', min, '-', max);
+        // 返回空字符串，不显示在文本中（用户可以用 $random:id 引用）
+        return '';
+      } else {
+        logDebug_ACU('[随机函数] 生成随机数:', randomValue, '范围:', min, '-', max);
         return String(randomValue);
       }
-      
-      const randomValue = Math.floor(Math.random() * (max - min + 1)) + min;
-      logDebug_ACU('[随机函数] 生成随机数:', randomValue, '范围:', min, '-', max);
-      return String(randomValue);
     });
+  }
+
+  /**
+   * 替换随机数变量引用 $random:id
+   * @param {string} content - 包含随机数变量引用的内容
+   * @returns {string} - 替换后的内容
+   */
+  function replaceRandomVariables_ACU(content) {
+    if (!content || typeof content !== 'string') {
+      return content || '';
+    }
+
+    // 匹配 $random:id 或 $random:id 格式
+    return content.replace(/\$random:([a-zA-Z_][a-zA-Z0-9_]*)/gi, (match, id) => {
+      if (randomVariables_ACU.hasOwnProperty(id)) {
+        return String(randomVariables_ACU[id]);
+      }
+      logWarn_ACU('[随机函数] 未找到随机数变量:', id);
+      return match; // 保持原样
+    });
+  }
+
+  /**
+   * 获取随机数变量值（用于条件判断）
+   * @param {string} id - 随机数变量 ID
+   * @returns {number|null} - 随机数值，不存在返回 null
+   */
+  function getRandomVariable_ACU(id) {
+    if (randomVariables_ACU.hasOwnProperty(id)) {
+      return randomVariables_ACU[id];
+    }
+    return null;
   }
 
   // =========================
@@ -9378,11 +9436,245 @@ const DatabaseAPI_ACU = {
     return false;
   }
 
+  // =========================
+  // [剧情推进] 条件模板扩展：统一条件表达式（cond属性）
+  // 语法：<if cond="条件表达式">条件提示词内容</if>
+  // 支持的子条件：seed:关键词表达式 | cell:表格条件
+  // 支持的逻辑运算符：& (AND) | , (OR)
+  // 支持括号分组：(A & B) , C
+  // 示例：<if cond="(seed:战斗 & cell:状态表/主角/魔力值 > 30) , cell:关系表/陈默/好感度 > 80">...</if>
+  // =========================
+
+  /**
+   * 解析单个子条件（seed:、cell: 或 random:）
+   * @param {string} subCondition - 子条件字符串，如 "seed:战斗" 或 "cell:状态表/主角/魔力值 > 30" 或 "random:dice > 3"
+   * @param {object} context - 上下文对象，包含 seedContent, allTablesJson, plotContent
+   * @returns {boolean} - 是否满足条件
+   */
+  function evaluateSubCondition_ACU(subCondition, context) {
+    if (!subCondition || typeof subCondition !== 'string') return false;
+    
+    const trimmed = subCondition.trim();
+    if (!trimmed) return false;
+    
+    // 检查是否是取反条件（以 ! 开头）
+    let isNegated = false;
+    let actualCondition = trimmed;
+    
+    if (trimmed.startsWith('!')) {
+      isNegated = true;
+      actualCondition = trimmed.slice(1).trim();
+    }
+    
+    // 解析子条件类型
+    if (actualCondition.startsWith('seed:')) {
+      // 关键词匹配
+      const keywordExpr = actualCondition.slice(5).trim(); // 去掉 "seed:" 前缀
+      let result = evaluateSeedExpression_ACU(keywordExpr, context.seedContent || '', context.plotContent || '');
+      return isNegated ? !result : result;
+      
+    } else if (actualCondition.startsWith('cell:')) {
+      // 表格数值比较
+      const cellExpr = actualCondition.slice(5).trim(); // 去掉 "cell:" 前缀
+      let result = evaluateCellExpression_ACU(cellExpr, context.allTablesJson);
+      return isNegated ? !result : result;
+      
+    } else if (actualCondition.startsWith('random:')) {
+      // 随机数条件判断
+      const randomExpr = actualCondition.slice(7).trim(); // 去掉 "random:" 前缀
+      let result = evaluateRandomExpression_ACU(randomExpr);
+      return isNegated ? !result : result;
+      
+    } else {
+      // 尝试作为关键词匹配（向后兼容，不带前缀的情况）
+      logWarn_ACU('[条件模板] 子条件缺少 seed:、cell: 或 random: 前缀，默认作为关键词匹配:', actualCondition);
+      let result = evaluateSeedExpression_ACU(actualCondition, context.seedContent || '', context.plotContent || '');
+      return isNegated ? !result : result;
+    }
+  }
+
+  /**
+   * 解析随机数条件表达式
+   * 支持两种格式：
+   * 1. random:id > 50 - 引用已生成的随机数变量
+   * 2. random:1-100 > 50 - 内联随机数（生成并判断）
+   * @param {string} expression - 随机数条件表达式
+   * @returns {boolean} - 是否满足条件
+   */
+  function evaluateRandomExpression_ACU(expression) {
+    if (!expression || typeof expression !== 'string') return false;
+    
+    const expr = expression.trim();
+    if (!expr) return false;
+    
+    // 支持的比较运算符：>=、<=、!=、==、>、<
+    const operators = ['>=', '<=', '!=', '==', '>', '<'];
+    
+    let matchedOperator = null;
+    let randomRef = '';
+    let compareValue = '';
+    
+    // 查找匹配的运算符
+    for (const op of operators) {
+      const opIndex = expr.indexOf(op);
+      if (opIndex !== -1) {
+        randomRef = expr.substring(0, opIndex).trim();
+        compareValue = expr.substring(opIndex + op.length).trim();
+        matchedOperator = op;
+        break;
+      }
+    }
+    
+    if (!matchedOperator) {
+      logWarn_ACU('[条件模板] evaluateRandomExpression_ACU: 未找到有效的比较运算符, expression=', expression);
+      return false;
+    }
+    
+    // 获取随机数值
+    let randomValue = null;
+    
+    // 检查是否是内联随机数格式（如 1-100）
+    const inlineMatch = randomRef.match(/^(\d+)-(\d+)$/);
+    if (inlineMatch) {
+      // 内联随机数：生成并判断
+      const min = parseInt(inlineMatch[1], 10);
+      const max = parseInt(inlineMatch[2], 10);
+      if (!isNaN(min) && !isNaN(max)) {
+        randomValue = Math.floor(Math.random() * (Math.abs(max - min) + 1)) + Math.min(min, max);
+        logDebug_ACU('[条件模板] 内联随机数生成:', randomValue, '范围:', min, '-', max);
+      }
+    } else {
+      // 引用随机数变量
+      randomValue = getRandomVariable_ACU(randomRef);
+      if (randomValue === null) {
+        logWarn_ACU('[条件模板] evaluateRandomExpression_ACU: 未找到随机数变量:', randomRef);
+        return false;
+      }
+    }
+    
+    // 执行比较
+    const numCompareValue = parseFloat(compareValue);
+    if (isNaN(numCompareValue)) {
+      logWarn_ACU('[条件模板] evaluateRandomExpression_ACU: 无效的比较值:', compareValue);
+      return false;
+    }
+    
+    return compareValue_ACU(randomValue, matchedOperator, numCompareValue);
+  }
+
+  /**
+   * 解析统一条件表达式（支持括号分组、& 和 , 运算符）
+   * 运算优先级：括号 > & (AND) > , (OR)
+   * @param {string} expression - 条件表达式
+   * @param {object} context - 上下文对象
+   * @returns {boolean} - 是否满足条件
+   */
+  function evaluateCondExpression_ACU(expression, context) {
+    if (!expression || typeof expression !== 'string') return false;
+    
+    const expr = expression.trim();
+    if (!expr) return false;
+    
+    // 使用递归下降解析器处理表达式
+    // 语法：Expression = OrExpr
+    //        OrExpr = AndExpr (',' AndExpr)*
+    //        AndExpr = Primary ('&' Primary)*
+    //        Primary = '(' Expression ')' | SubCondition
+    //        SubCondition = ('!'? ('seed:' | 'cell:')? [^()&,]+)
+    
+    let pos = 0;
+    
+    // 跳过空白
+    const skipWhitespace = () => {
+      while (pos < expr.length && /\s/.test(expr[pos])) {
+        pos++;
+      }
+    };
+    
+    // 解析或表达式（最低优先级）
+    const parseOrExpr = () => {
+      skipWhitespace();
+      let result = parseAndExpr();
+      
+      while (pos < expr.length) {
+        skipWhitespace();
+        if (expr[pos] === ',') {
+          pos++; // 跳过 ','
+          skipWhitespace();
+          const right = parseAndExpr();
+          result = result || right; // OR 逻辑
+        } else {
+          break;
+        }
+      }
+      
+      return result;
+    };
+    
+    // 解析与表达式
+    const parseAndExpr = () => {
+      skipWhitespace();
+      let result = parsePrimary();
+      
+      while (pos < expr.length) {
+        skipWhitespace();
+        if (expr[pos] === '&') {
+          pos++; // 跳过 '&'
+          skipWhitespace();
+          const right = parsePrimary();
+          result = result && right; // AND 逻辑
+        } else {
+          break;
+        }
+      }
+      
+      return result;
+    };
+    
+    // 解析基本元素（括号表达式或子条件）
+    const parsePrimary = () => {
+      skipWhitespace();
+      
+      if (pos >= expr.length) return false;
+      
+      // 括号表达式
+      if (expr[pos] === '(') {
+        pos++; // 跳过 '('
+        skipWhitespace();
+        const result = parseOrExpr();
+        skipWhitespace();
+        if (pos < expr.length && expr[pos] === ')') {
+          pos++; // 跳过 ')'
+        }
+        return result;
+      }
+      
+      // 子条件：提取直到遇到运算符或括号
+      let subCond = '';
+      while (pos < expr.length && expr[pos] !== '(' && expr[pos] !== ')' && expr[pos] !== '&' && expr[pos] !== ',') {
+        subCond += expr[pos];
+        pos++;
+      }
+      
+      return evaluateSubCondition_ACU(subCond, context);
+    };
+    
+    try {
+      const result = parseOrExpr();
+      skipWhitespace();
+      return result;
+    } catch (e) {
+      logError_ACU('[条件模板] evaluateCondExpression_ACU 解析出错:', e, 'expression:', expression);
+      return false;
+    }
+  }
+
   /**
    * 解析条件模板，根据关键词匹配或表格数值比较决定是否包含条件提示词内容
-   * 支持两种语法：
+   * 支持三种语法：
    * 1. <if seed="关键词表达式">内容</if> - 关键词匹配
-   * 2. <if cell="表格名::行名::列名 > 50">内容</if> - 表格数值比较
+   * 2. <if cell="表格名/行名/列名 > 50">内容</if> - 表格数值比较
+   * 3. <if cond="条件表达式">内容</if> - 统一条件表达式（新增）
    * @param {string} templateContent - 包含条件模板的提示词内容
    * @param {string} seedContent - 用于关键词检测的内容（表格内容）
    * @param {object} allTablesJson - 完整的表格数据对象（用于表格数值比较）
@@ -9402,9 +9694,12 @@ const DatabaseAPI_ACU = {
       plotContent = '';
     }
     
-    // 正则匹配 <if seed="表达式">内容</if> 或 <if cell="表达式">内容</if>
+    // 构建上下文对象
+    const context = { seedContent, allTablesJson, plotContent };
+    
+    // 正则匹配 <if seed="表达式">内容</if> 或 <if cell="表达式">内容</if> 或 <if cond="表达式">内容</if>
     // 使用非贪婪匹配，支持多行内容
-    const ifRegex = /<if\s+(seed|cell)\s*=\s*"([^"]*)"\s*>([\s\S]*?)<\/if>/gi;
+    const ifRegex = /<if\s+(seed|cell|cond)\s*=\s*"([^"]*)"\s*>([\s\S]*?)<\/if>/gi;
     
     let result = templateContent;
     let match;
@@ -9414,7 +9709,7 @@ const DatabaseAPI_ACU = {
     while ((match = ifRegex.exec(templateContent)) !== null) {
       matches.push({
         fullMatch: match[0],
-        type: match[1].toLowerCase(), // 'seed' 或 'cell'
+        type: match[1].toLowerCase(), // 'seed'、'cell' 或 'cond'
         expression: match[2],
         content: match[3],
         startIndex: match.index,
@@ -9433,6 +9728,9 @@ const DatabaseAPI_ACU = {
       } else if (m.type === 'cell') {
         // 表格数值比较
         shouldInclude = evaluateCellExpression_ACU(m.expression, allTablesJson);
+      } else if (m.type === 'cond') {
+        // 统一条件表达式（支持 seed: 和 cell: 混合，支持括号分组）
+        shouldInclude = evaluateCondExpression_ACU(m.expression, context);
       }
       
       if (shouldInclude) {
@@ -9487,7 +9785,11 @@ const DatabaseAPI_ACU = {
     
     while (currentIndex < content.length) {
       // 查找下一个 <if 开始标签
-      const ifStartMatch = content.slice(currentIndex).match(/<if\s+(seed|cell)\s*=\s*"([^"]*)"\s*>/i);
+      // 支持三种格式：
+      // 1. <if seed="表达式">
+      // 2. <if cell="表达式">
+      // 3. <if cond="表达式"> (新增)
+      const ifStartMatch = content.slice(currentIndex).match(/<if\s+(seed|cell|cond)\s*=\s*"([^"]*)"\s*>/i);
       
       if (!ifStartMatch) {
         // 没有更多的 if 块，添加剩余内容
@@ -9526,7 +9828,7 @@ const DatabaseAPI_ACU = {
    * 解析单个 if 块（包括 else 分支和嵌套）
    * @param {string} content - 完整内容
    * @param {number} startIndex - if 块开始索引
-   * @param {string} type - 条件类型 (seed 或 cell)
+   * @param {string} type - 条件类型 (seed、cell 或 cond)
    * @param {string} expression - 条件表达式
    * @param {object} context - 上下文
    * @param {number} depth - 当前深度
@@ -9534,7 +9836,8 @@ const DatabaseAPI_ACU = {
    */
   function parseSingleIfBlock_ACU(content, startIndex, type, expression, context, depth) {
     // 找到 if 开始标签的结束位置
-    const ifStartMatch = content.slice(startIndex).match(/<if\s+(?:seed|cell)\s*=\s*"[^"]*"\s*>/i);
+    // 支持 seed、cell、cond 三种类型
+    const ifStartMatch = content.slice(startIndex).match(/<if\s+(?:seed|cell|cond)\s*=\s*"[^"]*"\s*>/i);
     if (!ifStartMatch) return null;
     
     const ifStartTagEnd = startIndex + ifStartMatch[0].length;
@@ -9548,8 +9851,8 @@ const DatabaseAPI_ACU = {
       // 查找下一个 <if 或 </if> 或 <else>
       const remainingContent = content.slice(currentIndex);
       
-      // 匹配嵌套的 <if 开始标签
-      const nestedIfMatch = remainingContent.match(/<if\s+(?:seed|cell)\s*=\s*"[^"]*"\s*>/i);
+      // 匹配嵌套的 <if 开始标签（支持 seed、cell、cond 三种类型）
+      const nestedIfMatch = remainingContent.match(/<if\s+(?:seed|cell|cond)\s*=\s*"[^"]*"\s*>/i);
       // 匹配 </if> 结束标签
       const endIfMatch = remainingContent.match(/<\/if>/i);
       // 匹配 <else> 标签（只在当前层级有效）
@@ -9593,11 +9896,17 @@ const DatabaseAPI_ACU = {
           
           // 评估条件
           let conditionMet = false;
-          if (type.toLowerCase() === 'seed') {
+          const typeLower = type.toLowerCase();
+          
+          if (typeLower === 'seed') {
             // 关键词匹配（在表格内容和上轮规划数据中查找）
             conditionMet = evaluateSeedExpression_ACU(expression, context.seedContent || '', context.plotContent || '');
-          } else if (type.toLowerCase() === 'cell') {
+          } else if (typeLower === 'cell') {
+            // 表格数值比较
             conditionMet = evaluateCellExpression_ACU(expression, context.allTablesJson);
+          } else if (typeLower === 'cond') {
+            // 统一条件表达式（支持 seed: 和 cell: 混合，支持括号分组）
+            conditionMet = evaluateCondExpression_ACU(expression, context);
           }
           
           // 选择内容并递归处理嵌套
@@ -10738,15 +11047,17 @@ const DatabaseAPI_ACU = {
         logWarn_ACU('[剧情推进] 准备条件模板检测内容时出错:', e);
       }
 
-      // 4) 对每个段落：先 EJS 渲染，再占位符替换，再随机数处理，最后条件模板解析
+      // 4) 对每个段落：先 EJS 渲染，再占位符替换，再随机数处理，再随机数变量替换，最后条件模板解析
       for (const seg of messagesToUse) {
         if (!seg || typeof seg.content !== 'string') continue;
         let c = seg.content;
         c = await tryRenderWithEjs_ACU(c);
         c = performReplacements(c);
-        // [随机函数] 处理随机数标签，生成随机整数
+        // [随机函数] 处理随机数标签，生成随机整数（支持 id 属性存储变量）
         c = parseRandomTags_ACU(c);
-        // [条件模板] 解析条件模板，支持关键词匹配(seed)和表格数值比较(cell)，支持 else 分支和嵌套
+        // [随机函数] 替换随机数变量引用 $random:id
+        c = replaceRandomVariables_ACU(c);
+        // [条件模板] 解析条件模板，支持关键词匹配(seed)、表格数值比较(cell)、随机数条件(random)，支持 else 分支和嵌套
         const contextForIf = { seedContent: seedContentForConditional, allTablesJson: currentJsonTableData_ACU, plotContent: '' };
         c = parseIfBlockRecursive_ACU(c, contextForIf, 0);
         seg.__renderedContent = c;
