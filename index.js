@@ -2250,6 +2250,233 @@
    * @param {array} optimizations - 优化项数组
    * @returns {string} 优化后的正文
    */
+ /**
+  * 去除文本中的标点符号和空白，只保留文字和数字
+  */
+ function removePunctuation_ACU(text) {
+   if (!text) return '';
+   // 去除所有标点符号、空格、换行等，只保留中文、英文、数字
+   return text.replace(/[^\u4e00-\u9fa5a-zA-Z0-9]/g, '');
+ }
+ 
+ /**
+  * 从文本中提取关键词（简单的分词，取前N个有意义的词）
+  */
+ function extractKeywords_ACU(text, count = 5) {
+   if (!text) return [];
+   // 去除标点后按字符分割，取长度>=2的片段作为关键词
+   const cleanText = removePunctuation_ACU(text);
+   const keywords = [];
+   
+   // 简单分词：每2-4个字符作为一个关键词候选
+   for (let len = 4; len >= 2; len--) {
+     for (let i = 0; i <= cleanText.length - len; i++) {
+       const word = cleanText.substring(i, i + len);
+       if (!keywords.includes(word)) {
+         keywords.push(word);
+         if (keywords.length >= count) break;
+       }
+     }
+     if (keywords.length >= count) break;
+   }
+   
+   return keywords;
+ }
+ 
+ /**
+  * 新的段落匹配算法：去除标点后，比较开头、结尾和关键词
+  * 改进：找到开头后，向后搜索结尾位置，而不是用长度计算
+  * @returns {object} 匹配结果 { start, end, method }
+  */
+ function findParagraphMatch_ACU(originalText, fullContent) {
+   // 策略1：精确匹配
+   const exactIndex = fullContent.indexOf(originalText);
+   if (exactIndex !== -1) {
+     return { start: exactIndex, end: exactIndex + originalText.length, method: '精确匹配' };
+   }
+   
+   // 去除标点后的文本
+   const cleanOriginal = removePunctuation_ACU(originalText);
+   const cleanContent = removePunctuation_ACU(fullContent);
+   
+   if (cleanOriginal.length < 10) {
+     return { start: -1, end: -1, method: null }; // 太短不匹配
+   }
+   
+   // 提取开头和结尾（动态计算，最小3字符，最大10字符，不超过段落长度的1/4）
+   const prefixLen = Math.max(3, Math.min(10, Math.floor(cleanOriginal.length / 4)));
+   const suffixLen = Math.max(3, Math.min(10, Math.floor(cleanOriginal.length / 4)));
+   
+   const originalPrefix = cleanOriginal.substring(0, prefixLen);
+   const originalSuffix = cleanOriginal.substring(cleanOriginal.length - suffixLen);
+   
+   // 提取中间关键词
+   const keywords = extractKeywords_ACU(originalText, 5);
+   
+   // 在全文中查找开头
+   let searchStart = 0;
+   let bestMatch = null;
+   let bestScore = 0;
+   
+   while (searchStart < cleanContent.length) {
+     const prefixIndex = cleanContent.indexOf(originalPrefix, searchStart);
+     if (prefixIndex === -1) break;
+     
+     // 从开头位置向后搜索结尾
+     // 允许更大长度差异（±50%），因为AI可能合并或拆分段落
+     const minLen = Math.floor(cleanOriginal.length * 0.5);
+     const maxLen = Math.floor(cleanOriginal.length * 1.5);
+     
+     for (let len = minLen; len <= maxLen && prefixIndex + len + suffixLen <= cleanContent.length; len++) {
+       const candidateSuffixPos = prefixIndex + len - suffixLen;
+       const candidateSuffix = cleanContent.substring(candidateSuffixPos, candidateSuffixPos + suffixLen);
+       
+       if (candidateSuffix === originalSuffix) {
+         // 开头和结尾都匹配，检查关键词
+         const candidateText = cleanContent.substring(prefixIndex, prefixIndex + len);
+         let matchedKeywords = 0;
+         for (const kw of keywords) {
+           if (candidateText.includes(kw)) {
+             matchedKeywords++;
+           }
+         }
+         
+         const score = matchedKeywords / keywords.length;
+         // 降低关键词匹配阈值到40%，因为换行等问题可能导致部分关键词不匹配
+         if (score >= 0.4 && score > bestScore) {
+           bestScore = score;
+           bestMatch = {
+             cleanStart: prefixIndex,
+             cleanEnd: prefixIndex + len, // 使用实际找到的长度
+             score: score,
+             matchedKeywords: matchedKeywords,
+             totalKeywords: keywords.length
+           };
+           break; // 找到最佳匹配，跳出长度循环
+         }
+       }
+     }
+     
+     searchStart = prefixIndex + 1;
+   }
+   
+   if (bestMatch) {
+     // 将cleanContent中的位置映射回原始content
+     const mappedResult = mapCleanPositionToOriginal_ACU(fullContent, bestMatch.cleanStart, bestMatch.cleanEnd);
+     return {
+       start: mappedResult.start,
+       end: mappedResult.end,
+       method: `关键词匹配 (${(bestMatch.score * 100).toFixed(0)}%关键词匹配)`
+     };
+   }
+   
+   return { start: -1, end: -1, method: null };
+ }
+ 
+ /**
+  * 将去除标点后的位置映射回原始文本位置
+  * 改进：更精确的映射，确保不会多截或少截
+  */
+ function mapCleanPositionToOriginal_ACU(originalContent, cleanStart, cleanEnd) {
+   let cleanIndex = 0;
+   let originalStart = -1;
+   let originalEnd = -1;
+   
+   for (let i = 0; i < originalContent.length; i++) {
+     const char = originalContent[i];
+     const isWordChar = /[\u4e00-\u9fa5a-zA-Z0-9]/.test(char);
+     
+     if (isWordChar) {
+       if (cleanIndex === cleanStart) {
+         originalStart = i;
+       }
+       if (cleanIndex === cleanEnd - 1) {
+         originalEnd = i + 1;
+         break;
+       }
+       cleanIndex++;
+     }
+   }
+   
+   // 如果没找到结束位置，使用剩余内容
+   if (originalEnd === -1 && originalStart !== -1) {
+     originalEnd = originalContent.length;
+   }
+   
+   return { start: originalStart, end: originalEnd };
+ }
+ 
+ /**
+  * 移除字符串两端的标点符号
+  * @returns {object} { trimmed: 移除后的文本, prefix: 前端标点, suffix: 后端标点 }
+  */
+ function trimPunctuation_ACU(text) {
+   if (!text) return { trimmed: '', prefix: '', suffix: '' };
+   
+   // 标点符号正则（中英文标点）
+   const punctRegex = /^[^\u4e00-\u9fa5a-zA-Z0-9]+|[^\u4e00-\u9fa5a-zA-Z0-9]+$/g;
+   
+   let prefix = '';
+   let suffix = '';
+   let trimmed = text;
+   
+   // 提取前端标点
+   const prefixMatch = trimmed.match(/^[^\u4e00-\u9fa5a-zA-Z0-9]+/);
+   if (prefixMatch) {
+     prefix = prefixMatch[0];
+     trimmed = trimmed.substring(prefix.length);
+   }
+   
+   // 提取后端标点
+   const suffixMatch = trimmed.match(/[^\u4e00-\u9fa5a-zA-Z0-9]+$/);
+   if (suffixMatch) {
+     suffix = suffixMatch[0];
+     trimmed = trimmed.substring(0, trimmed.length - suffix.length);
+   }
+   
+   return { trimmed, prefix, suffix };
+ }
+ 
+ /**
+  * 处理单引号：
+  * - 如果后单引号在文段末尾，保留前引号（变双引号），移除后引号
+  * - 如果不在句末，前后都变成双引号
+  */
+ function processSingleQuotes_ACU(text) {
+   if (!text) return text;
+   
+   let result = text;
+   
+   // 处理中文单引号对 '...'
+   result = result.replace(/'([^']*)'/g, (match, content, offset, string) => {
+     const endPos = offset + match.length;
+     // 检查后面是否还有非标点内容
+     const afterMatch = string.substring(endPos).trim();
+     if (afterMatch === '' || /^[^\u4e00-\u9fa5a-zA-Z0-9]*$/.test(afterMatch)) {
+       // 在句末，保留前双引号，移除后引号
+       return `"${content}`;
+     } else {
+       // 不在句末，变成双引号
+       return `"${content}"`;
+     }
+   });
+   
+   // 处理英文单引号对 '...'
+   result = result.replace(/'([^']*)'/g, (match, content, offset, string) => {
+     const endPos = offset + match.length;
+     const afterMatch = string.substring(endPos).trim();
+     if (afterMatch === '' || /^[^\u4e00-\u9fa5a-zA-Z0-9]*$/.test(afterMatch)) {
+       // 在句末，保留前双引号，移除后引号
+       return `"${content}`;
+     } else {
+       // 不在句末，变成双引号
+       return `"${content}"`;
+     }
+   });
+   
+   return result;
+ }
+ 
  function applyOptimizations_ACU(originalContent, optimizations) {
    let result = originalContent;
    let appliedCount = 0;
@@ -2259,81 +2486,30 @@
    for (let i = 0; i < optimizations.length; i++) {
      const opt = optimizations[i];
      if (opt.type === 'replace' && opt.original && opt.optimized) {
-       // 策略1：精确匹配
-       let index = result.indexOf(opt.original);
+       let replaced = false;
        
-       // 策略2：如果精确匹配失败，尝试去除首尾空白后匹配
-       if (index === -1) {
-         const trimmedOriginal = opt.original.trim();
-         const trimmedResult = result;
-         const trimmedIndex = trimmedResult.indexOf(trimmedOriginal);
+       // 使用新的段落匹配算法
+       const match = findParagraphMatch_ACU(opt.original, result);
+       
+       if (match.start !== -1) {
+         // 匹配成功，获取原文两端的标点
+         const matchedText = result.substring(match.start, match.end);
+         const originalPunct = trimPunctuation_ACU(matchedText);
+         const optimizedPunct = trimPunctuation_ACU(opt.optimized);
          
-         if (trimmedIndex !== -1) {
-           // 找到匹配，但需要调整位置（保留原文的首尾空白）
-           const actualStart = trimmedIndex;
-           const actualEnd = trimmedIndex + trimmedOriginal.length;
-           const actualOriginal = result.substring(actualStart, actualEnd);
-           
-           // 使用实际找到的文本进行替换
-           result = result.substring(0, actualStart) + opt.optimized + result.substring(actualEnd);
-           index = actualStart; // 标记为成功
-           logDebug_ACU(`[正文优化] 优化项 ${i + 1} 使用trim匹配成功`);
-         }
+         // 使用原文两端的标点，中间用优化后的内容
+         let finalContent = originalPunct.prefix + optimizedPunct.trimmed + originalPunct.suffix;
+         
+         // 处理单引号
+         finalContent = processSingleQuotes_ACU(finalContent);
+         
+         // 执行替换
+         result = result.substring(0, match.start) + finalContent + result.substring(match.end);
+         replaced = true;
+         logDebug_ACU(`[正文优化] 优化项 ${i + 1} 使用${match.method}成功，位置: ${match.start}-${match.end}`);
        }
        
-       // 策略3：如果仍然失败，尝试忽略多余空白匹配
-       if (index === -1) {
-         // 将连续空白（包括换行）压缩为单个空格进行匹配
-         const normalizeText = (text) => text.replace(/\s+/g, ' ').trim();
-         const normalizedOriginal = normalizeText(opt.original);
-         const normalizedResult = normalizeText(result);
-         
-         if (normalizedResult.includes(normalizedOriginal)) {
-           // 找到规范化后的匹配，但这很难定位原始位置
-           // 尝试找到最接近的原始位置
-           const firstChar = opt.original.trim()[0];
-           const possibleStarts = [];
-           
-           for (let j = 0; j < result.length; j++) {
-             if (result[j] === firstChar || (result[j].match(/\s/) && result[j+1] === firstChar)) {
-               possibleStarts.push(j);
-             }
-           }
-           
-           // 尝试每个可能的位置
-           for (const startPos of possibleStarts) {
-             const testText = result.substring(startPos, startPos + opt.original.length + 50);
-             if (normalizeText(testText).startsWith(normalizedOriginal)) {
-               // 找到大致位置，尝试精确匹配
-               const endPos = Math.min(result.length, startPos + opt.original.length + 100);
-               const searchArea = result.substring(startPos, endPos);
-               
-               // 在搜索区域内找到最佳匹配
-               let bestMatch = null;
-               let bestMatchScore = 0;
-               
-               for (let len = opt.original.length - 20; len <= opt.original.length + 50; len++) {
-                 if (startPos + len > result.length) break;
-                 const candidate = result.substring(startPos, startPos + len);
-                 const score = calculateSimilarity_ACU(opt.original, candidate);
-                 if (score > bestMatchScore && score > 0.8) {
-                   bestMatchScore = score;
-                   bestMatch = { start: startPos, end: startPos + len, text: candidate };
-                 }
-               }
-               
-               if (bestMatch) {
-                 result = result.substring(0, bestMatch.start) + opt.optimized + result.substring(bestMatch.end);
-                 index = bestMatch.start;
-                 logDebug_ACU(`[正文优化] 优化项 ${i + 1} 使用模糊匹配成功，相似度: ${(bestMatchScore * 100).toFixed(1)}%`);
-                 break;
-               }
-             }
-           }
-         }
-       }
-       
-       if (index !== -1) {
+       if (replaced) {
          appliedCount++;
        } else {
          failedCount++;
@@ -2355,44 +2531,6 @@
    }
    
    return result;
- }
- 
- /**
-  * 计算两个字符串的相似度（0-1）
-  */
- function calculateSimilarity_ACU(str1, str2) {
-   if (!str1 || !str2) return 0;
-   
-   const s1 = str1.toLowerCase();
-   const s2 = str2.toLowerCase();
-   
-   if (s1 === s2) return 1;
-   
-   // 使用Levenshtein距离计算相似度
-   const len1 = s1.length;
-   const len2 = s2.length;
-   const maxLen = Math.max(len1, len2);
-   
-   if (maxLen === 0) return 1;
-   
-   const dp = Array(len1 + 1).fill(null).map(() => Array(len2 + 1).fill(0));
-   
-   for (let i = 0; i <= len1; i++) dp[i][0] = i;
-   for (let j = 0; j <= len2; j++) dp[0][j] = j;
-   
-   for (let i = 1; i <= len1; i++) {
-     for (let j = 1; j <= len2; j++) {
-       const cost = s1[i - 1] === s2[j - 1] ? 0 : 1;
-       dp[i][j] = Math.min(
-         dp[i - 1][j] + 1,
-         dp[i][j - 1] + 1,
-         dp[i - 1][j - 1] + cost
-       );
-     }
-   }
-   
-   const distance = dp[len1][len2];
-   return 1 - distance / maxLen;
  }
   
   /**
@@ -2458,28 +2596,45 @@
    */
   async function replaceChatMessage_ACU(messageIndex, newContent) {
     try {
+      logDebug_ACU(`[正文优化] replaceChatMessage_ACU 开始执行, messageIndex=${messageIndex}, newContent长度=${newContent?.length || 0}`);
+      
       const chat = SillyTavern_API_ACU.chat;
       if (!chat || !chat[messageIndex]) {
+        logError_ACU('[正文优化] 消息不存在, chat存在=', !!chat, 'messageIndex=', messageIndex);
         throw new Error('消息不存在');
       }
+      
+      const oldContent = chat[messageIndex].mes;
+      logDebug_ACU(`[正文优化] 原内容长度: ${oldContent?.length || 0}, 新内容长度: ${newContent?.length || 0}`);
       
       // 修改消息内容
       chat[messageIndex].mes = newContent;
       
+      // 验证修改是否成功
+      const verifyContent = chat[messageIndex].mes;
+      logDebug_ACU(`[正文优化] 修改后验证 - 内容长度: ${verifyContent?.length || 0}, 是否匹配: ${verifyContent === newContent}`);
+      
       // 保存聊天
       if (typeof SillyTavern_API_ACU.saveChat === 'function') {
+        logDebug_ACU('[正文优化] 正在保存聊天...');
         await SillyTavern_API_ACU.saveChat();
+        logDebug_ACU('[正文优化] 聊天已保存');
+      } else {
+        logDebug_ACU('[正文优化] saveChat 函数不存在');
       }
       
       // 触发消息更新事件（使用正确的eventTypes常量）
       if (SillyTavern_API_ACU?.eventSource?.emit && SillyTavern_API_ACU?.eventTypes?.MESSAGE_UPDATED) {
+        logDebug_ACU('[正文优化] 触发 MESSAGE_UPDATED 事件 (新API)');
         SillyTavern_API_ACU.eventSource.emit(SillyTavern_API_ACU.eventTypes.MESSAGE_UPDATED, messageIndex);
       } else if (SillyTavern_API_ACU.eventSource) {
-        // 兼容旧版本
+        logDebug_ACU('[正文优化] 触发 MESSAGE_UPDATED 事件 (旧API)');
         SillyTavern_API_ACU.eventSource.emit('MESSAGE_UPDATED', messageIndex);
+      } else {
+        logDebug_ACU('[正文优化] eventSource 不存在，无法触发更新事件');
       }
       
-      logDebug_ACU(`[正文优化] 消息 ${messageIndex} 已更新`);
+      logDebug_ACU(`[正文优化] 消息 ${messageIndex} 已更新完成`);
       return true;
       
     } catch (error) {
@@ -2890,14 +3045,21 @@
     jQuery_API_ACU('#acu-opt-apply').on('click', async function() {
       jQuery_API_ACU(this).prop('disabled', true).text('处理中...');
       
+      logDebug_ACU(`[正文优化] 用户点击应用，isLastLoop=${isLastLoop}, messageIndex=${messageIndex}`);
+      logDebug_ACU(`[正文优化] optimizedContent长度: ${result.optimizedContent?.length || 0}`);
+      
       // 如果是最后一轮，先应用优化
       if (isLastLoop) {
+        logDebug_ACU(`[正文优化] 准备调用 replaceChatMessage_ACU...`);
         const success = await replaceChatMessage_ACU(messageIndex, result.optimizedContent);
+        logDebug_ACU(`[正文优化] replaceChatMessage_ACU 返回: ${success}`);
         if (!success) {
           jQuery_API_ACU(this).prop('disabled', false).text(applyButtonText);
           showToastr_ACU('error', '应用失败');
           return;
         }
+      } else {
+        logDebug_ACU(`[正文优化] 非最后一轮，跳过应用，直接回调`);
       }
       
       jQuery_API_ACU('.acu-optimization-dialog, #acu-opt-backdrop').remove();
@@ -6879,7 +7041,7 @@ const DatabaseAPI_ACU = {
               name: s.name || k,
               sourceData: s.sourceData || { note: '', initNode: '', insertNode: '', updateNode: '', deleteNode: '' },
               content: [headerRow],
-              updateConfig: s.updateConfig || { uiSentinel: -1, contextDepth: -1, updateFrequency: -1, batchSize: -1, skipFloors: -1 },
+              updateConfig: s.updateConfig || { uiSentinel: -1, contextDepth: -1, updateFrequency: -1, batchSize: -1, skipFloors: -1, sendLatestRows: -1 },
               exportConfig: ensureExportConfigDefaults_ACU(s.exportConfig, s.name || k),
           };
           // v2: 基础数据（仅模板预置/seedRows）；注意：这里绝不从 content 派生，避免把真实数据误当作“基础数据”写入指导表
@@ -7118,7 +7280,7 @@ const DatabaseAPI_ACU = {
               name: s.name || k,
               sourceData: s.sourceData ? JSON.parse(JSON.stringify(s.sourceData)) : { note: '', initNode: '', insertNode: '', updateNode: '', deleteNode: '' },
               content: [headerRow],
-              updateConfig: s.updateConfig ? JSON.parse(JSON.stringify(s.updateConfig)) : { uiSentinel: -1, contextDepth: -1, updateFrequency: -1, batchSize: -1, skipFloors: -1 },
+              updateConfig: s.updateConfig ? JSON.parse(JSON.stringify(s.updateConfig)) : { uiSentinel: -1, contextDepth: -1, updateFrequency: -1, batchSize: -1, skipFloors: -1, sendLatestRows: -1 },
               exportConfig: ensureExportConfigDefaults_ACU(
                   s.exportConfig ? JSON.parse(JSON.stringify(s.exportConfig)) : null,
                   s.name || k
@@ -22412,11 +22574,23 @@ insertRow(1, ["时间2", "大纲事件2...", "关键词"]);
             let rowsToProcess = effectiveAllRows;
             let startIndex = 0;
 
-            // [新增] 如果是纪要表/总结表并且行数超过10，则只提取最新的10条（减少TK压力）
-            if ((table.name.trim() === '纪要表' || table.name.trim() === '总结表') && effectiveAllRows.length > 10) {
+            // [健全机制] 纪要表/总结表：固定使用硬编码的10条限制，不受 sendLatestRows 参数影响
+            // 这是为了保证纪要表的行为一致性，避免用户误配置导致发送过多数据
+            const isSummaryTable = (table.name.trim() === '纪要表' || table.name.trim() === '总结表');
+            if (isSummaryTable && effectiveAllRows.length > 10) {
                 startIndex = effectiveAllRows.length - 10;
                 rowsToProcess = effectiveAllRows.slice(-10);
-                tableDataText += `  - Note: Showing last ${rowsToProcess.length} of ${effectiveAllRows.length} entries.\n`;
+                tableDataText += `  - Note: Showing last ${rowsToProcess.length} of ${effectiveAllRows.length} entries (summary table fixed limit).\n`;
+            } else if (!isSummaryTable) {
+                // [新增] 其他表：使用 sendLatestRows 参数控制发送行数
+                // -1 = 全部发送，0 = 全部发送（沿用UI全局），正数 = 仅发送最新N条
+                const sendLatestRows = (table.updateConfig && typeof table.updateConfig.sendLatestRows === 'number')
+                    ? table.updateConfig.sendLatestRows : -1;
+                if (sendLatestRows > 0 && effectiveAllRows.length > sendLatestRows) {
+                    startIndex = effectiveAllRows.length - sendLatestRows;
+                    rowsToProcess = effectiveAllRows.slice(-sendLatestRows);
+                    tableDataText += `  - Note: Showing last ${rowsToProcess.length} of ${effectiveAllRows.length} entries (sendLatestRows=${sendLatestRows}).\n`;
+                }
             }
 
             if (rowsToProcess.length > 0) {
@@ -26884,8 +27058,8 @@ async function callCustomOpenAI_ACU(dynamicContent, abortController = null, opti
                   domain: "chat", type: "dynamic", enable: true, required: false,
                   content: [[null, "列1", "列2"]],
                   sourceData: { note: "新表格说明", initNode: "", insertNode: "", updateNode: "", deleteNode: "" },
-                  // -1 = 沿用UI全局（新版默认）；updateFrequency=0 可用于“禁用该表自动更新”
-                  updateConfig: { uiSentinel: -1, contextDepth: -1, updateFrequency: -1, batchSize: -1, skipFloors: -1 },
+                  // -1 = 沿用UI全局（新版默认）；updateFrequency=0 可用于"禁用该表自动更新"
+                  updateConfig: { uiSentinel: -1, contextDepth: -1, updateFrequency: -1, batchSize: -1, skipFloors: -1, sendLatestRows: -1 },
                   exportConfig: buildDefaultExportConfig_ACU(newName),
                   [TABLE_ORDER_FIELD_ACU]: 999999 // 临时占位，稍后会被 getOrderedSheetKeys_ACU / applySheetOrderNumbers_ACU 重编号
               };
@@ -27286,6 +27460,10 @@ async function callCustomOpenAI_ACU(dynamicContent, abortController = null, opti
                       <label>跳过更新楼层 (Skip Floors): <span class="acu-hint">(-1 = 沿用UI全局, 0+ = 生效)</span></label>
                       <input type="number" class="acu-form-input" id="cfg-skip" min="-1" step="1" value="${ucVal(updateConfig.skipFloors)}">
                   </div>
+                  <div class="acu-form-group">
+                      <label>发送最新N行 (Send Latest Rows): <span class="acu-hint">(-1 = 全部发送, 0 = 沿用UI全局, 1+ = 仅发送最新N条；纪要表固定使用10条)</span></label>
+                      <input type="number" class="acu-form-input" id="cfg-send-rows" min="-1" step="1" value="${ucVal(updateConfig.sendLatestRows)}">
+                  </div>
               </div>
 
               <div class="acu-config-section">
@@ -27512,6 +27690,7 @@ async function callCustomOpenAI_ACU(dynamicContent, abortController = null, opti
       jQuery_API_ACU('#cfg-freq').on('input', function() { if (!sheet.updateConfig) sheet.updateConfig = {}; sheet.updateConfig.uiSentinel = -1; sheet.updateConfig.updateFrequency = parseIntOrDefault_ACU(jQuery_API_ACU(this).val(), -1); });
       jQuery_API_ACU('#cfg-batch').on('input', function() { if (!sheet.updateConfig) sheet.updateConfig = {}; sheet.updateConfig.uiSentinel = -1; sheet.updateConfig.batchSize = parseIntOrDefault_ACU(jQuery_API_ACU(this).val(), -1); });
       jQuery_API_ACU('#cfg-skip').on('input', function() { if (!sheet.updateConfig) sheet.updateConfig = {}; sheet.updateConfig.uiSentinel = -1; sheet.updateConfig.skipFloors = parseIntOrDefault_ACU(jQuery_API_ACU(this).val(), -1); });
+      jQuery_API_ACU('#cfg-send-rows').on('input', function() { if (!sheet.updateConfig) sheet.updateConfig = {}; sheet.updateConfig.uiSentinel = -1; sheet.updateConfig.sendLatestRows = parseIntOrDefault_ACU(jQuery_API_ACU(this).val(), -1); });
       
       jQuery_API_ACU('#cfg-note').on('input', function() { if (!sheet.sourceData) sheet.sourceData = {}; sheet.sourceData.note = jQuery_API_ACU(this).val(); });
       jQuery_API_ACU('#cfg-init').on('input', function() { if (!sheet.sourceData) sheet.sourceData = {}; sheet.sourceData.initNode = jQuery_API_ACU(this).val(); });
