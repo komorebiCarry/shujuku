@@ -9678,6 +9678,24 @@ const DatabaseAPI_ACU = {
   }
 
   /**
+   * 规范化运算符表达式（将全角运算符转换为半角）
+   * 支持：＞、＜、＝、≥、≦、≠ 等全角符号
+   * @param {string} expression - 原始表达式
+   * @returns {string} - 规范化后的表达式
+   */
+  function normalizeOperators_ACU(expression) {
+    if (!expression || typeof expression !== 'string') return expression;
+    return expression
+      .replace(/＞/g, '>')    // 全角大于
+      .replace(/＜/g, '<')    // 全角小于
+      .replace(/＝/g, '==')   // 全角等于（转换为双等号）
+      .replace(/≥/g, '>=')   // 大于等于
+      .replace(/≦/g, '<=')   // 小于等于
+      .replace(/≤/g, '<=')   // 小于等于
+      .replace(/≠/g, '!=');  // 不等于
+  }
+
+  /**
    * 执行单个值的比较
    * @param {number|string} cellValue - 单元格值
    * @param {string} operator - 比较运算符
@@ -9728,6 +9746,9 @@ const DatabaseAPI_ACU = {
   function evaluateCellExpression_ACU(expression, allTablesJson) {
     if (!expression || typeof expression !== 'string') return false;
     
+    // 【新增】将全角运算符转换为半角运算符
+    const normalizedExpr = normalizeOperators_ACU(expression);
+    
     // 支持的比较运算符：>、<、>=、<=、==、!=
     const operators = ['>=', '<=', '!=', '==', '>', '<'];
     
@@ -9735,12 +9756,12 @@ const DatabaseAPI_ACU = {
     let cellRef = '';
     let compareValue = '';
     
-    // 查找匹配的运算符
+    // 查找匹配的运算符（使用规范化后的表达式）
     for (const op of operators) {
-      const opIndex = expression.indexOf(op);
+      const opIndex = normalizedExpr.indexOf(op);
       if (opIndex !== -1) {
-        cellRef = expression.substring(0, opIndex).trim();
-        compareValue = expression.substring(opIndex + op.length).trim();
+        cellRef = normalizedExpr.substring(0, opIndex).trim();
+        compareValue = normalizedExpr.substring(opIndex + op.length).trim();
         matchedOperator = op;
         break;
       }
@@ -9974,7 +9995,8 @@ const DatabaseAPI_ACU = {
   function evaluateCalcCondition_ACU(expression) {
     if (!expression || typeof expression !== 'string') return false;
     
-    const expr = expression.trim();
+    // 规范化运算符（支持全角符号）
+    const expr = normalizeOperators_ACU(expression).trim();
     if (!expr) return false;
     
     // 支持的比较运算符：>=、<=、!=、==、>、<
@@ -10026,7 +10048,8 @@ const DatabaseAPI_ACU = {
   function evaluateMaxCondition_ACU(expression) {
     if (!expression || typeof expression !== 'string') return false;
     
-    const expr = expression.trim();
+    // 规范化运算符（支持全角符号）
+    const expr = normalizeOperators_ACU(expression).trim();
     if (!expr) return false;
     
     const operators = ['>=', '<=', '!=', '==', '>', '<'];
@@ -10074,7 +10097,8 @@ const DatabaseAPI_ACU = {
   function evaluateMinCondition_ACU(expression) {
     if (!expression || typeof expression !== 'string') return false;
     
-    const expr = expression.trim();
+    // 规范化运算符（支持全角符号）
+    const expr = normalizeOperators_ACU(expression).trim();
     if (!expr) return false;
     
     const operators = ['>=', '<=', '!=', '==', '>', '<'];
@@ -10124,7 +10148,8 @@ const DatabaseAPI_ACU = {
   function evaluateRandomExpression_ACU(expression) {
     if (!expression || typeof expression !== 'string') return false;
     
-    const expr = expression.trim();
+    // 规范化运算符（支持全角符号）
+    const expr = normalizeOperators_ACU(expression).trim();
     if (!expr) return false;
     
     // 支持的比较运算符：>=、<=、!=、==、>、<
