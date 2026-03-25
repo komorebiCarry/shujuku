@@ -10570,7 +10570,7 @@ const DatabaseAPI_ACU = {
    * 从表格数据中获取指定单元格的值
    * @param {object} allTablesJson - 完整的表格数据对象
    * @param {string} tableName - 表格名称
-   * @param {string} rowName - 行名称（第一列的值）
+   * @param {string} rowName - 行标识文本（会在该表任意列中查找）
    * @param {string} colName - 列名称
    * @returns {object} - { success: boolean, value: string|number, error?: string }
    */
@@ -10604,16 +10604,16 @@ const DatabaseAPI_ACU = {
         return { success: false, value: null, error: `未找到列: ${colName}` };
       }
       
-      // 查找行（第一列匹配行名的行）
+      // 查找行：只要任意列有单元格匹配 rowName，就视为命中该行
+      const normalizedRowName = String(rowName || '').trim();
       const dataRows = targetTable.content.slice(1);
       const targetRow = dataRows.find(row => {
         if (!Array.isArray(row)) return false;
-        const firstColValue = String(row[0] || '').trim();
-        return firstColValue === rowName.trim();
+        return row.some(cell => String(cell || '').trim() === normalizedRowName);
       });
       
       if (!targetRow) {
-        return { success: false, value: null, error: `未找到行: ${rowName}` };
+        return { success: false, value: null, error: `未找到行标识: ${rowName}` };
       }
       
       // 获取单元格值
@@ -10693,9 +10693,9 @@ const DatabaseAPI_ACU = {
   /**
    * 解析数值比较表达式（简化版）
    * 支持格式：
-   * - 精确匹配：表格名/行名/列名 > 50
+   * - 精确匹配：表格名/行标识/列名 > 50（先在任意列定位行，再读取目标列；允许行列颠倒后再整体匹配）
    * - 模糊匹配（某行）：表格名/行名 > 50（检查该行所有数值列）
-   * - 模糊匹配（某列）：表格名/列名 > 50（检查该列所有数值行，行列颠倒自动匹配）
+   * - 模糊匹配（某列）：表格名/列名 > 50（检查该列所有数值行）
    * @param {string} expression - 比较表达式
    * @param {object} allTablesJson - 完整的表格数据对象
    * @returns {boolean} - 是否满足条件（任一匹配即返回true）
@@ -10763,57 +10763,20 @@ const DatabaseAPI_ACU = {
     
     // 根据参数数量决定匹配模式
     if (parts.length === 3) {
-      // 精确匹配：表格名/行名/列名
+      // 精确匹配：表格名/行标识/列名
+      // 先在任意列中定位到包含“行标识”的整行，再读取目标列；允许将“行标识/列名”整体交换后再次尝试
       const rowName = name1;
       const colName = name2;
-      
-      // 先尝试正常顺序
       let cellResult = getCellValue_ACU(allTablesJson, tableName, rowName, colName);
-      if (cellResult.success) {
-        if (compareValue_ACU(cellResult.value, matchedOperator, compareValue)) {
-          return true;
-        } else {
-          // 单元格存在但比较失败，返回 false
-          return false;
-        }
-      }
       
-      // 再尝试行列颠倒（行名当列名，列名当行名）
+      if (cellResult.success) {
+        return compareValue_ACU(cellResult.value, matchedOperator, compareValue);
+      }
+
+      // 允许行列颠倒，但仍要求“交换后”的行与列都同时存在才算命中
       cellResult = getCellValue_ACU(allTablesJson, tableName, colName, rowName);
       if (cellResult.success) {
-        if (compareValue_ACU(cellResult.value, matchedOperator, compareValue)) {
-          return true;
-        } else {
-          // 单元格存在但比较失败，返回 false
-          return false;
-        }
-      }
-      
-      // 【新增】单行表格支持：如果表格只有一行数据，尝试直接用 name1 作为列名获取值
-      // 这种情况适用于「全局数据表」等只有一行数据的表格
-      if (dataRows.length === 1) {
-        // 尝试将 name1 当作列名
-        const colIndexForName1 = headerRow.findIndex(h => String(h || '').trim() === name1.trim());
-        if (colIndexForName1 !== -1) {
-          const singleRowValue = dataRows[0][colIndexForName1];
-          if (compareValue_ACU(singleRowValue, matchedOperator, compareValue)) {
-            return true;
-          } else {
-            // 单元格存在但比较失败，返回 false
-            return false;
-          }
-        }
-        // 尝试将 name2 当作列名
-        const colIndexForName2 = headerRow.findIndex(h => String(h || '').trim() === name2.trim());
-        if (colIndexForName2 !== -1) {
-          const singleRowValue = dataRows[0][colIndexForName2];
-          if (compareValue_ACU(singleRowValue, matchedOperator, compareValue)) {
-            return true;
-          } else {
-            // 单元格存在但比较失败，返回 false
-            return false;
-          }
-        }
+        return compareValue_ACU(cellResult.value, matchedOperator, compareValue);
       }
       
       // 单元格不存在时：== 返回 false，!= 返回 true
