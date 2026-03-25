@@ -2179,8 +2179,13 @@ $CONTENT
          // 8. 替换最小值变量引用
          item.content = replaceMinVariables_ACU(item.content);
          // 9. 解析条件模板
-         const seedContentForConditional = formatNonSummaryTablesForSeed_ACU(currentJsonTableData_ACU);
-         const contextForIf = { seedContent: seedContentForConditional, allTablesJson: currentJsonTableData_ACU, plotContent: '' };
+         const latestAiContentForConditional = getLatestAIMessageContent_ACU();
+         const latestPlotContentForConditional = getPlotFromHistory_ACU();
+         const contextForIf = {
+           seedContent: latestAiContentForConditional,
+           allTablesJson: currentJsonTableData_ACU,
+           plotContent: latestPlotContentForConditional
+         };
          item.content = parseIfBlockRecursive_ACU(item.content, contextForIf, 0);
        }
        // 转换role为小写
@@ -2395,7 +2400,8 @@ $CONTENT
       const type = typeof opt.type === 'string' ? opt.type.trim() : 'replace';
       const original = typeof opt.original === 'string' ? opt.original.trim() : '';
       const optimized = typeof opt.optimized === 'string' ? opt.optimized.trim() : '';
-      const plan = typeof opt.plan === 'string' ? opt.plan.trim() : '';
+      const plan = [opt.plan, opt.reason, opt.strategy, opt.description, opt.note]
+        .find(value => typeof value === 'string' && value.trim())?.trim() || '';
 
       if (type !== 'replace' || !original || !optimized) {
         return null;
@@ -2538,13 +2544,20 @@ $CONTENT
         }
       }
 
+      const planFieldCandidates = ['plan', 'reason', 'strategy', 'description', 'note'];
       const optimizations = objects
-        .map(objText => normalizeOptimizationItem_ACU({
-          type: extractStringField_ACU(objText, 'type') || 'replace',
-          original: extractStringField_ACU(objText, 'original'),
-          plan: extractStringField_ACU(objText, 'plan'),
-          optimized: extractStringField_ACU(objText, 'optimized')
-        }))
+        .map(objText => {
+          const fallbackPlan = planFieldCandidates
+            .map(field => extractStringField_ACU(objText, field))
+            .find(value => value && value.trim()) || '';
+
+          return normalizeOptimizationItem_ACU({
+            type: extractStringField_ACU(objText, 'type') || 'replace',
+            original: extractStringField_ACU(objText, 'original'),
+            plan: fallbackPlan,
+            optimized: extractStringField_ACU(objText, 'optimized')
+          });
+        })
         .filter(Boolean)
         .slice(0, maxOptimizations);
 
@@ -10320,53 +10333,6 @@ const DatabaseAPI_ACU = {
   // =========================
 
   /**
-   * 获取除纪要表以外的所有数据库表格内容，用于条件模板的关键词检测
-   * @param {object} allTablesJson - 完整的表格数据对象
-   * @returns {string} - 格式化后的表格内容文本
-   */
-  function formatNonSummaryTablesForSeed_ACU(allTablesJson) {
-    try {
-      if (!allTablesJson || typeof allTablesJson !== 'object') {
-        return '';
-      }
-      
-      const sheets = Object.values(allTablesJson).filter(x => x && typeof x === 'object' && x.name && x.content);
-      let result = '';
-      
-      sheets.forEach(table => {
-        const name = String(table.name || '').trim();
-        // 排除纪要表和总结表
-        if (name === '纪要表' || name === '总结表') return;
-        
-        // 添加表格名称
-        result += `# ${name}\n`;
-        
-        // 格式化表格内容
-        if (Array.isArray(table.content) && table.content.length > 0) {
-          const headerRow = table.content[0];
-          if (Array.isArray(headerRow)) {
-            result += headerRow.join(' | ') + '\n';
-          }
-          
-          // 添加数据行
-          const dataRows = table.content.slice(1);
-          dataRows.forEach(row => {
-            if (Array.isArray(row)) {
-              result += row.join(' | ') + '\n';
-            }
-          });
-        }
-        result += '\n';
-      });
-      
-      return result;
-    } catch (e) {
-      logError_ACU('[剧情推进] formatNonSummaryTablesForSeed_ACU 出错:', e);
-      return '';
-    }
-  }
-
-  /**
    * 解析关键词表达式并判断是否匹配
    * 支持的语法：
    * - 简单匹配：战斗
@@ -10375,8 +10341,8 @@ const DatabaseAPI_ACU = {
    * - 非逻辑：!战斗
    * - 组合逻辑：(战斗&主角),感情
    * @param {string} expression - 关键词表达式
-   * @param {string} content - 待检测的内容（表格内容）
-   * @param {string} plotContent - 上轮规划数据（$6），可选
+   * @param {string} content - 待检测的内容（最新一层的AI回复正文）
+   * @param {string} plotContent - 最新一层的推进数据（$6），可选
    * @returns {boolean} - 是否匹配
    */
   function evaluateSeedExpression_ACU(expression, content, plotContent = '') {
@@ -10389,7 +10355,7 @@ const DatabaseAPI_ACU = {
     const expr = expression.trim();
     if (!expr) return false;
     
-    // 拼接表格内容和上轮规划数据，在两者中查找关键词
+    // 拼接最新一层AI回复正文和最新一层推进数据，在两者中查找关键词
     const combinedContent = content + '\n' + plotContent;
     const lowerContent = combinedContent.toLowerCase();
     
@@ -11458,11 +11424,23 @@ const DatabaseAPI_ACU = {
   }
 
   /**
-   * 获取用于关键词检测的内容（除纪要表外的表格内容）
-   * @returns {string} - 用于关键词检测的文本内容
+   * 获取最新一条AI消息的正文内容，用于条件模板的 seed 关键词检测
+   * @returns {string} - 最新AI消息正文；若不存在则返回空字符串
    */
-  function getSeedContentForPrompt_ACU() {
-    return formatNonSummaryTablesForSeed_ACU(currentJsonTableData_ACU || {});
+  function getLatestAIMessageContent_ACU() {
+    const chat = SillyTavern_API_ACU.chat;
+    if (!chat || chat.length === 0) {
+      return '';
+    }
+
+    for (let i = chat.length - 1; i >= 0; i--) {
+      const message = chat[i];
+      if (message && !message.is_user) {
+        return typeof message.mes === 'string' ? message.mes : '';
+      }
+    }
+
+    return '';
   }
 
   /**
@@ -11486,13 +11464,13 @@ const DatabaseAPI_ACU = {
     const startTime = Date.now();
     logDebug_ACU('[提示词模板] 开始处理酒馆提示词...');
     
-    // 获取上轮规划数据（$6）
+    // 获取最新一层推进数据（$6）
     const lastPlotContent = getPlotFromHistory_ACU();
-    logDebug_ACU('[提示词模板] $6 上轮规划数据:', lastPlotContent ? `长度=${lastPlotContent.length}` : '(空)');
+    logDebug_ACU('[提示词模板] $6 最新一层推进数据:', lastPlotContent ? `长度=${lastPlotContent.length}` : '(空)');
     
     // 获取上下文数据
     const context = {
-      seedContent: getSeedContentForPrompt_ACU(),
+      seedContent: getLatestAIMessageContent_ACU(),
       allTablesJson: getTableDataForPrompt_ACU(),
       plotContent: lastPlotContent
     };
@@ -12554,17 +12532,10 @@ const DatabaseAPI_ACU = {
       let messagesToUse = JSON.parse(JSON.stringify(plotSettings.promptGroup || []));
       if (!Array.isArray(messagesToUse)) messagesToUse = [];
 
-      // [条件模板] 准备检测内容：除纪要表以外的数据库表格内容 + $6上轮规划数据
+      // [条件模板] 准备检测内容：最新一层 AI 回复正文
       let seedContentForConditional = '';
       try {
-        // 获取除纪要表以外的数据库表格内容
-        if (currentJsonTableData_ACU && typeof currentJsonTableData_ACU === 'object') {
-          seedContentForConditional = formatNonSummaryTablesForSeed_ACU(currentJsonTableData_ACU);
-        }
-        // 添加 $6 上轮规划数据
-        if (lastPlotContent && typeof lastPlotContent === 'string') {
-          seedContentForConditional += '\n' + lastPlotContent;
-        }
+        seedContentForConditional = getLatestAIMessageContent_ACU();
         logDebug_ACU('[剧情推进] 条件模板检测内容长度:', seedContentForConditional.length);
       } catch (e) {
         logWarn_ACU('[剧情推进] 准备条件模板检测内容时出错:', e);
@@ -12594,7 +12565,7 @@ const DatabaseAPI_ACU = {
         // [最小值变量] 替换最小值变量引用 $min:id
         c = replaceMinVariables_ACU(c);
         // [条件模板] 解析条件模板，支持关键词匹配(seed)、表格数值比较(cell)、随机数条件(random)、计算变量条件(calc/max/min)，支持 else 分支和嵌套
-        const contextForIf = { seedContent: seedContentForConditional, allTablesJson: currentJsonTableData_ACU, plotContent: '' };
+        const contextForIf = { seedContent: seedContentForConditional, allTablesJson: currentJsonTableData_ACU, plotContent: lastPlotContent || '' };
         c = parseIfBlockRecursive_ACU(c, contextForIf, 0);
         seg.__renderedContent = c;
       }
@@ -24648,8 +24619,9 @@ async function callCustomOpenAI_ACU(dynamicContent, abortController = null, opti
         if (settings_ACU.promptTemplateSettings?.enabled !== false) {
           // 构建条件模板上下文
           const templateContext = {
-            seedContent: filterTableInjectedContent(dynamicContent.messagesText, '$1') + '\n' + (lastPlotContent || ''),
-            allTablesJson: currentJsonTableData_ACU
+            seedContent: getLatestAIMessageContent_ACU(),
+            allTablesJson: currentJsonTableData_ACU,
+            plotContent: lastPlotContent || ''
           };
           finalContent = parseIfBlocksInContent_ACU(finalContent, templateContext);
         }
