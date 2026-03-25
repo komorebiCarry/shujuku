@@ -2556,6 +2556,90 @@
    return result;
  }
   
+  let contentOptimizationAbortRequested_ACU = false;
+  let optimizationProgressToast_ACU = null;
+  let lastOptimizedMessageMeta_ACU = null;
+
+  function setLastOptimizationBase_ACU(payload = {}) {
+    const cache = {
+      messageIndex: Number.isInteger(payload.messageIndex) ? payload.messageIndex : -1,
+      messageId: payload.messageId ?? null,
+      baseContent: typeof payload.baseContent === 'string' ? payload.baseContent : '',
+      updatedAt: Date.now()
+    };
+
+    lastOptimizedMessageMeta_ACU = cache;
+
+    try {
+      const targetWindow = topLevelWindow_ACU || window;
+      targetWindow.__ACU_LAST_OPTIMIZATION_BASE__ = cache;
+    } catch (error) {
+      logDebug_ACU('[正文优化] 写入浏览器侧正文优化基础缓存失败（window）:', error);
+    }
+
+    try {
+      localStorage.setItem('ACU_LAST_OPTIMIZATION_BASE', JSON.stringify(cache));
+    } catch (error) {
+      logDebug_ACU('[正文优化] 写入浏览器侧正文优化基础缓存失败（localStorage）:', error);
+    }
+
+    return cache;
+  }
+
+  function getLastOptimizationBase_ACU() {
+    if (lastOptimizedMessageMeta_ACU?.baseContent) {
+      return lastOptimizedMessageMeta_ACU;
+    }
+
+    try {
+      const targetWindow = topLevelWindow_ACU || window;
+      const windowCache = targetWindow.__ACU_LAST_OPTIMIZATION_BASE__;
+      if (windowCache?.baseContent) {
+        lastOptimizedMessageMeta_ACU = windowCache;
+        return windowCache;
+      }
+    } catch (error) {
+      logDebug_ACU('[正文优化] 读取浏览器侧正文优化基础缓存失败（window）:', error);
+    }
+
+    try {
+      const raw = localStorage.getItem('ACU_LAST_OPTIMIZATION_BASE');
+      if (raw) {
+        const parsed = JSON.parse(raw);
+        if (parsed?.baseContent) {
+          lastOptimizedMessageMeta_ACU = parsed;
+          return parsed;
+        }
+      }
+    } catch (error) {
+      logDebug_ACU('[正文优化] 读取浏览器侧正文优化基础缓存失败（localStorage）:', error);
+    }
+
+    return null;
+  }
+
+  /**
+   * 取消正文优化
+   * @param {string} reason - 取消原因
+   * @returns {boolean} 是否执行了取消
+   */
+  function cancelContentOptimization_ACU(reason = '正文优化已由用户终止。') {
+    contentOptimizationAbortRequested_ACU = true;
+    hideOptimizationOverlay_ACU();
+    hideOptimizationProgressToast_ACU();
+    showToastr_ACU('warning', reason);
+    return true;
+  }
+
+  /**
+   * 检查正文优化是否已被取消
+   */
+  function ensureOptimizationNotCancelled_ACU() {
+    if (contentOptimizationAbortRequested_ACU) {
+      throw new Error('用户终止正文优化');
+    }
+  }
+
   /**
    * 显示无感替换遮罩
    * @param {string} message - 显示的消息
@@ -2594,6 +2678,15 @@
           font-size: 16px;
           font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
         ">${message}</div>
+        <button id="acu-optimization-overlay-cancel" style="
+          padding: 10px 18px;
+          border: 1px solid rgba(255, 193, 7, 0.7);
+          background: transparent;
+          color: #ffc107;
+          border-radius: 6px;
+          cursor: pointer;
+          font-size: 14px;
+        ">取消优化</button>
       </div>
       <style>
         @keyframes acu-spin {
@@ -2603,6 +2696,43 @@
     `;
     
     jQuery_API_ACU('body').append(overlayHtml);
+    jQuery_API_ACU('#acu-optimization-overlay-cancel').off('click.acu_opt_cancel').on('click.acu_opt_cancel', function(e) {
+      e.preventDefault();
+      e.stopPropagation();
+      cancelContentOptimization_ACU('正文优化已取消。');
+    });
+  }
+
+  /**
+   * 显示正文优化进度提示框（无遮罩模式）
+   * @param {string} message - 提示消息
+   */
+  function showOptimizationProgressToast_ACU(message = '正在进行正文优化...') {
+    hideOptimizationProgressToast_ACU();
+    const stopButtonHtml = `<button id="acu-opt-stop-btn" style="border: 1px solid #ffc107; color: #ffc107; background: transparent; padding: 5px 10px; border-radius: 4px; cursor: pointer; float: right; margin-left: 15px; font-size: 0.9em; transition: all 0.2s ease;" onmouseover="this.style.backgroundColor='#ffc107'; this.style.color='#1a1d24';" onmouseout="this.style.backgroundColor='transparent'; this.style.color='#ffc107';">取消优化</button>`;
+    optimizationProgressToast_ACU = showToastr_ACU('info', `<div>${message}${stopButtonHtml}</div>`, {
+      timeOut: 0,
+      extendedTimeOut: 0,
+      tapToDismiss: false,
+      onShown: function() {
+        jQuery_API_ACU('#acu-opt-stop-btn').off('click.acu_opt_cancel').on('click.acu_opt_cancel', function(e) {
+          e.preventDefault();
+          e.stopPropagation();
+          cancelContentOptimization_ACU('正文优化已取消。');
+          jQuery_API_ACU(this).closest('.toast').remove();
+        });
+      }
+    });
+  }
+
+  /**
+   * 隐藏正文优化进度提示框
+   */
+  function hideOptimizationProgressToast_ACU() {
+    if (optimizationProgressToast_ACU && toastr_API_ACU) {
+      toastr_API_ACU.clear(optimizationProgressToast_ACU);
+    }
+    optimizationProgressToast_ACU = null;
   }
   
   /**
@@ -2617,7 +2747,7 @@
    * @param {number} messageIndex - 消息索引
    * @param {string} newContent - 新内容
    */
-  async function replaceChatMessage_ACU(messageIndex, newContent) {
+  async function replaceChatMessage_ACU(messageIndex, newContent, options = {}) {
     try {
       logDebug_ACU(`[正文优化] replaceChatMessage_ACU 开始执行, messageIndex=${messageIndex}, newContent长度=${newContent?.length || 0}`);
       
@@ -2630,31 +2760,62 @@
       const oldContent = chat[messageIndex].mes;
       logDebug_ACU(`[正文优化] 原内容长度: ${oldContent?.length || 0}, 新内容长度: ${newContent?.length || 0}`);
       
-      // 修改消息内容
-      chat[messageIndex].mes = newContent;
-      
-      // 验证修改是否成功
-      const verifyContent = chat[messageIndex].mes;
-      logDebug_ACU(`[正文优化] 修改后验证 - 内容长度: ${verifyContent?.length || 0}, 是否匹配: ${verifyContent === newContent}`);
-      
-      // 保存聊天
-      if (typeof SillyTavern_API_ACU.saveChat === 'function') {
-        logDebug_ACU('[正文优化] 正在保存聊天...');
-        await SillyTavern_API_ACU.saveChat();
-        logDebug_ACU('[正文优化] 聊天已保存');
-      } else {
-        logDebug_ACU('[正文优化] saveChat 函数不存在');
+      // [新增] 保存原始内容到 extra 字段，用于"重新优化"功能
+      // 只有当 extra._acu_original_content 不存在时才保存（避免覆盖最初的原始内容）
+      const extra = chat[messageIndex].extra || {};
+      if (!extra._acu_original_content) {
+        extra._acu_original_content = options.originalContent ?? oldContent;
+        logDebug_ACU(`[正文优化] 保存原始内容到 extra._acu_original_content，长度: ${extra._acu_original_content?.length || 0}`);
       }
+      extra._acu_last_optimized_at = Date.now();
+      extra._acu_last_optimized_message_id = chat[messageIndex].message_id;
+      setLastOptimizationBase_ACU({
+        messageIndex,
+        messageId: chat[messageIndex].message_id,
+        baseContent: extra._acu_original_content || options.originalContent || oldContent || ''
+      });
       
-      // 触发消息更新事件（使用正确的eventTypes常量）
-      if (SillyTavern_API_ACU?.eventSource?.emit && SillyTavern_API_ACU?.eventTypes?.MESSAGE_UPDATED) {
-        logDebug_ACU('[正文优化] 触发 MESSAGE_UPDATED 事件 (新API)');
-        SillyTavern_API_ACU.eventSource.emit(SillyTavern_API_ACU.eventTypes.MESSAGE_UPDATED, messageIndex);
-      } else if (SillyTavern_API_ACU.eventSource) {
-        logDebug_ACU('[正文优化] 触发 MESSAGE_UPDATED 事件 (旧API)');
-        SillyTavern_API_ACU.eventSource.emit('MESSAGE_UPDATED', messageIndex);
+      // [修复] 使用酒馆的 setChatMessages API 来更新消息内容，确保渲染及时生效
+      // 该 API 会自动处理渲染，无需手动触发 MESSAGE_UPDATED 事件
+      // refresh: 'affected' 会触发被影响楼层的重新渲染
+      if (typeof SillyTavern_API_ACU.setChatMessages === 'function') {
+        logDebug_ACU('[正文优化] 使用 setChatMessages API 更新消息...');
+        await SillyTavern_API_ACU.setChatMessages(
+          [{ message_id: chat[messageIndex].message_id, mes: newContent, extra: extra }],
+          { refresh: 'affected' }
+        );
+        logDebug_ACU('[正文优化] 消息已通过 setChatMessages API 更新');
       } else {
-        logDebug_ACU('[正文优化] eventSource 不存在，无法触发更新事件');
+        // 降级方案：如果 setChatMessages 不可用，使用原有逻辑
+        logDebug_ACU('[正文优化] setChatMessages API 不可用，使用降级方案...');
+        
+        // 修改消息内容
+        chat[messageIndex].mes = newContent;
+        chat[messageIndex].extra = extra;
+        
+        // 验证修改是否成功
+        const verifyContent = chat[messageIndex].mes;
+        logDebug_ACU(`[正文优化] 修改后验证 - 内容长度: ${verifyContent?.length || 0}, 是否匹配: ${verifyContent === newContent}`);
+        
+        // 保存聊天
+        if (typeof SillyTavern_API_ACU.saveChat === 'function') {
+          logDebug_ACU('[正文优化] 正在保存聊天...');
+          await SillyTavern_API_ACU.saveChat();
+          logDebug_ACU('[正文优化] 聊天已保存');
+        } else {
+          logDebug_ACU('[正文优化] saveChat 函数不存在');
+        }
+        
+        // 触发消息更新事件（使用正确的eventTypes常量）
+        if (SillyTavern_API_ACU?.eventSource?.emit && SillyTavern_API_ACU?.eventTypes?.MESSAGE_UPDATED) {
+          logDebug_ACU('[正文优化] 触发 MESSAGE_UPDATED 事件 (新API)');
+          SillyTavern_API_ACU.eventSource.emit(SillyTavern_API_ACU.eventTypes.MESSAGE_UPDATED, messageIndex);
+        } else if (SillyTavern_API_ACU.eventSource) {
+          logDebug_ACU('[正文优化] 触发 MESSAGE_UPDATED 事件 (旧API)');
+          SillyTavern_API_ACU.eventSource.emit('MESSAGE_UPDATED', messageIndex);
+        } else {
+          logDebug_ACU('[正文优化] eventSource 不存在，无法触发更新事件');
+        }
       }
       
       logDebug_ACU(`[正文优化] 消息 ${messageIndex} 已更新完成`);
@@ -2667,12 +2828,300 @@
   }
   
   /**
+   * 获取消息的原始内容（用于重新优化）
+   * @param {number} messageIndex - 消息索引
+   * @returns {string|null} 原始内容，如果不存在则返回 null
+   */
+  function getOriginalContent_ACU(messageIndex) {
+    const cachedBase = getLastOptimizationBase_ACU();
+    if (cachedBase?.baseContent) {
+      const chat = SillyTavern_API_ACU.chat || [];
+      if (cachedBase.messageId != null) {
+        const matchedIndex = chat.findIndex(msg => msg && !msg.is_user && msg.message_id === cachedBase.messageId);
+        if (matchedIndex === messageIndex) {
+          return cachedBase.baseContent;
+        }
+      }
+      if (cachedBase.messageIndex === messageIndex) {
+        return cachedBase.baseContent;
+      }
+    }
+
+    const chat = SillyTavern_API_ACU.chat;
+    if (!chat || !chat[messageIndex]) {
+      return null;
+    }
+    const extra = chat[messageIndex].extra || {};
+    return extra._acu_original_content || null;
+  }
+  
+  /**
+   * 获取最近一次被正文优化替换过的 AI 消息索引
+   * @returns {number} 消息索引，不存在返回 -1
+   */
+  function getLastOptimizedMessageIndex_ACU() {
+    const chat = SillyTavern_API_ACU.chat || [];
+    const cachedBase = getLastOptimizationBase_ACU();
+
+    if (cachedBase?.messageId != null) {
+      const runtimeIndex = chat.findIndex(msg => msg && !msg.is_user && msg.message_id === cachedBase.messageId);
+      if (runtimeIndex >= 0) {
+        return runtimeIndex;
+      }
+    }
+
+    if (Number.isInteger(cachedBase?.messageIndex) && cachedBase.messageIndex >= 0 && chat[cachedBase.messageIndex] && !chat[cachedBase.messageIndex].is_user) {
+      return cachedBase.messageIndex;
+    }
+
+    let latestIndex = -1;
+    let latestTimestamp = -1;
+
+    for (let i = 0; i < chat.length; i++) {
+      const msg = chat[i];
+      if (!msg || msg.is_user) continue;
+      const extra = msg.extra || {};
+      const ts = Number(extra._acu_last_optimized_at || 0);
+      if (extra._acu_original_content && ts >= latestTimestamp) {
+        latestTimestamp = ts;
+        latestIndex = i;
+      }
+    }
+
+    if (latestIndex >= 0) {
+      const latestMessage = chat[latestIndex];
+      const latestExtra = latestMessage?.extra || {};
+      setLastOptimizationBase_ACU({
+        messageIndex: latestIndex,
+        messageId: latestMessage?.message_id ?? null,
+        baseContent: latestExtra._acu_original_content || latestMessage?.mes || ''
+      });
+    }
+
+    return latestIndex;
+  }
+
+  /**
+   * 重新优化消息
+   * @param {number} messageIndex - 消息索引
+   * @returns {Promise<boolean>} 是否成功
+   */
+  async function reoptimizeMessage_ACU(messageIndex) {
+    const config = settings_ACU.contentOptimizationSettings || {};
+    contentOptimizationAbortRequested_ACU = false;
+    
+    // 检查是否启用
+    if (!config.enabled) {
+      showToastr_ACU('warning', '正文优化功能未启用');
+      return false;
+    }
+    
+    const chat = SillyTavern_API_ACU.chat;
+    if (!chat || !chat[messageIndex]) {
+      showToastr_ACU('error', '消息不存在');
+      return false;
+    }
+    
+    const message = chat[messageIndex];
+    
+    // 跳过用户消息
+    if (message.is_user) {
+      showToastr_ACU('warning', '无法优化用户消息');
+      return false;
+    }
+    
+    // 获取原始内容
+    const originalContent = getOriginalContent_ACU(messageIndex) || message.mes;
+    
+    if (!originalContent) {
+      showToastr_ACU('error', '无法获取消息内容');
+      return false;
+    }
+    
+    logDebug_ACU(`[重新优化] 开始重新优化消息 ${messageIndex}，内容长度: ${originalContent.length}`);
+    
+    if (config.seamlessMode) {
+      showOptimizationOverlay_ACU('正在重新优化正文...');
+    } else {
+      showOptimizationProgressToast_ACU('正在进行正文优化（重新优化）...');
+    }
+    
+    try {
+      ensureOptimizationNotCancelled_ACU();
+      const result = await performContentOptimization_ACU(originalContent, {
+        currentLoop: 1,
+        userMessage: ''
+      });
+      
+      hideOptimizationOverlay_ACU();
+      hideOptimizationProgressToast_ACU();
+      
+      if (contentOptimizationAbortRequested_ACU) {
+        return false;
+      }
+
+      if (!result.success) {
+        showToastr_ACU('error', `重新优化失败: ${result.error || '未知错误'}`);
+        return false;
+      }
+      
+      if (!result.optimizations || result.optimizations.length === 0) {
+        showToastr_ACU('info', '原文已足够好，无需优化');
+        return true;
+      }
+      
+      showReoptimizationDialog_ACU(messageIndex, result, originalContent);
+      return true;
+      
+    } catch (error) {
+      hideOptimizationOverlay_ACU();
+      hideOptimizationProgressToast_ACU();
+      if (contentOptimizationAbortRequested_ACU || error?.message === '用户终止正文优化') {
+        logDebug_ACU('[重新优化] 用户已取消正文优化');
+        return false;
+      }
+      logError_ACU('[重新优化] 执行出错:', error);
+      showToastr_ACU('error', `重新优化失败: ${error.message}`);
+      return false;
+    } finally {
+      hideOptimizationOverlay_ACU();
+      hideOptimizationProgressToast_ACU();
+      contentOptimizationAbortRequested_ACU = false;
+    }
+  }
+  
+  /**
+   * 显示重新优化对话框
+   * @param {number} messageIndex - 消息索引
+   * @param {object} result - 优化结果
+   * @param {string} originalContent - 原始内容
+   */
+  function showReoptimizationDialog_ACU(messageIndex, result, originalContent) {
+    const dialogHtml = `
+      <div class="acu-optimization-dialog" style="
+        position: fixed;
+        top: 10px;
+        left: 50%;
+        transform: translateX(-50%);
+        background: #1a1d24;
+        border: 1px solid rgba(255, 255, 255, 0.15);
+        border-radius: 12px;
+        padding: 20px;
+        max-width: 800px;
+        width: calc(100% - 20px);
+        max-height: calc(90vh - 20px);
+        overflow-y: auto;
+        z-index: 100000;
+        color: rgba(255, 255, 255, 0.9);
+        font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+        box-sizing: border-box;
+      ">
+        <h3 style="margin: 0 0 8px 0; color: #7bb7ff;">🔄 重新优化结果</h3>
+        <p style="margin: 0 0 12px 0; color: rgba(255, 255, 255, 0.7);">${result.summary}</p>
+        <div class="optimization-list" style="margin-bottom: 16px; max-height: 400px; overflow-y: auto;">
+          ${result.optimizations.map((opt, i) => `
+            <div class="optimization-item" style="
+              background: rgba(255, 255, 255, 0.05);
+              border-radius: 8px;
+              padding: 12px;
+              margin-bottom: 8px;
+            ">
+              <div style="color: #ff6b6b; margin-bottom: 8px; text-decoration: line-through; opacity: 0.7;">
+                <strong>原文：</strong>${escapeHtml_ACU(opt.original.substring(0, 200))}${opt.original.length > 200 ? '...' : ''}
+              </div>
+              <div style="color: rgba(255, 255, 255, 0.7); font-size: 12px; margin-bottom: 8px; padding: 8px; background: rgba(123, 183, 255, 0.1); border-radius: 4px;">
+                <strong>修改方案：</strong>${escapeHtml_ACU(opt.plan || opt.reason || '未说明')}
+              </div>
+              <div style="color: #69db7c;">
+                <strong>优化：</strong>${escapeHtml_ACU(opt.optimized.substring(0, 200))}${opt.optimized.length > 200 ? '...' : ''}
+              </div>
+            </div>
+          `).join('')}
+        </div>
+        <div style="display: flex; gap: 8px; justify-content: flex-end; flex-wrap: wrap; padding-bottom: 10px;">
+          <button id="acu-opt-cancel" style="
+            padding: 10px 16px;
+            border: 1px solid rgba(255, 255, 255, 0.2);
+            background: transparent;
+            color: rgba(255, 255, 255, 0.7);
+            border-radius: 6px;
+            cursor: pointer;
+            min-width: 80px;
+            flex-shrink: 0;
+          ">取消</button>
+          <button id="acu-opt-reoptimize" style="
+            padding: 10px 16px;
+            border: 1px solid rgba(123, 183, 255, 0.5);
+            background: transparent;
+            color: #7bb7ff;
+            border-radius: 6px;
+            cursor: pointer;
+            min-width: 100px;
+            flex-shrink: 0;
+          ">🔄 再次优化</button>
+          <button id="acu-opt-apply" style="
+            padding: 10px 16px;
+            border: none;
+            background: #7bb7ff;
+            color: #1a1d24;
+            border-radius: 6px;
+            cursor: pointer;
+            font-weight: 600;
+            min-width: 100px;
+            flex-shrink: 0;
+          ">应用优化</button>
+        </div>
+      </div>
+      <div id="acu-opt-backdrop" style="
+        position: fixed;
+        top: 0; left: 0; right: 0; bottom: 0;
+        background: rgba(0, 0, 0, 0.5);
+        z-index: 99999;
+      "></div>
+    `;
+    
+    jQuery_API_ACU('body').append(dialogHtml);
+    
+    // 绑定取消事件
+    jQuery_API_ACU('#acu-opt-cancel, #acu-opt-backdrop').on('click', function() {
+      jQuery_API_ACU('.acu-optimization-dialog, #acu-opt-backdrop').remove();
+    });
+    
+    // 绑定再次优化事件
+    jQuery_API_ACU('#acu-opt-reoptimize').on('click', async function() {
+      jQuery_API_ACU(this).prop('disabled', true).text('优化中...');
+      
+      // 关闭当前对话框
+      jQuery_API_ACU('.acu-optimization-dialog, #acu-opt-backdrop').remove();
+      
+      // 重新优化（使用原始内容）
+      await reoptimizeMessage_ACU(messageIndex);
+    });
+    
+    // 绑定应用事件
+    jQuery_API_ACU('#acu-opt-apply').on('click', async function() {
+      jQuery_API_ACU(this).prop('disabled', true).text('应用中...');
+      
+      const success = await replaceChatMessage_ACU(messageIndex, result.optimizedContent, { originalContent: getOriginalContent_ACU(messageIndex) || originalContent });
+      
+      if (success) {
+        jQuery_API_ACU('.acu-optimization-dialog, #acu-opt-backdrop').remove();
+        showToastr_ACU('success', '优化已应用');
+      } else {
+        jQuery_API_ACU(this).prop('disabled', false).text('应用优化');
+        showToastr_ACU('error', '应用失败');
+      }
+    });
+  }
+  
+  /**
    * 执行正文优化流程（在GENERATION_ENDED后调用）
    * @param {number} messageIndex - AI消息索引
    * @returns {Promise<boolean>} 是否成功
    */
   async function executeContentOptimization_ACU(messageIndex) {
     const config = settings_ACU.contentOptimizationSettings || {};
+    contentOptimizationAbortRequested_ACU = false;
     
     // 检查是否启用
     if (!config.enabled) {
@@ -2692,10 +3141,14 @@
     }
     
     let content = message.mes || '';
+    setLastOptimizationBase_ACU({
+      messageIndex,
+      messageId: message.message_id,
+      baseContent: content
+    });
     
     // [新增] 获取用户消息（用于$8占位符）
     let userMessage = '';
-    // 从当前消息往前找最近的用户消息
     for (let i = messageIndex - 1; i >= 0; i--) {
       if (chat[i] && chat[i].is_user) {
         userMessage = chat[i].mes || '';
@@ -2703,13 +3156,11 @@
       }
     }
     
-    // [新增] 应用标签筛选规则
     const extractTags = (config.extractTags || '').trim();
     const extractRules = config.extractRules || [];
     const excludeTags = (config.excludeTags || '').trim();
     const excludeRules = config.excludeRules || [];
     
-    // 应用标签筛选（使用与剧情推进相同的函数）
     let processedContent = applyContextTagFilters_ACU(content, {
       extractTags,
       extractRules,
@@ -2717,100 +3168,97 @@
       excludeRules
     });
     
-    // 检查最小长度（使用处理后的内容）
     const minLength = config.minLength || 100;
     if (processedContent.length < minLength) {
       logDebug_ACU(`[正文优化] 处理后正文长度 ${processedContent.length} 小于最小阈值 ${minLength}，跳过优化`);
       return false;
     }
     
-    // [新增] 获取循环优化次数
     const loopCount = config.loopCount || 1;
     logDebug_ACU(`[正文优化] 开始优化消息 ${messageIndex}，原始长度 ${content.length}，处理后长度 ${processedContent.length}，循环次数: ${loopCount}`);
     
-    // 无感模式：显示遮罩
     if (config.seamlessMode) {
       showOptimizationOverlay_ACU(loopCount > 1 ? `正在优化正文 (1/${loopCount})...` : '正在优化正文...');
+    } else {
+      showOptimizationProgressToast_ACU(loopCount > 1 ? `正在进行正文优化 (1/${loopCount})...` : '正在进行正文优化...');
     }
     
     try {
-      // [修改] 如果是自动应用或无感模式，执行原有逻辑（所有循环完成后统一应用）
-      // 如果是手动确认模式，使用新的逐轮确认逻辑
+      ensureOptimizationNotCancelled_ACU();
       if (config.autoApply || config.seamlessMode) {
-        // 自动应用模式：所有循环完成后统一应用
         let currentContent = content;
         let totalOptimizations = [];
         let finalOptimizedContent = content;
         
         for (let loop = 1; loop <= loopCount; loop++) {
+          ensureOptimizationNotCancelled_ACU();
           logDebug_ACU(`[正文优化] 执行第 ${loop}/${loopCount} 轮优化`);
           
-          // 更新遮罩提示
           if (config.seamlessMode && loopCount > 1) {
             showOptimizationOverlay_ACU(`正在优化正文 (${loop}/${loopCount})...`);
+          } else if (!config.seamlessMode) {
+            showOptimizationProgressToast_ACU(`正在进行正文优化 (${loop}/${loopCount})...`);
           }
           
-          // 执行优化
           const result = await performContentOptimization_ACU(currentContent, {
             currentLoop: loop,
             userMessage: userMessage
           });
+          ensureOptimizationNotCancelled_ACU();
           
           if (!result.success) {
             logDebug_ACU(`[正文优化] 第 ${loop} 轮优化失败:`, result.error);
-            // 如果是第一轮就失败，直接返回失败
             if (loop === 1) {
               if (config.seamlessMode) {
                 hideOptimizationOverlay_ACU();
+              } else {
+                hideOptimizationProgressToast_ACU();
               }
               return false;
             }
-            // 如果是后续轮次失败，使用之前的结果
             break;
           }
           
-          // 检查是否有实际优化
           if (!result.optimizations || result.optimizations.length === 0) {
             logDebug_ACU(`[正文优化] 第 ${loop} 轮无需优化，原文已足够好`);
-            // 如果没有优化项，说明已经足够好，可以提前结束
             if (loop === 1) {
               if (config.seamlessMode) {
                 hideOptimizationOverlay_ACU();
+              } else {
+                hideOptimizationProgressToast_ACU();
               }
               return true;
             }
             break;
           }
           
-          // 累积优化项
           totalOptimizations = totalOptimizations.concat(result.optimizations);
           finalOptimizedContent = result.optimizedContent;
-          
-          // 更新当前内容为优化后的内容，用于下一轮优化
           currentContent = result.optimizedContent;
           
           logDebug_ACU(`[正文优化] 第 ${loop} 轮完成，本轮 ${result.optimizations.length} 个优化项，累计 ${totalOptimizations.length} 个`);
         }
         
-        // 检查是否有任何优化
         if (totalOptimizations.length === 0) {
           logDebug_ACU('[正文优化] 所有轮次均无需优化');
           if (config.seamlessMode) {
             hideOptimizationOverlay_ACU();
+          } else {
+            hideOptimizationProgressToast_ACU();
           }
           return true;
         }
         
-        // 自动应用
         await replaceChatMessage_ACU(messageIndex, finalOptimizedContent);
         
         if (config.seamlessMode) {
           hideOptimizationOverlay_ACU();
+        } else {
+          hideOptimizationProgressToast_ACU();
         }
         
-        // 显示优化结果提示
         if (config.showDiff && !config.seamlessMode) {
-          showOptimizationDiff_ACU({
+          showOptimizationDiff_ACU(messageIndex, {
             optimizations: totalOptimizations,
             summary: `共 ${loopCount} 轮优化，累计 ${totalOptimizations.length} 处改进`,
             optimizedContent: finalOptimizedContent
@@ -2821,16 +3269,26 @@
         
         return true;
       } else {
-        // 手动确认模式：逐轮确认
+        hideOptimizationProgressToast_ACU();
         return await executeContentOptimizationWithConfirm_ACU(messageIndex, content, userMessage, loopCount);
       }
       
     } catch (error) {
+      if (contentOptimizationAbortRequested_ACU || error?.message === '用户终止正文优化') {
+        logDebug_ACU('[正文优化] 用户已取消正文优化');
+        return false;
+      }
       logError_ACU('[正文优化] 执行出错:', error);
       if (config.seamlessMode) {
         hideOptimizationOverlay_ACU();
+      } else {
+        hideOptimizationProgressToast_ACU();
       }
       return false;
+    } finally {
+      hideOptimizationOverlay_ACU();
+      hideOptimizationProgressToast_ACU();
+      contentOptimizationAbortRequested_ACU = false;
     }
   }
   
@@ -3029,6 +3487,16 @@
             flex-shrink: 0;
           ">跳过本轮</button>
           ` : ''}
+          <button id="acu-opt-reoptimize" style="
+            padding: 10px 16px;
+            border: 1px solid rgba(123, 183, 255, 0.5);
+            background: transparent;
+            color: #7bb7ff;
+            border-radius: 6px;
+            cursor: pointer;
+            min-width: 100px;
+            flex-shrink: 0;
+          ">🔄 重新优化</button>
           <button id="acu-opt-apply" style="
             padding: 10px 16px;
             border: none;
@@ -3064,6 +3532,25 @@
       callback('skip');
     });
     
+    // 绑定重新优化事件
+    jQuery_API_ACU('#acu-opt-reoptimize').on('click', async function() {
+      jQuery_API_ACU(this).prop('disabled', true).text('优化中...');
+      
+      // 关闭当前对话框
+      jQuery_API_ACU('.acu-optimization-dialog, #acu-opt-backdrop').remove();
+      
+      // 获取原始内容并重新优化
+      const originalContent = getOriginalContent_ACU(messageIndex) || result.optimizedContent;
+      
+      logDebug_ACU(`[正文优化] 用户点击重新优化，messageIndex=${messageIndex}`);
+      
+      // 重新优化
+      await reoptimizeMessage_ACU(messageIndex);
+      
+      // 触发回调，结束当前优化流程
+      callback('cancel');
+    });
+    
     // 绑定应用事件
     jQuery_API_ACU('#acu-opt-apply').on('click', async function() {
       jQuery_API_ACU(this).prop('disabled', true).text('处理中...');
@@ -3074,7 +3561,7 @@
       // 如果是最后一轮，先应用优化
       if (isLastLoop) {
         logDebug_ACU(`[正文优化] 准备调用 replaceChatMessage_ACU...`);
-        const success = await replaceChatMessage_ACU(messageIndex, result.optimizedContent);
+        const success = await replaceChatMessage_ACU(messageIndex, result.optimizedContent, { originalContent: getOriginalContent_ACU(messageIndex) || originalContent });
         logDebug_ACU(`[正文优化] replaceChatMessage_ACU 返回: ${success}`);
         if (!success) {
           jQuery_API_ACU(this).prop('disabled', false).text(applyButtonText);
@@ -3146,6 +3633,16 @@
             min-width: 80px;
             flex-shrink: 0;
           ">取消</button>
+          <button id="acu-opt-reoptimize" style="
+            padding: 10px 16px;
+            border: 1px solid rgba(123, 183, 255, 0.5);
+            background: transparent;
+            color: #7bb7ff;
+            border-radius: 6px;
+            cursor: pointer;
+            min-width: 100px;
+            flex-shrink: 0;
+          ">🔄 重新优化</button>
           <button id="acu-opt-apply" style="
             padding: 10px 16px;
             border: none;
@@ -3174,10 +3671,23 @@
       jQuery_API_ACU('.acu-optimization-dialog, #acu-opt-backdrop').remove();
     });
     
+    // 绑定重新优化事件
+    jQuery_API_ACU('#acu-opt-reoptimize').on('click', async function() {
+      jQuery_API_ACU(this).prop('disabled', true).text('优化中...');
+      
+      // 关闭当前对话框
+      jQuery_API_ACU('.acu-optimization-dialog, #acu-opt-backdrop').remove();
+      
+      logDebug_ACU(`[正文优化] 用户点击重新优化，messageIndex=${messageIndex}`);
+      
+      // 重新优化
+      await reoptimizeMessage_ACU(messageIndex);
+    });
+    
     jQuery_API_ACU('#acu-opt-apply').on('click', async function() {
       jQuery_API_ACU(this).prop('disabled', true).text('应用中...');
       
-      const success = await replaceChatMessage_ACU(messageIndex, result.optimizedContent);
+      const success = await replaceChatMessage_ACU(messageIndex, result.optimizedContent, { originalContent: getOriginalContent_ACU(messageIndex) || originalContent });
       
       if (success) {
         jQuery_API_ACU('.acu-optimization-dialog, #acu-opt-backdrop').remove();
@@ -3203,13 +3713,26 @@
   /**
    * 显示优化结果摘要
    */
-  function showOptimizationDiff_ACU(result) {
+  function showOptimizationDiff_ACU(messageIndex, result) {
     const message = `正文替换完成，共 ${result.optimizations.length} 处改进`;
-    if (result.summary) {
-      showToastr_ACU('success', `${message}<br><small style="opacity:0.7">${result.summary}</small>`);
-    } else {
-      showToastr_ACU('success', message);
-    }
+    const reoptButtonHtml = `<button id="acu-opt-toast-reoptimize" style="border: 1px solid rgba(123, 183, 255, 0.5); color: #7bb7ff; background: transparent; padding: 5px 10px; border-radius: 4px; cursor: pointer; float: right; margin-left: 15px; font-size: 0.9em; transition: all 0.2s ease;" onmouseover="this.style.backgroundColor='rgba(123, 183, 255, 0.15)'" onmouseout="this.style.backgroundColor='transparent'">🔄 重新优化</button>`;
+    const html = result.summary
+      ? `<div>${message}${reoptButtonHtml}<br><small style="opacity:0.7">${result.summary}</small></div>`
+      : `<div>${message}${reoptButtonHtml}</div>`;
+    const toast = showToastr_ACU('success', html, {
+      timeOut: 10000,
+      extendedTimeOut: 3000,
+      tapToDismiss: false,
+      onShown: function() {
+        jQuery_API_ACU('#acu-opt-toast-reoptimize').off('click.acu_reopt').on('click.acu_reopt', async function(e) {
+          e.preventDefault();
+          e.stopPropagation();
+          jQuery_API_ACU(this).prop('disabled', true).text('优化中...');
+          if (toast && toastr_API_ACU) toastr_API_ACU.clear(toast);
+          await reoptimizeMessage_ACU(messageIndex);
+        });
+      }
+    });
   }
   
   /**
@@ -4465,6 +4988,24 @@
         }
     },
 
+    reoptimizeMessage: async function(messageIndex) {
+        try {
+            return await reoptimizeMessage_ACU(messageIndex);
+        } catch (e) {
+            logError_ACU('reoptimizeMessage failed:', e);
+            return false;
+        }
+    },
+
+    cancelContentOptimization: function(reason) {
+        try {
+            return cancelContentOptimization_ACU(reason);
+        } catch (e) {
+            logError_ACU('cancelContentOptimization failed:', e);
+            return false;
+        }
+    },
+ 
     // 删除当前注入目标世界书里的“本插件生成条目”
     deleteInjectedEntries: async function() {
         try {
@@ -20013,9 +20554,18 @@ const DatabaseAPI_ACU = {
                                     <label for="${SCRIPT_ID_PREFIX_ACU}-optimization-parallel-mode">填表与正文替换并行执行</label>
                                     <small class="notes" style="display: block; margin-left: 24px; margin-top: 4px;">勾选后填表不再等待正文替换完成，双方并行进行（默认关闭）</small>
                                 </div>
+                                <div style="margin-top: 16px; padding-top: 16px; border-top: 1px dashed var(--border_color_light);">
+                                    <label style="font-weight: 500; display: block; margin-bottom: 8px;">快捷操作</label>
+                                    <div style="display: flex; flex-direction: column; gap: 8px; align-items: stretch;">
+                                        <button id="${SCRIPT_ID_PREFIX_ACU}-optimization-reoptimize-latest" class="menu_button" title="对最近一次已执行正文替换的 AI 回复，基于替换前原文重新优化并再次替换" style="width: 100%; min-height: 38px; display: inline-flex; align-items: center; justify-content: center; gap: 8px; white-space: normal; line-height: 1.4; text-align: center; padding: 10px 14px;">
+                                            <i class="fa-solid fa-rotate-right"></i><span>重新优化上一次替换结果</span>
+                                        </button>
+                                    </div>
+                                    <small class="notes" style="display: block; margin-top: 6px; line-height: 1.5;">这里会定位“最近一次已经被正文替换过的 AI 回复”，并使用替换前保留的原文重新优化后再次替换。取消正文优化请使用进行中提示框里的“取消优化”按钮。</small>
+                                </div>
                             </div>
                         </div>
-
+ 
                         <!-- 标签筛选设置 -->
                         <div class="settings-section" style="margin-bottom: 25px; padding: 20px; background: var(--background_light); border-radius: 8px; border: 1px solid var(--border_color_light);">
                             <h4 style="margin: 0 0 15px 0; color: var(--text_primary); display: flex; align-items: center; gap: 8px;">
@@ -21899,6 +22449,27 @@ insertRow(1, ["时间2", "大纲事件2...", "关键词"]);
         });
       }
 
+      // 正文优化快捷操作按钮
+      const $optimizationReoptimizeLatest = $popupInstance_ACU.find(`#${SCRIPT_ID_PREFIX_ACU}-optimization-reoptimize-latest`);
+      if ($optimizationReoptimizeLatest.length) {
+        $optimizationReoptimizeLatest.off('click').on('click', async function() {
+          const lastOptimizedMessageIndex = getLastOptimizedMessageIndex_ACU();
+
+          if (lastOptimizedMessageIndex < 0) {
+            showToastr_ACU('warning', '当前还没有“已被正文替换过”的 AI 回复可供重新优化');
+            return;
+          }
+
+          jQuery_API_ACU(this).prop('disabled', true).text('处理中...');
+          try {
+            await reoptimizeMessage_ACU(lastOptimizedMessageIndex);
+          } finally {
+            jQuery_API_ACU(this).prop('disabled', false).html('<i class="fa-solid fa-rotate-right"></i> 重新优化最近一次被替换的AI回复');
+          }
+        });
+      }
+
+ 
       // ═══ 正文替换标签筛选规则 ═══
       // 标签提取输入框
       const $optimizationExtractTags = $popupInstance_ACU.find(`#${SCRIPT_ID_PREFIX_ACU}-optimization-extract-tags`);
