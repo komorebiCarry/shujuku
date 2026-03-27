@@ -9320,8 +9320,8 @@ const DatabaseAPI_ACU = {
   }
 
   function shouldSuppressWorldbookInjection_ACU() {
-      // 用户要求：取消“首楼填表后不注入世界书”的限制。
-      // 因此这里永不抑制世界书创建/更新（外部导入仍由 isImport 分支独立处理）。
+      // 用户要求：取消“首楼填表后不注入书”的限制。
+      // 是否创建条目，改由各条目更新逻辑自身基于“真实有效数据”判定，避免一刀切拦截整个链路。
       return false;
   }
 
@@ -9400,7 +9400,8 @@ const DatabaseAPI_ACU = {
           // 标记幂等
           greetingMsg._acu_local_template_base_state_seeded = GREETING_LOCAL_BASE_STATE_MARKER_ACU;
 
-          // [变更] 不再在开场白阶段抑制世界书注入（用户要求首楼填表后也要注入世界书）
+          // 不在这里做全局注入抑制；
+          // 是否真正创建世界书条目，交给后续各条目逻辑按“是否存在真实有效数据”决定。
           suppressWorldbookInjectionInGreeting_ACU = false;
 
           await SillyTavern_API_ACU.saveChat();
@@ -15223,8 +15224,9 @@ const DatabaseAPI_ACU = {
     
     if (typeof updateCardUpdateStatusDisplay_ACU === 'function') updateCardUpdateStatusDisplay_ACU();
 
-    // 需求3：不再把“模板基础状态/基础表格数据”写入聊天第一层的楼层本地数据（开场白种子写入已废弃）。
-    // 说明：直接走统一加载链路；开场白阶段的世界书注入会被 shouldSuppressWorldbookInjection_ACU 抑制（仅清理旧条目，不创建/更新）。
+    // 统一走聊天记录加载链路。
+    // 新开聊天开场白阶段（只有首条 AI、尚无用户消息）会被 shouldSuppressWorldbookInjection_ACU() 拦截，
+    // 此时只清理旧世界书条目，不创建新的注入条目。
     await loadOrCreateJsonTableFromChatHistory_ACU();
 
   // [核心修复] 切换聊天时，强制刷新可视化编辑器数据
@@ -16122,12 +16124,50 @@ const DatabaseAPI_ACU = {
     }
     
     const { readableText, importantPersonsTable, summaryTable, outlineTable } = formatJsonToReadable_ACU(mergedData);
-    
+    const hasAnyNonEmptyCell_ACU = data => {
+        if (!data) return false;
+        const sheetKeys = Object.keys(data).filter(k => k.startsWith('sheet_'));
+        for (const sheetKey of sheetKeys) {
+            const table = data[sheetKey];
+            const content = table?.content;
+            if (!Array.isArray(content) || content.length <= 1) continue;
+            for (let r = 1; r < content.length; r++) {
+                const row = content[r];
+                if (!Array.isArray(row)) continue;
+                for (let c = 1; c < row.length; c++) {
+                    const cell = row[c];
+                    if (cell === null || cell === undefined) continue;
+                    if (typeof cell === 'string') {
+                        if (cell.trim() !== '') return true;
+                    } else if (typeof cell === 'number') {
+                        if (!Number.isNaN(cell)) return true;
+                    } else if (typeof cell === 'boolean') {
+                        return true;
+                    } else {
+                        return true;
+                    }
+                }
+            }
+        }
+        return false;
+    };
+
+    let isDatabaseEmpty = false;
+    if (!readableText || readableText.trim() === '' || readableText.includes('数据库为空。')) {
+        isDatabaseEmpty = true;
+    } else if (!hasAnyNonEmptyCell_ACU(mergedData)) {
+        isDatabaseEmpty = true;
+    }
+
     // Call all the individual entry updaters
     await updateImportantPersonsRelatedEntries_ACU(importantPersonsTable, isImport);
     await updateSummaryTableEntries_ACU(summaryTable, isImport);
     await updateOutlineTableEntry_ACU(outlineTable, isImport);
-    await updateCustomTableExports_ACU(mergedData, isImport); // [新增] 处理自定义表格导出
+    if (isDatabaseEmpty) {
+        await updateCustomTableExports_ACU(null, isImport); // 仅清理旧自定义导出条目，不创建新条目
+    } else {
+        await updateCustomTableExports_ACU(mergedData, isImport);
+    }
 
     const primaryLorebookName = await getInjectionTargetLorebook_ACU();
     if (primaryLorebookName) {
@@ -16163,55 +16203,8 @@ const DatabaseAPI_ACU = {
                 getFixedPlacementDefaultsForTable_ACU(summaryTable?.name || '总结表').index
             );
 
-            // [修复] 检查生成的可读文本是否为空（即数据库为空）
-            // 注意：readableText 可能会包含 "数据库为空。" 这样的提示文本，需要根据 formatJsonToReadable_ACU 的返回值判断
-            // formatJsonToReadable_ACU 在数据为空时会返回 { readableText: "数据库为空。", ... }
-            // 或者如果 mergedData 本身就是初始状态
-            
-            // 更健全的空检查：必须存在“至少一个非空单元格”才算有数据
-            // 说明：新对话时很多表可能会带占位空行（content.length > 1 但全空），这种情况仍应视为“无数据”，不注入任何固定包裹条目。
-            const hasAnyNonEmptyCell_ACU = data => {
-                if (!data) return false;
-                const sheetKeys = Object.keys(data).filter(k => k.startsWith('sheet_'));
-                for (const sheetKey of sheetKeys) {
-                    const table = data[sheetKey];
-                    const content = table?.content;
-                    if (!Array.isArray(content) || content.length <= 1) continue; // 只有表头
-                    // 从第 1 行开始检查（跳过表头行）
-                    for (let r = 1; r < content.length; r++) {
-                        const row = content[r];
-                        if (!Array.isArray(row)) continue;
-                        // 从第 1 列开始检查（跳过ID列/占位null）
-                        for (let c = 1; c < row.length; c++) {
-                            const cell = row[c];
-                            if (cell === null || cell === undefined) continue;
-                            if (typeof cell === 'string') {
-                                if (cell.trim() !== '') return true;
-                            } else if (typeof cell === 'number') {
-                                if (!Number.isNaN(cell)) return true;
-                            } else if (typeof cell === 'boolean') {
-                                return true;
-                            } else {
-                                // 其他类型（对象等）也视为有内容
-                                return true;
-                            }
-                        }
-                    }
-                }
-                return false;
-            };
-
-            let isDatabaseEmpty = false;
-            // 检查1: 是否明确返回了空提示 / 空文本
-            if (!readableText || readableText.trim() === '' || readableText.includes('数据库为空。')) {
-                isDatabaseEmpty = true;
-            } else {
-                // 检查2: 是否存在任何非空单元格
-                if (!hasAnyNonEmptyCell_ACU(mergedData)) {
-                    isDatabaseEmpty = true;
-                }
-            }
-
+            // [修复] 自定义导出条目与全局条目必须共用同一套“数据库是否为空”判定。
+            // 否则会出现：全局条目已正确判空不注入，但自定义导出条目因为更早执行而提前被创建。
             if (isDatabaseEmpty) {
                 // 数据库为空：不应在世界书中固定注入任何包裹条目，顺便清理旧条目避免残留
                 const toDelete = [];
@@ -16720,22 +16713,27 @@ const DatabaseAPI_ACU = {
               const extraIndexPlacement = normalizePlacementConfig_ACU(config.extraIndexPlacement, DEFAULT_EXTRA_INDEX_PLACEMENT_ACU);
               const headers = table.content[0] ? table.content[0].slice(1) : [];
               const rows = table.content.slice(1).map(row => row.slice(1));
+              const hasAnyNonEmptyExportCell_ACU = row => Array.isArray(row) && row.some(cell => {
+                  const text = cell === null || cell === undefined ? '' : String(cell);
+                  return text.trim() !== '';
+              });
+              const effectiveRows = rows.filter(hasAnyNonEmptyExportCell_ACU);
               const extraIndexSpec = resolveExtraIndexSpec_ACU(
                   config,
                   headers,
-                  rows,
+                  effectiveRows,
                   config.entryName || tableName || '表格'
               );
               const mainHeaders = extraIndexSpec ? extraIndexSpec.mainCols : headers;
-              const mainRows = extraIndexSpec ? extraIndexSpec.mainRows : rows;
+              const mainRows = extraIndexSpec ? extraIndexSpec.mainRows : effectiveRows;
               
               // [新增] 检查是否有有效的索引条目数据
-              const hasExtraIndex = hasExtraIndexEnabled && extraIndexSpec && extraIndexSpec.indexCols.length > 0;
+              const hasExtraIndex = hasExtraIndexEnabled && extraIndexSpec && extraIndexSpec.indexCols.length > 0 && extraIndexSpec.indexRows.length > 0;
 
               const wrapperParts = parseWrapperTemplate(config.injectionTemplate);
               const useWrapperEntries = !!wrapperParts;
 
-              if (rows.length === 0 && !hasExtraIndex) return; // [修改] 如果有索引条目，即使没有数据行也继续处理
+              if (effectiveRows.length === 0 && !hasExtraIndex) return; // 仅存在空白行时不注入任何表格相关条目
 
               // [新增] 如果主条目禁用但索引条目启用，只处理索引条目
               if (mainEntryDisabled && hasExtraIndex) {
