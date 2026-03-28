@@ -1737,7 +1737,7 @@
   },
   {
     "role": "USER",
-    "content": "你是【填表AI】，负责根据用户提供的资料对表格数据执行增删改操作。\n\n## 核心任务\n依据三类资料来源执行表格编辑：\n- <背景设定>：故事及人物设定\n- <正文数据>：上轮发生的故事\n- <当前表格数据>：之前的数据作为填表基础\n\n## 输出格式（严格执行）\n\n<thought>\n[分析当前轮次的剧情变化]\n[阅读所有填表相关规则]\n[根据填表规则确定需要修改的表格和字段]\n[逐步推理每个修改操作，说明理由]\n针对纪要表的额外规则：如果<当前表格数据>里存在纪要表，那么本轮就必须对其进行插入一条新的总结记录。\n日志与纪要语气校准：你在思考纪要时，必须区分“正常恋爱互动”与“暗黑主从文风”。你可以使用正常的交流词汇（如：提议、要求、同意、拒绝、引导、配合、安抚），但【绝对禁止】将情侣间的普通调情与互动过度解读为“权力掌控”、“剥夺反抗”、“精神支配”、“屈服”等单向压迫词汇！</thought>\n\n<content>\n<tableEdit>\n<!--\ninsertRow(表格ID, {\"0\":\"字段0值\",\"1\":\"字段1值\",\"2\":\"字段2值\"})\nupdateRow(表格ID, 行号, {\"0\":\"字段0值\",\"1\":\"字段1值\",\"2\":\"字段2值\"})\ndeleteRow(表格ID, 行号)\n-->\n</tableEdit>\n</content>\n\n## 关键规则\n1. 必须逐表阅读每个表格的note部分，严格遵守其中的约束\n2. note的约束优先级最高，高于通用填表经验\n3. 若note要求禁止修改/格式固定/编码规则，必须严格执行\n4.出了note外，可能还存在某些存放特殊填表规则的表格，填表前需先进行阅读，并严格遵守其中的约束。\n5. 使用insertRow添加新行，updateRow更新已有行，deleteRow删除行\n\n## 格式要点\n- 所有指令必须包括再一个完整的注释块内\n- 必须使用双引号\n- 逗号后不加空格\n\n现在开始按此格式执行填表任务。",
+    "content": "你是【填表AI】，负责根据用户提供的资料对表格数据执行增删改操作。\n\n## 核心任务\n依据三类资料来源执行表格编辑：\n- <背景设定>：故事及人物设定\n- <正文数据>：上轮发生的故事\n- <当前表格数据>：之前的数据作为填表基础\n\n## 输出格式（严格执行）\n\n<thought>\n[分析当前轮次的剧情变化]\n[阅读所有填表相关规则]\n[根据填表规则确定需要修改的表格和字段]\n[逐步推理每个修改操作，说明理由]\n针对纪要表的额外规则：如果<当前表格数据>里存在纪要表，那么本轮就必须对其进行插入一条新的总结记录。\n日志与纪要语气校准：你在思考纪要时，必须区分“正常恋爱互动”与“暗黑主从文风”。你可以使用正常的交流词汇（如：提议、要求、同意、拒绝、引导、配合、安抚），但【绝对禁止】将情侣间的普通调情与互动过度解读为“权力掌控”、“剥夺反抗”、“精神支配”、“屈服”等单向压迫词汇！</thought>\n\n<content>\n<tableEdit>\ninsertRow(表格ID, {\"0\":\"字段0值\",\"1\":\"字段1值\",\"2\":\"字段2值\"})\nupdateRow(表格ID, 行号, {\"0\":\"字段0值\",\"1\":\"字段1值\",\"2\":\"字段2值\"})\ndeleteRow(表格ID, 行号)\n</tableEdit>\n</content>\n\n## 关键规则\n1. 必须逐表阅读每个表格的note部分，严格遵守其中的约束\n2. note的约束优先级最高，高于通用填表经验\n3. 若note要求禁止修改/格式固定/编码规则，必须严格执行\n4.除了note外，可能还存在某些存放特殊填表规则的表格，填表前需先进行阅读，并严格遵守其中的约束。\n5. 使用insertRow添加新行，updateRow更新已有行，deleteRow删除行\n\n## 格式要点\n- 必须使用双引号\n- 逗号后不加空格\n\n现在开始按此格式执行填表任务。",
     "deletable": false,
     "mainSlot": "A",
     "isMain": true
@@ -8919,6 +8919,20 @@ const DatabaseAPI_ACU = {
       const sheetGuideData = getChatSheetGuideDataForIsolationKey_ACU(currentIsolationKey);
       const hasSheetGuide = !!(sheetGuideData && typeof sheetGuideData === 'object' && Object.keys(sheetGuideData).some(k => k.startsWith('sheet_')));
 
+      // [新增] 获取当前模板/指导表的表格键列表，用于过滤非当前模板的数据
+      // 优先使用指导表（如果存在），否则使用当前模板
+      // 这样可以确保：切换/导入新模板后，只读取当前模板中存在的表格数据
+      const templateSheetKeys = (() => {
+          if (hasSheetGuide) {
+              // 存在指导表：使用指导表的表格键（指导表已在导入/切换模板时更新）
+              return Object.keys(sheetGuideData).filter(k => k.startsWith('sheet_'));
+          }
+          // 不存在指导表：使用当前模板的表格键
+          return getTemplateSheetKeys_ACU();
+      })();
+      const templateSheetKeySet = new Set(templateSheetKeys);
+      logDebug_ACU(`[Merge] Template/Guide filter: ${templateSheetKeys.length} tables allowed (${hasSheetGuide ? 'guide' : 'template'})`);
+
       // 1. [优化] 不使用模板作为基础，动态收集聊天记录中的所有实际数据
       let mergedData = {};
       const foundSheets = {};
@@ -8935,6 +8949,11 @@ const DatabaseAPI_ACU = {
               const updateGroupKeys = tagData.updateGroupKeys || [];
 
               Object.keys(independentData).forEach(storedSheetKey => {
+                  // [新增] 只处理当前模板/指导表中存在的表格
+                  if (!templateSheetKeySet.has(storedSheetKey)) {
+                      logDebug_ACU(`[Merge] Skipping sheet [${storedSheetKey}] - not in current template/guide`);
+                      return;
+                  }
                   if (!foundSheets[storedSheetKey]) {
                       mergedData[storedSheetKey] = JSON.parse(JSON.stringify(independentData[storedSheetKey]));
                       foundSheets[storedSheetKey] = true;
@@ -8980,6 +8999,11 @@ const DatabaseAPI_ACU = {
                   const updateGroupKeys = message.TavernDB_ACU_UpdateGroupKeys || [];
 
                   Object.keys(independentData).forEach(storedSheetKey => {
+                      // [新增] 只处理当前模板/指导表中存在的表格
+                      if (!templateSheetKeySet.has(storedSheetKey)) {
+                          logDebug_ACU(`[Merge] Skipping sheet [${storedSheetKey}] (legacy) - not in current template/guide`);
+                          return;
+                      }
                       if (!foundSheets[storedSheetKey]) {
                           mergedData[storedSheetKey] = JSON.parse(JSON.stringify(independentData[storedSheetKey]));
                           foundSheets[storedSheetKey] = true;
@@ -9006,6 +9030,10 @@ const DatabaseAPI_ACU = {
               if (message.TavernDB_ACU_Data) {
                   const standardData = message.TavernDB_ACU_Data;
                   Object.keys(standardData).forEach(k => {
+                      // [新增] 只处理当前模板/指导表中存在的表格
+                      if (!templateSheetKeySet.has(k)) {
+                          return;
+                      }
                       if (k.startsWith('sheet_') && !foundSheets[k] && standardData[k].name && !isSummaryOrOutlineTable_ACU(standardData[k].name)) {
                           mergedData[k] = JSON.parse(JSON.stringify(standardData[k]));
                           foundSheets[k] = true;
@@ -9018,6 +9046,10 @@ const DatabaseAPI_ACU = {
               if (message.TavernDB_ACU_SummaryData) {
                   const summaryData = message.TavernDB_ACU_SummaryData;
                   Object.keys(summaryData).forEach(k => {
+                      // [新增] 只处理当前模板/指导表中存在的表格
+                      if (!templateSheetKeySet.has(k)) {
+                          return;
+                      }
                       if (k.startsWith('sheet_') && !foundSheets[k] && summaryData[k].name && isSummaryOrOutlineTable_ACU(summaryData[k].name)) {
                           mergedData[k] = JSON.parse(JSON.stringify(summaryData[k]));
                           foundSheets[k] = true;
