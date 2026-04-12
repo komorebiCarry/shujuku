@@ -612,24 +612,19 @@ export   async function refreshMergedDataAndNotify_ACU() {
             logDebug_ACU('Notified frontend to refresh UI after data merge.');
         }
         
-        // 2. [修复] 独立检查并刷新可视化编辑器
-        // 使用新定义的全局刷新函数，确保逻辑一致性
+        // 2. 刷新可视化编辑器（UI层负责）
         setTimeout(() => {
              if (typeof window.ACU_Visualizer_Refresh === 'function') {
                  window.ACU_Visualizer_Refresh();
                  logDebug_ACU('Triggered global visualizer refresh.');
-             } else if (jQuery_API_ACU('#acu-visualizer-content').length || ACU_WindowManager.isOpen(`${SCRIPT_ID_PREFIX_ACU}-visualizer-window`)) {
-                 // Fallback
-                 jQuery_API_ACU(document).trigger('acu-visualizer-refresh-data');
+             } else if (typeof ACU_WindowManager !== 'undefined' && ACU_WindowManager.isOpen(`${SCRIPT_ID_PREFIX_ACU}-visualizer-window`)) {
+                 if (typeof notifyVisualizerRefresh_ACU === 'function') notifyVisualizerRefresh_ACU();
              }
-        }, 200); // 稍微增加延迟
+        }, 200);
 
-        // 3. 刷新当前打开的插件设置弹窗 (UI context)
-        if ($popupInstance_ACU && $popupInstance_ACU.is(':visible')) {
-             // 刷新状态显示 (消息计数)
-             if (typeof updateCardUpdateStatusDisplay_ACU === 'function') {
-                 updateCardUpdateStatusDisplay_ACU();
-             }
+        // 3. 刷新当前打开的插件设置弹窗 (UI层负责)
+        if (typeof updateCardUpdateStatusDisplay_ACU === 'function') {
+             updateCardUpdateStatusDisplay_ACU();
         }
               
         // [修复] 等待足够的时间，确保前端完成数据读取和UI刷新

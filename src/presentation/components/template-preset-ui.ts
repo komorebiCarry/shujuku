@@ -576,6 +576,9 @@
               save,
           });
           if (!activated) return false;
+          if ($popupInstance_ACU && refreshUi) {
+              loadTemplatePresetSelect_ACU({ keepGlobalValue: true });
+          }
           return { ...activated, isDefault: isDefaultPreset };
       }
 

@@ -5872,24 +5872,20 @@ async function refreshMergedDataAndNotify_ACU() {
             topLevelWindow_ACU.AutoCardUpdaterAPI._notifyTableUpdate();
             logDebug_ACU('Notified frontend to refresh UI after data merge.');
         }
-        // 2. [修复] 独立检查并刷新可视化编辑器
-        // 使用新定义的全局刷新函数，确保逻辑一致性
+        // 2. 刷新可视化编辑器（UI层负责）
         setTimeout(() => {
             if (typeof window.ACU_Visualizer_Refresh === 'function') {
                 window.ACU_Visualizer_Refresh();
                 logDebug_ACU('Triggered global visualizer refresh.');
             }
-            else if (jQuery_API_ACU('#acu-visualizer-content').length || ACU_WindowManager.isOpen(`${SCRIPT_ID_PREFIX_ACU}-visualizer-window`)) {
-                // Fallback
-                jQuery_API_ACU(document).trigger('acu-visualizer-refresh-data');
+            else if (typeof ACU_WindowManager !== 'undefined' && ACU_WindowManager.isOpen(`${SCRIPT_ID_PREFIX_ACU}-visualizer-window`)) {
+                if (typeof notifyVisualizerRefresh_ACU === 'function')
+                    notifyVisualizerRefresh_ACU();
             }
-        }, 200); // 稍微增加延迟
-        // 3. 刷新当前打开的插件设置弹窗 (UI context)
-        if ($popupInstance_ACU && $popupInstance_ACU.is(':visible')) {
-            // 刷新状态显示 (消息计数)
-            if (typeof updateCardUpdateStatusDisplay_ACU === 'function') {
-                updateCardUpdateStatusDisplay_ACU();
-            }
+        }, 200);
+        // 3. 刷新当前打开的插件设置弹窗 (UI层负责)
+        if (typeof updateCardUpdateStatusDisplay_ACU === 'function') {
+            updateCardUpdateStatusDisplay_ACU();
         }
         // [修复] 等待足够的时间，确保前端完成数据读取和UI刷新
         // 使用较长的延迟，确保前端有足够时间处理数据
@@ -18141,9 +18137,6 @@ async function activateChatTemplatePresetSelection_ACU(presetName, { source = 'u
         }
     }
     applyTemplateScopeForCurrentChat_ACU({ isolationKey: normalizedKey });
-    if ($popupInstance_ACU && refreshUi) {
-        loadTemplatePresetSelect_ACU({ keepGlobalValue: true });
-    }
     try {
         await refreshMergedDataAndNotify_ACU();
     }
@@ -18312,9 +18305,6 @@ async function restoreChatTemplateArchiveEntry_ACU(archiveKey, { chat = SillyTav
         archivePreviousChatScope: true,
     });
     applyTemplateScopeForCurrentChat_ACU({ isolationKey: normalizedKey });
-    if ($popupInstance_ACU && refreshUi) {
-        loadTemplatePresetSelect_ACU({ keepGlobalValue: true });
-    }
     try {
         await refreshMergedDataAndNotify_ACU();
     }
@@ -21786,6 +21776,13 @@ function abortAllActiveRequests_ACU() {
 
 // ── [module] src/presentation/components/status-display.ts ──
 // status-display.ts — 对应源文件有跨文件依赖，保留在原位
+// [T172] 可视化编辑器刷新通知（从 service/worldbook/pipeline.ts 提取）
+function notifyVisualizerRefresh_ACU() {
+    try {
+        jQuery_API_ACU(document).trigger('acu-visualizer-refresh-data');
+    }
+    catch (e) { }
+}
 
 
 // ── [module] src/presentation/bootstrap/startup.ts ──
@@ -30651,6 +30648,9 @@ async function applyTemplatePresetToCurrent_ACU(presetName, { source = 'ui', upd
         });
         if (!activated)
             return false;
+        if ($popupInstance_ACU && refreshUi) {
+            loadTemplatePresetSelect_ACU({ keepGlobalValue: true });
+        }
         return { ...activated, isDefault: isDefaultPreset };
     }
     let snapshot = null;

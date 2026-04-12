@@ -278,9 +278,6 @@
       }
 
       applyTemplateScopeForCurrentChat_ACU({ isolationKey: normalizedKey });
-      if ($popupInstance_ACU && refreshUi) {
-          loadTemplatePresetSelect_ACU({ keepGlobalValue: true });
-      }
       try { await refreshMergedDataAndNotify_ACU(); } catch (e) {}
       return {
           presetName: normalizedPresetName,
@@ -448,9 +445,6 @@
       });
       applyTemplateScopeForCurrentChat_ACU({ isolationKey: normalizedKey });
 
-      if ($popupInstance_ACU && refreshUi) {
-          loadTemplatePresetSelect_ACU({ keepGlobalValue: true });
-      }
       try { await refreshMergedDataAndNotify_ACU(); } catch (e) {}
       return {
           archiveKey: normalizedArchiveKey,
