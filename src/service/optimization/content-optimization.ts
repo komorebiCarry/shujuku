@@ -608,7 +608,6 @@
     }
   }
   
- // [已迁移到 src/shared/text-optimization.ts] removePunctuation_ACU, extractKeywords_ACU, findParagraphMatch_ACU, mapCleanPositionToOriginal_ACU, trimPunctuation_ACU, processSingleQuotes_ACU, applyOptimizations_ACU
  
   let contentOptimizationAbortRequested_ACU = false;
   let optimizationProgressToast_ACU = null;

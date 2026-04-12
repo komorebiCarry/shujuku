@@ -581,9 +581,7 @@
       return snapshot || sanitizeTemplateSnapshotForChat_ACU(previousTemplate);
   }
 
-  // [已迁移到 service/settings/settings-service.ts] applyTemplateScopeForCurrentChat_ACU
 
-  // [已迁移到 data/storage/chat-history.ts] getChatSheetGuideContainer_ACU, CHAT_SHEET_GUIDE_SEED_ROWS_FIELD_ACU
 
   function normalizeGuideData_ACU(dataObj) {
       if (!dataObj || typeof dataObj !== 'object') return null;
@@ -1345,7 +1343,6 @@
       return out;
   }
 
-  // [已迁移到 src/shared/utils.ts] lightenDarkenColor_ACU, getContrastYIQ_ACU
 
 
   // [新增] 辅助函数：从上下文中提取指定标签的内容（正文标签提取）

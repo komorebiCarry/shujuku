@@ -88,10 +88,8 @@
   }
 
   // [新增] 标准化标签排除规则：支持数组对象/字符串行/旧标签字符串兜底
-  // [已迁移到 shared/utils.ts] normalizeExcludeRules_ACU
 
   // [新增] 标准化正文标签提取规则，结构与排除规则一致
-  // [已迁移到 shared/utils.ts] normalizeExtractRules_ACU
 
   function getDefaultPlotContextExtractRules_ACU() {
       return normalizeExtractRules_ACU(
@@ -188,7 +186,6 @@
   }
 
   // [新增] 辅助函数：判断表格是否是总结表、总体大纲表或纪要表（这些表拥有索引编码锁定功能）
-  // [已迁移到 src/shared/utils.ts] isSummaryOrOutlineTable_ACU, isStandardTable_ACU
 
   // =========================
   // [新增] 表格更新锁定与总结索引锁定（按聊天+隔离标签存储）
@@ -572,7 +569,6 @@
   }
 
   // [重构] 刷新合并数据并通知前端和更新世界书
-  // [已迁移到 service/worldbook/pipeline.ts] refreshMergedDataAndNotify_ACU
 
   function formatJsonToReadable_ACU(jsonData) {
     if (!jsonData) return { readableText: "数据库为空。", importantPersonsTable: null, summaryTable: null, outlineTable: null };
@@ -965,14 +961,12 @@
     return threshold;
   }
 
-  // [已迁移到 src/service/settings/settings-service.ts] saveSettings_ACU
 
   // --- [剧情推进] 核心函数 ---
 
   /**
    * 剧情推进统一的API调用函数
    */
-  // [已迁移到 src/service/ai/api-call.ts] callApi_ACU
 
   /**
    * 将表格JSON数据转换为更适合LLM读取的文本格式。
@@ -2870,7 +2864,6 @@
    * @param {string} string - 需要转义的字符串.
    * @returns {string} - 转义后的字符串.
    */
-  // [已迁移到 src/shared/utils.ts] escapeRegExp_ACU
 
   function getNormalizedPlotMessageRole_ACU(role) {
     const ru = String(role || '').toUpperCase();
@@ -4254,7 +4247,6 @@
    * 生成用户输入文本的哈希值，用于精确匹配目标消息
    * 归一化处理：去除首尾空白，统一换行符
    */
-  // [已迁移到 src/shared/utils.ts] hashUserInput_ACU
 
   /**
    * 将plot附加到对应的用户消息上。
@@ -4689,11 +4681,8 @@
     }
   }
 
-  // [已迁移到 service/settings/settings-service.ts] loadTemplateFromStorage_ACU
 
-  // [已迁移到 service/settings/settings-service.ts] buildDefaultSettings_ACU
 
-  // [已迁移到 src/service/settings/settings-service.ts] loadSettings_ACU
 
   // Removed applyActualMessageVisibility_ACU function
 
@@ -4928,7 +4917,6 @@
    * @param {string} presetName - 预设名称，空字符串表示使用当前配置
    * @returns {object} - 包含 apiMode, apiConfig, tavernProfile 的配置对象
    */
-  // [已迁移到 service/ai/api-call.ts] getApiConfigByPreset_ACU
 
   function saveCustomCharCardPrompt_ACU() {
     if (!$popupInstance_ACU || !$charCardPromptSegmentsContainer_ACU) {

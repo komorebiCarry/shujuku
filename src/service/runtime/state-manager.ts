@@ -16,7 +16,6 @@
   let suppressWorldbookInjectionInGreeting_ACU = false;
 
   // --- [剧情推进] 相关常量 ---
-  // [已迁移到 src/data/constants.ts] STORAGE_KEY_PLOT_SETTINGS_ACU
 
   // [剧情推进] 循环状态管理
   const loopState_ACU = {
@@ -240,7 +239,6 @@
     $importTableSelectNone_ACU;
 
   // --- 全局设置对象 ---
-  // [已迁移到 src/data/models/defaults.ts] defaultWorldbookConfig_ACU
 
   let settings_ACU = {
       // 全局设置
@@ -332,9 +330,7 @@
   };
   // TABLE_TEMPLATE_ACU 现在从"配置存储(getConfigStorage_ACU)"或默认值加载，因此不属于主 settings 对象的一部分。
 
-  // [已迁移到 src/data/repositories/isolation-repo.ts] MAX_DATA_ISOLATION_HISTORY, normalizeDataIsolationHistory_ACU, getDataIsolationHistory_ACU, addDataIsolationHistory_ACU, removeDataIsolationHistory_ACU, ensureProfileExists_ACU, switchIsolationProfile_ACU
 
-  // [已迁移到 src/data/repositories/character-settings-repo.ts] getCurrentCharSettings_ACU, getCurrentWorldbookConfig_ACU
 
 
   // [从 05_core_tail.js:124 迁移] 隔离键辅助函数

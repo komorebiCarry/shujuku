@@ -2,14 +2,31 @@
 // presentation/index.ts — 表示层统一出口
 // ═══════════════════════════════════════════════════════════════
 
+// 窗口系统
 export * from './window/window-system';
+
+// 主题 & Toast
 export * from './theme/toast';
+
+// 组件
 export * from './components/table-selector';
 export * from './components/plot-editors';
+export * from './components/status-display';
+export * from './components/update-controls';
+export * from './components/worldbook-selectors';
+export * from './components/worldbook-selector';
+export * from './components/template-preset-ui';
+export * from './components/optimization-ui';
+export * from './components/update-status-display';
+export * from './components/import-status-ui';
+
+// 页面
 export * from './pages/main-popup';
 export * from './pages/visualizer';
-// 注意：以下模块因跨文件函数依赖保留在 features/ 原位，未迁入 presentation/
-// - status-display (features/runtime/01_runtime_state.js)
-// - startup (features/startup/01_ready_and_menu.js)
-// - update-controls (features/ui/01_update_trigger.js + features/data/01_data_admin.js)
-// - worldbook-selectors (features/worldbook/01~03)
+
+// 启动
+export * from './bootstrap/startup';
+
+// 触发器
+export * from './triggers/update-trigger';
+export * from './triggers/data-admin-ui';

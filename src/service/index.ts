@@ -19,6 +19,7 @@ export * from './import/snapshot-manager';
 export * from './runtime/init';
 export * from './runtime/state-manager';
 export * from './runtime/event-bus';
+export * from './runtime/helpers-remaining';
 export * from './runtime/api-registry';
 export * from './template/chat-scope';
 export * from './optimization/content-optimization';

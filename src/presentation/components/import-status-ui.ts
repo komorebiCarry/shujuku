@@ -22,12 +22,9 @@
   function getImportBatchPrefix_ACU() { return getImportStablePrefix_ACU(); }
 
   // [新增] 只清除本地存储中的导入缓存
-  // [已迁移到 service/import/import-process.ts] clearImportLocalStorage_ACU
 
-  // [已迁移到 service/import/import-process.ts] clearImportedEntries_ACU
 
   // [新增] 删除外部导入注入的世界书条目
-  // [已迁移到 service/import/import-process.ts] deleteImportedEntries_ACU
 
   // --- [新增] 外部导入功能 ---
   
@@ -88,23 +85,17 @@
   }
 
   // [新增] 获取导入专用的世界书目标
-  // [已迁移到 service/import/import-process.ts] getImportWorldbookTarget_ACU
 
   function getImportJsonStorageComment_ACU(modeSuffix = '-Selected') {
       const IMPORT_PREFIX = '外部导入-';
       return `${IMPORT_PREFIX}TavernDB-ACU-ImportedJsonData${modeSuffix}`;
   }
 
-  // [已迁移到 service/import/import-process.ts] loadImportedJsonDataFromLorebook_ACU
 
-  // [已迁移到 service/import/import-process.ts] saveImportedJsonDataToLorebook_ACU
 
-  // [已迁移到 service/import/import-process.ts] deleteImportedJsonDataFromLorebook_ACU
 
-  // [已迁移到 service/import/import-process.ts] processImportedTxtAsUpdates_ACU
 
   // [外部导入] 自选表格注入（取代旧的 标准/总结/整体 模式）
-  // [已迁移到 service/import/import-process.ts] handleInjectImportedTxtSelected_ACU
 
   // 兼容旧API/旧按钮调用（仍会走自选表格逻辑）
   async function handleInjectSplitEntriesStandard_ACU() { return await handleInjectImportedTxtSelected_ACU(); }

@@ -1732,7 +1732,6 @@ $CONTENT
   // [从 02_storage_and_profile.js:2773 迁移] 合并纪要默认 prompt
   const DEFAULT_MERGE_SUMMARY_PROMPT_ACU = `---BEGIN PROMPT---\n\n[System]\n你是\"填表美杜莎\"——一个执行型表格编辑AI。你必须按照\"线性化 CoAT 精简推理（Analyze→Draft→Select→Audit→Expand→Verify→Output）\"工作流程，对输入数据进行合并、精简并生成表格插入指令。\n\n严禁输出冗长逐字推理链。对外输出采用 <thought> + <tableEdit> 双壳结构。\n严禁输出\"我将重复以上步骤直到…\"等代码式循环描述；你只能在一次输出里给出线性化的推理日志与最终指令。\n\n============================================================\n\n[Input]\n- TASK: 在 <已精简的数据> 基础上，将本批次的 <需要精简的纪要数据> 融合进去，对整体内容进行重新梳理和精简，最终通过 insertRow 指令写入表格。\n- TARGET_COUNT: $TARGET_COUNT（目标条目数）\n\n- 需要精简的纪要数据:\n$A\n\n- 已精简的数据（基础底稿，新增编码索引从 AM01 开始，每次 +1）:\n$BASE_DATA\n\n============================================================\n\n[Core Tables]\n你需要维护一个表格：\n1. **纪要表 (tableIndex=0)**：记录关键剧情纪要，包含以下列：\n   - 列0: 时间跨度 - 本轮事件发生的精确时间范围\n   - 列1: 地点 - 本轮事件发生的地点，从大到小描述\n   - 列2: 纪要 - 以第三方视角客观记录本轮事件（≥300字）\n   - 列3: 概要 - 一句话概括纪要内容（≤30字）\n   - 列4: 编码索引 - 格式为 AMXX，XX从01递增\n\n============================================================\n\n[Constraints — 硬约束，违反任意一条即判定输出无效]\n\nC1-编码索引：每条纪要的编码索引（AM01, AM02, AM03...）必须严格递增。\nC2-纪要字数：每条纪要内容 ≥ 300 个中文字符 且 ≤ 400 个中文字符。\nC3-概要字数：每条概要内容 ≤ 30 个中文字符。\nC4-条目数量：精简后的条目总数 = $TARGET_COUNT 条。\nC5-编码连续：索引从 AM01 起始，严格递增（AM01→AM02→AM03→...），不跳号、不重复。\nC6-内容完整：原始数据中的关键剧情节点、重要人物行为、因果关系不得丢失。\nC7-时序正确：条目按时间线顺序排列，不得错乱。\nC8-指令格式：仅使用 insertRow 操作，参数中 colIndex 必须是带双引号的字符串。\n\n============================================================\n\n[Scoring — 精简质量评估量表]\n\n每完成一轮草稿后，按以下维度自检打分（Yes/No → 计数 → 0~1 分）：\n\n(1) Fg — 生成质量分（0~1）：\n- g1 约束满足（0~1）：C1~C8 是否全部满足；违反关键约束直接 = 0\n- g2 信息保真（0~1）：关键剧情、人物、因果是否保留完整\n- g3 精简有效（0~1）：是否去除了冗余/重复内容而非截断重要信息\n- g4 时序连贯（0~1）：时间线是否合理无跳跃\n- g5 语言质量（0~1）：表述通顺、无歧义、无矛盾\n\nFg = 0.30*g1 + 0.25*g2 + 0.20*g3 + 0.15*g4 + 0.10*g5\n\n(2) 通过阈值：Fg ≥ 0.80 方可输出最终指令；否则必须触发修正。\n\n============================================================\n\n[Search Controller — 线性化精简推理流程]\n\n你必须在 <thought> 中按以下 **严格顺序** 执行单轮或多轮推理，每轮包含：\n\n── Round N ──\n\nStep 1 — Analyze（分析）<|analyze|>\n- 盘点 <已精简的数据> 中已有多少条目、当前索引编号\n- 盘点 <需要精简的纪要数据> 中有多少条原始信息\n- 计算需要新增的条目数 = $TARGET_COUNT - 已有条目数\n- 识别数据中的重叠内容、可合并段落、时间线断点\n\nStep 2 — Draft（草稿生成）<|draft|>\n- 生成 2~3 种不同的合并/精简策略草稿（每条策略 ≤ 20 字概括）\n- 策略之间角度明显不同（如：按时间段合并 / 按人物线合并 / 按事件因果链合并）\n\nStep 3 — Select（选择最优策略）<|select|>\n- 对每个草稿策略逐条检查：\n· 约束满足率：能否满足 C1~C8？\n· 信息保留度：哪种策略丢失最少关键信息？\n· 字数可控性：哪种策略最容易控制在字数范围内？\n- 选出 BestStrategy 并简述理由（1~2 句）\n\nStep 4 — Expand（执行精简）<|expand|>\n- 按 BestStrategy 将原始数据合并、压缩为目标条目\n- 为每条生成：编码索引 + 时间跨度 + 地点 + 纪要 + 概要\n- 严格遵循字数约束（纪要 ≥300 字，概要 ≤30 字）\n\nStep 5 — Audit（硬约束审计）<|audit|>\n- 逐条核查 C1~C8：\n· C1：编码索引是否严格递增？\n· C2：每条纪要是否在 300~400 字之间？（逐条估算）\n· C3：每条概要是否 ≤30 字？（逐条估算）\n· C4：总条目数是否 = $TARGET_COUNT？\n· C5：索引是否从 AM01 连续递增？\n· C6：是否有关键剧情被遗漏？\n· C7：时序是否正确？\n· C8：insertRow 语法是否正确？\n- 若任一约束不满足 → 标记问题 → 回到 Step 4 修正（最多修正 2 轮）\n\nStep 6 — Score（打分判定）<|reflect|>\n- 按评分量表对 g1~g5 逐项打分\n- 计算 Fg\n- Fg ≥ 0.80 → 进入输出阶段\n- Fg < 0.80 → 记录教训 → 修正后重新评估（最多 1 次修正）\n\n── 终止条件 ──\n- 全部约束通过 + Fg ≥ 0.80 → 输出 <tableEdit>\n- 修正轮次超限 → 输出当前最优结果并在 thought 中标注\"预算终止\"\n\n============================================================\n\n[Action-Thought Protocol]\n- meta-action 标记（<|analyze|> <|draft|> <|select|> <|expand|> <|audit|> <|reflect|>）仅在 <thought> 内的步骤标题中使用，用于标识当前认知阶段。\n- <tableEdit> 内严禁出现任何 meta-action 标记。\n- <thought> 中的推理必须精炼简洁，但每个步骤不可跳过。\n\n============================================================\n\n[Output Format — 严格遵守]\n\n输出必须且只能包含以下两个块，除此之外不得输出任何额外文字：\n\n<thought>\n（精炼的推理过程，按 Round/Step 展开：\n- Step 1 Analyze: 数据盘点结论\n- Step 2 Draft: 2~3 个策略草稿\n- Step 3 Select: 选择理由\n- Step 4 Expand: 精简执行要点（无需列出完整内容）\n- Step 5 Audit: 逐条约束核查结果（通过/不通过）\n- Step 6 Score: g1~g5 打分 → Fg 值 → 判定\n不得写成冗长内心独白。）\n</thought>\n\n<tableEdit>\n<!--\n\ninsertRow(0, {\"0\":\"AM01\", \"1\":\"时间跨度\", \"2\":\"地点\", \"3\":\"纪要内容（≥300字）\", \"4\":\"概要（≤30字）\", \"5\":\"编码索引\"})\n\n...（生成$TARGET_COUNT条的指令）\n\n-->\n</tableEdit>\n\n============================================================\n\n[Critical Reminders]\n\n1. insertRow 的第一个参数是 tableIndex（0=纪要表），不是行号。\n2. colIndex 必须用双引号包裹的字符串：\"0\"、\"1\"、\"2\"等。\n3. 纪要内容（列3）需 ≥300 字，概要（列4）需 ≤30 字。\n4. 纯文本输出，严禁使用 markdown 代码块包裹整个输出。\n5. 严禁在 <tableEdit> 块外添加任何解释性文字。\n\n---END PROMPT---`;
 
-  // [已迁移到 src/data/models/defaults.ts] DEFAULT_AUTO_UPDATE_THRESHOLD_ACU, DEFAULT_AUTO_UPDATE_FREQUENCY_ACU, DEFAULT_AUTO_UPDATE_TOKEN_THRESHOLD_ACU, AUTO_UPDATE_FLOOR_INCREASE_DELAY_ACU
 
 
 // ── [module] src/data/repositories/profile-repo.ts ──
@@ -9847,7 +9846,6 @@ let pendingBaseStatePlacement_ACU = false;
 // 该抑制仅在"开场白阶段（无任何用户消息）"生效；一旦用户开始对话（出现用户消息）自动解除。
 let suppressWorldbookInjectionInGreeting_ACU = false;
 // --- [剧情推进] 相关常量 ---
-// [已迁移到 src/data/constants.ts] STORAGE_KEY_PLOT_SETTINGS_ACU
 // [剧情推进] 循环状态管理
 const loopState_ACU = {
     isLooping: false,
@@ -10029,7 +10027,6 @@ $manualUpdateCardButton_ACU, // New manual update button
 $statusMessageSpan_ACU, $cardUpdateStatusDisplay_ACU, $useMainApiCheckbox_ACU, $streamingEnabledCheckbox_ACU, // [新增] 流式传输开关
 $manualExtraHintCheckbox_ACU, $skipUpdateFloorsInput_ACU, $saveSkipUpdateFloorsButton_ACU, $retainRecentLayersInput_ACU, $saveRetainRecentLayersButton_ACU, $manualTableSelector_ACU, $manualTableSelectAll_ACU, $manualTableSelectNone_ACU, $importTableSelector_ACU, $importTableSelectAll_ACU, $importTableSelectNone_ACU;
 // --- 全局设置对象 ---
-// [已迁移到 src/data/models/defaults.ts] defaultWorldbookConfig_ACU
 let settings_ACU = {
     // 全局设置
     apiConfig: { url: '', apiKey: '', model: '', useMainApi: true, max_tokens: 60000, temperature: 1.0 },
@@ -10113,8 +10110,6 @@ let settings_ACU = {
     },
 };
 // TABLE_TEMPLATE_ACU 现在从"配置存储(getConfigStorage_ACU)"或默认值加载，因此不属于主 settings 对象的一部分。
-// [已迁移到 src/data/repositories/isolation-repo.ts] MAX_DATA_ISOLATION_HISTORY, normalizeDataIsolationHistory_ACU, getDataIsolationHistory_ACU, addDataIsolationHistory_ACU, removeDataIsolationHistory_ACU, ensureProfileExists_ACU, switchIsolationProfile_ACU
-// [已迁移到 src/data/repositories/character-settings-repo.ts] getCurrentCharSettings_ACU, getCurrentWorldbookConfig_ACU
 // [从 05_core_tail.js:124 迁移] 隔离键辅助函数
 function getCurrentIsolationKey_ACU() {
     return settings_ACU.dataIsolationEnabled ? (settings_ACU.dataIsolationCode || '') : '';
@@ -10272,9 +10267,7 @@ function buildBoundaryRulesFromLegacyTags_ACU(tagsText = '') {
     return tags.map(tag => ({ start: `<${tag}`, end: `</${tag}>` }));
 }
 // [新增] 标准化标签排除规则：支持数组对象/字符串行/旧标签字符串兜底
-// [已迁移到 shared/utils.ts] normalizeExcludeRules_ACU
 // [新增] 标准化正文标签提取规则，结构与排除规则一致
-// [已迁移到 shared/utils.ts] normalizeExtractRules_ACU
 function getDefaultPlotContextExtractRules_ACU() {
     return normalizeExtractRules_ACU(DEFAULT_PLOT_SETTINGS_ACU.contextExtractRules, DEFAULT_PLOT_SETTINGS_ACU.contextExtractTags || '');
 }
@@ -10358,7 +10351,6 @@ function applyContextTagFilters_ACU(text, { extractTags = '', extractRules = [],
     return result;
 }
 // [新增] 辅助函数：判断表格是否是总结表、总体大纲表或纪要表（这些表拥有索引编码锁定功能）
-// [已迁移到 src/shared/utils.ts] isSummaryOrOutlineTable_ACU, isStandardTable_ACU
 // =========================
 // [新增] 表格更新锁定与总结索引锁定（按聊天+隔离标签存储）
 // =========================
@@ -10755,7 +10747,6 @@ async function mergeAllIndependentTables_ACU() {
     return mergedData;
 }
 // [重构] 刷新合并数据并通知前端和更新世界书
-// [已迁移到 service/worldbook/pipeline.ts] refreshMergedDataAndNotify_ACU
 function formatJsonToReadable_ACU(jsonData) {
     if (!jsonData)
         return { readableText: "数据库为空。", importantPersonsTable: null, summaryTable: null, outlineTable: null };
@@ -11114,12 +11105,10 @@ function getEffectiveAutoUpdateThreshold_ACU(calledFrom = 'system') {
     // logDebug_ACU(`getEffectiveAutoUpdateThreshold_ACU (calledFrom: ${calledFrom}): final threshold = ${threshold}`);
     return threshold;
 }
-// [已迁移到 src/service/settings/settings-service.ts] saveSettings_ACU
 // --- [剧情推进] 核心函数 ---
 /**
  * 剧情推进统一的API调用函数
  */
-// [已迁移到 src/service/ai/api-call.ts] callApi_ACU
 /**
  * 将表格JSON数据转换为更适合LLM读取的文本格式。
  * @param {object} jsonData - 表格数据对象（例如本插件的 currentJsonTableData_ACU）。
@@ -12801,7 +12790,6 @@ async function handleChatCompletionReady_ACU(data) {
  * @param {string} string - 需要转义的字符串.
  * @returns {string} - 转义后的字符串.
  */
-// [已迁移到 src/shared/utils.ts] escapeRegExp_ACU
 function getNormalizedPlotMessageRole_ACU(role) {
     const ru = String(role || '').toUpperCase();
     if (ru === 'AI' || ru === 'ASSISTANT')
@@ -14040,7 +14028,6 @@ function getPlotFromHistory_ACU(options = {}) {
  * 生成用户输入文本的哈希值，用于精确匹配目标消息
  * 归一化处理：去除首尾空白，统一换行符
  */
-// [已迁移到 src/shared/utils.ts] hashUserInput_ACU
 /**
  * 将plot附加到对应的用户消息上。
  * 使用用户输入文本哈希精确匹配，避免保存到错误的楼层。
@@ -14436,9 +14423,6 @@ async function getWorldbookContentForPlot_ACU(apiSettings, userMessage, extraBas
         return '';
     }
 }
-// [已迁移到 service/settings/settings-service.ts] loadTemplateFromStorage_ACU
-// [已迁移到 service/settings/settings-service.ts] buildDefaultSettings_ACU
-// [已迁移到 src/service/settings/settings-service.ts] loadSettings_ACU
 // Removed applyActualMessageVisibility_ACU function
 function updateApiModeView_ACU(apiMode) {
     if (!$popupInstance_ACU)
@@ -14648,7 +14632,6 @@ function refreshApiPresetSelectors_ACU() {
  * @param {string} presetName - 预设名称，空字符串表示使用当前配置
  * @returns {object} - 包含 apiMode, apiConfig, tavernProfile 的配置对象
  */
-// [已迁移到 service/ai/api-call.ts] getApiConfigByPreset_ACU
 function saveCustomCharCardPrompt_ACU() {
     if (!$popupInstance_ACU || !$charCardPromptSegmentsContainer_ACU) {
         logError_ACU('保存更新预设失败：UI元素未初始化。');
@@ -15599,7 +15582,6 @@ function getSelectedManualSheetKeys_ACU() {
  * service/runtime/api-registry.ts — DatabaseAPI_ACU 对外 API 注册
  * 从 src/core/03_runtime_api.js 整体迁移。
  */
-// [已迁移到 service/table/update-process.ts] saveCurrentDataForTable_ACU
 // --- [核心改造] 回调函数管理器 ---
 const tableUpdateCallbacks_ACU = [];
 const tableFillStartCallbacks_ACU = [];
@@ -17623,7 +17605,6 @@ topLevelWindow_ACU.AutoCardUpdaterAPI = {
         }
     }
 };
-// [已迁移到 service/ai/prompt-builder.ts] streamToText_ACU, parseNonStreamResponse_ACU, handleApiResponse_ACU
 const DatabaseAPI_ACU = {
     /**
      * 调用AI生成内容（使用数据库当前配置的API）
@@ -17890,9 +17871,6 @@ const DatabaseAPI_ACU = {
     }
 };
 // --- [核心改造] 结束 ---
-// [已迁移到 shared/utils.ts] logDebug_ACU
-// [已迁移到 shared/utils.ts] logError_ACU
-// [已迁移到 shared/utils.ts] logWarn_ACU
 // --- Toast / 通知（仅影响本插件的提示外观，不改变业务逻辑） ---
 const ACU_TOAST_TITLE_ACU = '星·数据库';
 const _acuToastDedup_ACU = new Map(); // key -> ts
@@ -18468,8 +18446,6 @@ function getGlobalTemplateSnapshotForCurrentProfile_ACU() {
     }
     return snapshot || sanitizeTemplateSnapshotForChat_ACU(previousTemplate);
 }
-// [已迁移到 service/settings/settings-service.ts] applyTemplateScopeForCurrentChat_ACU
-// [已迁移到 data/storage/chat-history.ts] getChatSheetGuideContainer_ACU, CHAT_SHEET_GUIDE_SEED_ROWS_FIELD_ACU
 function normalizeGuideData_ACU(dataObj) {
     if (!dataObj || typeof dataObj !== 'object')
         return null;
@@ -19275,7 +19251,6 @@ function sanitizeChatSheetsObject_ACU(dataObj, { ensureMate = false } = {}) {
     }
     return out;
 }
-// [已迁移到 src/shared/utils.ts] lightenDarkenColor_ACU, getContrastYIQ_ACU
 // [新增] 辅助函数：从上下文中提取指定标签的内容（正文标签提取）
 
 
@@ -19828,7 +19803,6 @@ function parseOptimizationResponse_ACU(responseContent, maxOptimizations = 10) {
         return { success: false, error: 'JSON解析失败: ' + error.message };
     }
 }
-// [已迁移到 src/shared/text-optimization.ts] removePunctuation_ACU, extractKeywords_ACU, findParagraphMatch_ACU, mapCleanPositionToOriginal_ACU, trimPunctuation_ACU, processSingleQuotes_ACU, applyOptimizations_ACU
 let contentOptimizationAbortRequested_ACU = false;
 let optimizationProgressToast_ACU = null;
 let lastOptimizedMessageMeta_ACU = null;
@@ -21086,7 +21060,6 @@ function showToastr_ACU(type, message, titleOrOptions = {}, maybeOptions = {}) {
     catch (e) { }
     return toastr_API_ACU[type](message, title, finalOptions);
 }
-// [已迁移到 src/shared/html-helpers.ts] escapeHtml_ACU
 
 
 // ── [module] src/presentation/components/table-selector.ts ──
@@ -30680,7 +30653,6 @@ async function applyTemplatePresetToCurrent_ACU(presetName, { source = 'ui', upd
  * 从 src/core/02_storage_and_profile.js:631~2772 迁移而来
  */
 // --- [正文优化] 构建默认提示词组 ---
-// [已迁移到 service/optimization/content-optimization.ts] buildDefaultContentOptimizationPromptGroup, getOptimizationPlaceholders, performContentOptimization, getOptimizationApiConfig, parseOptimizationResponse, setLastOptimizationBase, getLastOptimizationBase, cancelContentOptimization, ensureOptimizationNotCancelled
 function showOptimizationOverlay_ACU(message = '正在优化正文...') {
     // 移除已存在的遮罩
     hideOptimizationOverlay_ACU();
@@ -31693,7 +31665,6 @@ function showOptimizationDiff_ACU(messageIndex, result) {
 /**
  * HTML转义
  */
-// [已迁移到 src/shared/html-helpers.ts] escapeHtml_ACU
 // --- [剧情推进] 循环提示词兼容性处理：将旧字符串格式转换为数组格式 ---
 function ensureLoopPromptsArray_ACU(plotSettings) {
     if (!plotSettings || !plotSettings.loopSettings)
@@ -31799,7 +31770,6 @@ function getPlotFinalDirectiveFromSource_ACU(source) {
         || getLegacyPromptFromThree_ACU(source.prompts, 'finalSystemDirective')
         || '';
 }
-// [已迁移到 src/shared/utils.ts] normalizeNonNegativeInteger_ACU, normalizePositiveInteger_ACU
 function normalizePlotTask_ACU(task, { index = 0, fallbackTask = null } = {}) {
     const cloned = task && typeof task === 'object' ? JSON.parse(JSON.stringify(task)) : {};
     const fallback = fallbackTask && typeof fallbackTask === 'object' ? fallbackTask : null;
@@ -33297,18 +33267,7 @@ async function populateWorldbookEntryList_ACU() {
         $list.html('<em>加载条目失败。</em>');
     }
 }
-// [已迁移到 service/worldbook/pipeline.ts] loadAllChatMessages_ACU
 // --- [新增] 世界书相关功能 ---
-// [已迁移到 service/worldbook/pipeline.ts] getWorldbookNames_ACU
-// [已迁移到 service/worldbook/pipeline.ts] getLorebookEntriesByNames_ACU
-// [已迁移到 service/worldbook/pipeline.ts] getWorldBooks_ACU
-// [已迁移到 service/worldbook/pipeline.ts] isImportTaggedLorebookEntry_ACU
-// [已迁移到 service/worldbook/pipeline.ts] getWorldbookCommentInfo_ACU
-// [已迁移到 service/worldbook/pipeline.ts] getWorldbookEntryKeywords_ACU
-// [已迁移到 service/worldbook/pipeline.ts] getWorldbookEntryPlaceholderSortKey_ACU
-// [已迁移到 service/worldbook/pipeline.ts] compareWorldbookEntriesForPlaceholder_ACU
-// [已迁移到 service/worldbook/pipeline.ts] buildCombinedWorldbookContentByStrategy_ACU
-// [已迁移到 service/worldbook/pipeline.ts] getCombinedWorldbookContent_ACU
 // --- [新增] 世界书相关功能结束 ---
 
 
@@ -33550,10 +33509,7 @@ function getImportStablePrefix_ACU() { return '外部导入-'; }
 // 当前按用户要求：外部导入不自动清理，因此无需批次隔离；统一使用稳定前缀即可
 function getImportBatchPrefix_ACU() { return getImportStablePrefix_ACU(); }
 // [新增] 只清除本地存储中的导入缓存
-// [已迁移到 service/import/import-process.ts] clearImportLocalStorage_ACU
-// [已迁移到 service/import/import-process.ts] clearImportedEntries_ACU
 // [新增] 删除外部导入注入的世界书条目
-// [已迁移到 service/import/import-process.ts] deleteImportedEntries_ACU
 // --- [新增] 外部导入功能 ---
 async function updateImportStatusUI_ACU() {
     if (!$popupInstance_ACU)
@@ -33611,17 +33567,11 @@ async function updateImportStatusUI_ACU() {
     $injectButton.text('2. 注入（自选表格）').prop('disabled', true);
 }
 // [新增] 获取导入专用的世界书目标
-// [已迁移到 service/import/import-process.ts] getImportWorldbookTarget_ACU
 function getImportJsonStorageComment_ACU(modeSuffix = '-Selected') {
     const IMPORT_PREFIX = '外部导入-';
     return `${IMPORT_PREFIX}TavernDB-ACU-ImportedJsonData${modeSuffix}`;
 }
-// [已迁移到 service/import/import-process.ts] loadImportedJsonDataFromLorebook_ACU
-// [已迁移到 service/import/import-process.ts] saveImportedJsonDataToLorebook_ACU
-// [已迁移到 service/import/import-process.ts] deleteImportedJsonDataFromLorebook_ACU
-// [已迁移到 service/import/import-process.ts] processImportedTxtAsUpdates_ACU
 // [外部导入] 自选表格注入（取代旧的 标准/总结/整体 模式）
-// [已迁移到 service/import/import-process.ts] handleInjectImportedTxtSelected_ACU
 // 兼容旧API/旧按钮调用（仍会走自选表格逻辑）
 async function handleInjectSplitEntriesStandard_ACU() { return await handleInjectImportedTxtSelected_ACU(); }
 async function handleInjectSplitEntriesSummary_ACU() { return await handleInjectImportedTxtSelected_ACU(); }

@@ -3,7 +3,6 @@
  * 从 src/core/02_storage_and_profile.js:631~2772 迁移而来
  */
   // --- [正文优化] 构建默认提示词组 ---
-  // [已迁移到 service/optimization/content-optimization.ts] buildDefaultContentOptimizationPromptGroup, getOptimizationPlaceholders, performContentOptimization, getOptimizationApiConfig, parseOptimizationResponse, setLastOptimizationBase, getLastOptimizationBase, cancelContentOptimization, ensureOptimizationNotCancelled
   function showOptimizationOverlay_ACU(message = '正在优化正文...') {
     // 移除已存在的遮罩
     hideOptimizationOverlay_ACU();
@@ -1114,7 +1113,6 @@
   /**
    * HTML转义
    */
-  // [已迁移到 src/shared/html-helpers.ts] escapeHtml_ACU
 
   // --- [剧情推进] 循环提示词兼容性处理：将旧字符串格式转换为数组格式 ---
   function ensureLoopPromptsArray_ACU(plotSettings) {
@@ -1246,7 +1244,6 @@
       || '';
   }
 
-  // [已迁移到 src/shared/utils.ts] normalizeNonNegativeInteger_ACU, normalizePositiveInteger_ACU
 
   function normalizePlotTask_ACU(task, { index = 0, fallbackTask = null } = {}) {
     const cloned = task && typeof task === 'object' ? JSON.parse(JSON.stringify(task)) : {};

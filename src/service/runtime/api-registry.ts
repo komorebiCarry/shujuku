@@ -2,7 +2,6 @@
  * service/runtime/api-registry.ts — DatabaseAPI_ACU 对外 API 注册
  * 从 src/core/03_runtime_api.js 整体迁移。
  */
-  // [已迁移到 service/table/update-process.ts] saveCurrentDataForTable_ACU
 
   // --- [核心改造] 回调函数管理器 ---
   const tableUpdateCallbacks_ACU = [];
@@ -2020,7 +2019,6 @@
     }
 };
 
-  // [已迁移到 service/ai/prompt-builder.ts] streamToText_ACU, parseNonStreamResponse_ACU, handleApiResponse_ACU
 
 const DatabaseAPI_ACU = {
     /**
@@ -2304,9 +2302,6 @@ const DatabaseAPI_ACU = {
   };
   // --- [核心改造] 结束 ---
 
-  // [已迁移到 shared/utils.ts] logDebug_ACU
-  // [已迁移到 shared/utils.ts] logError_ACU
-  // [已迁移到 shared/utils.ts] logWarn_ACU
 
   // --- Toast / 通知（仅影响本插件的提示外观，不改变业务逻辑） ---
   const ACU_TOAST_TITLE_ACU = '星·数据库';

@@ -324,4 +324,3 @@
     return toastr_API_ACU[type](message, title, finalOptions);
   }
 
-  // [已迁移到 src/shared/html-helpers.ts] escapeHtml_ACU
