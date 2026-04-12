@@ -12,11 +12,12 @@
 
 (function () {
   'use strict';
+  console.log('ACU_SCRIPT_DEBUG: AutoCardUpdater script execution started.');
 
 // ════════════════════════════════════════════════════════
-// [rollup:module] 以下为 shared/ 模块编译注入
+// [rollup:module] 以下为模块编译注入
 // ════════════════════════════════════════════════════════
-// ── [shared] src/shared/constants.ts ──
+// ── [module] src/shared/constants.ts ──
 /**
  * shared/constants.ts — 环境常量
  *
@@ -38,7 +39,7 @@ const POPUP_ID_ACU = `${SCRIPT_ID_PREFIX_ACU}-popup`;
 const MENU_ITEM_ID_ACU = `${SCRIPT_ID_PREFIX_ACU}-menu-item`;
 
 
-// ── [shared] src/shared/env.ts ──
+// ── [module] src/shared/env.ts ──
 /**
  * shared/env.ts — 运行时环境检测与存储策略
  *
@@ -80,7 +81,7 @@ if (!FORBID_BROWSER_LOCAL_STORAGE_FOR_CONFIG_ACU) {
 }
 
 
-// ── [shared] src/shared/service-locator.ts ──
+// ── [module] src/shared/service-locator.ts ──
 /**
  * shared/service-locator.ts — ACU_Services 服务定位器
  *
@@ -124,7 +125,7 @@ const ACU_Services = {
 };
 
 
-// ── [shared] src/shared/utils.ts ──
+// ── [module] src/shared/utils.ts ──
 /**
  * shared/utils.ts — 纯工具函数
  *
@@ -565,7 +566,7 @@ function cloneScopedConfigData_ACU(value, fallback = null) {
 }
 
 
-// ── [shared] src/shared/json-helpers.ts ──
+// ── [module] src/shared/json-helpers.ts ──
 /**
  * shared/json-helpers.ts — JSON 安全解析/序列化工具
  *
@@ -599,7 +600,7 @@ function safeJsonStringify_ACU(obj, fallback = '{}') {
 }
 
 
-// ── [shared] src/shared/html-helpers.ts ──
+// ── [module] src/shared/html-helpers.ts ──
 /**
  * shared/html-helpers.ts — HTML 工具函数
  *
@@ -621,7 +622,7 @@ function escapeHtml_ACU(unsafe) {
 }
 
 
-// ── [shared] src/shared/text-optimization.ts ──
+// ── [module] src/shared/text-optimization.ts ──
 /**
  * 正文优化纯逻辑函数
  *
@@ -843,7 +844,7 @@ function applyOptimizations_ACU(originalContent, optimizations) {
 }
 
 
-// ── [shared] src/data/constants.ts ──
+// ── [module] src/data/constants.ts ──
 /**
  * data/constants.ts — 数据层存储键常量和 Profile 工具
  *
@@ -885,7 +886,7 @@ function getProfileTemplateKey_ACU(code) {
 }
 
 
-// ── [shared] src/data/storage/idb-import-temp.ts ──
+// ── [module] src/data/storage/idb-import-temp.ts ──
 /**
  * IndexedDB 导入临时存储 + 通用 IDB 工具
  *
@@ -992,7 +993,7 @@ async function importTempRemove_ACU(key) {
 }
 
 
-// ── [shared] src/data/storage/tavern-storage.ts ──
+// ── [module] src/data/storage/tavern-storage.ts ──
 /**
  * 酒馆设置存储桥接（Tavern Settings Bridge）
  *
@@ -1323,7 +1324,7 @@ function migrateKeyToTavernStorageIfNeeded_ACU(key) {
 }
 
 
-// ── [shared] src/data/storage/chat-history.ts ──
+// ── [module] src/data/storage/chat-history.ts ──
 /**
  * data/storage/chat-history.ts — 聊天消息自定义字段读写
  *
@@ -1397,7 +1398,7 @@ function getChatSheetGuideContainer_ACU(chat) {
 }
 
 
-// ── [shared] src/data/models/defaults.ts ──
+// ── [module] src/data/models/defaults.ts ──
 // ═══════════════════════════════════════════════════════════════
 // data/models/defaults.ts — 默认常量（纯数据，无 DOM 依赖）
 // 从 02_storage_and_profile.js 迁入
@@ -1430,7 +1431,7 @@ const defaultWorldbookConfig_ACU = {
 };
 
 
-// ── [shared] src/data/models/defaults-json.js ──
+// ── [module] src/data/models/defaults-json.js ──
 /**
  * data/models/defaults-json.js — 巨型 JSON 默认值
  *
@@ -1734,7 +1735,7 @@ $CONTENT
   // [已迁移到 src/data/models/defaults.ts] DEFAULT_AUTO_UPDATE_THRESHOLD_ACU, DEFAULT_AUTO_UPDATE_FREQUENCY_ACU, DEFAULT_AUTO_UPDATE_TOKEN_THRESHOLD_ACU, AUTO_UPDATE_FLOOR_INCREASE_DELAY_ACU
 
 
-// ── [shared] src/data/repositories/profile-repo.ts ──
+// ── [module] src/data/repositories/profile-repo.ts ──
 /**
  * Profile 与 GlobalMeta 管理
  *
@@ -1823,7 +1824,7 @@ function sanitizeSettingsForProfileSave_ACU(settingsObj) {
 }
 
 
-// ── [shared] src/data/repositories/isolation-repo.ts ──
+// ── [module] src/data/repositories/isolation-repo.ts ──
 /**
  * 数据隔离（Isolation）相关函数
  *
@@ -1920,7 +1921,7 @@ async function switchIsolationProfile_ACU(newCodeRaw) {
 }
 
 
-// ── [shared] src/data/repositories/template-preset-repo.ts ──
+// ── [module] src/data/repositories/template-preset-repo.ts ──
 // ═══════════════════════════════════════════════════════════════
 // data/repositories/template-preset-repo.ts — 模板预设纯数据工具函数
 // 从 02_storage_and_profile.js 行 18~101 迁入
@@ -2002,7 +2003,7 @@ function sanitizeFilenameComponent_ACU(name) {
 }
 
 
-// ── [shared] src/data/repositories/character-settings-repo.ts ──
+// ── [module] src/data/repositories/character-settings-repo.ts ──
 // ═══════════════════════════════════════════════════════════════
 // data/repositories/character-settings-repo.ts — 角色专属设置辅助函数
 // 从 02_storage_and_profile.js 行 4193~4236 迁入
@@ -2041,7 +2042,7 @@ function getCurrentWorldbookConfig_ACU() {
 }
 
 
-// ── [shared] src/data/repositories/table-repo.ts ──
+// ── [module] src/data/repositories/table-repo.ts ──
 /**
  * data/repositories/table-repo.ts — 表格数据 CRUD
  * 从 src/core/05_core_tail.js:2409~2693 迁移而来。
@@ -2299,7 +2300,7 @@ async function loadOrCreateJsonTableFromChatHistory_ACU() {
 }
 
 
-// ── [shared] src/service/settings/settings-service.ts ──
+// ── [module] src/service/settings/settings-service.ts ──
 // ═══════════════════════════════════════════════════════════════
 // service/settings/settings-service.ts — 设置加载/保存编排
 // 从 04_shared_helpers.js 迁入
@@ -2909,7 +2910,7 @@ function applyTemplateScopeForCurrentChat_ACU({ isolationKey = getCurrentIsolati
 }
 
 
-// ── [shared] src/service/ai/api-call.ts ──
+// ── [module] src/service/ai/api-call.ts ──
 // service/ai/api-call.ts — AI 调用编排（剧情推进用）
 // 从 04_shared_helpers.js 迁入
 async function callApi_ACU(messages, apiSettings, abortSignal = null) {
@@ -3037,7 +3038,7 @@ async function callCustomOpenAI_ACU_Direct(messages) {
 }
 
 
-// ── [shared] src/service/ai/prompt-builder.ts ──
+// ── [module] src/service/ai/prompt-builder.ts ──
 /**
  * service/ai/prompt-builder.ts — AI 输入准备 + JSON清洗 + 表格编辑解析
  * 从 src/features/ai/01_prompt_prepare.js + 02_api_call.js 合并迁移。
@@ -4614,7 +4615,7 @@ async function handleApiResponse_ACU(response, signal = null) {
  
 
 
-// ── [shared] src/service/table/update-process.ts ──
+// ── [module] src/service/table/update-process.ts ──
 // update-process.ts
 // 从 01_update_process.js 迁入
 async function processUpdates_ACU(indicesToUpdate, mode = 'auto', options = {}) {
@@ -5281,7 +5282,7 @@ async function saveCurrentDataForTable_ACU(sheetKey) {
 }
 
 
-// ── [shared] src/service/worldbook/pipeline.ts ──
+// ── [module] src/service/worldbook/pipeline.ts ──
 // pipeline.ts
 // 从 05_core_tail.js 迁入
 async function updateReadableLorebookEntry_ACU(createIfNeeded = false, isImport = false, targetLorebookOverride = null) {
@@ -6236,7 +6237,7 @@ async function getCombinedWorldbookContent_ACU(initialScanTextOverride = '', opt
 }
 
 
-// ── [shared] src/service/worldbook/injection-engine.ts ──
+// ── [module] src/service/worldbook/injection-engine.ts ──
 /**
  * service/worldbook/injection-engine.ts — 世界书注入/导出/清理引擎
  * 从 src/core/05_core_tail.js:123~2401 迁移而来。
@@ -8435,7 +8436,7 @@ async function updateImportantPersonsRelatedEntries_ACU(importantPersonsTable, i
 // 无标签使用空字符串 "" 作为键名，有标签则使用标签代码
 
 
-// ── [shared] src/service/data-admin/admin.ts ──
+// ── [module] src/service/data-admin/admin.ts ──
 // admin.ts
 // 从 01_data_admin.js 迁入
 function importCombinedSettings_ACU() {
@@ -8571,7 +8572,7 @@ function importCombinedSettings_ACU() {
 }
 
 
-// ── [shared] src/service/summary/merge-logic.ts ──
+// ── [module] src/service/summary/merge-logic.ts ──
 // merge-logic.ts
 async function checkAndTriggerAutoMergeSummary_ACU() {
     if (!settings_ACU.autoMergeEnabled)
@@ -8902,7 +8903,7 @@ async function performAutoMergeSummary_ACU(options) {
 }
 
 
-// ── [shared] src/service/import/import-process.ts ──
+// ── [module] src/service/import/import-process.ts ──
 // import-process.ts
 async function processImportedTxtAsUpdates_ACU() {
     // 外部导入：按“自选表格”处理与注入（与手动填表一致的表选择体验）
@@ -9409,7 +9410,7 @@ async function deleteImportedJsonDataFromLorebook_ACU(targetLorebook, modeSuffix
 }
 
 
-// ── [shared] src/service/runtime/init.ts ──
+// ── [module] src/service/runtime/init.ts ──
 // init.ts — 初始化编排
 // 从 05_core_tail.js 迁入
 function mainInitialize_ACU() {
@@ -9829,7 +9830,7 @@ function mainInitialize_ACU() {
 }
 
 
-// ── [shared] src/service/runtime/state-manager.ts ──
+// ── [module] src/service/runtime/state-manager.ts ──
 /**
  * service/runtime/state-manager.ts — ACU_State 全局状态管理 + 生成门控
  * 从 src/core/02_storage_and_profile.js:624~793 迁移而来。
@@ -10120,7 +10121,7 @@ function getCurrentIsolationKey_ACU() {
 }
 
 
-// ── [shared] src/service/runtime/event-bus.ts ──
+// ── [module] src/service/runtime/event-bus.ts ──
 /**
  * service/runtime/event-bus.ts — ACU_EventBus 事件总线
  *
@@ -10190,7 +10191,7 @@ const ACU_EventBus = {
 };
 
 
-// ── [shared] src/service/runtime/helpers-remaining.ts ──
+// ── [module] src/service/runtime/helpers-remaining.ts ──
 /**
  * service/runtime/helpers-remaining.ts — 04_shared_helpers 剩余函数
  * 从 src/core/04_shared_helpers.js:38~5968 迁移而来。
@@ -15593,7 +15594,7 @@ function getSelectedManualSheetKeys_ACU() {
 }
 
 
-// ── [shared] src/service/runtime/api-registry.ts ──
+// ── [module] src/service/runtime/api-registry.ts ──
 /**
  * service/runtime/api-registry.ts — DatabaseAPI_ACU 对外 API 注册
  * 从 src/core/03_runtime_api.js 整体迁移。
@@ -17898,7 +17899,7 @@ const _acuToastDedup_ACU = new Map(); // key -> ts
 let _acuToastStyleInjected_ACU = false;
 
 
-// ── [shared] src/service/template/chat-scope.ts ──
+// ── [module] src/service/template/chat-scope.ts ──
 /**
  * service/template/chat-scope.ts — 聊天模板/剧情作用域管理 + Sheet Guide + sanitize
  * 从 src/core/04_shared_helpers.js:37~1382 迁移而来。
@@ -19278,7 +19279,7 @@ function sanitizeChatSheetsObject_ACU(dataObj, { ensureMate = false } = {}) {
 // [新增] 辅助函数：从上下文中提取指定标签的内容（正文标签提取）
 
 
-// ── [shared] src/service/optimization/content-optimization.ts ──
+// ── [module] src/service/optimization/content-optimization.ts ──
 /**
  * service/optimization/content-optimization.ts — 正文优化服务逻辑
  * 从 src/core/02_storage_and_profile.js:630~1325 迁移而来。
@@ -19910,7 +19911,7 @@ function ensureOptimizationNotCancelled_ACU() {
  */
 
 
-// ── [shared] src/presentation/window/window-system.ts ──
+// ── [module] src/presentation/window/window-system.ts ──
 // window-system.ts
 // 从 01_window_system.js 整体迁入
 const ACU_WindowManager = {
@@ -20757,7 +20758,7 @@ function closeACUWindow(id) {
 // --- [Legacy] 旧版"单份设置/单份模板"存储键（仅用于迁移；新版本不再直接读写它们） ---
 
 
-// ── [shared] src/presentation/theme/toast.ts ──
+// ── [module] src/presentation/theme/toast.ts ──
 // toast.ts
 // 从 03_theme_and_toast.js 整体迁入
 function ensureAcuToastStylesInjected_ACU() {
@@ -21088,7 +21089,7 @@ function showToastr_ACU(type, message, titleOrOptions = {}, maybeOptions = {}) {
 // [已迁移到 src/shared/html-helpers.ts] escapeHtml_ACU
 
 
-// ── [shared] src/presentation/components/table-selector.ts ──
+// ── [module] src/presentation/components/table-selector.ts ──
 // table-selector.ts
 // 从 04_table_selectors.js 整体迁入
 function renderManualTableSelector_ACU() {
@@ -21268,7 +21269,7 @@ function handleManualSelectNone_ACU() {
 // [新增] 统一的手动更新函数（支持按表选择，优先使用模板参数）
 
 
-// ── [shared] src/presentation/components/plot-editors.ts ──
+// ── [module] src/presentation/components/plot-editors.ts ──
 // plot-editors.ts
 // 从 02_shared_editors_and_selectors.js 整体迁入
 function renderPromptSegments_ACU(segments) {
@@ -21807,11 +21808,11 @@ function abortAllActiveRequests_ACU() {
 // --- [新增] 内部保存函数：保存单个表格的数据到聊天历史 ---
 
 
-// ── [shared] src/presentation/components/status-display.ts ──
+// ── [module] src/presentation/components/status-display.ts ──
 // status-display.ts — 对应源文件有跨文件依赖，保留在原位
 
 
-// ── [shared] src/presentation/bootstrap/startup.ts ──
+// ── [module] src/presentation/bootstrap/startup.ts ──
 /**
  * presentation/bootstrap/startup.ts — 启动 + 菜单初始化
  * 从 features/startup/01_ready_and_menu.js 迁移而来
@@ -21867,15 +21868,15 @@ function addAutoCardMenuItem_ACU() {
 }
 
 
-// ── [shared] src/presentation/components/update-controls.ts ──
+// ── [module] src/presentation/components/update-controls.ts ──
 // update-controls.ts — 对应源文件有跨文件依赖，保留在原位
 
 
-// ── [shared] src/presentation/components/worldbook-selectors.ts ──
+// ── [module] src/presentation/components/worldbook-selectors.ts ──
 // worldbook-selectors.ts — 对应源文件有跨文件依赖，保留在原位
 
 
-// ── [shared] src/presentation/pages/main-popup.ts ──
+// ── [module] src/presentation/pages/main-popup.ts ──
 // main-popup.ts
 // 从 05_main_popup.js 整体迁入
 async function openAutoCardPopup_ACU() {
@@ -27399,7 +27400,7 @@ insertRow(1, ["时间2", "大纲事件2...", "关键词"]);
 // Removed updateAdvancedHideUIDisplay_ACU function
 
 
-// ── [shared] src/presentation/pages/visualizer.ts ──
+// ── [module] src/presentation/pages/visualizer.ts ──
 // visualizer.ts
 // 从 06_visualizer.js 整体迁入
 const VISUALIZER_CSS_ACU = `
@@ -30064,7 +30065,7 @@ async function saveVisualizerChanges_ACU(saveToTemplate = false) {
 // Direct AI Call helper (simplified version of callCustomOpenAI_ACU for one-off tasks)
 
 
-// ── [shared] src/presentation/components/template-preset-ui.ts ──
+// ── [module] src/presentation/components/template-preset-ui.ts ──
 /**
  * presentation/components/template-preset-ui.ts — 模板预设 UI 函数
  * 从 src/core/02_storage_and_profile.js:20~628 迁移而来
@@ -30673,7 +30674,7 @@ async function applyTemplatePresetToCurrent_ACU(presetName, { source = 'ui', upd
 }
 
 
-// ── [shared] src/presentation/components/optimization-ui.ts ──
+// ── [module] src/presentation/components/optimization-ui.ts ──
 /**
  * presentation/components/optimization-ui.ts — 正文优化 UI + 剧情推进 UI
  * 从 src/core/02_storage_and_profile.js:631~2772 迁移而来
@@ -32615,7 +32616,7 @@ function restorePlotPromptOverride_ACU() {
 }
 
 
-// ── [shared] src/presentation/components/worldbook-selector.ts ──
+// ── [module] src/presentation/components/worldbook-selector.ts ──
 /**
  * presentation/components/worldbook-selector.ts — 世界书选择 UI
  * 从 features/worldbook/01~03 + 04 迁移而来
@@ -33311,7 +33312,7 @@ async function populateWorldbookEntryList_ACU() {
 // --- [新增] 世界书相关功能结束 ---
 
 
-// ── [shared] src/presentation/components/update-status-display.ts ──
+// ── [module] src/presentation/components/update-status-display.ts ──
 /**
  * presentation/components/update-status-display.ts — 运行时状态/更新显示 UI
  * 从 features/runtime/01_runtime_state.js 迁移而来
@@ -33528,7 +33529,7 @@ async function updateCardUpdateStatusDisplay_ACU() {
 }
 
 
-// ── [shared] src/presentation/components/import-status-ui.ts ──
+// ── [module] src/presentation/components/import-status-ui.ts ──
 /**
  * presentation/components/import-status-ui.ts — 导入状态 UI
  * 从 features/import/01~03 迁移而来
@@ -33627,7 +33628,7 @@ async function handleInjectSplitEntriesSummary_ACU() { return await handleInject
 async function handleInjectSplitEntriesFull_ACU() { return await handleInjectImportedTxtSelected_ACU(); }
 
 
-// ── [shared] src/presentation/triggers/update-trigger.ts ──
+// ── [module] src/presentation/triggers/update-trigger.ts ──
 /**
  * presentation/triggers/update-trigger.ts — 手动更新触发 UI
  * 从 features/ui/01_update_trigger.js 迁移而来
@@ -34328,7 +34329,7 @@ function exportCombinedSettings_ACU() {
 }
 
 
-// ── [shared] src/presentation/triggers/data-admin-ui.ts ──
+// ── [module] src/presentation/triggers/data-admin-ui.ts ──
 /**
  * presentation/triggers/data-admin-ui.ts — 导入/导出/重置 UI
  * 从 features/data/01_data_admin.js 迁移而来
@@ -34990,119 +34991,12 @@ function importTableTemplate_ACU({ scope = 'global' } = {}) {
 // CSS for the Visualizer - 墨韵清雅设计系统（古典中国风）
 
 // ════════════════════════════════════════════════════════
-// [rollup:module] shared/ 注入结束
+// [rollup:module] 模块注入结束
 // ════════════════════════════════════════════════════════
-
-  console.log('ACU_SCRIPT_DEBUG: AutoCardUpdater script execution started.'); // Very first log
-
-  // [已迁移到 src/shared/env.ts] topLevelWindow_ACU, FORBID_BROWSER_LOCAL_STORAGE_FOR_CONFIG_ACU, ALLOW_LEGACY_LOCALSTORAGE_MIGRATION_ACU, legacyLocalStorage_ACU, storage_ACU
-  // [已迁移到 src/shared/constants.ts] DEBUG_MODE_ACU, UNIQUE_SCRIPT_ID, SCRIPT_ID_PREFIX_ACU, POPUP_ID_ACU, MENU_ITEM_ID_ACU
-
-  // ═══════════════════════════════════════════════════════════════════════════════
-  // ███ 独立窗口系统 - 不依赖酒馆 callGenericPopup ███
-  // ═══════════════════════════════════════════════════════════════════════════════
-  
-  // 窗口管理器：追踪所有打开的窗口实例
-  // [已迁移到 presentation/window/window-system.ts] 窗口系统
-
-  // [已迁移] 全部内容迁移到 presentation/components/template-preset-ui.ts, optimization-ui.ts, data/models/defaults-json.js, service/runtime/state-manager.ts
-
-  // [已迁移到 presentation/components/plot-editors.ts] 剧情编辑器 UI
-
-  // [已迁移到 service/runtime/api-registry.ts] DatabaseAPI_ACU, tableUpdateCallbacks_ACU, tableFillStartCallbacks_ACU, ACU_TOAST_TITLE_ACU 等全部内容
-
-  // [已迁移到 presentation/theme/toast.ts] 主题+Toast
-
-  // [已迁移到 src/shared/utils.ts] cleanChatName_ACU
-
-  // [已迁移到 src/shared/utils.ts] deepMerge_ACU
-
-  // [关键修复] 解析表格模板：支持去注释，并可选择"仅保留表头行"
-  // 目的：模板允许携带示例/预置数据，但这些数据不应在"当前对话/角色卡没有数据库记录"时被当作真实数据注入世界书。
-  // [已迁移到 shared/utils.ts] stripSeedRowsFromTemplate_ACU
-
-  // [已迁移到 shared/utils.ts] parseTableTemplateJson_ACU
-
-  // [表格顺序新机制] 在数据对象上应用"按给定 keys 顺序重编号"
-  // [已迁移到 shared/utils.ts] applySheetOrderNumbers_ACU
-
-  // [表格顺序新机制] 确保对象里的所有 sheet_ 都有合法编号（用于模板载入/导入/兼容旧数据）
-  // [已迁移到 shared/utils.ts] ensureSheetOrderNumbers_ACU
-
-  // [表格顺序新机制] 读取模板里 sheet_ keys 的顺序（按编号升序；缺失则按当前键顺序并补齐编号）
-  // [已迁移到 shared/utils.ts] getTemplateSheetKeys_ACU
-
-  // =========================
-  // [新增] 聊天记录第一层：空白"指导表"（仅表头+参数，无数据行）
-  // 目标：
-  // - 不再维护"表头清单"这种轻量结构，而是保存一份"包含所有表格的更新参数/表头/顺序"的空白表集合
-  // - 仅用于本插件：为表格编辑/填表参数提供稳定来源；不暴露到 exportTableAsJson 等外部接口
-  // - 保存位置：chat[0]（第一层消息对象）上挂载一个内部字段
-  // - 按隔离标签分槽：tags[isolationKey]
-  // 备注：此处的"空白表"指 content 只保留表头行（content[0]），不含任何数据行
-  // =========================
-  // [已迁移到 data/storage/chat-history.ts] CHAT_SHEET_GUIDE_FIELD_ACU, CHAT_SHEET_GUIDE_VERSION_ACU, LEGACY_CHAT_TABLE_HEADER_GUIDE_FIELD_ACU, CHAT_SCOPED_CONFIG_FIELD_ACU, CHAT_SCOPED_CONFIG_VERSION_ACU, CHAT_TEMPLATE_ARCHIVE_OPTION_PREFIX_ACU, MAX_CHAT_TEMPLATE_ARCHIVES_PER_TAG_ACU
-
-  // [已迁移到 shared/utils.ts] getChatFirstLayerMessage_ACU
-
-  // [已迁移到 shared/utils.ts] cloneScopedConfigData_ACU
-
-  // [已迁移到 data/storage/chat-history.ts] getChatScopedConfigContainer_ACU, normalizeChatScopedConfigContainer_ACU
-
-  // [已迁移到 service/template/chat-scope.ts] 模板/剧情作用域CRUD + Sheet Guide + sanitize (~60个函数)
-  // [已迁移到 service/runtime/helpers-remaining.ts] 剩余全部函数 (~143个)
-
-  // [已迁移到 presentation/components/table-selector.ts] 表格选择器 UI
-
-  // [已迁移] handleManualUpdate_ACU → service/table/update-process.ts
-  // [已迁移] getCurrentIsolationKey_ACU → service/runtime/state-manager.ts
-  // [已迁移] mainInitialize_ACU → service/runtime/init.ts
-  // [已迁移] table-repo 相关 → data/repositories/table-repo.ts
-  // [已迁移] injection-engine 相关 → service/worldbook/injection-engine.ts
 
   $(function() {
       console.log('ACU_INIT_DEBUG: Document is ready, attempting to initialize ACU script.');
       mainInitialize_ACU();
   });
 
-  // [已迁移到 presentation/bootstrap/startup.ts]
-
-  // [已迁移到 presentation/components/import-status-ui.ts]
-
-  // [已迁移到 presentation/components/import-status-ui.ts]
-
-  // [已迁移到 presentation/components/import-status-ui.ts]
-
-  // [已迁移到 presentation/components/worldbook-selector.ts]
-
-  // [已迁移到 presentation/components/worldbook-selector.ts]
-
-  // [已迁移到 presentation/components/worldbook-selector.ts]
-
-  // [已迁移到 presentation/pages/main-popup.ts] 主弹窗 UI
-
-  // [已迁移到 presentation/components/update-status-display.ts]
-
-  // [已迁移到 presentation/components/worldbook-selector.ts]
-
-  // [已迁移到 service/ai/prompt-builder.ts] prepareAIInput_ACU
-
-  // [已迁移到 service/ai/prompt-builder.ts] callCustomOpenAI_ACU, normalizeAiResponse, extractTableEdit, parseAndApplyTableEdits, JSON清洗管线
-
-  // [已迁移到 service/table/update-process.ts] processUpdates_ACU
-
-  // [新增] 自动合并纪要检测函数
-  // [已迁移到 service/summary/merge-logic.ts] checkAndTriggerAutoMergeSummary_ACU
-
-  // [新增] 执行自动合并总结函数
-  // [已迁移到 service/summary/merge-logic.ts] performAutoMergeSummary_ACU
-  // [已迁移到 presentation/triggers/update-trigger.ts]
-
-  // [已迁移到 presentation/triggers/data-admin-ui.ts]
-
-  // [已迁移到 presentation/pages/visualizer.ts] 可视化编辑器 UI
-
-  // [已迁移到 service/ai/api-call.ts] callCustomOpenAI_ACU_Direct
 })();
-
-
