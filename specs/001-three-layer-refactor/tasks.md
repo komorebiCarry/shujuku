@@ -312,6 +312,43 @@
 
 ---
 
+## 阶段 9：service/ 层职责纯化 — DOM 操作清理
+
+目的：service/ 层严格遵守"不碰 DOM"原则。将所有 DOM 读写操作从 service/ 提取到 presentation/ 层，service/ 只保留纯业务逻辑。
+
+策略：对每个 service/ 文件，将 DOM 操作（`$popupInstance_ACU.find()`、`jQuery_API_ACU()`、`.val()`、`.prop()`、`.hide()`/`.show()`、`.append()`、`.html()`、`.text()`）提取为 presentation/ 层的 UI 刷新函数，service/ 层在业务完成后调用 UI 刷新函数（或通过 `!!$popupInstance_ACU` 传参让调用方决定是否刷新 UI）。
+
+### 9A：轻量文件（DOM 操作 ≤5 处）
+
+- [ ] T170 [US7] `service/template/chat-scope.ts`（2处）：`$popupInstance_ACU && refreshUi` → `loadTemplatePresetSelect_ACU` 调用移到 presentation 层调用方
+- [ ] T171 [US7] `service/runtime/state-manager.ts`（2处）：仅全局变量声明 `let jQuery_API_ACU` / `let $popupInstance_ACU`，移到 `shared/env.ts` 或保留（声明不算 DOM 操作）
+- [ ] T172 [US7] `service/worldbook/pipeline.ts`（3处）：`jQuery_API_ACU(document).trigger()` + `$popupInstance_ACU.is(':visible')` → 提取为 `notifyVisualizerRefresh_ACU()` 到 presentation
+- [ ] T173 [US7] `service/table/update-process.ts`（4处）：`$statusMessageSpan_ACU` + 停止按钮绑定 → 提取为 `bindStopButton_ACU()` / `updateStatusText_ACU()` 到 presentation
+- [ ] T174 [US7] `service/worldbook/injection-engine.ts`（4处）：`$popupInstance_ACU.find('h2')` + `jQuery_API_ACU(document).trigger()` → 提取 UI 更新到 presentation
+- [ ] T175 [US7] `service/runtime/api-registry.ts`（5处）：`!!$popupInstance_ACU` 作为 refreshUi 参数 → 保留（条件传递不算直接操作），`loadPlotPresetSelect_ACU()` 调用移到 presentation
+
+### 9B：中量文件（DOM 操作 5~20 处）
+
+- [ ] T176 [US7] `service/import/import-process.ts`（7处）：`$popupInstance_ACU.find()` 读导入参数 + 禁用按钮 → 提取为 `getImportParams_ACU()` + `setInjectButtonEnabled_ACU()` 到 presentation
+- [ ] T177 [US7] `service/runtime/init.ts`（11处）：`jQuery_API_ACU('#send_textarea').val()` 读写 + `jQuery_API_ACU(document).trigger()` → 提取为 `getSendTextareaValue_ACU()` / `setSendTextareaValue_ACU()` / `triggerVisualizerRefresh_ACU()` 到 presentation
+- [ ] T178 [US7] `service/data-admin/admin.ts`（12处）：导入后回填 UI → 提取为 `refreshImportSettingsUI_ACU(settings)` 到 presentation
+- [ ] T179 [US7] `service/settings/settings-service.ts`（17处）：`loadSettings_ACU` 中的 UI 回填 → 提取为 `syncSettingsToUI_ACU(settings)` 到 presentation
+
+### 9C：重量文件（DOM 操作 40+ 处）
+
+- [ ] T180 [US7] `service/runtime/helpers-remaining.ts`（43处）：需逐函数分类
+  - 纯 UI 函数（`updateLoopUIStatus`、`updateLoopTimerDisplay`、`updateApiModeView`、`updateCustomApiInputsState`、`loadTavernApiProfiles`、`refreshApiPresetSelectors`、`saveApiConfig`、`saveCustomCharCardPrompt`、`saveAutoUpdateThreshold` 等 ~15 个函数）→ 整体移到 `presentation/triggers/settings-ui-sync.ts`
+  - 混合函数（`runOptimizationLogic`、`triggerLoopGeneration`、`loadPresetAndCleanCharacterData` 等）→ DOM 操作部分提取为回调
+
+### 9D：验证
+
+- [ ] T181 [US7] 验证：`grep -rn '$popupInstance_ACU\|jQuery_API_ACU' src/service/` 返回 0 个结果（仅允许 state-manager.ts 中的变量声明）
+- [ ] T182 [US7] verify-build ✓ + audit-bundle 7/7 ✓ + tsc --noEmit 零语法错误
+
+检查点：service/ 层零 DOM 操作（变量声明除外）
+
+---
+
 ## 依赖与执行顺序
 
 ### 阶段依赖
