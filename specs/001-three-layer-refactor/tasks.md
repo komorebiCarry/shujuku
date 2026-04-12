@@ -209,38 +209,25 @@
 
 #### 运行时基础设施（ACU_State + EventBus）
 
-- [ ] T112 [US6] `02_storage.js:624~790` → `service/runtime/state-manager.ts`（~200行：ACU_State getter/setter + 变更通知 + 用户发送意图 + 生成门控；DOM hook 部分委托 presentation 层）
-- [ ] T113 [US6] 新建 `service/runtime/event-bus.ts`（~60行：ACU_EventBus 事件总线，初版 §5.3）
+- [x] T112 [US6] `02_storage.js:624~793` → `service/runtime/state-manager.ts`（174行：全局状态 + 生成门控 + 发送意图）
+- [x] T113 [US6] 新建 `service/runtime/event-bus.ts`（68行：ACU_EventBus 事件总线）
 
-#### 模板作用域管理（04_shared_helpers.js 主体迁出）
+#### 模板作用域管理 + Sheet Guide + sanitize（合并 T114~T120）
 
-- [ ] T114 [US6] `04_shared_helpers.js:29~160` → `service/template/chat-scope.ts`（~130行：剧情作用域 CRUD）
-- [ ] T115 [US6] `04_shared_helpers.js:160~346` → `service/template/chat-scope.ts` 续（~186行：模板作用域 CRUD + preset entries）
-- [ ] T116 [US6] `04_shared_helpers.js:347~510` → `service/template/template-archive.ts`（~163行：模板归档 10 函数）
-- [ ] T117 [US6] `04_shared_helpers.js:510~640` → `service/template/chat-scope.ts` 续（~130行：模板状态持久化 + 全局快照）
-- [ ] T118 [US6] `04_shared_helpers.js:641~1030` → `service/template/sheet-guide.ts`（~390行：Sheet Guide 管理 8 函数）
+- [x] T114~T120 [US6] `04_shared_helpers.js:37~1382` → `service/template/chat-scope.ts`（1351行：模板/剧情作用域CRUD + Sheet Guide + sanitize ~60函数，合并迁移）
 
-#### 表格服务补全
+#### 世界书服务补全（合并 T121~T124）
 
-- [ ] T119 [US6] `04_shared_helpers.js:1031~1370` → `service/table/sheet-helpers.ts`（~340行：sanitizeChatSheetsObject, getSortedSheetKeys 等）
-- [ ] T120 [US6] `04_shared_helpers.js:2050~2600` → `service/table/merge-engine.ts`（~550行：条件模板引擎、条件变量）
-
-#### 世界书服务补全
-
-- [ ] T121 [US6] `05_core_tail.js:86~390` → `service/worldbook/entry-builder.ts`（~305行：世界书导出配置构建 27 函数）
-- [ ] T122 [US6] `05_core_tail.js:392~572` → `service/worldbook/injection-engine.ts`（~180行：purgeSheetKeysFromChatHistoryHard）
-- [ ] T123 [US6] `05_core_tail.js:573~1580` → `service/worldbook/injection-engine.ts` 续（~1007行：updateOutline/Summary/Custom/ImportantPersons）
-- [ ] T124 [US6] `05_core_tail.js:1580~1766` → `service/worldbook/injection-engine.ts` 续（~186行：getCurrentIsolationKey + 人名关键词）
+- [x] T121~T124 [US6] `05_core_tail.js:123~2401` → `service/worldbook/injection-engine.ts`（2285行：enforceCleanup + resetScriptState + placement配置 + 全部注入/导出函数 ~40函数）
 
 #### AI 服务补全
 
-- [ ] T125 [US6] `features/ai/01+02_api_call.js` → `service/ai/prompt-builder.ts`（prepareAIInput + callCustomOpenAI 跨文件合并）
-- [ ] T126 [US6] `features/ai/02_api_call.js` JSON 清洗管线 → `service/ai/response-parser.ts`（parseAndApplyTableEdits + sanitizeJsonPipeline 等）
-- [ ] T127 [US6] `03_runtime_api.js:2025~2110` → `service/ai/response-parser.ts`（~85行：streamToText + parseNonStreamResponse + handleApiResponse）
+- [x] T125~T126 [US6] `features/ai/01+02_api_call.js` → `service/ai/prompt-builder.ts`（1538行：prepareAIInput + callCustomOpenAI + JSON清洗 + 表格编辑解析，跨文件合并）
+- [x] T127 [US6] `03_runtime_api.js:2025~2110` → `service/ai/prompt-builder.ts` 追加（+88行：streamToText + parseNonStream + handleApiResponse）
 
 #### 正文优化服务
 
-- [ ] T128 [US6] `02_storage.js:1085~1700` → `service/optimization/content-optimization.ts`（~615行：正文优化业务逻辑，不含 UI）
+- [x] T128 [US6] `02_storage.js:630~1325` → `service/optimization/content-optimization.ts`（700行：正文优化完整服务链路，不含 UI）
 
 #### 04_shared_helpers.js 剩余分流
 

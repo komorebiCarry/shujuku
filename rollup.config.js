@@ -160,6 +160,7 @@ if (BUILD_MODE === 'concat') {
     { path: 'src/service/runtime/init.ts' },
     { path: 'src/service/runtime/state-manager.ts' },
     { path: 'src/service/runtime/event-bus.ts' },
+    { path: 'src/service/runtime/helpers-remaining.ts' },
     { path: 'src/service/template/chat-scope.ts' },
     { path: 'src/service/optimization/content-optimization.ts' },
     { path: 'src/presentation/window/window-system.ts' },
