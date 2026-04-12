@@ -1,57 +1,4 @@
-  async function saveCurrentDataForTable_ACU(sheetKey) {
-      try {
-          if (!currentJsonTableData_ACU || !currentJsonTableData_ACU[sheetKey]) {
-              logWarn_ACU('saveCurrentDataForTable_ACU: No data to save.');
-              return;
-          }
-          
-          const chat = SillyTavern_API_ACU.chat;
-          if (!chat || chat.length === 0) {
-              logWarn_ACU('saveCurrentDataForTable_ACU: No chat history.');
-              return;
-          }
-          
-          // 查找最新的AI消息
-          for (let i = chat.length - 1; i >= 0; i--) {
-              if (!chat[i].is_user) {
-                  const targetMessage = chat[i];
-                  const sheet = currentJsonTableData_ACU[sheetKey];
-                  
-                  // 判断表格类型
-                  const isSummaryTable = isSummaryOrOutlineTable_ACU(sheet.name);
-                  
-                  // 保存到对应字段
-                  const cleanSheet = sanitizeSheetForStorage_ACU(sheet);
-                  
-                  if (isSummaryTable) {
-                      // 总结表
-                      let summaryData = targetMessage.TavernDB_ACU_SummaryData;
-                      if (typeof summaryData === 'string') {
-                          try { summaryData = JSON.parse(summaryData); } catch (e) { summaryData = {}; }
-                      }
-                      if (!summaryData) summaryData = {};
-                      summaryData[sheetKey] = cleanSheet;
-                      targetMessage.TavernDB_ACU_SummaryData = summaryData;
-                  } else {
-                      // 标准表
-                      let standardData = targetMessage.TavernDB_ACU_Data;
-                      if (typeof standardData === 'string') {
-                          try { standardData = JSON.parse(standardData); } catch (e) { standardData = {}; }
-                      }
-                      if (!standardData) standardData = {};
-                      standardData[sheetKey] = cleanSheet;
-                      targetMessage.TavernDB_ACU_Data = standardData;
-                  }
-                  
-                  // 保存聊天记录
-                  await SillyTavern_API_ACU.saveChat();
-                  break;
-              }
-          }
-      } catch (e) {
-          logError_ACU('saveCurrentDataForTable_ACU failed:', e);
-      }
-  }
+  // [已迁移到 service/table/update-process.ts] saveCurrentDataForTable_ACU
 
   // --- [核心改造] 回调函数管理器 ---
   const tableUpdateCallbacks_ACU = [];
@@ -2444,15 +2391,9 @@ const DatabaseAPI_ACU = {
   };
   // --- [核心改造] 结束 ---
 
-  function logDebug_ACU(...args) {
-    if (DEBUG_MODE_ACU) console.log(`[${SCRIPT_ID_PREFIX_ACU}]`, ...args);
-  }
-  function logError_ACU(...args) {
-    console.error(`[${SCRIPT_ID_PREFIX_ACU}]`, ...args);
-  }
-  function logWarn_ACU(...args) {
-    console.warn(`[${SCRIPT_ID_PREFIX_ACU}]`, ...args);
-  }
+  // [已迁移到 shared/utils.ts] logDebug_ACU
+  // [已迁移到 shared/utils.ts] logError_ACU
+  // [已迁移到 shared/utils.ts] logWarn_ACU
 
   // --- Toast / 通知（仅影响本插件的提示外观，不改变业务逻辑） ---
   const ACU_TOAST_TITLE_ACU = '星·数据库';

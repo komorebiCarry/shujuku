@@ -1,0 +1,443 @@
+/**
+ * shared/utils.ts — 纯工具函数
+ *
+ * 零副作用、零全局依赖、零 DOM 操作。
+ * 从 src/core/04_shared_helpers.js 迁移而来。
+ */
+
+/**
+ * 清洗聊天文件名：去除路径前缀和扩展名后缀
+ */
+export function cleanChatName_ACU(fileName: string): string {
+  if (!fileName || typeof fileName !== 'string') return 'unknown_chat_source';
+  let cleanedName = fileName;
+  if (fileName.includes('/') || fileName.includes('\\')) {
+    const parts = fileName.split(/[\\/]/);
+    cleanedName = parts[parts.length - 1];
+  }
+  return cleanedName.replace(/\.jsonl$/, '').replace(/\.json$/, '');
+}
+
+/**
+ * 深度合并两个对象（source 覆盖 target）
+ */
+export function deepMerge_ACU(target: any, source: any): any {
+  const isObject = (obj: any) => obj && typeof obj === 'object' && !Array.isArray(obj);
+  let output = { ...target };
+  if (isObject(target) && isObject(source)) {
+    Object.keys(source).forEach(key => {
+      if (isObject(source[key])) {
+        if (!(key in target))
+          Object.assign(output, { [key]: source[key] });
+        else
+          output[key] = deepMerge_ACU(target[key], source[key]);
+      } else {
+        Object.assign(output, { [key]: source[key] });
+      }
+    });
+  }
+  return output;
+}
+
+/**
+ * 颜色加深/减淡
+ */
+export function lightenDarkenColor_ACU(col: string, amt: number): string {
+  let usePound = false;
+  if (col.startsWith('#')) {
+    col = col.slice(1);
+    usePound = true;
+  }
+  let num = parseInt(col, 16);
+  let r = (num >> 16) + amt;
+  if (r > 255) r = 255;
+  else if (r < 0) r = 0;
+  let b = ((num >> 8) & 0x00ff) + amt;
+  if (b > 255) b = 255;
+  else if (b < 0) b = 0;
+  let g = (num & 0x0000ff) + amt;
+  if (g > 255) g = 255;
+  else if (g < 0) g = 0;
+  return (usePound ? '#' : '') + ('000000' + ((r << 16) | (b << 8) | g).toString(16)).slice(-6);
+}
+
+/**
+ * 根据背景色计算前景色（黑或白）
+ */
+export function getContrastYIQ_ACU(hexcolor: string): string {
+  if (hexcolor.startsWith('#')) hexcolor = hexcolor.slice(1);
+  var r = parseInt(hexcolor.substr(0, 2), 16);
+  var g = parseInt(hexcolor.substr(2, 2), 16);
+  var b = parseInt(hexcolor.substr(4, 2), 16);
+  var yiq = (r * 299 + g * 587 + b * 114) / 1000;
+  return yiq >= 128 ? '#000000' : '#FFFFFF';
+}
+
+/**
+ * 转义正则表达式特殊字符
+ */
+export function escapeRegExp_ACU(string: string): string {
+  return string.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+/**
+ * 生成用户输入文本的哈希值（FNV-1a 变体）
+ */
+export function hashUserInput_ACU(text: string): string {
+  if (!text) return '';
+  const normalized = String(text).trim().replace(/\r\n/g, '\n').replace(/\r/g, '\n');
+  let hash = 2166136261;
+  for (let i = 0; i < normalized.length; i++) {
+    hash ^= normalized.charCodeAt(i);
+    hash += (hash << 1) + (hash << 4) + (hash << 7) + (hash << 8) + (hash << 24);
+  }
+  return hash.toString(36);
+}
+
+/**
+ * 非负整数归一化（fallback 默认 0）
+ */
+export function normalizeNonNegativeInteger_ACU(value: any, fallbackValue: number = 0): number {
+  const num = Number(value);
+  if (Number.isFinite(num) && num >= 0) return Math.floor(num);
+  const fallback = Number(fallbackValue);
+  return Number.isFinite(fallback) && fallback >= 0 ? Math.floor(fallback) : 0;
+}
+
+/**
+ * 正整数归一化（fallback 默认 1）
+ */
+export function normalizePositiveInteger_ACU(value: any, fallbackValue: number = 1): number {
+  const num = Number(value);
+  if (Number.isFinite(num) && num > 0) return Math.floor(num);
+  const fallback = Number(fallbackValue);
+  return Number.isFinite(fallback) && fallback > 0 ? Math.floor(fallback) : 1;
+}
+
+/**
+ * 判断表格是否是总结表、总体大纲表或纪要表
+ */
+export function isSummaryOrOutlineTable_ACU(tableName: string): boolean {
+  if (!tableName || typeof tableName !== 'string') return false;
+  const trimmedName = tableName.trim();
+  return trimmedName === '总结表' || trimmedName === '总体大纲' || trimmedName === '纪要表';
+}
+
+/**
+ * 判断表格是否是标准表（非总结表和总体大纲表）
+ */
+export function isStandardTable_ACU(tableName: string): boolean {
+  return !isSummaryOrOutlineTable_ACU(tableName);
+}
+
+
+export   function normalizeExtractRules_ACU(extractRulesInput, legacyExtractTags = '') {
+      return normalizeExcludeRules_ACU(extractRulesInput, legacyExtractTags);
+  }
+
+
+export   function normalizeExcludeRules_ACU(excludeRulesInput, legacyExcludeTags = '') {
+      const normalized = [];
+      const dedup = new Set();
+
+      const pushRule = (startRaw, endRaw) => {
+          const start = String(startRaw || '').trim();
+          const end = String(endRaw || '').trim();
+          if (!start || !end) return;
+          const key = `${start}\u0000${end}`;
+          if (dedup.has(key)) return;
+          dedup.add(key);
+          normalized.push({ start, end });
+      };
+
+      if (Array.isArray(excludeRulesInput)) {
+          excludeRulesInput.forEach(rule => {
+              if (!rule) return;
+              if (typeof rule === 'string') {
+                  const parts = rule.split('|');
+                  if (parts.length >= 2) {
+                      const start = parts.shift();
+                      const end = parts.join('|');
+                      pushRule(start, end);
+                  }
+                  return;
+              }
+              if (typeof rule === 'object') {
+                  pushRule(rule.start ?? rule.begin ?? rule.open, rule.end ?? rule.close ?? rule.finish);
+              }
+          });
+      }
+
+      // 兼容旧配置：若未提供新规则，则回退旧标签字符串
+      if (normalized.length === 0) {
+          buildBoundaryRulesFromLegacyTags_ACU(legacyExcludeTags).forEach(rule => pushRule(rule.start, rule.end));
+      }
+
+      return normalized;
+  }
+
+
+export   function logDebug_ACU(...args) {
+    if (DEBUG_MODE_ACU) console.log(`[${SCRIPT_ID_PREFIX_ACU}]`, ...args);
+  }
+
+
+export   function logError_ACU(...args) {
+    console.error(`[${SCRIPT_ID_PREFIX_ACU}]`, ...args);
+  }
+
+
+export   function logWarn_ACU(...args) {
+    console.warn(`[${SCRIPT_ID_PREFIX_ACU}]`, ...args);
+  }
+
+
+export   function stripSeedRowsFromTemplate_ACU(templateObj) {
+      if (!templateObj || typeof templateObj !== 'object') return templateObj;
+      Object.keys(templateObj).forEach(k => {
+          if (!k.startsWith('sheet_')) return;
+          const table = templateObj[k];
+          if (!table || !Array.isArray(table.content) || table.content.length === 0) return;
+          const headerRow = table.content[0];
+          // 仅保留表头行，移除所有数据行（包括模板自带的示例/预置数据）
+          table.content = [headerRow];
+      });
+      return templateObj;
+  }
+
+
+export   function parseTableTemplateJson_ACU({ stripSeedRows = false } = {}) {
+      try {
+          let cleanTemplate = TABLE_TEMPLATE_ACU.trim();
+          cleanTemplate = cleanTemplate.replace(/\/\/.*$/gm, '').replace(/\/\*[\s\S]*?\*\//g, '');
+          
+          // [调试] 输出模板字符串的前100个字符，帮助诊断问题
+          logDebug_ACU('[模板解析] cleanTemplate前100字符:', cleanTemplate.substring(0, 100));
+          logDebug_ACU('[模板解析] cleanTemplate长度:', cleanTemplate.length);
+          logDebug_ACU('[模板解析] 首字符:', JSON.stringify(cleanTemplate[0]));
+          logDebug_ACU('[模板解析] 尾字符:', JSON.stringify(cleanTemplate[cleanTemplate.length - 1]));
+          
+          // [修复2026-03-06] 处理DEFAULT_TABLE_TEMPLATE_ACU的双重JSON编码问题
+          // DEFAULT_TABLE_TEMPLATE_ACU 使用模板字符串定义，格式是：`"{...}"`
+          // 问题：模板字符串中的 \n 会被解释为实际换行符，\t 被解释为制表符等
+          // 而JSON规范不允许字符串中包含未转义的控制字符
+          // 解决方案：先将实际的控制字符转义回JSON兼容格式
+          
+          function escapeStringForJson_ACU(str) {
+              // 将字符串中的控制字符转义为JSON兼容格式
+              // 注意顺序很重要：先转义反斜杠，再转义双引号，最后转义控制字符
+              return str
+                  .replace(/\\/g, '\\\\')  // 先转义反斜杠
+                  .replace(/"/g, '\\"')    // 转义双引号
+                  .replace(/\n/g, '\\n')   // 换行符
+                  .replace(/\r/g, '\\r')   // 回车符
+                  .replace(/\t/g, '\\t');  // 制表符
+          }
+          
+          let obj = null;
+          
+          // 如果模板字符串以双引号开头和结尾，说明是被引号包围的JSON字符串
+          if (cleanTemplate.startsWith('"') && cleanTemplate.endsWith('"')) {
+              logDebug_ACU('[模板解析] 检测到双引号包围格式');
+              try {
+                  // 方案1：尝试直接解析（如果模板字符串中的转义序列正确）
+                  try {
+                      logDebug_ACU('[模板解析] 尝试方案1：直接解析...');
+                      const unquoted = JSON.parse(cleanTemplate);
+                      logDebug_ACU('[模板解析] 方案1第一次解析成功，类型:', typeof unquoted);
+                      if (typeof unquoted === 'string') {
+                          obj = safeJsonParse_ACU(unquoted, null);
+                          logDebug_ACU('[模板解析] 方案1第二次解析结果:', obj ? '成功' : '失败');
+                          if (obj) {
+                              logDebug_ACU('[模板解析] 方案1成功！');
+                              return stripSeedRows ? stripSeedRowsFromTemplate_ACU(obj) : obj;
+                          }
+                      } else if (typeof unquoted === 'object' && unquoted !== null) {
+                          logDebug_ACU('[模板解析] 方案1直接得到对象！');
+                          return stripSeedRows ? stripSeedRowsFromTemplate_ACU(unquoted) : unquoted;
+                      }
+                  } catch (e1) {
+                      logDebug_ACU('[模板解析] 方案1失败:', e1.message);
+                  }
+                  
+                  // 方案2：转义控制字符后再解析
+                  logDebug_ACU('[模板解析] 尝试方案2：转义后解析...');
+                  // 去掉首尾引号，转义内部的控制字符，然后解析
+                  const innerContent = cleanTemplate.slice(1, -1);
+                  const escapedContent = escapeStringForJson_ACU(innerContent);
+                  const rewrapped = '"' + escapedContent + '"';
+                  
+                  try {
+                      const unquoted = JSON.parse(rewrapped);
+                      logDebug_ACU('[模板解析] 方案2第一次解析成功，类型:', typeof unquoted);
+                      if (typeof unquoted === 'string') {
+                          obj = safeJsonParse_ACU(unquoted, null);
+                          logDebug_ACU('[模板解析] 方案2第二次解析结果:', obj ? '成功' : '失败');
+                          if (obj) {
+                              logDebug_ACU('[模板解析] 方案2成功！');
+                              return stripSeedRows ? stripSeedRowsFromTemplate_ACU(obj) : obj;
+                          }
+                          // 如果safeJsonParse失败，尝试直接JSON.parse
+                          try {
+                              obj = JSON.parse(unquoted);
+                              if (obj) {
+                                  logDebug_ACU('[模板解析] 方案2（fallback）成功！');
+                                  return stripSeedRows ? stripSeedRowsFromTemplate_ACU(obj) : obj;
+                              }
+                          } catch (e3) {
+                              logDebug_ACU('[模板解析] 方案2 fallback失败:', e3.message);
+                          }
+                      } else if (typeof unquoted === 'object' && unquoted !== null) {
+                          logDebug_ACU('[模板解析] 方案2直接得到对象！');
+                          return stripSeedRows ? stripSeedRowsFromTemplate_ACU(unquoted) : unquoted;
+                      }
+                  } catch (e2) {
+                      logDebug_ACU('[模板解析] 方案2失败:', e2.message);
+                  }
+              } catch (e) {
+                  logDebug_ACU('[模板解析] 双引号格式处理失败:', e.message);
+              }
+          } else {
+              logDebug_ACU('[模板解析] 不是双引号包围格式，尝试常规解析...');
+          }
+          
+          // 如果上述处理失败，尝试常规解析
+          if (!obj) {
+              logDebug_ACU('[模板解析] 尝试safeJsonParse_ACU...');
+              obj = safeJsonParse_ACU(cleanTemplate, null);
+              logDebug_ACU('[模板解析] safeJsonParse_ACU结果:', obj ? '成功' : '失败');
+          }
+          
+          // 如果还是失败，尝试转义后解析
+          if (!obj && typeof cleanTemplate === 'string') {
+              logDebug_ACU('[模板解析] 尝试转义后解析...');
+              try {
+                  const escaped = escapeStringForJson_ACU(cleanTemplate);
+                  obj = safeJsonParse_ACU(escaped, null);
+                  logDebug_ACU('[模板解析] 转义后解析结果:', obj ? '成功' : '失败');
+              } catch (e) {
+                  logDebug_ACU('[模板解析] 转义后解析异常:', e.message);
+              }
+          }
+          
+          if (!obj) {
+              logError_ACU('Failed to parse TABLE_TEMPLATE_ACU: safeJsonParse returned null');
+              return null;
+          }
+          logDebug_ACU('[模板解析] 最终成功！');
+          return stripSeedRows ? stripSeedRowsFromTemplate_ACU(obj) : obj;
+      } catch (e) {
+          logError_ACU('Failed to parse TABLE_TEMPLATE_ACU.', e);
+          return null;
+      }
+  }
+
+
+export   function applySheetOrderNumbers_ACU(dataObj, orderedKeys) {
+      if (!dataObj || typeof dataObj !== 'object') return false;
+      const keys = Array.isArray(orderedKeys) ? orderedKeys : [];
+      let changed = false;
+      keys.forEach((k, idx) => {
+          const sheet = dataObj[k];
+          if (!sheet || typeof sheet !== 'object') return;
+          if (sheet[TABLE_ORDER_FIELD_ACU] !== idx) {
+              sheet[TABLE_ORDER_FIELD_ACU] = idx;
+              changed = true;
+          }
+      });
+      return changed;
+  }
+
+
+export   function ensureSheetOrderNumbers_ACU(dataObj, { baseOrderKeys = null, forceRebuild = false } = {}) {
+      if (!dataObj || typeof dataObj !== 'object') return false;
+      const sheetKeys = Array.isArray(baseOrderKeys) && baseOrderKeys.length
+          ? baseOrderKeys.filter(k => k && k.startsWith('sheet_') && dataObj[k])
+          : Object.keys(dataObj).filter(k => k.startsWith('sheet_'));
+      if (sheetKeys.length === 0) return false;
+
+      // 检查现有编号是否合法且不重复
+      const seen = new Set();
+      let needRebuild = !!forceRebuild;
+      for (const k of sheetKeys) {
+          const v = dataObj?.[k]?.[TABLE_ORDER_FIELD_ACU];
+          if (!Number.isFinite(v)) { needRebuild = true; break; }
+          const iv = Math.trunc(v);
+          if (seen.has(iv)) { needRebuild = true; break; }
+          seen.add(iv);
+      }
+
+      if (!needRebuild) return false;
+      return applySheetOrderNumbers_ACU(dataObj, sheetKeys);
+  }
+
+
+export   function getTemplateSheetKeys_ACU() {
+      const templateObj = parseTableTemplateJson_ACU({ stripSeedRows: false });
+      if (!templateObj || typeof templateObj !== 'object') return [];
+
+      const keys = Object.keys(templateObj).filter(k => k.startsWith('sheet_'));
+      if (keys.length === 0) return [];
+
+      // 如果模板缺编号（或重复），按现有键顺序补齐。
+      // 注意：当前运行态可能来自"全局模板"也可能来自"当前聊天模板覆写"，
+      // 因此这里不能无条件回写到 profile，否则会把聊天专属模板误污染到全局模板存储里。
+      const changed = ensureSheetOrderNumbers_ACU(templateObj, { baseOrderKeys: keys, forceRebuild: false });
+      if (changed) {
+          try {
+              const normalizedTemplateStr = JSON.stringify(templateObj);
+              TABLE_TEMPLATE_ACU = normalizedTemplateStr;
+              const currentChatTemplateScope = getCurrentChatTemplateScopeState_ACU() || migrateLegacyTemplateScopeForCurrentChat_ACU();
+              if (currentChatTemplateScope?.templateStr) {
+                  const updatedGuideData = buildChatSheetGuideDataFromTemplateObj_ACU(templateObj, { stripSeedRows: false });
+                  const nextState = buildChatTemplateScopeStateFromCurrent_ACU({
+                      isolationKey: currentChatTemplateScope.isolationKey,
+                      presetName: currentChatTemplateScope.presetName,
+                      source: currentChatTemplateScope.source || 'inherit',
+                      originGlobalName: currentChatTemplateScope.originGlobalName,
+                      originGlobalRevision: currentChatTemplateScope.originGlobalRevision,
+                      updatedAt: currentChatTemplateScope.updatedAt || Date.now(),
+                      templateSource: normalizedTemplateStr,
+                      guideData: updatedGuideData || currentChatTemplateScope.guideData,
+                  });
+                  if (nextState) {
+                      setCurrentChatTemplateScopeState_ACU(nextState, {
+                          isolationKey: currentChatTemplateScope.isolationKey,
+                          reason: 'template_scope_order_no_init',
+                      });
+                  }
+                  logDebug_ACU('[OrderNo] Chat template order numbers initialized and persisted to current chat scope.');
+              } else {
+                  // [Profile] 模板随"标识代码(profile)"保存
+                  saveCurrentProfileTemplate_ACU(TABLE_TEMPLATE_ACU);
+                  logDebug_ACU('[OrderNo] Global template order numbers initialized and persisted.');
+              }
+          } catch (e) {
+              logWarn_ACU('[OrderNo] Failed to persist initialized template order numbers:', e);
+          }
+      }
+
+      // 按 orderNo 排序输出 keys
+      return keys.sort((a, b) => {
+          const ao = Number.isFinite(templateObj[a]?.[TABLE_ORDER_FIELD_ACU]) ? templateObj[a][TABLE_ORDER_FIELD_ACU] : Infinity;
+          const bo = Number.isFinite(templateObj[b]?.[TABLE_ORDER_FIELD_ACU]) ? templateObj[b][TABLE_ORDER_FIELD_ACU] : Infinity;
+          if (ao !== bo) return ao - bo;
+          return String(templateObj[a]?.name || a).localeCompare(String(templateObj[b]?.name || b));
+      });
+  }
+
+
+export   function getChatFirstLayerMessage_ACU(chat) {
+      if (!Array.isArray(chat) || chat.length === 0) return null;
+      return chat[0] || null;
+  }
+
+
+export   function cloneScopedConfigData_ACU(value, fallback = null) {
+      if (value === undefined) return fallback;
+      try {
+          return JSON.parse(JSON.stringify(value));
+      } catch (e) {
+          return fallback;
+      }
+  }

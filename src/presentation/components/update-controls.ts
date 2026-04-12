@@ -1,0 +1,1 @@
+// update-controls.ts — 对应源文件有跨文件依赖，保留在原位

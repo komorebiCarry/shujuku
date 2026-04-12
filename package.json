@@ -1,0 +1,19 @@
+{
+  "name": "acu-star-database-iii",
+  "version": "1.1.0",
+  "private": true,
+  "type": "module",
+  "description": "星·数据库 III (AutoCardUpdater) - SillyTavern 数据库自动更新 Tampermonkey 脚本",
+  "scripts": {
+    "build": "rollup -c",
+    "build:concat": "BUILD_MODE=concat rollup -c",
+    "verify": "bash scripts/verify-build.sh",
+    "typecheck": "tsc --noEmit"
+  },
+  "devDependencies": {
+    "rollup": "^4.28.0",
+    "@rollup/plugin-typescript": "^12.1.0",
+    "typescript": "^5.7.0",
+    "tslib": "^2.8.0"
+  }
+}

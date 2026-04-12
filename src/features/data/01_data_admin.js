@@ -1,36 +1,3 @@
-        if (!templateObj || typeof templateObj !== 'object') {
-            throw new Error('无法解析当前模板。');
-        }
-        const sheetKeys = Object.keys(templateObj).filter(k => k.startsWith('sheet_'));
-        ensureSheetOrderNumbers_ACU(templateObj, { baseOrderKeys: sheetKeys, forceRebuild: false });
-        // [瘦身] 合并导出时也不带冗余字段
-        const templateData = sanitizeChatSheetsObject_ACU(templateObj, { ensureMate: true });
-        const combinedData = {
-            prompt: promptSegments,
-            template: templateData,
-            mergeSummaryPrompt: settings_ACU.mergeSummaryPrompt || DEFAULT_MERGE_SUMMARY_PROMPT_ACU, // [新增] 导出合并提示词
-            mergeTargetCount: settings_ACU.mergeTargetCount || 1, // [新增] 导出合并目标条数
-            mergeBatchSize: settings_ACU.mergeBatchSize || 5, // [新增] 导出合并批次大小
-            mergeStartIndex: settings_ACU.mergeStartIndex || 1, // [新增] 导出合并起始条数
-            mergeEndIndex: settings_ACU.mergeEndIndex || null, // [新增] 导出合并终止条数
-            autoMergeEnabled: settings_ACU.autoMergeEnabled || false, // [新增] 导出自动合并总结设置
-            autoMergeThreshold: settings_ACU.autoMergeThreshold || 20, // [新增] 导出自动合并总结楼层数
-            autoMergeReserve: settings_ACU.autoMergeReserve || 0, // [新增] 导出保留固定楼层数
-            deleteStartFloor: settings_ACU.deleteStartFloor || null, // [新增] 导出删除起始楼层
-            deleteEndFloor: settings_ACU.deleteEndFloor || null // [新增] 导出删除终止楼层
-        };
-        const jsonString = JSON.stringify(combinedData, null, 2);
-        const blob = new Blob([jsonString], { type: 'application/json' });
-        const url = URL.createObjectURL(blob);
-        const a = document.createElement('a');
-        a.href = url;
-        a.download = 'TavernDB_Combined_Settings.json';
-        document.body.appendChild(a);
-        a.click();
-        document.body.removeChild(a);
-        URL.revokeObjectURL(url);
-        showToastr_ACU('success', '合并配置已成功导出！');
-    } catch (error) {
         logError_ACU('导出合并配置失败:', error);
         showToastr_ACU('error', '导出合并配置失败，请检查控制台获取详情。');
     }
