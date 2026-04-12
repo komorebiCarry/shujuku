@@ -152,6 +152,7 @@ if (BUILD_MODE === 'concat') {
     { path: 'src/service/ai/api-call.ts' },
     { path: 'src/service/table/update-process.ts' },
     { path: 'src/service/worldbook/pipeline.ts' },
+    { path: 'src/service/worldbook/injection-engine.ts' },
     { path: 'src/service/data-admin/admin.ts' },
     { path: 'src/service/summary/merge-logic.ts' },
     { path: 'src/service/import/import-process.ts' },
