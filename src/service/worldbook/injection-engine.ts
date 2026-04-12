@@ -59,12 +59,10 @@
     await loadAllChatMessages_ACU();
     applyTemplateScopeForCurrentChat_ACU();
     
-    if ($popupInstance_ACU) {
-      const $titleElement = $popupInstance_ACU.find('h2#updater-main-title-acu');
-      if ($titleElement.length)
-        $titleElement.html(`当前聊天：${escapeHtml_ACU(currentChatFileIdentifier_ACU || '未知')}`);
-      if ($statusMessageSpan_ACU) $statusMessageSpan_ACU.text('准备就绪');
+    if (typeof updateChatTitleDisplay_ACU === 'function') {
+      updateChatTitleDisplay_ACU(currentChatFileIdentifier_ACU);
     }
+    if (typeof updateTableFillStatus_ACU === 'function') updateTableFillStatus_ACU('准备就绪');
     
     if (typeof updateCardUpdateStatusDisplay_ACU === 'function') updateCardUpdateStatusDisplay_ACU();
 
@@ -77,7 +75,7 @@
     // 这确保了无论编辑器是否打开（即是否绑定了事件），数据源都被更新，并且如果有监听者则触发
     // [优化] 增加短暂延迟，确保 DOM 渲染完成（尽管是数据层面的刷新）
     setTimeout(() => {
-        jQuery_API_ACU(document).trigger('acu-visualizer-refresh-data');
+        if (typeof notifyVisualizerRefresh_ACU === 'function') notifyVisualizerRefresh_ACU();
         logDebug_ACU('Triggered visualizer refresh on chat change (with delay).');
     }, 100);
 
@@ -680,7 +678,7 @@
           try { await loadAllChatMessages_ACU(); } catch (e) {}
           // 通知前端刷新
           if (topLevelWindow_ACU.AutoCardUpdaterAPI) topLevelWindow_ACU.AutoCardUpdaterAPI._notifyTableUpdate();
-          setTimeout(() => { jQuery_API_ACU(document).trigger('acu-visualizer-refresh-data'); }, 200);
+          setTimeout(() => { if (typeof notifyVisualizerRefresh_ACU === 'function') notifyVisualizerRefresh_ACU(); }, 200);
       }
       return { changed: changedAny, changedCount };
   }

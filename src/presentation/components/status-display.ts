@@ -34,3 +34,16 @@
         $manualUpdateCardButton_ACU.prop('disabled', false).text('立即手动更新');
     }
   }
+
+  // [T174] 更新聊天标题显示
+  function updateChatTitleDisplay_ACU(chatIdentifier) {
+    if (!$popupInstance_ACU) return;
+    const $titleElement = $popupInstance_ACU.find('h2#updater-main-title-acu');
+    if ($titleElement.length)
+        $titleElement.html(`当前聊天：${escapeHtml_ACU(chatIdentifier || '未知')}`);
+  }
+
+  // [T175] 检查弹窗是否打开（供 service 层用布尔判断，不暴露 DOM 引用）
+  function isPopupOpen_ACU() {
+    return !!$popupInstance_ACU;
+  }

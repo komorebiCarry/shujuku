@@ -6246,13 +6246,11 @@ async function resetScriptStateForNewChat_ACU(chatFileName) {
     logDebug_ACU(`ACU: currentChatFileIdentifier FINAL set to: "${currentChatFileIdentifier_ACU}" (Source: CHAT_CHANGED event)`);
     await loadAllChatMessages_ACU();
     applyTemplateScopeForCurrentChat_ACU();
-    if ($popupInstance_ACU) {
-        const $titleElement = $popupInstance_ACU.find('h2#updater-main-title-acu');
-        if ($titleElement.length)
-            $titleElement.html(`当前聊天：${escapeHtml_ACU(currentChatFileIdentifier_ACU || '未知')}`);
-        if ($statusMessageSpan_ACU)
-            $statusMessageSpan_ACU.text('准备就绪');
+    if (typeof updateChatTitleDisplay_ACU === 'function') {
+        updateChatTitleDisplay_ACU(currentChatFileIdentifier_ACU);
     }
+    if (typeof updateTableFillStatus_ACU === 'function')
+        updateTableFillStatus_ACU('准备就绪');
     if (typeof updateCardUpdateStatusDisplay_ACU === 'function')
         updateCardUpdateStatusDisplay_ACU();
     // 统一走聊天记录加载链路。
@@ -6263,7 +6261,8 @@ async function resetScriptStateForNewChat_ACU(chatFileName) {
     // 这确保了无论编辑器是否打开（即是否绑定了事件），数据源都被更新，并且如果有监听者则触发
     // [优化] 增加短暂延迟，确保 DOM 渲染完成（尽管是数据层面的刷新）
     setTimeout(() => {
-        jQuery_API_ACU(document).trigger('acu-visualizer-refresh-data');
+        if (typeof notifyVisualizerRefresh_ACU === 'function')
+            notifyVisualizerRefresh_ACU();
         logDebug_ACU('Triggered visualizer refresh on chat change (with delay).');
     }, 100);
     // [修复] 加载完成后，延迟检查并强制清理角色卡绑定世界书（如果设置了注入到其他目标）
@@ -6908,7 +6907,8 @@ async function purgeSheetKeysFromChatHistoryHard_ACU(sheetKeysToPurge) {
         // 通知前端刷新
         if (topLevelWindow_ACU.AutoCardUpdaterAPI)
             topLevelWindow_ACU.AutoCardUpdaterAPI._notifyTableUpdate();
-        setTimeout(() => { jQuery_API_ACU(document).trigger('acu-visualizer-refresh-data'); }, 200);
+        setTimeout(() => { if (typeof notifyVisualizerRefresh_ACU === 'function')
+            notifyVisualizerRefresh_ACU(); }, 200);
     }
     return { changed: changedAny, changedCount };
 }
@@ -15923,7 +15923,7 @@ topLevelWindow_ACU.AutoCardUpdaterAPI = {
             const result = await applyTemplatePresetToCurrent_ACU(name, {
                 source: 'api',
                 updateGlobal: normalizedScope === 'global',
-                refreshUi: !!$popupInstance_ACU,
+                refreshUi: typeof isPopupOpen_ACU === "function" ? isPopupOpen_ACU() : false,
                 save: true,
                 persistChatScope: normalizedScope === 'chat',
             });
@@ -16691,7 +16691,7 @@ topLevelWindow_ACU.AutoCardUpdaterAPI = {
             }
             const result = switchCurrentChatPlotPreset_ACU(presetName, {
                 source: 'api',
-                refreshUi: !!$popupInstance_ACU,
+                refreshUi: typeof isPopupOpen_ACU === "function" ? isPopupOpen_ACU() : false,
                 save: true,
             });
             if (!result) {
@@ -16719,7 +16719,7 @@ topLevelWindow_ACU.AutoCardUpdaterAPI = {
             }
             const result = switchCurrentChatPlotPreset_ACU(presetName, {
                 source: 'api',
-                refreshUi: !!$popupInstance_ACU,
+                refreshUi: typeof isPopupOpen_ACU === "function" ? isPopupOpen_ACU() : false,
                 save: true,
             });
             if (!result) {
@@ -16803,7 +16803,7 @@ topLevelWindow_ACU.AutoCardUpdaterAPI = {
                 scope: normalizedScope,
                 source: normalizedScope === 'chat' ? 'api_import_template_chat' : 'api_import_template_global',
                 presetName: normalizedPresetName,
-                refreshUi: !!$popupInstance_ACU,
+                refreshUi: typeof isPopupOpen_ACU === "function" ? isPopupOpen_ACU() : false,
                 save: true,
                 persistChatScope: normalizedScope === 'chat',
             });
@@ -16899,7 +16899,7 @@ topLevelWindow_ACU.AutoCardUpdaterAPI = {
                 switchedCurrentChat = this.injectPlotPresetToCurrentChat(finalName) === true;
             }
             // 如果设置面板已打开，刷新预设选择器
-            if ($popupInstance_ACU && !switchTo) {
+            if ((typeof isPopupOpen_ACU === 'function' ? isPopupOpen_ACU() : false) && !switchTo) {
                 loadPlotPresetSelect_ACU();
             }
             return {
@@ -21776,6 +21776,18 @@ function resetManualUpdateButton_ACU() {
     if ($manualUpdateCardButton_ACU) {
         $manualUpdateCardButton_ACU.prop('disabled', false).text('立即手动更新');
     }
+}
+// [T174] 更新聊天标题显示
+function updateChatTitleDisplay_ACU(chatIdentifier) {
+    if (!$popupInstance_ACU)
+        return;
+    const $titleElement = $popupInstance_ACU.find('h2#updater-main-title-acu');
+    if ($titleElement.length)
+        $titleElement.html(`当前聊天：${escapeHtml_ACU(chatIdentifier || '未知')}`);
+}
+// [T175] 检查弹窗是否打开（供 service 层用布尔判断，不暴露 DOM 引用）
+function isPopupOpen_ACU() {
+    return !!$popupInstance_ACU;
 }
 
 

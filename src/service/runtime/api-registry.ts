@@ -354,7 +354,7 @@
             const result = await applyTemplatePresetToCurrent_ACU(name, {
                 source: 'api',
                 updateGlobal: normalizedScope === 'global',
-                refreshUi: !!$popupInstance_ACU,
+                refreshUi: typeof isPopupOpen_ACU === "function" ? isPopupOpen_ACU() : false,
                 save: true,
                 persistChatScope: normalizedScope === 'chat',
             });
@@ -1096,7 +1096,7 @@
 
             const result = switchCurrentChatPlotPreset_ACU(presetName, {
                 source: 'api',
-                refreshUi: !!$popupInstance_ACU,
+                refreshUi: typeof isPopupOpen_ACU === "function" ? isPopupOpen_ACU() : false,
                 save: true,
             });
 
@@ -1127,7 +1127,7 @@
 
             const result = switchCurrentChatPlotPreset_ACU(presetName, {
                 source: 'api',
-                refreshUi: !!$popupInstance_ACU,
+                refreshUi: typeof isPopupOpen_ACU === "function" ? isPopupOpen_ACU() : false,
                 save: true,
             });
 
@@ -1216,7 +1216,7 @@
                 scope: normalizedScope,
                 source: normalizedScope === 'chat' ? 'api_import_template_chat' : 'api_import_template_global',
                 presetName: normalizedPresetName,
-                refreshUi: !!$popupInstance_ACU,
+                refreshUi: typeof isPopupOpen_ACU === "function" ? isPopupOpen_ACU() : false,
                 save: true,
                 persistChatScope: normalizedScope === 'chat',
             });
@@ -1317,7 +1317,7 @@
             }
 
             // 如果设置面板已打开，刷新预设选择器
-            if ($popupInstance_ACU && !switchTo) {
+            if ((typeof isPopupOpen_ACU === 'function' ? isPopupOpen_ACU() : false) && !switchTo) {
                 loadPlotPresetSelect_ACU();
             }
 
