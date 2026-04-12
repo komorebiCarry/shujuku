@@ -27216,14 +27216,8 @@ async function saveVisualizerChanges_ACU(saveToTemplate = false) {
     }
 };
 
-/**
- * 处理流式响应，累积所有 chunk 并返回完整文本
- * @param {Response} response - fetch 返回的 Response 对象
- * @param {AbortSignal} signal - 可选的中止信号
- * @returns {Promise<string>} 完整的 AI 响应文本
- */
   // [已迁移到 service/ai/prompt-builder.ts] streamToText_ACU, parseNonStreamResponse_ACU, handleApiResponse_ACU
- */
+
 const DatabaseAPI_ACU = {
     /**
      * 调用AI生成内容（使用数据库当前配置的API）
