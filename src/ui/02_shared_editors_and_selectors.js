@@ -1,0 +1,552 @@
+  function renderPromptSegments_ACU(segments) {
+      if (!$charCardPromptSegmentsContainer_ACU) return;
+      $charCardPromptSegmentsContainer_ACU.empty();
+      
+      // 确保 segments 是一个数组
+      if (!Array.isArray(segments)) {
+          // 如果不是数组，尝试解析。如果解析失败或内容为空，则创建一个默认的段落。
+          let parsedSegments;
+          try {
+              if (typeof segments === 'string' && segments.trim()) {
+                  parsedSegments = JSON.parse(segments);
+              }
+          } catch (e) {
+              logWarn_ACU('Could not parse charCardPrompt as JSON. Treating as a single text block.', segments);
+          }
+          
+          if (!Array.isArray(parsedSegments) || parsedSegments.length === 0) {
+              // 解析失败或结果不是有效数组，则将原始输入（如果是字符串）放入一个默认段落
+              const content = (typeof segments === 'string' && segments.trim()) ? segments : DEFAULT_CHAR_CARD_PROMPT_ACU;
+              parsedSegments = [{ role: 'assistant', content: content, deletable: false }];
+          }
+          segments = parsedSegments;
+      }
+      
+      // 如果渲染后还是空数组，则添加一个不可删除的默认段落
+      if (segments.length === 0) {
+          segments.push({ role: 'assistant', content: DEFAULT_CHAR_CARD_PROMPT_ACU, deletable: false });
+      }
+
+
+
+      segments.forEach((segment, index) => {
+          const roleUpper = String(segment?.role || '').toUpperCase();
+          const roleLower = String(segment?.role || '').toLowerCase();
+          const mainSlot = (segment && (String(segment.mainSlot || '').toUpperCase() || (segment.isMain ? 'A' : (segment.isMain2 ? 'B' : '')))) || '';
+          const isMainA = mainSlot === 'A';
+          const isMainB = mainSlot === 'B';
+          const isMainPrompt = isMainA || isMainB;
+          const borderColor = isMainA ? 'var(--accent-primary)' : (isMainB ? '#ffb74d' : '');
+          const segmentId = `${SCRIPT_ID_PREFIX_ACU}-prompt-segment-${index}`;
+          
+          const segmentHtml = `
+              <div class="prompt-segment" id="${segmentId}" data-main-slot="${escapeHtml_ACU(mainSlot)}" ${isMainPrompt ? `style="border-left: 3px solid ${borderColor};"` : ''}>
+                  <div class="prompt-segment-toolbar">
+                      <div style="display:flex; align-items:center; gap:8px;">
+                          <select class="prompt-segment-role">
+                              <option value="assistant" ${roleUpper === 'AI' || roleUpper === 'ASSISTANT' || roleLower === 'assistant' ? 'selected' : ''}>AI</option>
+                              <option value="SYSTEM" ${roleUpper === 'SYSTEM' || roleLower === 'system' ? 'selected' : ''}>系统</option>
+                              <option value="USER" ${roleUpper === 'USER' || roleLower === 'user' ? 'selected' : ''}>用户</option>
+                          </select>
+                          <label style="display:flex; align-items:center; gap:6px; font-size:0.8em; cursor:pointer; user-select:none;" title="用于运行时替换/合并注入的主提示词槽位。A/B 均不可删除；剧情推进会优先覆盖 A(系统) + B(用户)。">
+                              <span style="opacity:0.85;">主提示词</span>
+                              <select class="prompt-segment-main-slot" style="font-size:0.85em;">
+                                  <option value="" ${!isMainPrompt ? 'selected' : ''}>普通</option>
+                                  <option value="A" ${isMainA ? 'selected' : ''}>A(建议System)</option>
+                                  <option value="B" ${isMainB ? 'selected' : ''}>B(建议User)</option>
+                              </select>
+                          </label>
+                      </div>
+                      <button class="prompt-segment-delete-btn" data-index="${index}" style="${isMainPrompt ? 'display:none;' : ''}">-</button>
+                  </div>
+                  <textarea class="prompt-segment-content" rows="4">${escapeHtml_ACU(segment.content)}</textarea>
+              </div>
+          `;
+          $charCardPromptSegmentsContainer_ACU.append(segmentHtml);
+      });
+  }
+
+  function getCharCardPromptFromUI_ACU() {
+      if (!$charCardPromptSegmentsContainer_ACU) return [];
+      const segments = [];
+      $charCardPromptSegmentsContainer_ACU.find('.prompt-segment').each(function() {
+          const $segment = $(this);
+          const role = $segment.find('.prompt-segment-role').val();
+          const content = $segment.find('.prompt-segment-content').val();
+          const mainSlotRaw = $segment.find('.prompt-segment-main-slot').val();
+          const mainSlot = String(mainSlotRaw || '').toUpperCase();
+          const isMainA = mainSlot === 'A';
+          const isMainB = mainSlot === 'B';
+          
+          // 主提示词A/B不可删除
+          const isDeletable = (isMainA || isMainB) ? false : true;
+          
+          const segmentData = { role: role, content: content, deletable: isDeletable };
+          if (isMainA) {
+            segmentData.mainSlot = 'A';
+            segmentData.isMain = true; // 兼容旧逻辑
+          } else if (isMainB) {
+            segmentData.mainSlot = 'B';
+            segmentData.isMain2 = true; // 兼容旧逻辑（若有）
+          }
+          
+          segments.push(segmentData);
+      });
+      return segments;
+  }
+
+  // --- [剧情推进] 独立提示词组（段落编辑器） ---
+  // 说明：
+  // - 用途：规划请求（callApi_ACU 的 messages）完全来自 plotSettings.promptGroup，不再“运行时替换”数据库更新预设的 A/B 段落。
+  // - 兼容：若用户只有旧的三段 prompts(main/system/final)，则会自动迁移生成一份 promptGroup（只在首次缺失时发生）。
+
+  function buildDefaultPlotPromptGroup_ACU({ mainAContent = '', mainBContent = '' } = {}) {
+      // [重要] 现在从独立的 DEFAULT_PLOT_PROMPT_GROUP_ACU 获取默认结构，不再从填表提示词合并
+      const src = DEFAULT_PLOT_PROMPT_GROUP_ACU;
+      const base = Array.isArray(src)
+          ? JSON.parse(JSON.stringify(src))
+          : (typeof src === 'string' && src.trim() ? [{ role: 'USER', content: src, deletable: false, mainSlot: 'A', isMain: true }] : []);
+
+      const getMainSlot = seg => {
+          if (!seg) return '';
+          const slot = String(seg.mainSlot || '').toUpperCase();
+          if (slot === 'A' || slot === 'B') return slot;
+          if (seg.isMain) return 'A';
+          if (seg.isMain2) return 'B';
+          return '';
+      };
+
+      let aIdx = base.findIndex(s => getMainSlot(s) === 'A');
+      let bIdx = base.findIndex(s => getMainSlot(s) === 'B');
+      if (aIdx === -1) {
+          base.unshift({ role: 'SYSTEM', content: '', deletable: false, mainSlot: 'A', isMain: true });
+          aIdx = 0;
+      }
+      if (bIdx === -1) {
+          base.splice(aIdx + 1, 0, { role: 'USER', content: '', deletable: false, mainSlot: 'B', isMain2: true });
+          bIdx = aIdx + 1;
+      }
+
+      // 如果传入了自定义内容，则覆盖默认内容
+      if (mainAContent && base[aIdx]) base[aIdx].content = String(mainAContent);
+      if (mainBContent && base[bIdx]) base[bIdx].content = String(mainBContent);
+      return base;
+  }
+
+  function getLegacyPlotPromptContent_ACU(plotSettings, promptId) {
+      try {
+          const p = plotSettings?.prompts;
+          if (!p) return '';
+          if (Array.isArray(p)) {
+              const item = p.find(x => x && x.id === promptId);
+              return item?.content || '';
+          }
+          // 旧对象结构：{ mainPrompt, systemPrompt, finalSystemDirective }
+          if (typeof p === 'object') return p[promptId] || '';
+      } catch (e) {}
+      return '';
+  }
+
+  function ensurePlotPromptGroup_ACU(plotSettings, { persist = false } = {}) {
+      if (!plotSettings) return;
+      if (Array.isArray(plotSettings.promptGroup) && plotSettings.promptGroup.length > 0) return;
+
+      // 默认来源：优先用旧三段 prompts 的 main/system；否则用默认值。
+      const legacyMain = getLegacyPlotPromptContent_ACU(plotSettings, 'mainPrompt') || (DEFAULT_PLOT_SETTINGS_ACU?.prompts?.[0]?.content || '');
+      const legacySystem = getLegacyPlotPromptContent_ACU(plotSettings, 'systemPrompt') || (DEFAULT_PLOT_SETTINGS_ACU?.prompts?.[1]?.content || '');
+
+      plotSettings.promptGroup = buildDefaultPlotPromptGroup_ACU({
+          mainAContent: legacyMain,
+          mainBContent: legacySystem,
+      });
+
+      if (persist) {
+          try { saveSettings_ACU(); } catch (e) {}
+      }
+  }
+
+  function renderPlotPromptSegments_ACU(segments) {
+      if ((!$plotPromptSegmentsContainer_ACU || !$plotPromptSegmentsContainer_ACU.length) && $popupInstance_ACU) {
+          $plotPromptSegmentsContainer_ACU = $popupInstance_ACU.find(`#${SCRIPT_ID_PREFIX_ACU}-plot-prompt-segments-container`);
+      }
+      if (!$plotPromptSegmentsContainer_ACU || !$plotPromptSegmentsContainer_ACU.length) return;
+      $plotPromptSegmentsContainer_ACU.empty();
+
+      // 确保 segments 是一个数组
+      if (!Array.isArray(segments)) {
+          segments = [];
+      }
+      if (segments.length === 0) {
+          const activeSettings = getActivePlotEditorSettings_ACU() || settings_ACU?.plotSettings;
+          ensurePlotPromptGroup_ACU(activeSettings);
+          segments = JSON.parse(JSON.stringify(activeSettings?.promptGroup || []));
+      }
+
+      const getMainSlot = seg => {
+          if (!seg) return '';
+          const slot = String(seg.mainSlot || '').toUpperCase();
+          if (slot === 'A' || slot === 'B') return slot;
+          if (seg.isMain) return 'A';
+          if (seg.isMain2) return 'B';
+          return '';
+      };
+
+      segments.forEach((segment, index) => {
+          const roleUpper = String(segment?.role || '').toUpperCase();
+          const roleLower = String(segment?.role || '').toLowerCase();
+          const mainSlot = getMainSlot(segment);
+          const isMainA = mainSlot === 'A';
+          const isMainB = mainSlot === 'B';
+          const isMainPrompt = isMainA || isMainB;
+          const borderColor = isMainA ? 'var(--accent-primary)' : (isMainB ? '#ffb74d' : '');
+          const segmentId = `${SCRIPT_ID_PREFIX_ACU}-plot-prompt-segment-${index}`;
+
+          const segmentHtml = `
+              <div class="plot-prompt-segment" id="${segmentId}" data-main-slot="${escapeHtml_ACU(mainSlot)}" ${isMainPrompt ? `style="border-left: 3px solid ${borderColor};"` : ''}>
+                  <div class="plot-prompt-segment-toolbar">
+                      <div style="display:flex; align-items:center; gap:8px;">
+                          <select class="plot-prompt-segment-role">
+                              <option value="assistant" ${roleUpper === 'AI' || roleUpper === 'ASSISTANT' || roleLower === 'assistant' ? 'selected' : ''}>AI</option>
+                              <option value="SYSTEM" ${roleUpper === 'SYSTEM' || roleLower === 'system' ? 'selected' : ''}>系统</option>
+                              <option value="USER" ${roleUpper === 'USER' || roleLower === 'user' ? 'selected' : ''}>用户</option>
+                          </select>
+                          <label style="display:flex; align-items:center; gap:6px; font-size:0.8em; cursor:pointer; user-select:none;" title="用于兼容旧预设的A/B槽位。A/B 均不可删除；但运行时不会再对其进行自动替换，完全由本提示词组决定。">
+                              <span style="opacity:0.85;">主提示词</span>
+                              <select class="plot-prompt-segment-main-slot" style="font-size:0.85em;">
+                                  <option value="" ${!isMainPrompt ? 'selected' : ''}>普通</option>
+                                  <option value="A" ${isMainA ? 'selected' : ''}>A(建议System)</option>
+                                  <option value="B" ${isMainB ? 'selected' : ''}>B(建议User)</option>
+                              </select>
+                          </label>
+                      </div>
+                      <button class="plot-prompt-segment-delete-btn" data-index="${index}" style="${isMainPrompt ? 'display:none;' : ''}">-</button>
+                  </div>
+                  <textarea class="plot-prompt-segment-content" rows="4">${escapeHtml_ACU(segment.content)}</textarea>
+              </div>
+          `;
+          $plotPromptSegmentsContainer_ACU.append(segmentHtml);
+      });
+  }
+
+  function getPlotPromptGroupFromUI_ACU() {
+      if (!$plotPromptSegmentsContainer_ACU) return [];
+      const segments = [];
+      $plotPromptSegmentsContainer_ACU.find('.plot-prompt-segment').each(function() {
+          const $segment = $(this);
+          const role = $segment.find('.plot-prompt-segment-role').val();
+          const content = $segment.find('.plot-prompt-segment-content').val();
+          const mainSlotRaw = $segment.find('.plot-prompt-segment-main-slot').val();
+          const mainSlot = String(mainSlotRaw || '').toUpperCase();
+          const isMainA = mainSlot === 'A';
+          const isMainB = mainSlot === 'B';
+
+          // 主提示词A/B不可删除
+          const isDeletable = (isMainA || isMainB) ? false : true;
+
+          const segmentData = { role: role, content: content, deletable: isDeletable };
+          if (isMainA) {
+              segmentData.mainSlot = 'A';
+              segmentData.isMain = true;
+          } else if (isMainB) {
+              segmentData.mainSlot = 'B';
+              segmentData.isMain2 = true;
+          }
+          segments.push(segmentData);
+      });
+      return segments;
+  }
+
+  function normalizePlotTaskListForEditor_ACU(tasks) {
+      return (Array.isArray(tasks) ? tasks : []).map((task, index) => normalizePlotTask_ACU({
+          ...(task || {}),
+          order: index,
+      }, {
+          index,
+          fallbackTask: task || null,
+      }));
+  }
+
+  function getPrimaryPlotTask_ACU(plotSettings) {
+      const tasks = Array.isArray(plotSettings?.plotTasks) ? plotSettings.plotTasks : normalizePlotTasks_ACU(plotSettings);
+      return tasks.find(task => task && task.enabled !== false) || tasks[0] || null;
+  }
+
+  function syncLegacyPlotSettingsFromPrimaryTask_ACU(plotSettings) {
+      if (!plotSettings || typeof plotSettings !== 'object') return null;
+      const primaryTask = getPrimaryPlotTask_ACU(plotSettings);
+      if (primaryTask) {
+          syncLegacyPlotSettingsFromTask_ACU(plotSettings, primaryTask);
+      }
+      return primaryTask;
+  }
+
+  function getCurrentPlotTaskEditorState_ACU(plotSettings = settings_ACU?.plotSettings, { autoSelect = true } = {}) {
+      if (!plotSettings || typeof plotSettings !== 'object') {
+          return { tasks: [], selectedTask: null, selectedIndex: -1 };
+      }
+
+      ensurePlotTasksCompat_ACU(plotSettings, { syncLegacy: false });
+      const tasks = Array.isArray(plotSettings.plotTasks) ? plotSettings.plotTasks : [];
+      if (!tasks.length) {
+          currentPlotTaskEditorId_ACU = '';
+          return { tasks: [], selectedTask: null, selectedIndex: -1 };
+      }
+
+      let selectedIndex = tasks.findIndex(task => task && task.id === currentPlotTaskEditorId_ACU);
+      if (selectedIndex === -1 && autoSelect) {
+          const fallbackTask = tasks.find(task => task && task.enabled !== false) || tasks[0];
+          selectedIndex = tasks.indexOf(fallbackTask);
+          currentPlotTaskEditorId_ACU = fallbackTask?.id || '';
+      }
+
+      const selectedTask = selectedIndex >= 0 ? tasks[selectedIndex] : null;
+      if (selectedTask?.id) {
+          currentPlotTaskEditorId_ACU = selectedTask.id;
+      }
+
+      return { tasks, selectedTask, selectedIndex };
+  }
+
+  function renderPlotTaskList_ACU(plotSettings = getActivePlotEditorSettings_ACU()) {
+      if (!$popupInstance_ACU) return;
+      if (!$plotTaskListContainer_ACU || !$plotTaskListContainer_ACU.length) {
+          $plotTaskListContainer_ACU = $popupInstance_ACU.find(`#${SCRIPT_ID_PREFIX_ACU}-plot-task-list`);
+      }
+      if (!$plotTaskListContainer_ACU || !$plotTaskListContainer_ACU.length) return;
+
+      const { tasks, selectedTask } = getCurrentPlotTaskEditorState_ACU(plotSettings, { autoSelect: true });
+      $plotTaskListContainer_ACU.empty();
+
+      if (!tasks.length) {
+          $plotTaskListContainer_ACU.append('<div class="notes" style="padding: 10px 12px;">暂无剧情任务</div>');
+          return;
+      }
+
+      tasks.forEach((task, index) => {
+          const isSelected = selectedTask?.id === task.id;
+          const enabledText = task.enabled !== false ? '启用' : '停用';
+          const enabledColor = task.enabled !== false ? 'var(--green)' : 'var(--red)';
+          const stageNo = normalizePositiveInteger_ACU(task?.stage, 1);
+          const itemHtml = `
+              <button type="button" class="button acu-plot-task-item ${isSelected ? 'acu-plot-task-item--active' : ''}" data-task-id="${escapeHtml_ACU(task.id)}" style="display:flex; width:100%; align-items:center; justify-content:space-between; gap:12px; margin-bottom:8px; padding:10px 12px; text-align:left; border:${isSelected ? '1px solid var(--accent-primary)' : '1px solid var(--border_color_light)'}; background:${isSelected ? 'color-mix(in srgb, var(--accent-primary) 12%, var(--background_default))' : 'var(--background_default)'}; border-radius:8px;">
+                  <span style="display:flex; flex-direction:column; gap:4px; min-width:0;">
+                      <span style="font-weight:600; color:var(--text_primary); white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">${index + 1}. ${escapeHtml_ACU(task.name || task.id || `剧情任务${index + 1}`)}</span>
+                      <span class="notes" style="white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">阶段：${stageNo} · 标签：${escapeHtml_ACU(task.extractTags || '(未设置)')}</span>
+                  </span>
+                  <span style="flex-shrink:0; font-size:0.8em; color:${enabledColor};">${enabledText}${isSelected ? ' · 编辑中' : ''}</span>
+              </button>
+          `;
+          $plotTaskListContainer_ACU.append(itemHtml);
+      });
+  }
+
+  function loadCurrentPlotTaskToUI_ACU(plotSettings = getActivePlotEditorSettings_ACU()) {
+      if (!$popupInstance_ACU) return;
+      const { selectedTask } = getCurrentPlotTaskEditorState_ACU(plotSettings, { autoSelect: true });
+      if (!selectedTask) {
+          renderPlotPromptSegments_ACU(JSON.parse(JSON.stringify(getPlotPromptGroupFromSource_ACU(plotSettings))));
+          $popupInstance_ACU.find(`#${SCRIPT_ID_PREFIX_ACU}-plot-task-name`).val('');
+          $popupInstance_ACU.find(`#${SCRIPT_ID_PREFIX_ACU}-plot-task-enabled`).prop('checked', true);
+          $popupInstance_ACU.find(`#${SCRIPT_ID_PREFIX_ACU}-plot-extract-tags`).val('');
+          $popupInstance_ACU.find(`#${SCRIPT_ID_PREFIX_ACU}-plot-min-length`).val(plotSettings?.minLength ?? 0);
+          $popupInstance_ACU.find(`#${SCRIPT_ID_PREFIX_ACU}-plot-task-stage`).val(1);
+          $popupInstance_ACU.find(`#${SCRIPT_ID_PREFIX_ACU}-plot-task-max-retries`).val(plotSettings?.loopSettings?.maxRetries ?? DEFAULT_PLOT_SETTINGS_ACU.loopSettings?.maxRetries ?? 3);
+          return;
+      }
+
+      renderPlotPromptSegments_ACU(JSON.parse(JSON.stringify(selectedTask.promptGroup || [])));
+      $popupInstance_ACU.find(`#${SCRIPT_ID_PREFIX_ACU}-plot-task-name`).val(selectedTask.name || '');
+      $popupInstance_ACU.find(`#${SCRIPT_ID_PREFIX_ACU}-plot-task-enabled`).prop('checked', selectedTask.enabled !== false);
+      $popupInstance_ACU.find(`#${SCRIPT_ID_PREFIX_ACU}-plot-extract-tags`).val(selectedTask.extractTags || '');
+      $popupInstance_ACU.find(`#${SCRIPT_ID_PREFIX_ACU}-plot-min-length`).val(selectedTask.minLength ?? 0);
+      $popupInstance_ACU.find(`#${SCRIPT_ID_PREFIX_ACU}-plot-task-stage`).val(normalizePositiveInteger_ACU(selectedTask.stage, 1));
+      $popupInstance_ACU.find(`#${SCRIPT_ID_PREFIX_ACU}-plot-task-max-retries`).val(selectedTask.maxRetries ?? DEFAULT_PLOT_SETTINGS_ACU.loopSettings?.maxRetries ?? 3);
+  }
+
+  function saveCurrentPlotTaskFromUI_ACU({ silent = false, renderTaskList = false, persist = true } = {}) {
+      if (!$popupInstance_ACU) return null;
+      const plotSettings = getActivePlotEditorSettings_ACU();
+      if (!plotSettings) return null;
+      const { tasks, selectedTask, selectedIndex } = getCurrentPlotTaskEditorState_ACU(plotSettings, { autoSelect: true });
+      if (!selectedTask || selectedIndex < 0) return null;
+
+      const taskNameRaw = $popupInstance_ACU.find(`#${SCRIPT_ID_PREFIX_ACU}-plot-task-name`).val();
+      const taskExtractTagsRaw = $popupInstance_ACU.find(`#${SCRIPT_ID_PREFIX_ACU}-plot-extract-tags`).val();
+      const taskMinLengthRaw = parseInt($popupInstance_ACU.find(`#${SCRIPT_ID_PREFIX_ACU}-plot-min-length`).val(), 10);
+      const taskStageRaw = parseInt($popupInstance_ACU.find(`#${SCRIPT_ID_PREFIX_ACU}-plot-task-stage`).val(), 10);
+      const taskMaxRetriesRaw = parseInt($popupInstance_ACU.find(`#${SCRIPT_ID_PREFIX_ACU}-plot-task-max-retries`).val(), 10);
+      const updatedTask = normalizePlotTask_ACU({
+          ...selectedTask,
+          name: String(taskNameRaw || '').trim() || selectedTask.name || `剧情任务${selectedIndex + 1}`,
+          enabled: $popupInstance_ACU.find(`#${SCRIPT_ID_PREFIX_ACU}-plot-task-enabled`).is(':checked'),
+          promptGroup: getPlotPromptGroupFromUI_ACU(),
+          extractTags: String(taskExtractTagsRaw || ''),
+          minLength: Number.isFinite(taskMinLengthRaw) ? taskMinLengthRaw : selectedTask.minLength,
+          stage: Number.isFinite(taskStageRaw) && taskStageRaw > 0
+              ? taskStageRaw
+              : selectedTask.stage,
+          maxRetries: Number.isFinite(taskMaxRetriesRaw) && taskMaxRetriesRaw > 0
+              ? taskMaxRetriesRaw
+              : selectedTask.maxRetries,
+          order: selectedTask.order ?? selectedIndex,
+      }, {
+          index: selectedIndex,
+          fallbackTask: selectedTask,
+      });
+
+      const nextTasks = normalizePlotTaskListForEditor_ACU(tasks.map((task, index) => index === selectedIndex ? updatedTask : task));
+      plotSettings.plotTasks = nextTasks;
+      currentPlotTaskEditorId_ACU = updatedTask.id;
+      syncLegacyPlotSettingsFromPrimaryTask_ACU(plotSettings);
+
+      if (persist) saveSettings_ACU();
+      if (renderTaskList) renderPlotTaskList_ACU(plotSettings);
+      if (!silent) showToastr_ACU('success', '当前剧情任务已保存。');
+      return updatedTask;
+  }
+
+  function flushCurrentPlotTaskEditorState_ACU({ renderTaskList = false, persist = true } = {}) {
+      clearTimeout(plotTaskEditorAutoSaveTimer_ACU);
+      return saveCurrentPlotTaskFromUI_ACU({ silent: true, renderTaskList, persist });
+  }
+
+  function buildNewPlotTaskForUI_ACU(plotSettings = getActivePlotEditorSettings_ACU()) {
+      const tasks = Array.isArray(plotSettings?.plotTasks) ? plotSettings.plotTasks : [];
+      const defaultStage = normalizePositiveInteger_ACU(tasks[tasks.length - 1]?.stage, 1);
+      let serial = tasks.length + 1;
+      let taskId = `plotTask${serial}`;
+      while (tasks.some(task => task && task.id === taskId)) {
+          serial += 1;
+          taskId = `plotTask${serial}`;
+      }
+      return normalizePlotTask_ACU({
+          id: taskId,
+          name: `剧情任务${tasks.length + 1}`,
+          enabled: true,
+          promptGroup: buildDefaultPlotPromptGroup_ACU(),
+          extractTags: DEFAULT_PLOT_SETTINGS_ACU.extractTags || '',
+          minLength: 0,
+          stage: defaultStage,
+          maxRetries: plotSettings?.loopSettings?.maxRetries ?? DEFAULT_PLOT_SETTINGS_ACU.loopSettings?.maxRetries ?? 3,
+          order: tasks.length,
+      }, { index: tasks.length });
+  }
+
+  function schedulePlotTaskAutoSave_ACU({ renderTaskList = true } = {}) {
+      clearTimeout(plotTaskEditorAutoSaveTimer_ACU);
+      plotTaskEditorAutoSaveTimer_ACU = setTimeout(() => {
+          saveCurrentPlotTaskFromUI_ACU({ silent: true, renderTaskList, persist: true });
+      }, 300);
+  }
+
+  function selectPlotTaskForEditing_ACU(taskId, { saveCurrent = true } = {}) {
+      const plotSettings = getActivePlotEditorSettings_ACU();
+      if (!plotSettings || !taskId) return;
+      if (saveCurrent) {
+          saveCurrentPlotTaskFromUI_ACU({ silent: true, renderTaskList: false, persist: true });
+      }
+      currentPlotTaskEditorId_ACU = String(taskId);
+      renderPlotTaskList_ACU(plotSettings);
+      loadCurrentPlotTaskToUI_ACU(plotSettings);
+  }
+
+  function addPlotTaskFromUI_ACU() {
+      const plotSettings = getActivePlotEditorSettings_ACU();
+      if (!plotSettings) return;
+      saveCurrentPlotTaskFromUI_ACU({ silent: true, renderTaskList: false, persist: true });
+      const nextTasks = normalizePlotTaskListForEditor_ACU([
+          ...(Array.isArray(plotSettings.plotTasks) ? plotSettings.plotTasks : []),
+          buildNewPlotTaskForUI_ACU(plotSettings),
+      ]);
+      plotSettings.plotTasks = nextTasks;
+      currentPlotTaskEditorId_ACU = nextTasks[nextTasks.length - 1]?.id || currentPlotTaskEditorId_ACU;
+      syncLegacyPlotSettingsFromPrimaryTask_ACU(plotSettings);
+      saveSettings_ACU();
+      renderPlotTaskList_ACU(plotSettings);
+      loadCurrentPlotTaskToUI_ACU(plotSettings);
+      showToastr_ACU('success', '已新增一个剧情任务。');
+  }
+
+  function deleteCurrentPlotTaskFromUI_ACU() {
+      const plotSettings = getActivePlotEditorSettings_ACU();
+      if (!plotSettings) return;
+      const { tasks, selectedTask, selectedIndex } = getCurrentPlotTaskEditorState_ACU(plotSettings, { autoSelect: true });
+      if (!selectedTask || selectedIndex < 0) return;
+      if (tasks.length <= 1) {
+          showToastr_ACU('warning', '至少需要保留一个剧情任务。');
+          return;
+      }
+      if (!confirm(`确定要删除剧情任务“${selectedTask.name || selectedTask.id}”吗？`)) {
+          return;
+      }
+
+      const nextTasks = normalizePlotTaskListForEditor_ACU(tasks.filter((_, index) => index !== selectedIndex));
+      const fallbackIndex = Math.min(selectedIndex, nextTasks.length - 1);
+      plotSettings.plotTasks = nextTasks;
+      currentPlotTaskEditorId_ACU = nextTasks[fallbackIndex]?.id || nextTasks[0]?.id || '';
+      syncLegacyPlotSettingsFromPrimaryTask_ACU(plotSettings);
+      saveSettings_ACU();
+      renderPlotTaskList_ACU(plotSettings);
+      loadCurrentPlotTaskToUI_ACU(plotSettings);
+      showToastr_ACU('success', '剧情任务已删除。');
+  }
+
+  function moveCurrentPlotTask_ACU(direction) {
+      const plotSettings = getActivePlotEditorSettings_ACU();
+      if (!plotSettings) return;
+      const { tasks, selectedTask, selectedIndex } = getCurrentPlotTaskEditorState_ACU(plotSettings, { autoSelect: true });
+      if (!selectedTask || selectedIndex < 0) return;
+
+      const offset = direction === 'up' ? -1 : 1;
+      const targetIndex = selectedIndex + offset;
+      if (targetIndex < 0 || targetIndex >= tasks.length) return;
+
+      saveCurrentPlotTaskFromUI_ACU({ silent: true, renderTaskList: false, persist: true });
+      const reordered = [...plotSettings.plotTasks];
+      const [movedTask] = reordered.splice(selectedIndex, 1);
+      reordered.splice(targetIndex, 0, movedTask);
+      plotSettings.plotTasks = normalizePlotTaskListForEditor_ACU(reordered);
+      currentPlotTaskEditorId_ACU = movedTask?.id || currentPlotTaskEditorId_ACU;
+      syncLegacyPlotSettingsFromPrimaryTask_ACU(plotSettings);
+      saveSettings_ACU();
+      renderPlotTaskList_ACU(plotSettings);
+      loadCurrentPlotTaskToUI_ACU(plotSettings);
+  }
+
+
+  let isAutoUpdatingCard_ACU = false; // Tracks if an update is in progress
+  let wasStoppedByUser_ACU = false; // [新增] 标记更新是否被用户手动终止
+  let newMessageDebounceTimer_ACU = null;
+  let currentAbortController_ACU = null; // [新增] 用于中止正在进行的AI请求
+  let activePlotEditorSettings_ACU = null;
+  let currentPlotTaskEditorId_ACU = '';
+  let currentEditablePlotPresetState_ACU = {
+    initialized: false,
+    presetName: '',
+    scope: 'resolved',
+    source: '',
+  };
+  let plotTaskEditorAutoSaveTimer_ACU = null;
+  let activeAbortControllers_ACU = new Set(); // [新增] 并发请求的 AbortController 集合
+  let manualExtraHint_ACU = ''; // [新增] 手动更新时的额外提示词（一次性）
+
+  function trackAbortController_ACU(controller) {
+      if (controller) activeAbortControllers_ACU.add(controller);
+  }
+
+  function untrackAbortController_ACU(controller) {
+      if (controller) activeAbortControllers_ACU.delete(controller);
+  }
+
+  function abortAllActiveRequests_ACU() {
+      activeAbortControllers_ACU.forEach(controller => {
+          try {
+              controller.abort();
+          } catch (e) {
+              // ignore
+          }
+      });
+      activeAbortControllers_ACU.clear();
+  }
+
+  // --- [新增] 内部保存函数：保存单个表格的数据到聊天历史 ---
