@@ -756,3 +756,7 @@
         URL.revokeObjectURL(url);
         showToastr_ACU('success', '合并配置已成功导出！');
     } catch (error) {
+        logError_ACU('导出合并配置失败:', error);
+        showToastr_ACU('error', '导出合并配置失败，请检查控制台获取详情。');
+    }
+  }

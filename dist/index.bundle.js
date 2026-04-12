@@ -4609,9 +4609,6 @@ async function handleApiResponse_ACU(response, signal = null) {
         return await parseNonStreamResponse_ACU(response);
     }
 }
-/**
- * 数据库插件暴露给外部的 API 对象
- 
 
 
 // ── [module] src/service/table/update-process.ts ──
@@ -21790,9 +21787,6 @@ function abortAllActiveRequests_ACU() {
  * presentation/bootstrap/startup.ts — 启动 + 菜单初始化
  * 从 features/startup/01_ready_and_menu.js 迁移而来
  */
-console.log('ACU_INIT_DEBUG: Document is ready, attempting to initialize ACU script.');
-mainInitialize_ACU();
-;
 function addAutoCardMenuItem_ACU() {
     const parentDoc = SillyTavern_API_ACU?.Chat?.document
         ? SillyTavern_API_ACU.Chat.document
@@ -34275,7 +34269,10 @@ function exportCombinedSettings_ACU() {
         URL.revokeObjectURL(url);
         showToastr_ACU('success', '合并配置已成功导出！');
     }
-    catch (error) { }
+    catch (error) {
+        logError_ACU('导出合并配置失败:', error);
+        showToastr_ACU('error', '导出合并配置失败，请检查控制台获取详情。');
+    }
 }
 
 
@@ -34284,8 +34281,6 @@ function exportCombinedSettings_ACU() {
  * presentation/triggers/data-admin-ui.ts — 导入/导出/重置 UI
  * 从 features/data/01_data_admin.js 迁移而来
  */
-logError_ACU('导出合并配置失败:', error);
-showToastr_ACU('error', '导出合并配置失败，请检查控制台获取详情。');
 function importCombinedSettings_ACU() {
     const input = document.createElement('input');
     input.type = 'file';

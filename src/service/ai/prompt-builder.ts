@@ -1621,6 +1621,3 @@ async function handleApiResponse_ACU(response, signal = null) {
         return await parseNonStreamResponse_ACU(response);
     }
 }
-
-/**
- * 数据库插件暴露给外部的 API 对象

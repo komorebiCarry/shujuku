@@ -2,10 +2,6 @@
  * presentation/triggers/data-admin-ui.ts — 导入/导出/重置 UI
  * 从 features/data/01_data_admin.js 迁移而来
  */
-        logError_ACU('导出合并配置失败:', error);
-        showToastr_ACU('error', '导出合并配置失败，请检查控制台获取详情。');
-    }
-  }
 
   function importCombinedSettings_ACU() {
     const input = document.createElement('input');

@@ -2,9 +2,6 @@
  * presentation/bootstrap/startup.ts — 启动 + 菜单初始化
  * 从 features/startup/01_ready_and_menu.js 迁移而来
  */
-      console.log('ACU_INIT_DEBUG: Document is ready, attempting to initialize ACU script.');
-      mainInitialize_ACU();
-  });
 
   function addAutoCardMenuItem_ACU() {
     const parentDoc = SillyTavern_API_ACU?.Chat?.document
