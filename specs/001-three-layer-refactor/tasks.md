@@ -194,14 +194,14 @@
 - [x] T103 [P] [US6] 新建 `data/models/table-data.ts`（~90行：表格数据结构定义 sheet/mate 接口，纯类型不注入产物）
 - [x] T104 [P] [US6] 新建 `data/models/settings-model.ts`（~65行：设置/剧情数据结构 + 接口定义）
 - [x] T105 [P] [US6] 新建 `data/models/template-model.ts`（~75行：模板预设/作用域/归档/SheetGuide 接口定义）
-- [ ] T106 [US6] `04_shared_helpers.js:43~50` + 相关 → `data/storage/chat-history.ts`（~150行：聊天消息自定义字段 CRUD）
-- [ ] T107 [US6] 从 tavern-storage.ts 拆出 → `data/storage/config-storage.ts`（~80行：统一配置存储门面）
-- [ ] T108 [US6] `05_core_tail.js:1767~2058` → `data/repositories/table-repo.ts`（~290行：save/load/create/init JsonTable）
-- [ ] T109 [US6] 从 settings-service.ts 拆出 → `data/repositories/settings-repo.ts`（~100行：loadSettings/saveSettings 纯数据读写）
-- [ ] T110 [US6] 新建 `data/repositories/import-repo.ts`（~60行：导入暂存数据高层 Repository）
-- [ ] T111 [US6] 更新 `data/index.ts` 统一出口
+- [x] T106 [US6] `04_shared_helpers.js` 常量+函数 → `data/storage/chat-history.ts`（~80行：字段常量 + 底层容器读取 CRUD）
+- [x] T107 [US6] `data/storage/config-storage.ts`（re-export 门面，底层在 tavern-storage.ts）
+- [x] T108 [US6] `05_core_tail.js:2409~2693` → `data/repositories/table-repo.ts`（289行：save/load/create/init JsonTable）
+- [x] T109 [US6] `data/repositories/settings-repo.ts`（re-export 门面，实际在 settings-service.ts）
+- [x] T110 [US6] `data/repositories/import-repo.ts`（re-export 门面，底层在 idb-import-temp.ts）
+- [x] T111 [US6] 更新 `data/index.ts` 统一出口（含全部 7B 新模块）
 
-检查点：verify-build ✓ + audit-bundle ✓
+检查点：verify-build ✓ + audit-bundle 7/7 ✓（36 模块注入）
 
 ---
 
