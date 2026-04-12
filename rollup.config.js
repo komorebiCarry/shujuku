@@ -157,6 +157,7 @@ if (BUILD_MODE === 'concat') {
     { path: 'src/service/import/import-process.ts' },
     { path: 'src/service/runtime/init.ts' },
     { path: 'src/service/runtime/state-manager.ts' },
+    { path: 'src/service/runtime/event-bus.ts' },
     { path: 'src/presentation/window/window-system.ts' },
     { path: 'src/presentation/theme/toast.ts' },
     { path: 'src/presentation/components/table-selector.ts' },
