@@ -89,7 +89,7 @@ export   function importCombinedSettings_ACU() {
                     scope: 'global',
                     source: 'import_combined',
                     presetName: normalizeTemplatePresetSelectionValue_ACU(getCurrentTemplatePresetName_ACU({ requireExisting: false })),
-                    refreshUi: typeof isPopupOpen_ACU === "function" ? isPopupOpen_ACU() : false,
+                    refreshUi: false,
                     save: true,
                     persistChatScope: false,
                 });

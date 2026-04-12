@@ -9,7 +9,7 @@
     showToastr_ACU('info', '正在准备数据库更新工具...', { timeOut: 1000 });
     // The state is managed by background event listeners. The popup should only display the current state.
     // Calling reset here could cause race conditions or incorrect state wipes.
-    loadSettings_ACU(); // Load latest settings into UI
+    loadSettingsAndRefreshUI_ACU(); // Load latest settings into UI
 
     const popupHtml = `
             <div id="${POPUP_ID_ACU}" class="auto-card-updater-popup">

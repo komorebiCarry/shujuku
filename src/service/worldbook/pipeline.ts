@@ -618,7 +618,6 @@ export   async function refreshMergedDataAndNotify_ACU() {
                  window.ACU_Visualizer_Refresh();
                  logDebug_ACU('Triggered global visualizer refresh.');
              } else if (typeof ACU_WindowManager !== 'undefined' && ACU_WindowManager.isOpen(`${SCRIPT_ID_PREFIX_ACU}-visualizer-window`)) {
-                 if (typeof notifyVisualizerRefresh_ACU === 'function') notifyVisualizerRefresh_ACU();
              }
         }, 200);
 

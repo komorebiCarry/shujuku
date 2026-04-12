@@ -367,7 +367,7 @@ export   async function handleManualUpdate_ACU() {
 export   async function proceedWithCardUpdate_ACU(messagesToUse, batchToastMessage = '正在填表，请稍候...', saveTargetIndex = -1, isImportMode = false, updateMode = 'standard', isSilentMode = false, targetSheetKeys = null, requestOptions = null) {
     // UI 状态更新通过 presentation 层函数
     const statusUpdate = (text) => {
-        if (!isSilentMode && typeof updateTableFillStatus_ACU === 'function') updateTableFillStatus_ACU(text);
+        if (!isSilentMode && $statusMessageSpan_ACU) $statusMessageSpan_ACU.text(text);
     };
 
     const localAbortController = new AbortController();

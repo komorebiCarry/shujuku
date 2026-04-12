@@ -3704,9 +3704,6 @@
       }
 
       saveSettings_ACU();
-      if (typeof isPopupOpen_ACU === "function" && isPopupOpen_ACU()) {
-        loadPlotSettingsToUI_ACU();
-      }
       logDebug_ACU('[剧情推进] Chat override snapshot restored from chat history.');
       return;
     }
@@ -3765,10 +3762,6 @@
               }
             }
 
-            if (typeof isPopupOpen_ACU === "function" && isPopupOpen_ACU()) {
-              loadPlotSettingsToUI_ACU();
-            }
-
             logDebug_ACU('[剧情推进] Legacy plotPresetBindings entry migrated to chat metadata snapshot.');
             return;
           }
@@ -3791,9 +3784,6 @@
     syncCurrentEditablePlotPresetState_ACU({ source: globalPresetToLoad ? 'load_inherit_global' : 'load_inherit_default' });
     saveSettings_ACU();
 
-    if (typeof isPopupOpen_ACU === "function" && isPopupOpen_ACU()) {
-      loadPlotSettingsToUI_ACU();
-    }
 
     logDebug_ACU('[剧情推进] Current chat is inheriting the active global plot preset state.');
   }

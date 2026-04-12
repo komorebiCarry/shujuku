@@ -97,7 +97,7 @@
       // Removed $hideCurrentValueDisplay_ACU, $advHideToggle, $advHideArea assignments
 
       // Load existing settings into UI fields
-      loadSettings_ACU(); // This function will populate the fields
+      loadSettingsAndRefreshUI_ACU(); // This function will populate the fields
       // [新增] 加载世界书UI状态（已移至 loadSettings_ACU）
       // $worldbookSourceRadios.filter(`[value="${getCurrentWorldbookConfig_ACU().source}"]`).prop('checked', true);
       // updateWorldbookSourceView_ACU();

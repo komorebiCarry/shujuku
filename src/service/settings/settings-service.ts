@@ -200,8 +200,12 @@ export   function loadSettings_ACU() {
           settings_ACU.maxConcurrentGroups = 1;
       }
       logDebug_ACU('Settings loaded:', settings_ACU);
+  }
 
-      // UI 回填交给 presentation 层
+  // [拆分] loadSettings 的 presentation 版本：加载数据后刷新 UI
+  // presentation 层调用此版本；service 层内部调用上面的 loadSettings_ACU（不触发 UI）
+  function loadSettingsAndRefreshUI_ACU() {
+      loadSettings_ACU();
       if (typeof syncAllSettingsToUI_ACU === 'function') syncAllSettingsToUI_ACU(settings_ACU);
   }
 

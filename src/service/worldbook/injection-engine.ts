@@ -59,23 +59,14 @@
     await loadAllChatMessages_ACU();
     applyTemplateScopeForCurrentChat_ACU();
     
-    if (typeof updateChatTitleDisplay_ACU === 'function') {
-      updateChatTitleDisplay_ACU(currentChatFileIdentifier_ACU);
-    }
-    if (typeof updateTableFillStatus_ACU === 'function') updateTableFillStatus_ACU('准备就绪');
-    
     if (typeof updateCardUpdateStatusDisplay_ACU === 'function') updateCardUpdateStatusDisplay_ACU();
 
-    // 统一走聊天记录加载链路。
-    // 新开聊天开场白阶段（只有首条 AI、尚无用户消息）会被 shouldSuppressWorldbookInjection_ACU() 拦截，
-    // 此时只清理旧世界书条目，不创建新的注入条目。
     await loadOrCreateJsonTableFromChatHistory_ACU();
 
   // [核心修复] 切换聊天时，强制刷新可视化编辑器数据
     // 这确保了无论编辑器是否打开（即是否绑定了事件），数据源都被更新，并且如果有监听者则触发
     // [优化] 增加短暂延迟，确保 DOM 渲染完成（尽管是数据层面的刷新）
     setTimeout(() => {
-        if (typeof notifyVisualizerRefresh_ACU === 'function') notifyVisualizerRefresh_ACU();
         logDebug_ACU('Triggered visualizer refresh on chat change (with delay).');
     }, 100);
 
@@ -678,7 +669,6 @@
           try { await loadAllChatMessages_ACU(); } catch (e) {}
           // 通知前端刷新
           if (topLevelWindow_ACU.AutoCardUpdaterAPI) topLevelWindow_ACU.AutoCardUpdaterAPI._notifyTableUpdate();
-          setTimeout(() => { if (typeof notifyVisualizerRefresh_ACU === 'function') notifyVisualizerRefresh_ACU(); }, 200);
       }
       return { changed: changedAny, changedCount };
   }

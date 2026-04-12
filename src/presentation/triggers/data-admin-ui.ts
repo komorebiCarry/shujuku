@@ -477,7 +477,7 @@
               return false;
           }
 
-          loadSettings_ACU();
+          loadSettingsAndRefreshUI_ACU();
           refreshTemplatePresetSelectInUI_ACU({ selectName: '', keepValue: false });
           showToastr_ACU('success', '已恢复默认预设及模板！模板已更新，但不会影响当前聊天记录的本地数据。');
           return true;

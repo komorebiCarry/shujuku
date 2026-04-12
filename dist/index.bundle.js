@@ -2485,7 +2485,11 @@ function loadSettings_ACU() {
         settings_ACU.maxConcurrentGroups = 1;
     }
     logDebug_ACU('Settings loaded:', settings_ACU);
-    // UI 回填交给 presentation 层
+}
+// [拆分] loadSettings 的 presentation 版本：加载数据后刷新 UI
+// presentation 层调用此版本；service 层内部调用上面的 loadSettings_ACU（不触发 UI）
+function loadSettingsAndRefreshUI_ACU() {
+    loadSettings_ACU();
     if (typeof syncAllSettingsToUI_ACU === 'function')
         syncAllSettingsToUI_ACU(settings_ACU);
 }
@@ -4775,8 +4779,8 @@ async function handleManualUpdate_ACU() {
 async function proceedWithCardUpdate_ACU(messagesToUse, batchToastMessage = '正在填表，请稍候...', saveTargetIndex = -1, isImportMode = false, updateMode = 'standard', isSilentMode = false, targetSheetKeys = null, requestOptions = null) {
     // UI 状态更新通过 presentation 层函数
     const statusUpdate = (text) => {
-        if (!isSilentMode && typeof updateTableFillStatus_ACU === 'function')
-            updateTableFillStatus_ACU(text);
+        if (!isSilentMode && $statusMessageSpan_ACU)
+            $statusMessageSpan_ACU.text(text);
     };
     const localAbortController = new AbortController();
     let loadingToast = null;
@@ -5677,8 +5681,6 @@ async function refreshMergedDataAndNotify_ACU() {
                 logDebug_ACU('Triggered global visualizer refresh.');
             }
             else if (typeof ACU_WindowManager !== 'undefined' && ACU_WindowManager.isOpen(`${SCRIPT_ID_PREFIX_ACU}-visualizer-window`)) {
-                if (typeof notifyVisualizerRefresh_ACU === 'function')
-                    notifyVisualizerRefresh_ACU();
             }
         }, 200);
         // 3. 刷新当前打开的插件设置弹窗 (UI层负责)
@@ -6079,23 +6081,13 @@ async function resetScriptStateForNewChat_ACU(chatFileName) {
     logDebug_ACU(`ACU: currentChatFileIdentifier FINAL set to: "${currentChatFileIdentifier_ACU}" (Source: CHAT_CHANGED event)`);
     await loadAllChatMessages_ACU();
     applyTemplateScopeForCurrentChat_ACU();
-    if (typeof updateChatTitleDisplay_ACU === 'function') {
-        updateChatTitleDisplay_ACU(currentChatFileIdentifier_ACU);
-    }
-    if (typeof updateTableFillStatus_ACU === 'function')
-        updateTableFillStatus_ACU('准备就绪');
     if (typeof updateCardUpdateStatusDisplay_ACU === 'function')
         updateCardUpdateStatusDisplay_ACU();
-    // 统一走聊天记录加载链路。
-    // 新开聊天开场白阶段（只有首条 AI、尚无用户消息）会被 shouldSuppressWorldbookInjection_ACU() 拦截，
-    // 此时只清理旧世界书条目，不创建新的注入条目。
     await loadOrCreateJsonTableFromChatHistory_ACU();
     // [核心修复] 切换聊天时，强制刷新可视化编辑器数据
     // 这确保了无论编辑器是否打开（即是否绑定了事件），数据源都被更新，并且如果有监听者则触发
     // [优化] 增加短暂延迟，确保 DOM 渲染完成（尽管是数据层面的刷新）
     setTimeout(() => {
-        if (typeof notifyVisualizerRefresh_ACU === 'function')
-            notifyVisualizerRefresh_ACU();
         logDebug_ACU('Triggered visualizer refresh on chat change (with delay).');
     }, 100);
     // [修复] 加载完成后，延迟检查并强制清理角色卡绑定世界书（如果设置了注入到其他目标）
@@ -6740,8 +6732,6 @@ async function purgeSheetKeysFromChatHistoryHard_ACU(sheetKeysToPurge) {
         // 通知前端刷新
         if (topLevelWindow_ACU.AutoCardUpdaterAPI)
             topLevelWindow_ACU.AutoCardUpdaterAPI._notifyTableUpdate();
-        setTimeout(() => { if (typeof notifyVisualizerRefresh_ACU === 'function')
-            notifyVisualizerRefresh_ACU(); }, 200);
     }
     return { changed: changedAny, changedCount };
 }
@@ -8307,7 +8297,7 @@ function importCombinedSettings_ACU() {
                     scope: 'global',
                     source: 'import_combined',
                     presetName: normalizeTemplatePresetSelectionValue_ACU(getCurrentTemplatePresetName_ACU({ requireExisting: false })),
-                    refreshUi: typeof isPopupOpen_ACU === "function" ? isPopupOpen_ACU() : false,
+                    refreshUi: false,
                     save: true,
                     persistChatScope: false,
                 });
@@ -9242,14 +9232,8 @@ function mainInitialize_ACU() {
                         return;
                     }
                     applyTemplateScopeForCurrentChat_ACU();
-                    // 3. 刷新所有UI（包括可视化编辑器）和世界书
+                    // 3. 刷新数据（UI 刷新由 presentation 层负责）
                     await refreshMergedDataAndNotify_ACU();
-                    if (typeof isPopupOpen_ACU === "function" && isPopupOpen_ACU()) {
-                        loadTemplatePresetSelect_ACU({ keepGlobalValue: false });
-                    }
-                    // [新增] 再次强制刷新可视化编辑器，确保万无一失
-                    if (typeof notifyVisualizerRefresh_ACU === 'function')
-                        notifyVisualizerRefresh_ACU();
                     // [新增] 再次强制刷新状态显示，确保UI同步
                     if (typeof updateCardUpdateStatusDisplay_ACU === 'function') {
                         updateCardUpdateStatusDisplay_ACU();
@@ -13240,9 +13224,6 @@ async function loadPresetAndCleanCharacterData_ACU() {
             logDebug_ACU('[剧情推进] Cleared legacy plotPresetBindings entry because chat metadata override is authoritative.');
         }
         saveSettings_ACU();
-        if (typeof isPopupOpen_ACU === "function" && isPopupOpen_ACU()) {
-            loadPlotSettingsToUI_ACU();
-        }
         logDebug_ACU('[剧情推进] Chat override snapshot restored from chat history.');
         return;
     }
@@ -13296,9 +13277,6 @@ async function loadPresetAndCleanCharacterData_ACU() {
                             logWarn_ACU('[剧情推进] 保存迁移后的聊天级剧情推进快照失败:', error);
                         }
                     }
-                    if (typeof isPopupOpen_ACU === "function" && isPopupOpen_ACU()) {
-                        loadPlotSettingsToUI_ACU();
-                    }
                     logDebug_ACU('[剧情推进] Legacy plotPresetBindings entry migrated to chat metadata snapshot.');
                     return;
                 }
@@ -13318,9 +13296,6 @@ async function loadPresetAndCleanCharacterData_ACU() {
     currentPlotTaskEditorId_ACU = '';
     syncCurrentEditablePlotPresetState_ACU({ source: globalPresetToLoad ? 'load_inherit_global' : 'load_inherit_default' });
     saveSettings_ACU();
-    if (typeof isPopupOpen_ACU === "function" && isPopupOpen_ACU()) {
-        loadPlotSettingsToUI_ACU();
-    }
     logDebug_ACU('[剧情推进] Current chat is inheriting the active global plot preset state.');
 }
 /**
@@ -14482,7 +14457,7 @@ topLevelWindow_ACU.AutoCardUpdaterAPI = {
             const result = await applyTemplatePresetToCurrent_ACU(name, {
                 source: 'api',
                 updateGlobal: normalizedScope === 'global',
-                refreshUi: typeof isPopupOpen_ACU === "function" ? isPopupOpen_ACU() : false,
+                refreshUi: false,
                 save: true,
                 persistChatScope: normalizedScope === 'chat',
             });
@@ -15250,7 +15225,7 @@ topLevelWindow_ACU.AutoCardUpdaterAPI = {
             }
             const result = switchCurrentChatPlotPreset_ACU(presetName, {
                 source: 'api',
-                refreshUi: typeof isPopupOpen_ACU === "function" ? isPopupOpen_ACU() : false,
+                refreshUi: false,
                 save: true,
             });
             if (!result) {
@@ -15278,7 +15253,7 @@ topLevelWindow_ACU.AutoCardUpdaterAPI = {
             }
             const result = switchCurrentChatPlotPreset_ACU(presetName, {
                 source: 'api',
-                refreshUi: typeof isPopupOpen_ACU === "function" ? isPopupOpen_ACU() : false,
+                refreshUi: false,
                 save: true,
             });
             if (!result) {
@@ -15362,7 +15337,7 @@ topLevelWindow_ACU.AutoCardUpdaterAPI = {
                 scope: normalizedScope,
                 source: normalizedScope === 'chat' ? 'api_import_template_chat' : 'api_import_template_global',
                 presetName: normalizedPresetName,
-                refreshUi: typeof isPopupOpen_ACU === "function" ? isPopupOpen_ACU() : false,
+                refreshUi: false,
                 save: true,
                 persistChatScope: normalizedScope === 'chat',
             });
@@ -15457,10 +15432,7 @@ topLevelWindow_ACU.AutoCardUpdaterAPI = {
             if (switchTo) {
                 switchedCurrentChat = this.injectPlotPresetToCurrentChat(finalName) === true;
             }
-            // 如果设置面板已打开，刷新预设选择器
-            if ((typeof isPopupOpen_ACU === 'function' ? isPopupOpen_ACU() : false) && !switchTo) {
-                loadPlotPresetSelect_ACU();
-            }
+            // UI 刷新由 presentation 层调用方负责
             return {
                 success: true,
                 message: switchedCurrentChat
@@ -20556,7 +20528,7 @@ async function openAutoCardPopup_ACU() {
     showToastr_ACU('info', '正在准备数据库更新工具...', { timeOut: 1000 });
     // The state is managed by background event listeners. The popup should only display the current state.
     // Calling reset here could cause race conditions or incorrect state wipes.
-    loadSettings_ACU(); // Load latest settings into UI
+    loadSettingsAndRefreshUI_ACU(); // Load latest settings into UI
     const popupHtml = `
             <div id="${POPUP_ID_ACU}" class="auto-card-updater-popup">
                 <style>
@@ -23121,7 +23093,7 @@ async function bindPopupEvents_ACU() {
     const $saveImportSplitSizeButton_ACU = $popupInstance_ACU.find(`#${SCRIPT_ID_PREFIX_ACU}-save-import-split-size`);
     // Removed $hideCurrentValueDisplay_ACU, $advHideToggle, $advHideArea assignments
     // Load existing settings into UI fields
-    loadSettings_ACU(); // This function will populate the fields
+    loadSettingsAndRefreshUI_ACU(); // This function will populate the fields
     // [新增] 加载世界书UI状态（已移至 loadSettings_ACU）
     // $worldbookSourceRadios.filter(`[value="${getCurrentWorldbookConfig_ACU().source}"]`).prop('checked', true);
     // updateWorldbookSourceView_ACU();
@@ -33536,7 +33508,7 @@ async function resetAllToDefaults_ACU() {
             showToastr_ACU('error', '恢复默认设置失败：默认表格模板恢复失败。');
             return false;
         }
-        loadSettings_ACU();
+        loadSettingsAndRefreshUI_ACU();
         refreshTemplatePresetSelectInUI_ACU({ selectName: '', keepValue: false });
         showToastr_ACU('success', '已恢复默认预设及模板！模板已更新，但不会影响当前聊天记录的本地数据。');
         return true;
@@ -33883,13 +33855,13 @@ function saveApiConfig_ACU() {
     }
     saveSettings_ACU();
     showToastr_ACU('success', 'API配置已保存！');
-    loadSettings_ACU();
+    loadSettingsAndRefreshUI_ACU();
 }
 function clearApiConfig_ACU() {
     Object.assign(settings_ACU.apiConfig, { url: '', apiKey: '', model: '', max_tokens: 120000, temperature: 0.9 });
     saveSettings_ACU();
     showToastr_ACU('info', 'API配置已清除！');
-    loadSettings_ACU();
+    loadSettingsAndRefreshUI_ACU();
 }
 // --- [新增] API预设管理函数 ---
 function saveApiPreset_ACU(presetName) {
@@ -33928,7 +33900,7 @@ function loadApiPreset_ACU(presetName) {
     settings_ACU.apiConfig = JSON.parse(JSON.stringify(preset.apiConfig));
     settings_ACU.tavernProfile = preset.tavernProfile;
     saveSettings_ACU();
-    loadSettings_ACU();
+    loadSettingsAndRefreshUI_ACU();
     showToastr_ACU('success', `已加载API预设 "${presetName}"。`);
     return true;
 }
@@ -34030,14 +34002,14 @@ function saveCustomCharCardPrompt_ACU() {
     settings_ACU.charCardPrompt = newPromptSegments;
     saveSettings_ACU();
     showToastr_ACU('success', '更新预设已保存！');
-    loadSettings_ACU(); // This will re-render from the saved data.
+    loadSettingsAndRefreshUI_ACU(); // This will re-render from the saved data.
 }
 function resetDefaultCharCardPrompt_ACU() {
     settings_ACU.charCardPrompt = DEFAULT_CHAR_CARD_PROMPT_ACU;
     saveSettings_ACU();
     showToastr_ACU('info', '更新预设已恢复为默认值！');
     // loadSettings will trigger renderPromptSegments_ACU which correctly handles the string default
-    loadSettings_ACU();
+    loadSettingsAndRefreshUI_ACU();
 }
 function loadCharCardPromptFromJson_ACU() {
     const input = document.createElement('input');
@@ -34148,7 +34120,7 @@ function saveAutoUpdateThreshold_ACU({ silent = false, skipReload = false } = {}
                 showToastr_ACU('success', '自动更新阈值已保存！');
         }
         if (!skipReload)
-            loadSettings_ACU();
+            loadSettingsAndRefreshUI_ACU();
     }
     else {
         if (!silent)
@@ -34169,7 +34141,7 @@ function saveAutoUpdateTokenThreshold_ACU({ silent = false, skipReload = false }
         if (!silent)
             showToastr_ACU('success', '自动更新Token阈值已保存！');
         if (!skipReload)
-            loadSettings_ACU();
+            loadSettingsAndRefreshUI_ACU();
     }
     else {
         if (!silent)
@@ -34191,7 +34163,7 @@ function saveTableMaxRetries_ACU({ silent = false, skipReload = false } = {}) {
         if (!silent)
             showToastr_ACU('success', '填表自动重试次数已保存！');
         if (!skipReload)
-            loadSettings_ACU();
+            loadSettingsAndRefreshUI_ACU();
     }
     else {
         if (!silent)
@@ -34212,7 +34184,7 @@ function saveAutoUpdateFrequency_ACU({ silent = false, skipReload = false } = {}
         if (!silent)
             showToastr_ACU('success', '自动更新频率已保存！');
         if (!skipReload)
-            loadSettings_ACU();
+            loadSettingsAndRefreshUI_ACU();
     }
     else {
         if (!silent)
@@ -34234,7 +34206,7 @@ function saveUpdateBatchSize_ACU({ silent = false, skipReload = false } = {}) {
         if (!silent)
             showToastr_ACU('success', '批处理大小已保存！');
         if (!skipReload)
-            loadSettings_ACU();
+            loadSettingsAndRefreshUI_ACU();
     }
     else {
         if (!silent)
@@ -34256,7 +34228,7 @@ function saveMaxConcurrentGroups_ACU({ silent = false, skipReload = false } = {}
         if (!silent)
             showToastr_ACU('success', '最大并发数已保存！');
         if (!skipReload)
-            loadSettings_ACU();
+            loadSettingsAndRefreshUI_ACU();
     }
     else {
         if (!silent)
@@ -34278,7 +34250,7 @@ function saveSkipUpdateFloors_ACU({ silent = false, skipReload = false } = {}) {
         if (!silent)
             showToastr_ACU('success', '跳过更新楼层已保存！');
         if (!skipReload)
-            loadSettings_ACU();
+            loadSettingsAndRefreshUI_ACU();
     }
     else {
         if (!silent)
@@ -34307,7 +34279,7 @@ function saveRetainRecentLayers_ACU({ silent = false, skipReload = false } = {})
         }
     }
     if (!skipReload)
-        loadSettings_ACU();
+        loadSettingsAndRefreshUI_ACU();
 }
 // [新增] 清理超出保留层数的旧本地数据（表格数据 + 剧情推进数据）
 // 按AI楼层计数，仅保留最近N层的数据，更早楼层的 TavernDB_ACU_* 和 qrf_plot 字段将被删除
@@ -34408,7 +34380,7 @@ function saveImportSplitSize_ACU() {
         settings_ACU.importSplitSize = newSize;
         saveSettings_ACU();
         showToastr_ACU('success', '导入分割大小已保存！');
-        loadSettings_ACU();
+        loadSettingsAndRefreshUI_ACU();
     }
     else {
         showToastr_ACU('warning', `导入分割大小 "${valStr}" 无效。请输入一个大于等于100的整数。恢复为: ${settings_ACU.importSplitSize}`);

@@ -163,14 +163,8 @@ export   function mainInitialize_ACU() {
 
              applyTemplateScopeForCurrentChat_ACU();
  
-            // 3. 刷新所有UI（包括可视化编辑器）和世界书
+            // 3. 刷新数据（UI 刷新由 presentation 层负责）
             await refreshMergedDataAndNotify_ACU();
-            if (typeof isPopupOpen_ACU === "function" && isPopupOpen_ACU()) {
-                loadTemplatePresetSelect_ACU({ keepGlobalValue: false });
-            }
-            
-            // [新增] 再次强制刷新可视化编辑器，确保万无一失
-            if (typeof notifyVisualizerRefresh_ACU === 'function') notifyVisualizerRefresh_ACU();
             
             // [新增] 再次强制刷新状态显示，确保UI同步
             if (typeof updateCardUpdateStatusDisplay_ACU === 'function') {

@@ -139,14 +139,14 @@
     }
     saveSettings_ACU();
     showToastr_ACU('success', 'API配置已保存！');
-    loadSettings_ACU();
+    loadSettingsAndRefreshUI_ACU();
   }
 
   function clearApiConfig_ACU() {
     Object.assign(settings_ACU.apiConfig, { url: '', apiKey: '', model: '', max_tokens: 120000, temperature: 0.9 });
     saveSettings_ACU();
     showToastr_ACU('info', 'API配置已清除！');
-    loadSettings_ACU();
+    loadSettingsAndRefreshUI_ACU();
   }
 
   // --- [新增] API预设管理函数 ---
@@ -191,7 +191,7 @@
     settings_ACU.tavernProfile = preset.tavernProfile;
     
     saveSettings_ACU();
-    loadSettings_ACU();
+    loadSettingsAndRefreshUI_ACU();
     showToastr_ACU('success', `已加载API预设 "${presetName}"。`);
     return true;
   }
@@ -305,7 +305,7 @@
     settings_ACU.charCardPrompt = newPromptSegments;
     saveSettings_ACU();
     showToastr_ACU('success', '更新预设已保存！');
-    loadSettings_ACU(); // This will re-render from the saved data.
+    loadSettingsAndRefreshUI_ACU(); // This will re-render from the saved data.
   }
 
   function resetDefaultCharCardPrompt_ACU() {
@@ -313,7 +313,7 @@
     saveSettings_ACU();
     showToastr_ACU('info', '更新预设已恢复为默认值！');
     // loadSettings will trigger renderPromptSegments_ACU which correctly handles the string default
-    loadSettings_ACU();
+    loadSettingsAndRefreshUI_ACU();
   }
 
   function loadCharCardPromptFromJson_ACU() {
@@ -427,7 +427,7 @@
         if (newT === 0) showToastr_ACU('success', '自动更新阈值已保存！标准表自动更新已禁用。');
         else showToastr_ACU('success', '自动更新阈值已保存！');
       }
-      if (!skipReload) loadSettings_ACU();
+      if (!skipReload) loadSettingsAndRefreshUI_ACU();
     } else {
       if (!silent) showToastr_ACU('warning', `阈值 "${valStr}" 无效。请输入一个大于等于0的整数。恢复为: ${settings_ACU.autoUpdateThreshold}`);
       $autoUpdateThresholdInput_ACU.val(settings_ACU.autoUpdateThreshold);
@@ -446,7 +446,7 @@
       settings_ACU.autoUpdateTokenThreshold = newT;
       saveSettings_ACU();
       if (!silent) showToastr_ACU('success', '自动更新Token阈值已保存！');
-      if (!skipReload) loadSettings_ACU();
+      if (!skipReload) loadSettingsAndRefreshUI_ACU();
     } else {
       if (!silent) showToastr_ACU('warning', `Token阈值 "${valStr}" 无效。请输入一个大于等于0的整数。恢复为: ${settings_ACU.autoUpdateTokenThreshold}`);
       $autoUpdateTokenThresholdInput_ACU.val(settings_ACU.autoUpdateTokenThreshold);
@@ -466,7 +466,7 @@
       settings_ACU.tableMaxRetries = newR;
       saveSettings_ACU();
       if (!silent) showToastr_ACU('success', '填表自动重试次数已保存！');
-      if (!skipReload) loadSettings_ACU();
+      if (!skipReload) loadSettingsAndRefreshUI_ACU();
     } else {
       if (!silent) showToastr_ACU('warning', `重试次数 "${valStr}" 无效。请输入1-10之间的整数。恢复为: ${settings_ACU.tableMaxRetries || 3}`);
       $tableMaxRetriesInput_ACU.val(settings_ACU.tableMaxRetries || 3);
@@ -485,7 +485,7 @@
       settings_ACU.autoUpdateFrequency = newF;
       saveSettings_ACU();
       if (!silent) showToastr_ACU('success', '自动更新频率已保存！');
-      if (!skipReload) loadSettings_ACU();
+      if (!skipReload) loadSettingsAndRefreshUI_ACU();
     } else {
       if (!silent) showToastr_ACU('warning', `更新频率 "${valStr}" 无效。请输入一个大于0的整数。恢复为: ${settings_ACU.autoUpdateFrequency}`);
       $autoUpdateFrequencyInput_ACU.val(settings_ACU.autoUpdateFrequency);
@@ -506,7 +506,7 @@
           settings_ACU.updateBatchSize = newBatchSize;
           saveSettings_ACU();
           if (!silent) showToastr_ACU('success', '批处理大小已保存！');
-          if (!skipReload) loadSettings_ACU();
+          if (!skipReload) loadSettingsAndRefreshUI_ACU();
       } else {
           if (!silent) showToastr_ACU('warning', `批处理大小 "${valStr}" 无效。请输入一个大于0的整数。恢复为: ${settings_ACU.updateBatchSize}`);
           $updateBatchSizeInput_ACU.val(settings_ACU.updateBatchSize);
@@ -526,7 +526,7 @@
           settings_ACU.maxConcurrentGroups = newLimit;
           saveSettings_ACU();
           if (!silent) showToastr_ACU('success', '最大并发数已保存！');
-          if (!skipReload) loadSettings_ACU();
+          if (!skipReload) loadSettingsAndRefreshUI_ACU();
       } else {
           if (!silent) showToastr_ACU('warning', `最大并发数 "${valStr}" 无效。请输入一个大于0的整数。恢复为: ${settings_ACU.maxConcurrentGroups || 1}`);
           $maxConcurrentGroupsInput_ACU.val(settings_ACU.maxConcurrentGroups || 1);
@@ -546,7 +546,7 @@
            settings_ACU.skipUpdateFloors = newSkip;
            saveSettings_ACU();
            if (!silent) showToastr_ACU('success', '跳过更新楼层已保存！');
-           if (!skipReload) loadSettings_ACU();
+           if (!skipReload) loadSettingsAndRefreshUI_ACU();
        } else {
            if (!silent) showToastr_ACU('warning', `跳过更新楼层 "${valStr}" 无效。请输入一个大于等于0的整数。恢复为: ${settings_ACU.skipUpdateFloors || 0}`);
            $skipUpdateFloorsInput_ACU.val(settings_ACU.skipUpdateFloors || 0);
@@ -573,7 +573,7 @@
                showToastr_ACU('success', `保留层数已保存：最近 ${newRetain} 层！`);
            }
        }
-       if (!skipReload) loadSettings_ACU();
+       if (!skipReload) loadSettingsAndRefreshUI_ACU();
    }
 
    // [新增] 清理超出保留层数的旧本地数据（表格数据 + 剧情推进数据）
@@ -686,7 +686,7 @@
           settings_ACU.importSplitSize = newSize;
           saveSettings_ACU();
           showToastr_ACU('success', '导入分割大小已保存！');
-          loadSettings_ACU();
+          loadSettingsAndRefreshUI_ACU();
       } else {
           showToastr_ACU('warning', `导入分割大小 "${valStr}" 无效。请输入一个大于等于100的整数。恢复为: ${settings_ACU.importSplitSize}`);
           $input.val(settings_ACU.importSplitSize);
