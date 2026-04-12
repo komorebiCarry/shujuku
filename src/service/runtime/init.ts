@@ -8,7 +8,7 @@ import { _injectTableRepoDeps } from '../../data/repositories/table-repo';
 
 import { DEFAULT_PLOT_SETTINGS_ACU } from '../../data/models/defaults-json.js';
 import { addAutoCardMenuItem_ACU } from '../../presentation/bootstrap/startup';
-import { newMessageDebounceTimer_ACU, _set_newMessageDebounceTimer_ACU} from '../../presentation/components/plot-editors';
+import { newMessageDebounceTimer_ACU, _set_newMessageDebounceTimer_ACU} from './state-manager';
 import { showToastr_ACU } from '../../presentation/theme/toast';
 import { attemptToLoadCoreApis_ACU } from '../../presentation/triggers/settings-ui-sync';
 import { handleChatCompletionReady_ACU, loadPresetAndCleanCharacterData_ACU, stopAutoLoop_ACU } from './helpers-remaining';
@@ -17,7 +17,7 @@ import { applyTemplateScopeForCurrentChat_ACU, loadSettings_ACU } from '../setti
 import { resetScriptStateForNewChat_ACU } from '../worldbook/injection-engine';
 import { loadAllChatMessages_ACU, refreshMergedDataAndNotify_ACU } from '../worldbook/pipeline';
 import { cleanChatName_ACU, hashUserInput_ACU, logDebug_ACU, logError_ACU, logWarn_ACU } from '../../shared/utils';
-import { markPlotIntercept_ACU, shouldSkipPlotIntercept_ACU } from '../../presentation/components/optimization-ui';
+import { markPlotIntercept_ACU, shouldSkipPlotIntercept_ACU } from '../plot/plot-logic';
 import { getSendTextareaValue_ACU, setSendTextareaValue_ACU } from '../../presentation/components/status-display';
 import { updateCardUpdateStatusDisplay_ACU } from '../../presentation/components/update-status-display';
 import { handleNewMessageDebounced_ACU } from '../../presentation/triggers/settings-ui-sync';

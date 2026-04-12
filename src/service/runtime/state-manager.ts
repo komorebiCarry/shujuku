@@ -276,3 +276,42 @@ export function _set_tempPlotToSave_ACU(v: any) { tempPlotToSave_ACU = v; }
 export function _set_pendingBaseStatePlacement_ACU(v: any) { pendingBaseStatePlacement_ACU = v; }
 export function _set_suppressWorldbookInjectionInGreeting_ACU(v: any) { suppressWorldbookInjectionInGreeting_ACU = v; }
 export function _set_independentTableStates_ACU(v: any) { independentTableStates_ACU = v; }
+
+// ═══ 从 plot-editors.ts 迁移的业务状态 ═══
+export let isAutoUpdatingCard_ACU = false;
+export let wasStoppedByUser_ACU = false;
+export let newMessageDebounceTimer_ACU: any = null;
+export let currentAbortController_ACU: any = null;
+export let activePlotEditorSettings_ACU: any = null;
+export let currentPlotTaskEditorId_ACU = '';
+export let currentEditablePlotPresetState_ACU: any = {
+  initialized: false,
+  presetName: '',
+  scope: 'resolved',
+  source: '',
+};
+export let plotTaskEditorAutoSaveTimer_ACU: any = null;
+export let activeAbortControllers_ACU = new Set<any>();
+export let manualExtraHint_ACU = '';
+
+export function trackAbortController_ACU(controller: any) {
+    if (controller) activeAbortControllers_ACU.add(controller);
+}
+export function untrackAbortController_ACU(controller: any) {
+    if (controller) activeAbortControllers_ACU.delete(controller);
+}
+export function abortAllActiveRequests_ACU() {
+    activeAbortControllers_ACU.forEach(controller => {
+        try { controller.abort(); } catch (e) {}
+    });
+    activeAbortControllers_ACU.clear();
+}
+
+export function _set_currentAbortController_ACU(v: any) { currentAbortController_ACU = v; }
+export function _set_isAutoUpdatingCard_ACU(v: any) { isAutoUpdatingCard_ACU = v; }
+export function _set_manualExtraHint_ACU(v: any) { manualExtraHint_ACU = v; }
+export function _set_wasStoppedByUser_ACU(v: any) { wasStoppedByUser_ACU = v; }
+export function _set_currentEditablePlotPresetState_ACU(v: any) { currentEditablePlotPresetState_ACU = v; }
+export function _set_activePlotEditorSettings_ACU(v: any) { activePlotEditorSettings_ACU = v; }
+export function _set_currentPlotTaskEditorId_ACU(v: any) { currentPlotTaskEditorId_ACU = v; }
+export function _set_newMessageDebounceTimer_ACU(v: any) { newMessageDebounceTimer_ACU = v; }

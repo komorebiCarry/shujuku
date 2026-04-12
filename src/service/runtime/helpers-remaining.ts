@@ -1,6 +1,6 @@
 import { DEFAULT_PLOT_SETTINGS_ACU } from '../../data/models/defaults-json.js';
 import { deriveTemplatePresetNameForImport_ACU } from '../../data/repositories/template-preset-repo';
-import { currentPlotTaskEditorId_ACU , _set_currentPlotTaskEditorId_ACU} from '../../presentation/components/plot-editors';
+import { currentPlotTaskEditorId_ACU , _set_currentPlotTaskEditorId_ACU} from './state-manager';
 import { ACU_TOAST_CATEGORY_ACU, showToastr_ACU } from '../../presentation/theme/toast';
 import { callApi_ACU, getApiConfigByPreset_ACU } from '../ai/api-call';
 import { SillyTavern_API_ACU, TavernHelper_API_ACU, toastr_API_ACU, TABLE_ORDER_FIELD_ACU, abortController_ACU, currentChatFileIdentifier_ACU, currentJsonTableData_ACU, getCurrentIsolationKey_ACU, independentTableStates_ACU, isProcessing_Plot_ACU, loopState_ACU, planningGuard_ACU, settings_ACU, suppressWorldbookInjectionInGreeting_ACU, tempPlotToSave_ACU , _set_isProcessing_Plot_ACU, _set_abortController_ACU, _set_tempPlotToSave_ACU, _set_suppressWorldbookInjectionInGreeting_ACU, _set_currentJsonTableData_ACU} from './state-manager';
@@ -9,7 +9,7 @@ import { buildChatPlotScopeStateFromSettings_ACU, buildChatSheetGuideDataFromTem
 import { buildCombinedWorldbookContentByStrategy_ACU, deleteAllGeneratedEntries_ACU } from '../worldbook/pipeline';
 import { topLevelWindow_ACU } from '../../shared/env';
 import { ensureSheetOrderNumbers_ACU, escapeRegExp_ACU, getTemplateSheetKeys_ACU, hashUserInput_ACU, isSummaryOrOutlineTable_ACU, logDebug_ACU, logError_ACU, logWarn_ACU, normalizeExcludeRules_ACU, normalizeExtractRules_ACU, normalizeNonNegativeInteger_ACU, normalizePositiveInteger_ACU, parseTableTemplateJson_ACU } from '../../shared/utils';
-import { applyPlotPresetToSettings_ACU, clearPlotPresetBindingForChat_ACU, ensureLoopPromptsArray_ACU, ensurePlotPresetBindingsStore_ACU, ensurePlotTasksCompat_ACU, findPlotPresetByName_ACU, getCurrentRuntimePlotPresetName_ACU, getPlotGlobalRevision_ACU, getPlotPresetBindingForChat_ACU, getPlotPromptContentByIdFromSettings_ACU, isDefaultPlotPresetSelection_ACU, normalizePlotPresetSelectionValue_ACU, normalizePlotTask_ACU, normalizePlotTasks_ACU, replaceCurrentPlotSettingsWithSnapshot_ACU, resetPlotSettingsToDefault_ACU, syncCurrentEditablePlotPresetState_ACU } from '../../presentation/components/optimization-ui';
+import { applyPlotPresetToSettings_ACU, clearPlotPresetBindingForChat_ACU, ensureLoopPromptsArray_ACU, ensurePlotPresetBindingsStore_ACU, ensurePlotTasksCompat_ACU, findPlotPresetByName_ACU, getCurrentRuntimePlotPresetName_ACU, getPlotGlobalRevision_ACU, getPlotPresetBindingForChat_ACU, getPlotPromptContentByIdFromSettings_ACU, isDefaultPlotPresetSelection_ACU, normalizePlotPresetSelectionValue_ACU, normalizePlotTask_ACU, normalizePlotTasks_ACU, replaceCurrentPlotSettingsWithSnapshot_ACU, resetPlotSettingsToDefault_ACU, syncCurrentEditablePlotPresetState_ACU } from '../plot/plot-logic';
 import { clickSendButton_ACU, setSendTextareaValue_ACU } from '../../presentation/components/status-display';
 import { upsertTemplatePreset_ACU } from '../../presentation/components/template-preset-ui';
 import { isEntryBlocked_ACU } from '../../presentation/components/worldbook-selector';

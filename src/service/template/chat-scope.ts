@@ -14,7 +14,7 @@ import { applyTemplateScopeForCurrentChat_ACU } from '../settings/settings-servi
 import { refreshMergedDataAndNotify_ACU } from '../worldbook/pipeline';
 import { safeJsonParse_ACU, safeJsonStringify_ACU } from '../../shared/json-helpers';
 import { applySheetOrderNumbers_ACU, cloneScopedConfigData_ACU, ensureSheetOrderNumbers_ACU, getChatFirstLayerMessage_ACU, hashUserInput_ACU, isSummaryOrOutlineTable_ACU, logDebug_ACU, logWarn_ACU, parseTableTemplateJson_ACU } from '../../shared/utils';
-import { ensureLoopPromptsArray_ACU, ensurePlotPromptsArray_ACU, ensurePlotTasksCompat_ACU, getPlotFinalDirectiveFromSource_ACU, normalizePlotPresetSelectionValue_ACU, setPlotPromptContentByIdForSettings_ACU } from '../../presentation/components/optimization-ui';
+import { ensureLoopPromptsArray_ACU, ensurePlotPromptsArray_ACU, ensurePlotTasksCompat_ACU, getPlotFinalDirectiveFromSource_ACU, normalizePlotPresetSelectionValue_ACU, setPlotPromptContentByIdForSettings_ACU } from '../plot/plot-logic';
 import { getTemplatePresetDisplayName_ACU, persistTemplateScopeSelectionState_ACU, upsertTemplatePreset_ACU } from '../../presentation/components/template-preset-ui';
 import { formatPlotScopeUpdatedAt_ACU } from '../../presentation/pages/popup-helpers';
 import { ensureExportConfigDefaults_ACU, ensureGlobalInjectionConfigDefaults_ACU } from '../worldbook/injection-engine';

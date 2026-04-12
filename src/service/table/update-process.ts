@@ -1,7 +1,7 @@
 // update-process.ts
 // 从 01_update_process.js 迁入
 
-import { abortAllActiveRequests_ACU, isAutoUpdatingCard_ACU, wasStoppedByUser_ACU, _set_isAutoUpdatingCard_ACU, _set_manualExtraHint_ACU, _set_wasStoppedByUser_ACU} from '../../presentation/components/plot-editors';
+import { abortAllActiveRequests_ACU, isAutoUpdatingCard_ACU, wasStoppedByUser_ACU, _set_isAutoUpdatingCard_ACU, _set_manualExtraHint_ACU, _set_wasStoppedByUser_ACU} from '../runtime/state-manager';
 import { getManualSelectionFromUI_ACU } from '../../presentation/components/table-selector';
 import { ACU_TOAST_CATEGORY_ACU, showToastr_ACU } from '../../presentation/theme/toast';
 import { callCustomOpenAI_ACU } from '../ai/prompt-builder';

@@ -1498,6 +1498,47 @@ $CONTENT
     function _set_pendingBaseStatePlacement_ACU(v) { pendingBaseStatePlacement_ACU = v; }
     function _set_suppressWorldbookInjectionInGreeting_ACU(v) { suppressWorldbookInjectionInGreeting_ACU = v; }
     function _set_independentTableStates_ACU(v) { independentTableStates_ACU = v; }
+    // ═══ 从 plot-editors.ts 迁移的业务状态 ═══
+    let isAutoUpdatingCard_ACU$1 = false;
+    let wasStoppedByUser_ACU$1 = false;
+    let newMessageDebounceTimer_ACU$1 = null;
+    let currentAbortController_ACU$1 = null;
+    let activePlotEditorSettings_ACU$1 = null;
+    let currentPlotTaskEditorId_ACU$1 = '';
+    let currentEditablePlotPresetState_ACU$1 = {
+        initialized: false,
+        presetName: '',
+        scope: 'resolved',
+        source: '',
+    };
+    let plotTaskEditorAutoSaveTimer_ACU$1 = null;
+    let activeAbortControllers_ACU$1 = new Set();
+    let manualExtraHint_ACU$1 = '';
+    function trackAbortController_ACU$1(controller) {
+        if (controller)
+            activeAbortControllers_ACU$1.add(controller);
+    }
+    function untrackAbortController_ACU$1(controller) {
+        if (controller)
+            activeAbortControllers_ACU$1.delete(controller);
+    }
+    function abortAllActiveRequests_ACU$1() {
+        activeAbortControllers_ACU$1.forEach(controller => {
+            try {
+                controller.abort();
+            }
+            catch (e) { }
+        });
+        activeAbortControllers_ACU$1.clear();
+    }
+    function _set_currentAbortController_ACU$1(v) { currentAbortController_ACU$1 = v; }
+    function _set_isAutoUpdatingCard_ACU$1(v) { isAutoUpdatingCard_ACU$1 = v; }
+    function _set_manualExtraHint_ACU$1(v) { manualExtraHint_ACU$1 = v; }
+    function _set_wasStoppedByUser_ACU$1(v) { wasStoppedByUser_ACU$1 = v; }
+    function _set_currentEditablePlotPresetState_ACU$1(v) { currentEditablePlotPresetState_ACU$1 = v; }
+    function _set_activePlotEditorSettings_ACU$1(v) { activePlotEditorSettings_ACU$1 = v; }
+    function _set_currentPlotTaskEditorId_ACU$1(v) { currentPlotTaskEditorId_ACU$1 = v; }
+    function _set_newMessageDebounceTimer_ACU$1(v) { newMessageDebounceTimer_ACU$1 = v; }
 
     // ═══════════════════════════════════════════════════════════════
     // data/repositories/template-preset-repo.ts — 模板预设纯数据工具函数
@@ -8689,7 +8730,7 @@ $CONTENT
         if (chatScopeState?.snapshot) {
             logDebug_ACU(`[剧情推进] Applying chat override snapshot for chat "${currentChatFileIdentifier_ACU || 'unknown'}".`);
             replaceCurrentPlotSettingsWithSnapshot_ACU(plotSettings, chatScopeState.snapshot);
-            _set_currentPlotTaskEditorId_ACU('');
+            _set_currentPlotTaskEditorId_ACU$1('');
             syncCurrentEditablePlotPresetState_ACU({ source: 'load_chat_override' });
             if (clearPlotPresetBindingForChat_ACU(currentChatFileIdentifier_ACU)) {
                 logDebug_ACU('[剧情推进] Cleared legacy plotPresetBindings entry because chat metadata override is authoritative.');
@@ -8727,7 +8768,7 @@ $CONTENT
                         logDebug_ACU(`[剧情推进] Migrating legacy default binding to chat snapshot for chat "${currentChatFileIdentifier_ACU || 'unknown'}".`);
                         resetPlotSettingsToDefault_ACU(plotSettings);
                     }
-                    _set_currentPlotTaskEditorId_ACU('');
+                    _set_currentPlotTaskEditorId_ACU$1('');
                     const migratedScopeState = buildChatPlotScopeStateFromSettings_ACU(plotSettings, {
                         presetName: legacyPresetName,
                         source: `legacy_binding_${legacyBinding.source || 'inherit'}`,
@@ -8764,7 +8805,7 @@ $CONTENT
             logDebug_ACU(`[剧情推进] Applying inherited default preset for chat "${currentChatFileIdentifier_ACU || 'unknown'}".`);
             resetPlotSettingsToDefault_ACU(plotSettings);
         }
-        _set_currentPlotTaskEditorId_ACU('');
+        _set_currentPlotTaskEditorId_ACU$1('');
         syncCurrentEditablePlotPresetState_ACU({ source: globalPresetToLoad ? 'load_inherit_global' : 'load_inherit_default' });
         saveSettings_ACU();
         logDebug_ACU('[剧情推进] Current chat is inheriting the active global plot preset state.');
@@ -10658,15 +10699,15 @@ $CONTENT
         const worldbookContent = await getCombinedWorldbookContent_ACU(worldbookScanText, {
             excludeImportTaggedEntries: excludeImportTaggedWorldbookEntries,
         });
-        const manualExtraHintText = manualExtraHint_ACU || '';
+        const manualExtraHintText = manualExtraHint_ACU$1 || '';
         // Return the dynamic parts for interpolation.
         return { tableDataText, messagesText, worldbookContent, manualExtraHint: manualExtraHintText };
     }
     async function callCustomOpenAI_ACU(dynamicContent, abortController = null, options = null) {
         // [新增] 创建一个新的 AbortController 用于本次请求
         const localAbortController = abortController || new AbortController();
-        _set_currentAbortController_ACU(localAbortController);
-        trackAbortController_ACU(localAbortController);
+        _set_currentAbortController_ACU$1(localAbortController);
+        trackAbortController_ACU$1(localAbortController);
         const abortSignal = localAbortController.signal;
         const skipProfileSwitch = !!options?.skipProfileSwitch;
         const forceDirectApi = !!options?.forceDirectApi;
@@ -10965,9 +11006,9 @@ $CONTENT
             }
         }
         finally {
-            untrackAbortController_ACU(localAbortController);
-            if (currentAbortController_ACU === localAbortController) {
-                _set_currentAbortController_ACU(null);
+            untrackAbortController_ACU$1(localAbortController);
+            if (currentAbortController_ACU$1 === localAbortController) {
+                _set_currentAbortController_ACU$1(null);
             }
         }
     }
@@ -12394,7 +12435,7 @@ $CONTENT
             return true;
         }
         const { targetSheetKeys, batchSize: specificBatchSize, requestOptions } = options;
-        _set_isAutoUpdatingCard_ACU(true);
+        _set_isAutoUpdatingCard_ACU$1(true);
         // [新增] 根据更新模式选择不同的批处理大小和阈值
         const isSummaryMode = (mode && (mode.includes('summary') || mode === 'manual_summary')) || false;
         // 优先使用传入的 specificBatchSize，否则使用全局批处理大小
@@ -12604,12 +12645,12 @@ $CONTENT
             }
         }
         // 自动合并总结检测已移至更高层级调用处
-        _set_isAutoUpdatingCard_ACU(false);
+        _set_isAutoUpdatingCard_ACU$1(false);
         return overallSuccess;
     }
     async function handleManualUpdate_ACU() {
         try {
-            if (isAutoUpdatingCard_ACU) {
+            if (isAutoUpdatingCard_ACU$1) {
                 showToastr_ACU('warning', '数据库更新正在进行中，请稍候...');
                 return;
             }
@@ -12677,7 +12718,7 @@ $CONTENT
                 updateGroups[groupKey].sheetKeys.push(sheetKey);
             });
             const groupKeys = Object.keys(updateGroups);
-            _set_isAutoUpdatingCard_ACU(true);
+            _set_isAutoUpdatingCard_ACU$1(true);
             for (const gKey of groupKeys) {
                 const group = updateGroups[gKey];
                 logDebug_ACU(`[Manual Parallel] Processing group update for groupId=${group.groupId}, sheets: ${group.sheetKeys.join(', ')}`);
@@ -12687,14 +12728,14 @@ $CONTENT
                     batchSize: group.batchSize
                 });
                 if (!success) {
-                    _set_isAutoUpdatingCard_ACU(false);
+                    _set_isAutoUpdatingCard_ACU$1(false);
                     showToastr_ACU('error', '手动更新失败或被终止。', { acuToastCategory: ACU_TOAST_CATEGORY_ACU.ERROR });
                     return;
                 }
                 await loadAllChatMessages_ACU();
                 await refreshMergedDataAndNotify_ACU();
             }
-            _set_isAutoUpdatingCard_ACU(false);
+            _set_isAutoUpdatingCard_ACU$1(false);
             showToastr_ACU('success', '手动更新完成！', { acuToastCategory: ACU_TOAST_CATEGORY_ACU.TABLE_OK });
             if (typeof updateCardUpdateStatusDisplay_ACU === 'function') {
                 updateCardUpdateStatusDisplay_ACU();
@@ -12708,8 +12749,8 @@ $CONTENT
             }
         }
         finally {
-            _set_manualExtraHint_ACU('');
-            _set_isAutoUpdatingCard_ACU(false);
+            _set_manualExtraHint_ACU$1('');
+            _set_isAutoUpdatingCard_ACU$1(false);
             if (typeof resetManualUpdateButton_ACU === 'function')
                 resetManualUpdateButton_ACU();
         }
@@ -12748,12 +12789,12 @@ $CONTENT
                     onShown: function () {
                         if (typeof bindTableFillStopButton_ACU === 'function') {
                             bindTableFillStopButton_ACU(localAbortController, () => {
-                                _set_wasStoppedByUser_ACU(true);
-                                abortAllActiveRequests_ACU();
-                                _set_isAutoUpdatingCard_ACU(false);
+                                _set_wasStoppedByUser_ACU$1(true);
+                                abortAllActiveRequests_ACU$1();
+                                _set_isAutoUpdatingCard_ACU$1(false);
                                 statusUpdate('操作已终止。');
                                 showToastr_ACU('warning', '填表操作已由用户终止。');
-                                setTimeout(() => { _set_wasStoppedByUser_ACU(false); }, 3000);
+                                setTimeout(() => { _set_wasStoppedByUser_ACU$1(false); }, 3000);
                             });
                         }
                     }
@@ -12770,7 +12811,7 @@ $CONTENT
                 throw new Error('无法准备AI输入，数据库未加载。');
             for (let attempt = 1; attempt <= maxRetries; attempt++) {
                 // [修复] 检查用户是否已经终止操作，如果是则立即退出重试循环
-                if (wasStoppedByUser_ACU) {
+                if (wasStoppedByUser_ACU$1) {
                     logDebug_ACU('ACU: User abort detected, exiting retry loop.');
                     throw new DOMException('Aborted by user', 'AbortError');
                 }
@@ -12784,7 +12825,7 @@ $CONTENT
                     // 1. API调用
                     aiResponse = await callCustomOpenAI_ACU(dynamicContent, localAbortController, requestOptions);
                     // 检查用户中止
-                    if (localAbortController.signal.aborted || wasStoppedByUser_ACU) {
+                    if (localAbortController.signal.aborted || wasStoppedByUser_ACU$1) {
                         throw new DOMException('Aborted by user', 'AbortError');
                     }
                     // 2. [新增] 空回检测：检查AI回复长度是否低于阈值
@@ -12823,7 +12864,7 @@ $CONTENT
                     attemptError = error;
                     logWarn_ACU(`第 ${attempt} 次尝试失败: ${error.message}`);
                     // 用户中止：直接抛出，不重试
-                    if (error?.name === 'AbortError' || String(error?.message || '').toLowerCase().includes('aborted') || wasStoppedByUser_ACU) {
+                    if (error?.name === 'AbortError' || String(error?.message || '').toLowerCase().includes('aborted') || wasStoppedByUser_ACU$1) {
                         throw new DOMException('Aborted by user', 'AbortError');
                     }
                     // 如果不是最后一次尝试，等待5秒后重试
@@ -26515,11 +26556,11 @@ insertRow(1, ["时间2", "大纲事件2...", "关键词"]);
         // [新增] 外部触发增量更新
         triggerUpdate: async function () {
             logDebug_ACU('External trigger for database update received.');
-            if (isAutoUpdatingCard_ACU) {
+            if (isAutoUpdatingCard_ACU$1) {
                 showToastr_ACU('info', '已有更新任务在后台进行中。', { acuToastCategory: ACU_TOAST_CATEGORY_ACU.MANUAL_TABLE });
                 return false;
             }
-            _set_isAutoUpdatingCard_ACU(true);
+            _set_isAutoUpdatingCard_ACU$1(true);
             // 使用与手动更新相同的逻辑
             await loadAllChatMessages_ACU(); // Keep for worldbook context
             const chatHistory = SillyTavern_API_ACU.chat || []; // Use the live chat data for slicing
@@ -26547,7 +26588,7 @@ insertRow(1, ["时间2", "大纲事件2...", "关键词"]);
             }
             const messagesToProcess = chatHistory.slice(sliceStartIndex);
             const success = await proceedWithCardUpdate_ACU$1(messagesToProcess);
-            _set_isAutoUpdatingCard_ACU(false);
+            _set_isAutoUpdatingCard_ACU$1(false);
             return success;
         },
         // =========================
@@ -31472,6 +31513,17 @@ insertRow(1, ["时间2", "大纲事件2...", "关键词"]);
         logDebug_ACU('[剧情推进] 已恢复AI指令预设（charCardPrompt）。');
     }
 
+    /**
+     * service/plot/plot-logic.ts — 剧情推进纯逻辑函数
+     *
+     * 从 presentation/components/optimization-ui.ts 中提取的纯计算/数据处理函数。
+     * 这些函数不操作 DOM，可以被 service 层和 presentation 层共同引用。
+     *
+     * 注意：此文件只包含纯逻辑，不 import presentation 层任何模块。
+     */
+    // Re-export 所有纯逻辑函数（当前先做 re-export 桥接，后续逐步搬移函数体）
+    // 这样 service 层可以立即改为从此处 import，不需要等函数体全部搬完
+
     // ═══════════════════════════════════════════════════════════════
     // service/settings/settings-service.ts — 设置加载/保存编排
     // 从 04_shared_helpers.js 迁入
@@ -34792,8 +34844,8 @@ insertRow(1, ["时间2", "大纲事件2...", "关键词"]);
                     if (SillyTavern_API_ACU.eventTypes[evName]) {
                         SillyTavern_API_ACU.eventSource.on(SillyTavern_API_ACU.eventTypes[evName], async (data) => {
                             logDebug_ACU(`ACU ${evName} event detected. Triggering data reload and merge from chat history.`);
-                            clearTimeout(newMessageDebounceTimer_ACU);
-                            _set_newMessageDebounceTimer_ACU(setTimeout(async () => {
+                            clearTimeout(newMessageDebounceTimer_ACU$1);
+                            _set_newMessageDebounceTimer_ACU$1(setTimeout(async () => {
                                 // [修复] 重新合并数据并更新UI和世界书
                                 await refreshMergedDataAndNotify_ACU();
                             }, 500)); // 使用防抖处理快速滑动

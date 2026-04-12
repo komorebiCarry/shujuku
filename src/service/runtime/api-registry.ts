@@ -5,7 +5,7 @@ import { deriveTemplatePresetNameForImport_ACU, normalizeTemplatePresetSelection
 import { openAutoCardPopup_ACU } from '../../presentation/pages/main-popup';
 import { openNewVisualizer_ACU } from '../../presentation/pages/visualizer';
 import { handleTxtImportAndSplit_ACU } from '../../presentation/components/import-status-ui';
-import { isAutoUpdatingCard_ACU, _set_isAutoUpdatingCard_ACU } from '../../presentation/components/plot-editors';
+import { isAutoUpdatingCard_ACU, _set_isAutoUpdatingCard_ACU } from './state-manager';
 import { ACU_TOAST_CATEGORY_ACU, showToastr_ACU } from '../../presentation/theme/toast';
 import { getApiConfigByPreset_ACU } from '../ai/api-call';
 import { handleApiResponse_ACU } from '../ai/prompt-builder';
@@ -20,7 +20,8 @@ import { topLevelWindow_ACU } from '../../shared/env';
 import { isSummaryOrOutlineTable_ACU, logDebug_ACU, logError_ACU, logWarn_ACU } from '../../shared/utils';
 import { saveIndependentTableToChatHistory_ACU } from '../../data/repositories/table-repo';
 import { handleInjectSplitEntriesFull_ACU, handleInjectSplitEntriesStandard_ACU, handleInjectSplitEntriesSummary_ACU } from '../../presentation/components/import-status-ui';
-import { getCurrentRuntimePlotPresetName_ACU, normalizePlotPresetExcludeRules_ACU, reoptimizeMessage_ACU, switchCurrentChatPlotPreset_ACU } from '../../presentation/components/optimization-ui';
+import { getCurrentRuntimePlotPresetName_ACU, normalizePlotPresetExcludeRules_ACU, switchCurrentChatPlotPreset_ACU } from '../plot/plot-logic';
+import { reoptimizeMessage_ACU } from '../../presentation/components/optimization-ui';
 import { applyTemplatePresetToCurrent_ACU, applyTemplateSnapshotToScope_ACU, listTemplatePresetNames_ACU, normalizeTemplateOperationScope_ACU, parseImportedTemplateData_ACU, refreshTemplatePresetSelectInUI_ACU, upsertTemplatePreset_ACU } from '../../presentation/components/template-preset-ui';
 import { exportCurrentJsonData_ACU, exportTableTemplate_ACU, importTableTemplate_ACU, overrideLatestLayerWithTemplate_ACU, resetAllToDefaults_ACU, resetTableTemplate_ACU } from '../../presentation/triggers/data-admin-ui';
 import { deleteApiPreset_ACU, loadApiPreset_ACU, saveApiPreset_ACU } from '../../presentation/triggers/settings-ui-sync';
