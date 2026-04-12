@@ -306,7 +306,7 @@
 - [x] T162 [P] 检查并清理所有 `// TODO`、`// FIXME`、`// [已迁移到 ...]` 注释（50 处已清除）
 - [ ] T163 [P] 验证 window.AutoCardUpdaterAPI 的 80+ 个方法全部可通过外部调用（需手动测试）
 - [x] T164 确认最终目录结构中每个文件只属于一个架构层级（shared/data/service/presentation 四层，无交叉）
-- [x] T165 [P] 运行 `tsc --noEmit` 检查：6 个语法错误（startup.ts/data-admin-ui.ts/update-trigger.ts/prompt-builder.ts），均为迁移时的边界截断，不影响 rollup 产物（rollup 用 transpileModule 单文件编译，不做全局类型检查）
+- [x] T165 [P] 运行 `tsc --noEmit` 检查：6 个语法错误已全部修复（迁移截断导致的函数不完整/JSDoc 未闭合），tsc 零语法错误
 - [x] T166 更新 `specs/001-three-layer-refactor/` 下所有文档的完成状态
 - [x] T167 与初版设计 `plans/three_layer_refactor_plan.md` §2.2 逐一核对，44 个目标模块全部到位（部分合并/更名，无缺失）
 
