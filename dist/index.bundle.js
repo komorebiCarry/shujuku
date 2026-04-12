@@ -1899,25 +1899,7 @@ function ensureProfileExists_ACU(code, { seedFromCurrent = true } = {}) {
         }
     }
 }
-async function switchIsolationProfile_ACU(newCodeRaw) {
-    const newCode = normalizeIsolationCode_ACU(newCodeRaw);
-    const oldCode = normalizeIsolationCode_ACU(settings_ACU?.dataIsolationCode || '');
-    try {
-        saveSettings_ACU();
-    }
-    catch (e) { }
-    loadGlobalMeta_ACU();
-    if (oldCode)
-        addDataIsolationHistory_ACU(oldCode, { save: false });
-    if (newCode)
-        addDataIsolationHistory_ACU(newCode, { save: false });
-    globalMeta_ACU.activeIsolationCode = newCode;
-    normalizeDataIsolationHistory_ACU(globalMeta_ACU.isolationCodeList);
-    saveGlobalMeta_ACU();
-    ensureProfileExists_ACU(newCode, { seedFromCurrent: true });
-    loadSettings_ACU();
-    applyTemplateScopeForCurrentChat_ACU({ isolationKey: newCode });
-}
+// [已移到 service/settings/settings-service.ts] switchIsolationProfile_ACU（业务编排）
 
 
 // ── [module] src/data/repositories/template-preset-repo.ts ──
@@ -1947,7 +1929,7 @@ function persistCurrentTemplatePresetName_ACU(presetName, { save = true } = {}) 
     const normalizedPresetName = normalizeTemplatePresetSelectionValue_ACU(presetName);
     settings_ACU.currentTemplatePresetName = normalizedPresetName;
     if (save) {
-        saveSettings_ACU();
+        persistSettingsToStorage_ACU();
     }
     return normalizedPresetName;
 }
@@ -2308,41 +2290,24 @@ async function loadOrCreateJsonTableFromChatHistory_ACU() {
 // 属于 service 层（业务编排），不是纯 data 层。
 // ═══════════════════════════════════════════════════════════════
 function saveSettings_ACU() {
+    // 数据层：纯存储持久化
+    persistSettingsToStorage_ACU();
+    // service 层补充：存储状态检查 + UI 通知
     try {
         const store = getConfigStorage_ACU();
-        const code = normalizeIsolationCode_ACU(settings_ACU?.dataIsolationCode || globalMeta_ACU?.activeIsolationCode || '');
-        // 同步 globalMeta 的当前标识（避免刷新后回到旧标识）
-        if (globalMeta_ACU && typeof globalMeta_ACU === 'object') {
-            globalMeta_ACU.activeIsolationCode = code;
-            if (code)
-                addDataIsolationHistory_ACU(code, { save: false });
-            normalizeDataIsolationHistory_ACU(globalMeta_ACU.isolationCodeList);
-            saveGlobalMeta_ACU();
-        }
-        const payloadObj = sanitizeSettingsForProfileSave_ACU(settings_ACU);
-        payloadObj.dataIsolationCode = code;
-        const payload = JSON.stringify(payloadObj);
-        // [Profile] 按标识码保存"整套设置"
-        store.setItem(getProfileSettingsKey_ACU(code), payload);
-        if (store && store._isTavern) {
-            logDebug_ACU(`[Profile] Settings saved for code: ${code || '(default)'}`);
-        }
-        else {
+        if (store && !store._isTavern) {
             if (isIndexedDbAvailable_ACU()) {
-                console.warn(`[${SCRIPT_ID_PREFIX_ACU}] 未连接到酒馆服务端设置：已保存到 IndexedDB（仅本浏览器可用，跨浏览器不同步）。请检查顶层 bridge 是否注入成功。`);
                 try {
                     showToastr_ACU('info', '当前未连接酒馆设置：已保存到 IndexedDB（仅本浏览器可用）。', { timeOut: 6000 });
                 }
                 catch (e) { }
             }
             else {
-                console.warn(`[${SCRIPT_ID_PREFIX_ACU}] 未连接到可持久化的 extension_settings，且 IndexedDB 不可用：本次保存仅在内存中生效，刷新会丢失。`);
                 try {
                     showToastr_ACU('warning', '⚠️ 当前未连接酒馆设置且 IndexedDB 不可用，本次修改刷新后会丢失。', { timeOut: 8000 });
                 }
                 catch (e) { }
             }
-            // 异步再尝试一次初始化（不阻塞 UI）
             void initTavernSettingsBridge_ACU();
         }
     }
@@ -2757,6 +2722,23 @@ function applyTemplateScopeForCurrentChat_ACU({ isolationKey = getCurrentIsolati
         isolationKey: normalizedKey,
         presetName: getCurrentTemplatePresetName_ACU({ requireExisting: false }),
     };
+}
+// [从 data/repositories/isolation-repo.ts 移入] 切换隔离 Profile（业务编排，不属于 data 层）
+async function switchIsolationProfile_ACU(newCodeRaw) {
+    const newCode = normalizeIsolationCode_ACU(newCodeRaw);
+    const oldCode = normalizeIsolationCode_ACU(settings_ACU?.dataIsolationCode || '');
+    persistSettingsToStorage_ACU();
+    loadGlobalMeta_ACU();
+    if (oldCode)
+        addDataIsolationHistory_ACU(oldCode, { save: false });
+    if (newCode)
+        addDataIsolationHistory_ACU(newCode, { save: false });
+    globalMeta_ACU.activeIsolationCode = newCode;
+    normalizeDataIsolationHistory_ACU(globalMeta_ACU.isolationCodeList);
+    saveGlobalMeta_ACU();
+    ensureProfileExists_ACU(newCode, { seedFromCurrent: true });
+    loadSettings_ACU();
+    applyTemplateScopeForCurrentChat_ACU({ isolationKey: newCode });
 }
 
 

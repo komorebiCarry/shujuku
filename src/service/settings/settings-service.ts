@@ -7,32 +7,18 @@
 // ═══════════════════════════════════════════════════════════════
 
 export function saveSettings_ACU() {
+  // 数据层：纯存储持久化
+  persistSettingsToStorage_ACU();
+
+  // service 层补充：存储状态检查 + UI 通知
   try {
       const store = (getConfigStorage_ACU as any)();
-      const code = (normalizeIsolationCode_ACU as any)((settings_ACU as any)?.dataIsolationCode || (globalMeta_ACU as any)?.activeIsolationCode || '');
-      // 同步 globalMeta 的当前标识（避免刷新后回到旧标识）
-      if (globalMeta_ACU && typeof globalMeta_ACU === 'object') {
-          (globalMeta_ACU as any).activeIsolationCode = code;
-          if (code) (addDataIsolationHistory_ACU as any)(code, { save: false });
-          (normalizeDataIsolationHistory_ACU as any)((globalMeta_ACU as any).isolationCodeList);
-          (saveGlobalMeta_ACU as any)();
-      }
-      const payloadObj = (sanitizeSettingsForProfileSave_ACU as any)(settings_ACU);
-      payloadObj.dataIsolationCode = code;
-      const payload = JSON.stringify(payloadObj);
-      // [Profile] 按标识码保存"整套设置"
-      store.setItem((getProfileSettingsKey_ACU as any)(code), payload);
-      if (store && store._isTavern) {
-          (logDebug_ACU as any)(`[Profile] Settings saved for code: ${code || '(default)'}`);
-      } else {
+      if (store && !store._isTavern) {
           if ((isIndexedDbAvailable_ACU as any)()) {
-              console.warn(`[${SCRIPT_ID_PREFIX_ACU}] 未连接到酒馆服务端设置：已保存到 IndexedDB（仅本浏览器可用，跨浏览器不同步）。请检查顶层 bridge 是否注入成功。`);
               try { (showToastr_ACU as any)('info', '当前未连接酒馆设置：已保存到 IndexedDB（仅本浏览器可用）。', { timeOut: 6000 }); } catch (e) {}
           } else {
-              console.warn(`[${SCRIPT_ID_PREFIX_ACU}] 未连接到可持久化的 extension_settings，且 IndexedDB 不可用：本次保存仅在内存中生效，刷新会丢失。`);
               try { (showToastr_ACU as any)('warning', '⚠️ 当前未连接酒馆设置且 IndexedDB 不可用，本次修改刷新后会丢失。', { timeOut: 8000 }); } catch (e) {}
           }
-          // 异步再尝试一次初始化（不阻塞 UI）
           void (initTavernSettingsBridge_ACU as any)();
       }
   } catch (error) {
@@ -448,3 +434,23 @@ export   function applyTemplateScopeForCurrentChat_ACU({ isolationKey = getCurre
           presetName: getCurrentTemplatePresetName_ACU({ requireExisting: false }),
       };
   }
+
+// [从 data/repositories/isolation-repo.ts 移入] 切换隔离 Profile（业务编排，不属于 data 层）
+export async function switchIsolationProfile_ACU(newCodeRaw: string): Promise<void> {
+    const newCode = (normalizeIsolationCode_ACU as any)(newCodeRaw);
+    const oldCode = (normalizeIsolationCode_ACU as any)((settings_ACU as any)?.dataIsolationCode || '');
+
+    persistSettingsToStorage_ACU();
+
+    (loadGlobalMeta_ACU as any)();
+    if (oldCode) (addDataIsolationHistory_ACU as any)(oldCode, { save: false });
+    if (newCode) (addDataIsolationHistory_ACU as any)(newCode, { save: false });
+    (globalMeta_ACU as any).activeIsolationCode = newCode;
+    (normalizeDataIsolationHistory_ACU as any)((globalMeta_ACU as any).isolationCodeList);
+    (saveGlobalMeta_ACU as any)();
+
+    (ensureProfileExists_ACU as any)(newCode, { seedFromCurrent: true });
+
+    loadSettings_ACU();
+    (applyTemplateScopeForCurrentChat_ACU as any)({ isolationKey: newCode });
+}

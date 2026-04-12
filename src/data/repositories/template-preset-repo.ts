@@ -26,7 +26,7 @@ export function persistCurrentTemplatePresetName_ACU(presetName: any, { save = t
     const normalizedPresetName = normalizeTemplatePresetSelectionValue_ACU(presetName);
     (settings_ACU as any).currentTemplatePresetName = normalizedPresetName;
     if (save) {
-        (saveSettings_ACU as any)();
+        (persistSettingsToStorage_ACU as any)();
     }
     return normalizedPresetName;
 }

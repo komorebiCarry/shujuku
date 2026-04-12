@@ -1,9 +1,10 @@
 /**
  * data/repositories/settings-repo.ts — 设置读写 Repository
  *
- * 对应初版设计 plans/three_layer_refactor_plan.md §3.1 的 settings-repo.js。
- * 当前阶段：re-export 门面，实际读写逻辑在 service/settings/settings-service.ts 中。
- * 后续去掉 IIFE 后，将从 settings-service 拆出纯数据读写部分到此处。
+ * 提供 data 层的设置持久化接口。
+ * 纯 CRUD：persistSettingsToStorage_ACU (写) 在 data/storage/config-storage.ts
+ * 业务编排：saveSettings_ACU / loadSettings_ACU 在 service/settings/settings-service.ts
  */
 
-export { saveSettings_ACU, loadSettings_ACU } from '../../service/settings/settings-service';
+// data 层不再 re-export service 层函数
+// 如需业务级 save/load，调用方应直接使用 service 层的 saveSettings_ACU / loadSettings_ACU

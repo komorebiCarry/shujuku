@@ -67,21 +67,4 @@ export function ensureProfileExists_ACU(code: string, { seedFromCurrent = true }
     }
 }
 
-export async function switchIsolationProfile_ACU(newCodeRaw: string): Promise<void> {
-    const newCode = (normalizeIsolationCode_ACU as any)(newCodeRaw);
-    const oldCode = (normalizeIsolationCode_ACU as any)((settings_ACU as any)?.dataIsolationCode || '');
-
-    try { (saveSettings_ACU as any)(); } catch (e) {}
-
-    (loadGlobalMeta_ACU as any)();
-    if (oldCode) addDataIsolationHistory_ACU(oldCode, { save: false });
-    if (newCode) addDataIsolationHistory_ACU(newCode, { save: false });
-    (globalMeta_ACU as any).activeIsolationCode = newCode;
-    normalizeDataIsolationHistory_ACU((globalMeta_ACU as any).isolationCodeList);
-    (saveGlobalMeta_ACU as any)();
-
-    ensureProfileExists_ACU(newCode, { seedFromCurrent: true });
-
-    (loadSettings_ACU as any)();
-    (applyTemplateScopeForCurrentChat_ACU as any)({ isolationKey: newCode });
-}
+// [已移到 service/settings/settings-service.ts] switchIsolationProfile_ACU（业务编排）
