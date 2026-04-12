@@ -135,3 +135,8 @@
       $popupInstance_ACU.find(`input[name="${SCRIPT_ID_PREFIX_ACU}-api-mode"][value="${s.apiMode}"]`).prop('checked', true);
       if (typeof updateApiModeView_ACU === 'function') updateApiModeView_ACU(s.apiMode);
   }
+
+  // [T180] 模拟点击酒馆发送按钮
+  function clickSendButton_ACU() {
+    try { jQuery_API_ACU('#send_but').click(); } catch(e) {}
+  }

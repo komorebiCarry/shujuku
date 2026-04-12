@@ -93,6 +93,7 @@ const modules = [
   { path: 'src/presentation/components/import-status-ui.ts' },
   { path: 'src/presentation/triggers/update-trigger.ts' },
   { path: 'src/presentation/triggers/data-admin-ui.ts' },
+  { path: 'src/presentation/triggers/settings-ui-sync.ts' },
 ];
 
 // ═══════════════════════════════════════════════════════════════
