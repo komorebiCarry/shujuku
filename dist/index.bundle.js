@@ -4935,18 +4935,15 @@ async function handleManualUpdate_ACU() {
     finally {
         manualExtraHint_ACU = '';
         isAutoUpdatingCard_ACU = false;
-        if ($manualUpdateCardButton_ACU) {
-            $manualUpdateCardButton_ACU.prop('disabled', false).text('立即手动更新');
-        }
+        if (typeof resetManualUpdateButton_ACU === 'function')
+            resetManualUpdateButton_ACU();
     }
 }
 async function proceedWithCardUpdate_ACU(messagesToUse, batchToastMessage = '正在填表，请稍候...', saveTargetIndex = -1, isImportMode = false, updateMode = 'standard', isSilentMode = false, targetSheetKeys = null, requestOptions = null) {
-    if (!$statusMessageSpan_ACU && $popupInstance_ACU)
-        $statusMessageSpan_ACU = $popupInstance_ACU.find(`#${SCRIPT_ID_PREFIX_ACU}-status-message`);
+    // UI 状态更新通过 presentation 层函数
     const statusUpdate = (text) => {
-        // [新增] 静默模式下不更新状态消息
-        if (!isSilentMode && $statusMessageSpan_ACU)
-            $statusMessageSpan_ACU.text(text);
+        if (!isSilentMode && typeof updateTableFillStatus_ACU === 'function')
+            updateTableFillStatus_ACU(text);
     };
     const localAbortController = new AbortController();
     let loadingToast = null;
@@ -4974,43 +4971,15 @@ async function proceedWithCardUpdate_ACU(messagesToUse, batchToastMessage = '正
                 tapToDismiss: false,
                 acuToastCategory: ACU_TOAST_CATEGORY_ACU.MANUAL_TABLE,
                 onShown: function () {
-                    const $stopButton = jQuery_API_ACU('#acu-stop-update-btn');
-                    if ($stopButton.length) {
-                        $stopButton.off('click.acu_stop').on('click.acu_stop', function (e) {
-                            e.stopPropagation();
-                            e.preventDefault();
-                            // [修复] 设置标志，告知事件监听器跳过因终止操作而触发的下一次更新检查
-                            // 但只跳过一次，之后自动恢复正常
+                    if (typeof bindTableFillStopButton_ACU === 'function') {
+                        bindTableFillStopButton_ACU(localAbortController, () => {
                             wasStoppedByUser_ACU = true;
-                            // 1. Abort network requests
                             abortAllActiveRequests_ACU();
-                            // [修复] 不再调用 SillyTavern_API_ACU.stopGeneration()，
-                            // 因为这会停止酒馆的生成，但填表是独立的API调用，不应影响酒馆
-                            // if (SillyTavern_API_ACU && typeof SillyTavern_API_ACU.stopGeneration === 'function') {
-                            //     SillyTavern_API_ACU.stopGeneration();
-                            //     logDebug_ACU('Called SillyTavern_API_ACU.stopGeneration()');
-                            // }
-                            // 2. Immediately reset UI state
                             isAutoUpdatingCard_ACU = false;
-                            if ($manualUpdateCardButton_ACU) {
-                                $manualUpdateCardButton_ACU.prop('disabled', false).text('立即手动更新');
-                            }
-                            if ($statusMessageSpan_ACU) {
-                                $statusMessageSpan_ACU.text('操作已终止。');
-                            }
-                            // 3. Remove toast and show confirmation
-                            jQuery_API_ACU(this).closest('.toast').remove();
+                            statusUpdate('操作已终止。');
                             showToastr_ACU('warning', '填表操作已由用户终止。');
-                            // [修复] 延迟重置标志，确保只跳过因本次终止操作触发的事件
-                            // 而不会影响后续正常的自动更新
-                            setTimeout(() => {
-                                wasStoppedByUser_ACU = false;
-                                logDebug_ACU('ACU: wasStoppedByUser_ACU reset after abort timeout.');
-                            }, 3000);
+                            setTimeout(() => { wasStoppedByUser_ACU = false; }, 3000);
                         });
-                    }
-                    else {
-                        logError_ACU('Could not find the stop button in the toast.');
                     }
                 }
             });
@@ -5208,10 +5177,6 @@ async function proceedWithCardUpdate_ACU(messagesToUse, batchToastMessage = '正
         }
         // currentAbortController_ACU 由 callCustomOpenAI_ACU 内部管理
         // [修改] 不在此处重置 isAutoUpdatingCard_ACU 和按钮状态，交由上层调用函数管理
-        // isAutoUpdatingCard_ACU = false; 
-        // if ($manualUpdateCardButton_ACU) {
-        //     $manualUpdateCardButton_ACU.prop('disabled', false).text('立即手动更新');
-        // }
     }
 }
 async function saveCurrentDataForTable_ACU(sheetKey) {
@@ -21782,6 +21747,35 @@ function notifyVisualizerRefresh_ACU() {
         jQuery_API_ACU(document).trigger('acu-visualizer-refresh-data');
     }
     catch (e) { }
+}
+// [T173] 填表状态消息更新
+function updateTableFillStatus_ACU(text) {
+    if (!$statusMessageSpan_ACU && $popupInstance_ACU)
+        $statusMessageSpan_ACU = $popupInstance_ACU.find(`#${SCRIPT_ID_PREFIX_ACU}-status-message`);
+    if ($statusMessageSpan_ACU)
+        $statusMessageSpan_ACU.text(text);
+}
+// [T173] 填表停止按钮绑定
+function bindTableFillStopButton_ACU(localAbortController, onStop) {
+    const $stopButton = jQuery_API_ACU('#acu-stop-update-btn');
+    if ($stopButton.length) {
+        $stopButton.off('click.acu_stop').on('click.acu_stop', function (e) {
+            e.stopPropagation();
+            e.preventDefault();
+            if ($manualUpdateCardButton_ACU) {
+                $manualUpdateCardButton_ACU.prop('disabled', false).text('立即手动更新');
+            }
+            jQuery_API_ACU(this).closest('.toast').remove();
+            if (typeof onStop === 'function')
+                onStop();
+        });
+    }
+}
+// [T173] 重置手动更新按钮状态
+function resetManualUpdateButton_ACU() {
+    if ($manualUpdateCardButton_ACU) {
+        $manualUpdateCardButton_ACU.prop('disabled', false).text('立即手动更新');
+    }
 }
 
 

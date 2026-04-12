@@ -4,3 +4,33 @@
   function notifyVisualizerRefresh_ACU() {
     try { jQuery_API_ACU(document).trigger('acu-visualizer-refresh-data'); } catch(e) {}
   }
+
+  // [T173] 填表状态消息更新
+  function updateTableFillStatus_ACU(text) {
+    if (!$statusMessageSpan_ACU && $popupInstance_ACU)
+        $statusMessageSpan_ACU = $popupInstance_ACU.find(`#${SCRIPT_ID_PREFIX_ACU}-status-message`);
+    if ($statusMessageSpan_ACU) $statusMessageSpan_ACU.text(text);
+  }
+
+  // [T173] 填表停止按钮绑定
+  function bindTableFillStopButton_ACU(localAbortController, onStop) {
+    const $stopButton = jQuery_API_ACU('#acu-stop-update-btn');
+    if ($stopButton.length) {
+        $stopButton.off('click.acu_stop').on('click.acu_stop', function(e) {
+            e.stopPropagation();
+            e.preventDefault();
+            if ($manualUpdateCardButton_ACU) {
+                $manualUpdateCardButton_ACU.prop('disabled', false).text('立即手动更新');
+            }
+            jQuery_API_ACU(this).closest('.toast').remove();
+            if (typeof onStop === 'function') onStop();
+        });
+    }
+  }
+
+  // [T173] 重置手动更新按钮状态
+  function resetManualUpdateButton_ACU() {
+    if ($manualUpdateCardButton_ACU) {
+        $manualUpdateCardButton_ACU.prop('disabled', false).text('立即手动更新');
+    }
+  }
