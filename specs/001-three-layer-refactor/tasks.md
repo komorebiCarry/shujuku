@@ -272,10 +272,10 @@
 
 #### 大文件拆分
 
-- [ ] T148 [US6] **[延后]** `presentation/pages/main-popup.ts`（5736行单函数）→ 拆为 7 个子文件：需重构函数签名，风险高，列入后续优化
-- [ ] T149 [US6] **[延后]** `presentation/pages/visualizer.ts`（2757行）→ 拆为 3 个子文件：同上
-- [ ] T150 [P] [US6] **[延后]** 从 window-system.ts 拆出 → `presentation/window/window-styles.ts`（~200行）
-- [ ] T151 [P] [US6] **[延后]** 从 toast.ts 拆出 → `presentation/theme/theme-engine.ts`（~100行）
+- [x] T148 [US6] `main-popup.ts`（5736行）→ 拆为 3 个文件：main-popup.ts(2488行) + popup-bindings.ts(2700行) + popup-helpers.ts(562行)
+- [x] T149 [US6] `visualizer.ts`（2757行）→ 拆为 3 个文件：visualizer.ts(1459行) + visualizer-sidebar.ts(182行) + visualizer-main.ts(1124行)
+- [x] T150 [P] [US6] 从 window-system.ts 拆出 → `presentation/window/window-styles.ts`（430行：主题+CSS注入）
+- [x] T151 [P] [US6] toast.ts 保持不变（主题函数已在 window-styles.ts，toast.ts 本身就是纯 toast）
 
 - [x] T152 [US6] 更新 `presentation/index.ts` 统一出口
 
