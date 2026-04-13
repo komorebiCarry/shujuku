@@ -41,14 +41,14 @@ import './service/ai/prompt-builder';
 import './service/table/update-process';
 import './service/worldbook/pipeline';
 import './service/worldbook/injection-engine';
-import './service/data-admin/admin';
+import './presentation/triggers/admin-ui';
 import './service/summary/merge-logic';
 import './service/import/import-process';
-import './service/runtime/init';
+import './presentation/bootstrap/init';
 import './service/runtime/state-manager';
 import './service/runtime/event-bus';
 import './service/runtime/helpers-remaining';
-import './service/runtime/api-registry';
+import './presentation/bootstrap/api-registry';
 import './service/template/chat-scope';
 import './service/optimization/content-optimization';
 
@@ -82,7 +82,7 @@ import './presentation/triggers/settings-ui-sync';
 // ═══════════════════════════════════════════════════════════════
 // 启动入口
 // ═══════════════════════════════════════════════════════════════
-import { mainInitialize_ACU } from './service/runtime/init';
+import { mainInitialize_ACU } from './presentation/bootstrap/init';
 
 // jQuery ready 回调
 declare const $: any;

@@ -21489,7 +21489,7 @@ $CONTENT
         return blockedKeywords.some(keyword => name.includes(keyword));
     }
 
-    // admin.ts
+    // admin-ui.ts — 导入合并配置（presentation 层：涉及 DOM 操作和 UI 刷新）
     // 从 01_data_admin.js 迁入
     function importCombinedSettings_ACU$1() {
         const input = document.createElement('input');
@@ -32172,7 +32172,7 @@ insertRow(1, ["时间2", "大纲事件2...", "关键词"]);
         return true;
     }
 
-    // init.ts — 初始化编排
+    // init.ts — 初始化编排（presentation 层：负责事件绑定、UI 初始化、模块串联）
     // 从 05_core_tail.js 迁入
     function mainInitialize_ACU() {
         // 注入 data 层依赖（打破 data→service 的循环依赖）
@@ -32185,21 +32185,21 @@ insertRow(1, ["时间2", "大纲事件2...", "关键词"]);
             setCurrentJsonTableData: (v) => _set_currentJsonTableData_ACU(v),
             getCurrentIsolationKey: () => getCurrentIsolationKey_ACU(),
             showToastr: (...args) => { try {
-                const { showToastr_ACU } = require('../../presentation/theme/toast');
+                const { showToastr_ACU } = require('../../service/runtime/toast-service');
                 showToastr_ACU(...args);
             }
             catch (e) { } },
-            applyTemplateScopeForCurrentChat: (...args) => { const { applyTemplateScopeForCurrentChat_ACU } = require('../settings/settings-service'); return applyTemplateScopeForCurrentChat_ACU(...args); },
-            attachSeedRowsToCurrentDataFromGuide: (...args) => { const m = require('../template/chat-scope'); return m.attachSeedRowsToCurrentDataFromGuide_ACU(...args); },
-            buildChatSheetGuideDataFromData: (...args) => { const m = require('../template/chat-scope'); return m.buildChatSheetGuideDataFromData_ACU(...args); },
-            ensureChatSheetGuideSeeded: (...args) => { const m = require('../template/chat-scope'); return m.ensureChatSheetGuideSeeded_ACU(...args); },
-            getChatSheetGuideDataForIsolationKey: (...args) => { const m = require('../template/chat-scope'); return m.getChatSheetGuideDataForIsolationKey_ACU(...args); },
-            getSortedSheetKeys: (...args) => { const m = require('../template/chat-scope'); return m.getSortedSheetKeys_ACU(...args); },
-            sanitizeSheetForStorage: (...args) => { const m = require('../template/chat-scope'); return m.sanitizeSheetForStorage_ACU(...args); },
-            setChatSheetGuideDataForIsolationKey: (...args) => { const m = require('../template/chat-scope'); return m.setChatSheetGuideDataForIsolationKey_ACU(...args); },
-            deleteAllGeneratedEntries: (...args) => { const m = require('../worldbook/pipeline'); return m.deleteAllGeneratedEntries_ACU(...args); },
-            refreshMergedDataAndNotify: (...args) => { const m = require('../worldbook/pipeline'); return m.refreshMergedDataAndNotify_ACU(...args); },
-            mergeAllIndependentTables: (...args) => { const m = require('./helpers-remaining'); return m.mergeAllIndependentTables_ACU(...args); },
+            applyTemplateScopeForCurrentChat: (...args) => { const { applyTemplateScopeForCurrentChat_ACU } = require('../../service/settings/settings-service'); return applyTemplateScopeForCurrentChat_ACU(...args); },
+            attachSeedRowsToCurrentDataFromGuide: (...args) => { const m = require('../../service/template/chat-scope'); return m.attachSeedRowsToCurrentDataFromGuide_ACU(...args); },
+            buildChatSheetGuideDataFromData: (...args) => { const m = require('../../service/template/chat-scope'); return m.buildChatSheetGuideDataFromData_ACU(...args); },
+            ensureChatSheetGuideSeeded: (...args) => { const m = require('../../service/template/chat-scope'); return m.ensureChatSheetGuideSeeded_ACU(...args); },
+            getChatSheetGuideDataForIsolationKey: (...args) => { const m = require('../../service/template/chat-scope'); return m.getChatSheetGuideDataForIsolationKey_ACU(...args); },
+            getSortedSheetKeys: (...args) => { const m = require('../../service/template/chat-scope'); return m.getSortedSheetKeys_ACU(...args); },
+            sanitizeSheetForStorage: (...args) => { const m = require('../../service/template/chat-scope'); return m.sanitizeSheetForStorage_ACU(...args); },
+            setChatSheetGuideDataForIsolationKey: (...args) => { const m = require('../../service/template/chat-scope'); return m.setChatSheetGuideDataForIsolationKey_ACU(...args); },
+            deleteAllGeneratedEntries: (...args) => { const m = require('../../service/worldbook/pipeline'); return m.deleteAllGeneratedEntries_ACU(...args); },
+            refreshMergedDataAndNotify: (...args) => { const m = require('../../service/worldbook/pipeline'); return m.refreshMergedDataAndNotify_ACU(...args); },
+            mergeAllIndependentTables: (...args) => { const m = require('../../service/runtime/helpers-remaining'); return m.mergeAllIndependentTables_ACU(...args); },
         });
         console.log('ACU_INIT_DEBUG: mainInitialize_ACU called.');
         if (attemptToLoadCoreApis_ACU()) {

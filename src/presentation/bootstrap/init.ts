@@ -1,4 +1,4 @@
-// init.ts — 初始化编排
+// init.ts — 初始化编排（presentation 层：负责事件绑定、UI 初始化、模块串联）
 // 从 05_core_tail.js 迁入
 
 import { _injectCharSettingsDeps } from '../../data/repositories/character-settings-repo';
@@ -7,21 +7,21 @@ import { _injectProfileRepoDeps } from '../../data/repositories/profile-repo';
 import { _injectTableRepoDeps } from '../../data/repositories/table-repo';
 
 import { DEFAULT_PLOT_SETTINGS_ACU } from '../../data/models/defaults-json.js';
-import { addAutoCardMenuItem_ACU } from '../../presentation/bootstrap/startup';
-import { newMessageDebounceTimer_ACU, _set_newMessageDebounceTimer_ACU} from './state-manager';
-import { showToastr_ACU } from './toast-service';
-import { attemptToLoadCoreApis_ACU } from '../../presentation/triggers/settings-ui-sync';
-import { handleChatCompletionReady_ACU, loadPresetAndCleanCharacterData_ACU, stopAutoLoop_ACU } from './helpers-remaining';
-import { SillyTavern_API_ACU, currentChatFileIdentifier_ACU, generationGate_ACU, installSendIntentCaptureHooks_ACU, isProcessing_Plot_ACU, isQuietLikeGeneration_ACU, isRecentUserSendIntent_ACU, loopState_ACU, recordGenerationContext_ACU, recordLastUserSend_ACU, settings_ACU, shouldProcessAutoTableUpdateForGenerationEnded_ACU, shouldProcessPlotForGeneration_ACU, _set_isProcessing_Plot_ACU} from './state-manager';
-import { applyTemplateScopeForCurrentChat_ACU, loadSettings_ACU } from '../settings/settings-service';
-import { resetScriptStateForNewChat_ACU } from '../worldbook/injection-engine';
-import { loadAllChatMessages_ACU, refreshMergedDataAndNotify_ACU } from '../worldbook/pipeline';
+import { addAutoCardMenuItem_ACU } from './startup';
+import { newMessageDebounceTimer_ACU, _set_newMessageDebounceTimer_ACU} from '../../service/runtime/state-manager';
+import { showToastr_ACU } from '../../service/runtime/toast-service';
+import { attemptToLoadCoreApis_ACU } from '../triggers/settings-ui-sync';
+import { handleChatCompletionReady_ACU, loadPresetAndCleanCharacterData_ACU, stopAutoLoop_ACU } from '../../service/runtime/helpers-remaining';
+import { SillyTavern_API_ACU, currentChatFileIdentifier_ACU, generationGate_ACU, installSendIntentCaptureHooks_ACU, isProcessing_Plot_ACU, isQuietLikeGeneration_ACU, isRecentUserSendIntent_ACU, loopState_ACU, recordGenerationContext_ACU, recordLastUserSend_ACU, settings_ACU, shouldProcessAutoTableUpdateForGenerationEnded_ACU, shouldProcessPlotForGeneration_ACU, _set_isProcessing_Plot_ACU} from '../../service/runtime/state-manager';
+import { applyTemplateScopeForCurrentChat_ACU, loadSettings_ACU } from '../../service/settings/settings-service';
+import { resetScriptStateForNewChat_ACU } from '../../service/worldbook/injection-engine';
+import { loadAllChatMessages_ACU, refreshMergedDataAndNotify_ACU } from '../../service/worldbook/pipeline';
 import { cleanChatName_ACU, hashUserInput_ACU, logDebug_ACU, logError_ACU, logWarn_ACU } from '../../shared/utils';
-import { markPlotIntercept_ACU, shouldSkipPlotIntercept_ACU } from '../plot/plot-logic';
-import { getSendTextareaValue_ACU, setSendTextareaValue_ACU } from '../../presentation/components/status-display';
-import { updateCardUpdateStatusDisplay_ACU } from '../../presentation/components/update-status-display';
-import { handleNewMessageDebounced_ACU } from '../../presentation/triggers/settings-ui-sync';
-import { enterLoopRetryFlow_ACU, onLoopGenerationEnded_ACU, runOptimizationLogic_ACU } from './helpers-remaining';
+import { markPlotIntercept_ACU, shouldSkipPlotIntercept_ACU } from '../../service/plot/plot-logic';
+import { getSendTextareaValue_ACU, setSendTextareaValue_ACU } from '../components/status-display';
+import { updateCardUpdateStatusDisplay_ACU } from '../components/update-status-display';
+import { handleNewMessageDebounced_ACU } from '../triggers/settings-ui-sync';
+import { enterLoopRetryFlow_ACU, onLoopGenerationEnded_ACU, runOptimizationLogic_ACU } from '../../service/runtime/helpers-remaining';
 
 export   function mainInitialize_ACU() {
     // 注入 data 层依赖（打破 data→service 的循环依赖）
@@ -33,18 +33,18 @@ export   function mainInitialize_ACU() {
       getCurrentJsonTableData: () => currentJsonTableData_ACU,
       setCurrentJsonTableData: (v) => _set_currentJsonTableData_ACU(v),
       getCurrentIsolationKey: () => getCurrentIsolationKey_ACU(),
-      showToastr: (...args) => { try { const { showToastr_ACU } = require('../../presentation/theme/toast'); showToastr_ACU(...args); } catch(e) {} },
-      applyTemplateScopeForCurrentChat: (...args) => { const { applyTemplateScopeForCurrentChat_ACU } = require('../settings/settings-service'); return applyTemplateScopeForCurrentChat_ACU(...args); },
-      attachSeedRowsToCurrentDataFromGuide: (...args) => { const m = require('../template/chat-scope'); return m.attachSeedRowsToCurrentDataFromGuide_ACU(...args); },
-      buildChatSheetGuideDataFromData: (...args) => { const m = require('../template/chat-scope'); return m.buildChatSheetGuideDataFromData_ACU(...args); },
-      ensureChatSheetGuideSeeded: (...args) => { const m = require('../template/chat-scope'); return m.ensureChatSheetGuideSeeded_ACU(...args); },
-      getChatSheetGuideDataForIsolationKey: (...args) => { const m = require('../template/chat-scope'); return m.getChatSheetGuideDataForIsolationKey_ACU(...args); },
-      getSortedSheetKeys: (...args) => { const m = require('../template/chat-scope'); return m.getSortedSheetKeys_ACU(...args); },
-      sanitizeSheetForStorage: (...args) => { const m = require('../template/chat-scope'); return m.sanitizeSheetForStorage_ACU(...args); },
-      setChatSheetGuideDataForIsolationKey: (...args) => { const m = require('../template/chat-scope'); return m.setChatSheetGuideDataForIsolationKey_ACU(...args); },
-      deleteAllGeneratedEntries: (...args) => { const m = require('../worldbook/pipeline'); return m.deleteAllGeneratedEntries_ACU(...args); },
-      refreshMergedDataAndNotify: (...args) => { const m = require('../worldbook/pipeline'); return m.refreshMergedDataAndNotify_ACU(...args); },
-      mergeAllIndependentTables: (...args) => { const m = require('./helpers-remaining'); return m.mergeAllIndependentTables_ACU(...args); },
+      showToastr: (...args) => { try { const { showToastr_ACU } = require('../../service/runtime/toast-service'); showToastr_ACU(...args); } catch(e) {} },
+      applyTemplateScopeForCurrentChat: (...args) => { const { applyTemplateScopeForCurrentChat_ACU } = require('../../service/settings/settings-service'); return applyTemplateScopeForCurrentChat_ACU(...args); },
+      attachSeedRowsToCurrentDataFromGuide: (...args) => { const m = require('../../service/template/chat-scope'); return m.attachSeedRowsToCurrentDataFromGuide_ACU(...args); },
+      buildChatSheetGuideDataFromData: (...args) => { const m = require('../../service/template/chat-scope'); return m.buildChatSheetGuideDataFromData_ACU(...args); },
+      ensureChatSheetGuideSeeded: (...args) => { const m = require('../../service/template/chat-scope'); return m.ensureChatSheetGuideSeeded_ACU(...args); },
+      getChatSheetGuideDataForIsolationKey: (...args) => { const m = require('../../service/template/chat-scope'); return m.getChatSheetGuideDataForIsolationKey_ACU(...args); },
+      getSortedSheetKeys: (...args) => { const m = require('../../service/template/chat-scope'); return m.getSortedSheetKeys_ACU(...args); },
+      sanitizeSheetForStorage: (...args) => { const m = require('../../service/template/chat-scope'); return m.sanitizeSheetForStorage_ACU(...args); },
+      setChatSheetGuideDataForIsolationKey: (...args) => { const m = require('../../service/template/chat-scope'); return m.setChatSheetGuideDataForIsolationKey_ACU(...args); },
+      deleteAllGeneratedEntries: (...args) => { const m = require('../../service/worldbook/pipeline'); return m.deleteAllGeneratedEntries_ACU(...args); },
+      refreshMergedDataAndNotify: (...args) => { const m = require('../../service/worldbook/pipeline'); return m.refreshMergedDataAndNotify_ACU(...args); },
+      mergeAllIndependentTables: (...args) => { const m = require('../../service/runtime/helpers-remaining'); return m.mergeAllIndependentTables_ACU(...args); },
     });
 
     console.log('ACU_INIT_DEBUG: mainInitialize_ACU called.');

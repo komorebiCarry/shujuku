@@ -1,15 +1,15 @@
-// admin.ts
+// admin-ui.ts — 导入合并配置（presentation 层：涉及 DOM 操作和 UI 刷新）
 // 从 01_data_admin.js 迁入
 
 import { getCurrentTemplatePresetName_ACU, normalizeTemplatePresetSelectionValue_ACU } from '../../data/repositories/template-preset-repo';
-import { renderPromptSegments_ACU } from '../../presentation/components/plot-editors';
-import { showToastr_ACU } from '../runtime/toast-service';
-import { settings_ACU } from '../runtime/state-manager';
-import { saveSettings_ACU } from '../settings/settings-service';
-import { sanitizeChatSheetsObject_ACU } from '../template/chat-scope';
+import { renderPromptSegments_ACU } from '../components/plot-editors';
+import { showToastr_ACU } from '../../service/runtime/toast-service';
+import { settings_ACU } from '../../service/runtime/state-manager';
+import { saveSettings_ACU } from '../../service/settings/settings-service';
+import { sanitizeChatSheetsObject_ACU } from '../../service/template/chat-scope';
 import { ensureSheetOrderNumbers_ACU, logDebug_ACU, logError_ACU } from '../../shared/utils';
-import { syncMergeSettingsToUI_ACU } from '../../presentation/components/status-display';
-import { applyTemplateSnapshotToScope_ACU } from '../template/template-preset-service';
+import { syncMergeSettingsToUI_ACU } from '../components/status-display';
+import { applyTemplateSnapshotToScope_ACU } from '../../service/template/template-preset-service';
 
 export   function importCombinedSettings_ACU() {
     const input = document.createElement('input');
