@@ -4,7 +4,6 @@ import { SillyTavern_API_ACU, currentJsonTableData_ACU, settings_ACU } from '../
 import { topLevelWindow_ACU } from '../../shared/env';
 import { applyOptimizations_ACU } from '../../shared/text-optimization';
 import { logDebug_ACU, logError_ACU, logWarn_ACU } from '../../shared/utils';
-import { hideOptimizationOverlay_ACU, hideOptimizationProgressToast_ACU } from '../../presentation/components/optimization-ui';
 import { formatOutlineTableForPlot_ACU, formatSummaryIndexForPlot_ACU, getLatestAIMessageContent_ACU, getPlotFromHistory_ACU, getWorldbookContentForPlot_ACU, parseCalcTags_ACU, parseIfBlockRecursive_ACU, parseMaxTags_ACU, parseMinTags_ACU, parseRandomTags_ACU, replaceCalcVariables_ACU, replaceMaxVariables_ACU, replaceMinVariables_ACU, replaceRandomVariables_ACU } from '../runtime/helpers-remaining';
 /**
  * service/optimization/content-optimization.ts — 正文优化服务逻辑
@@ -686,8 +685,7 @@ import { formatOutlineTableForPlot_ACU, formatSummaryIndexForPlot_ACU, getLatest
    */
   export function cancelContentOptimization_ACU(reason = '正文优化已由用户终止。') {
     contentOptimizationAbortRequested_ACU = true;
-    hideOptimizationOverlay_ACU();
-    hideOptimizationProgressToast_ACU();
+    // hideOptimizationOverlay / hideOptimizationProgressToast 由 presentation 层调用方执行
     showToastr_ACU('warning', reason);
     return true;
   }

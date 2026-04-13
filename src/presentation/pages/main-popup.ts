@@ -5,7 +5,7 @@ import { DEFAULT_AUTO_UPDATE_FREQUENCY_ACU, DEFAULT_AUTO_UPDATE_THRESHOLD_ACU, D
 import { DEFAULT_TEMPLATE_PRESET_OPTION_VALUE_ACU } from '../../data/repositories/template-preset-repo';
 import { showToastr_ACU } from '../theme/toast';
 import { coreApisAreReady_ACU, currentChatFileIdentifier_ACU, $popupInstance_ACU, _set_$popupInstance_ACU} from '../../service/runtime/state-manager';
-import { loadSettingsAndRefreshUI_ACU } from '../../service/settings/settings-service';
+import { loadSettingsAndRefreshUI_ACU } from '../components/settings-ui-helpers';
 import { POPUP_ID_ACU, SCRIPT_ID_PREFIX_ACU } from '../../shared/constants';
 import { escapeHtml_ACU } from '../../shared/html-helpers';
 import { logDebug_ACU, logError_ACU, logWarn_ACU } from '../../shared/utils';

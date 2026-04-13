@@ -10,7 +10,6 @@ import { updateReadableLorebookEntry_ACU } from '../worldbook/pipeline';
 import { topLevelWindow_ACU } from '../../shared/env';
 import { logDebug_ACU, logError_ACU, logWarn_ACU } from '../../shared/utils';
 import { saveIndependentTableToChatHistory_ACU } from '../../data/repositories/table-repo';
-import { updateCardUpdateStatusDisplay_ACU } from '../../presentation/components/update-status-display';
 import { extractTableEditInner_ACU } from '../ai/prompt-builder';
 
 export   async function checkAndTriggerAutoMergeSummary_ACU() {
@@ -363,7 +362,7 @@ export   async function performAutoMergeSummary_ACU(options) {
       await updateReadableLorebookEntry_ACU(true);
 
       topLevelWindow_ACU.AutoCardUpdaterAPI._notifyTableUpdate();
-      if (typeof updateCardUpdateStatusDisplay_ACU === 'function') updateCardUpdateStatusDisplay_ACU();
+      // updateCardUpdateStatusDisplay 由 presentation 层调用方在合并完成后执行
 
       // 清除进度提示框
       if (progressToast) {

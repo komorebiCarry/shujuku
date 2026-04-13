@@ -721,6 +721,7 @@ import { getEffectiveAutoUpdateThreshold_ACU } from '../../service/runtime/helpe
         // [新增] 在手动更新全部完成后检测自动合并总结
         try {
             await checkAndTriggerAutoMergeSummary_ACU();
+            if (typeof updateCardUpdateStatusDisplay_ACU === 'function') updateCardUpdateStatusDisplay_ACU();
         } catch (e) {
             logWarn_ACU('自动合并总结检测失败:', e);
         }

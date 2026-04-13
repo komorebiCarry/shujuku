@@ -1,9 +1,11 @@
 import { DEFAULT_CHAR_CARD_PROMPT_ACU } from '../../data/models/defaults-json.js';
 import { AUTO_UPDATE_FLOOR_INCREASE_DELAY_ACU } from '../../data/models/defaults';
+import { updateCardUpdateStatusDisplay_ACU } from '../components/update-status-display';
 import { getCharCardPromptFromUI_ACU, isAutoUpdatingCard_ACU, manualExtraHint_ACU, newMessageDebounceTimer_ACU, renderPromptSegments_ACU, wasStoppedByUser_ACU , _set_isAutoUpdatingCard_ACU, _set_manualExtraHint_ACU, _set_newMessageDebounceTimer_ACU} from '../components/plot-editors';
 import { ACU_TOAST_CATEGORY_ACU, showToastr_ACU } from '../theme/toast';
 import { NEW_MESSAGE_DEBOUNCE_DELAY_ACU, SillyTavern_API_ACU, TavernHelper_API_ACU, jQuery_API_ACU, toastr_API_ACU, $popupInstance_ACU, $customApiUrlInput_ACU, $customApiKeyInput_ACU, $customApiModelInput_ACU, $customApiModelSelect_ACU, $maxTokensInput_ACU, $temperatureInput_ACU, $apiStatusDisplay_ACU, $charCardPromptSegmentsContainer_ACU, $autoUpdateThresholdInput_ACU, $autoUpdateTokenThresholdInput_ACU, $autoUpdateFrequencyInput_ACU, $updateBatchSizeInput_ACU, $maxConcurrentGroupsInput_ACU, $skipUpdateFloorsInput_ACU, $retainRecentLayersInput_ACU, $tableMaxRetriesInput_ACU, $manualExtraHintCheckbox_ACU, allChatMessages_ACU, coreApisAreReady_ACU, currentJsonTableData_ACU, getCurrentIsolationKey_ACU, lastTotalAiMessages_ACU, settings_ACU , _set_coreApisAreReady_ACU, _set_SillyTavern_API_ACU, _set_TavernHelper_API_ACU, _set_jQuery_API_ACU, _set_toastr_API_ACU, _set_lastTotalAiMessages_ACU} from '../../service/runtime/state-manager';
-import { loadSettingsAndRefreshUI_ACU, saveSettings_ACU } from '../../service/settings/settings-service';
+import { saveSettings_ACU } from '../../service/settings/settings-service';
+import { loadSettingsAndRefreshUI_ACU } from '../components/settings-ui-helpers';
 import { checkAndTriggerAutoMergeSummary_ACU } from '../../service/summary/merge-logic';
 import { processUpdates_ACU } from '../../service/table/update-process';
 import { getSortedSheetKeys_ACU } from '../../service/template/chat-scope';
@@ -1249,6 +1251,7 @@ import { maybeLiftWorldbookSuppression_ACU } from '../../service/runtime/helpers
         // [新增] 在自动更新全部完成后检测自动合并总结
         try {
             await checkAndTriggerAutoMergeSummary_ACU();
+            if (typeof updateCardUpdateStatusDisplay_ACU === 'function') updateCardUpdateStatusDisplay_ACU();
         } catch (e) {
             logWarn_ACU('自动合并总结检测失败:', e);
         }

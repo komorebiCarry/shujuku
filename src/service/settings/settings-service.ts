@@ -17,7 +17,6 @@ import { persistSettingsToStorage_ACU } from '../../data/storage/config-storage'
 import { isIndexedDbAvailable_ACU } from '../../data/storage/idb-import-temp';
 import { configIdbCacheLoaded_ACU, ensureConfigIdbCacheLoaded_ACU, getConfigStorage_ACU, initTavernSettingsBridge_ACU, migrateKeyToTavernStorageIfNeeded_ACU, pendingSettingsReloadFromIdb_ACU, _set_pendingSettingsReloadFromIdb_ACU} from '../../data/storage/tavern-storage';
 import { ensureTagRulesCompat_ACU } from '../plot/plot-logic';
-import { syncAllSettingsToUI_ACU } from '../../presentation/components/status-display';
 import { getDefaultTemplateSnapshot_ACU, getTemplatePreset_ACU } from '../template/template-preset-service';
 import { showToastr_ACU } from '../runtime/toast-service';
 import { buildDefaultContentOptimizationPromptGroup_ACU } from '../optimization/content-optimization';
@@ -222,12 +221,7 @@ export   function loadSettings_ACU() {
       logDebug_ACU('Settings loaded:', settings_ACU);
   }
 
-  // [拆分] loadSettings 的 presentation 版本：加载数据后刷新 UI
-  // presentation 层调用此版本；service 层内部调用上面的 loadSettings_ACU（不触发 UI）
-  export function loadSettingsAndRefreshUI_ACU() {
-      loadSettings_ACU();
-      if (typeof syncAllSettingsToUI_ACU === 'function') syncAllSettingsToUI_ACU(settings_ACU);
-  }
+  // loadSettingsAndRefreshUI_ACU 已搬到 presentation/components/settings-ui-helpers.ts
 
 
 export   function loadTemplateFromStorage_ACU(codeOverride = null) {

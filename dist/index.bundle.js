@@ -2622,310 +2622,6 @@ $CONTENT
     function _set_currentPlotTaskEditorId_ACU(v) { currentPlotTaskEditorId_ACU = v; }
     function _set_newMessageDebounceTimer_ACU(v) { newMessageDebounceTimer_ACU = v; }
 
-    // service/ai/api-call.ts — AI 调用编排（剧情推进用）
-    // 从 04_shared_helpers.js 迁入
-    async function callApi_ACU(messages, apiSettings, abortSignal = null) {
-        // [新增] 获取剧情推进使用的API配置（支持API预设）
-        const apiPresetConfig = getApiConfigByPreset_ACU(settings_ACU.plotApiPreset);
-        const effectiveApiMode = apiPresetConfig.apiMode;
-        const effectiveApiConfig = apiPresetConfig.apiConfig;
-        logDebug_ACU(`[剧情推进] 使用API预设: ${settings_ACU.plotApiPreset || '当前配置'}, 模式: ${effectiveApiMode}`);
-        if (effectiveApiMode === 'tavern' || effectiveApiConfig.useMainApi) {
-            // 使用主API或酒馆预设（流式传输）
-            logDebug_ACU('[剧情推进] 通过酒馆主API发送请求（流式传输）...');
-            if (typeof TavernHelper_API_ACU.generateRaw !== 'function') {
-                throw new Error('TavernHelper.generateRaw 函数不存在。请检查酒馆版本。');
-            }
-            const response = await TavernHelper_API_ACU.generateRaw({
-                ordered_prompts: messages,
-                should_stream: settings_ACU.streamingEnabled || false,
-            });
-            if (typeof response !== 'string') {
-                throw new Error('主API调用未返回预期的文本响应。');
-            }
-            return response.trim();
-        }
-        else {
-            // 使用自定义API（流式传输）
-            if (!effectiveApiConfig.url || !effectiveApiConfig.model) {
-                throw new Error('自定义API的URL或模型未配置。');
-            }
-            const requestBody = {
-                messages: messages,
-                model: effectiveApiConfig.model.replace(/^models\//, ''),
-                max_tokens: effectiveApiConfig.maxTokens || effectiveApiConfig.max_tokens || 20000,
-                temperature: effectiveApiConfig.temperature || 0.7,
-                top_p: effectiveApiConfig.topP || effectiveApiConfig.top_p || 0.95,
-                stream: settings_ACU.streamingEnabled || false,
-                chat_completion_source: 'custom',
-                group_names: [],
-                include_reasoning: false,
-                reasoning_effort: 'medium',
-                enable_web_search: false,
-                request_images: false,
-                custom_prompt_post_processing: 'strict',
-                reverse_proxy: effectiveApiConfig.url,
-                proxy_password: '',
-                custom_url: effectiveApiConfig.url,
-                custom_include_headers: effectiveApiConfig.apiKey ? `Authorization: Bearer ${effectiveApiConfig.apiKey}` : '',
-            };
-            const response = await fetch('/api/backends/chat-completions/generate', {
-                method: 'POST',
-                headers: { ...SillyTavern.getRequestHeaders(), 'Content-Type': 'application/json' },
-                body: JSON.stringify(requestBody),
-                signal: abortSignal,
-            });
-            if (!response.ok) {
-                const errTxt = await response.text();
-                throw new Error(`API请求失败: ${response.status} ${errTxt}`);
-            }
-            // 根据streamingEnabled设置选择响应处理方式
-            const content = await handleApiResponse_ACU(response, abortSignal);
-            if (content) {
-                return content.trim();
-            }
-            throw new Error(`API调用返回无效响应`);
-        }
-    }
-    function getApiConfigByPreset_ACU(presetName) {
-        if (!presetName) {
-            // 使用当前配置
-            return {
-                apiMode: settings_ACU.apiMode,
-                apiConfig: settings_ACU.apiConfig,
-                tavernProfile: settings_ACU.tavernProfile
-            };
-        }
-        const preset = settings_ACU.apiPresets.find(p => p.name === presetName);
-        if (preset) {
-            return {
-                apiMode: preset.apiMode,
-                apiConfig: preset.apiConfig,
-                tavernProfile: preset.tavernProfile
-            };
-        }
-        // 预设不存在，回退到当前配置
-        logWarn_ACU(`API预设 "${presetName}" 不存在，使用当前配置。`);
-        return {
-            apiMode: settings_ACU.apiMode,
-            apiConfig: settings_ACU.apiConfig,
-            tavernProfile: settings_ACU.tavernProfile
-        };
-    }
-    async function callCustomOpenAI_ACU_Direct(messages) {
-        // Reuse the logic from callCustomOpenAI_ACU but bypass the prompt replacement part
-        // ... For brevity, I will just call callCustomOpenAI_ACU with a hacked dynamicContent?
-        // No, callCustomOpenAI_ACU relies on settings_ACU.charCardPrompt.
-        // I should refactor callCustomOpenAI_ACU to accept direct messages, or duplicate the API calling part.
-        // Duplicating API calling logic for safety and isolation
-        if (settings_ACU.apiMode === 'tavern') {
-            const profileId = settings_ACU.tavernProfile;
-            return await SillyTavern_API_ACU.ConnectionManagerRequestService.sendRequest(profileId, messages, settings_ACU.apiConfig.max_tokens || 4096).then(r => r.result.choices[0].message.content);
-        }
-        else {
-            // Custom API（流式传输）
-            if (settings_ACU.apiConfig.useMainApi) {
-                return await TavernHelper_API_ACU.generateRaw({ ordered_prompts: messages, should_stream: settings_ACU.streamingEnabled || false });
-            }
-            else {
-                const url = `/api/backends/chat-completions/generate`;
-                const body = JSON.stringify({
-                    messages: messages,
-                    model: settings_ACU.apiConfig.model,
-                    max_tokens: settings_ACU.apiConfig.max_tokens,
-                    stream: settings_ACU.streamingEnabled || false,
-                    chat_completion_source: "custom",
-                    // ... other params
-                    reverse_proxy: settings_ACU.apiConfig.url,
-                    custom_url: settings_ACU.apiConfig.url,
-                    custom_include_headers: settings_ACU.apiConfig.apiKey ? `Authorization: Bearer ${settings_ACU.apiConfig.apiKey}` : ""
-                });
-                const res = await fetch(url, { method: 'POST', headers: { ...SillyTavern.getRequestHeaders(), 'Content-Type': 'application/json' }, body });
-                // 根据streamingEnabled设置选择响应处理方式
-                const content = await handleApiResponse_ACU(res);
-                return content;
-            }
-        }
-    }
-
-    // table-selector.ts
-    // 从 04_table_selectors.js 整体迁入
-    function renderManualTableSelector_ACU() {
-        if (!$manualTableSelector_ACU || !$manualTableSelector_ACU.length || !currentJsonTableData_ACU$1)
-            return;
-        const availableKeys = getSortedSheetKeys_ACU(currentJsonTableData_ACU$1);
-        if (availableKeys.length === 0) {
-            $manualTableSelector_ACU.html('<div class="notes">暂无表格可选。</div>');
-            return;
-        }
-        const resolvedSelection = getSelectedManualSheetKeys_ACU();
-        const selectedSet = new Set(resolvedSelection);
-        if (!Array.isArray(settings_ACU.manualSelectedTables) || JSON.stringify(settings_ACU.manualSelectedTables) !== JSON.stringify(resolvedSelection)) {
-            settings_ACU.manualSelectedTables = resolvedSelection;
-            saveSettings_ACU();
-        }
-        let html = '<div class="acu-table-selector" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(180px,1fr));gap:8px;max-height:240px;overflow:auto;padding:8px;border:1px solid var(--border-normal);border-radius:8px;background:var(--bg-secondary);">';
-        availableKeys.forEach(key => {
-            const name = currentJsonTableData_ACU$1[key]?.name || key;
-            const checked = selectedSet.has(key) ? 'checked' : '';
-            html += `<label style="display:flex;align-items:center;gap:8px;padding:10px;border:1px solid var(--border-normal);border-radius:6px;background:var(--bg-primary);">
-              <input type="checkbox" data-key="${key}" ${checked} style="margin:0;width:14px;height:14px;flex-shrink:0;">
-              <span style="flex:1;word-break:break-all;font-weight:600;">${escapeHtml_ACU(name)}</span>
-          </label>`;
-        });
-        html += '</div>';
-        $manualTableSelector_ACU.html(html);
-        $manualTableSelector_ACU.off('change', 'input[type="checkbox"]').on('change', 'input[type="checkbox"]', function () {
-            const checkedKeys = [];
-            $manualTableSelector_ACU.find('input[type="checkbox"]:checked').each(function () {
-                const key = jQuery_API_ACU(this).data('key');
-                if (key)
-                    checkedKeys.push(key);
-            });
-            settings_ACU.manualSelectedTables = checkedKeys;
-            settings_ACU.hasManualSelection = true;
-            saveSettings_ACU();
-        });
-    }
-    // 优先从当前UI读取勾选的表，若UI未渲染则回退到已保存选择
-    function getManualSelectionFromUI_ACU() {
-        if ($manualTableSelector_ACU && $manualTableSelector_ACU.length) {
-            const keys = [];
-            $manualTableSelector_ACU.find('input[type="checkbox"]:checked').each(function () {
-                const k = jQuery_API_ACU(this).data('key');
-                if (k)
-                    keys.push(k);
-            });
-            if (keys.length > 0 || settings_ACU.hasManualSelection) {
-                // 如果读取到选择，或曾经明确选择过，则同步到设置
-                settings_ACU.manualSelectedTables = keys;
-                settings_ACU.hasManualSelection = true;
-                saveSettings_ACU();
-                return keys;
-            }
-        }
-        return getSelectedManualSheetKeys_ACU();
-    }
-    // =========================
-    // [外部导入] 注入表格自选（与手动填表一致，但独立存储到 settings_ACU.importSelectedTables）
-    // =========================
-    function getImportBaseTableData_ACU() {
-        // 优先用“模板表结构”（外部导入的数据库就是从模板重建的）
-        try {
-            const templateData = parseTableTemplateJson_ACU({ stripSeedRows: true });
-            if (templateData)
-                return templateData;
-        }
-        catch (e) {
-            // ignore
-        }
-        // 回退：如果模板解析失败，至少用当前内存数据渲染列表
-        return currentJsonTableData_ACU$1 || null;
-    }
-    function getSelectedImportSheetKeys_ACU() {
-        const base = getImportBaseTableData_ACU();
-        if (!base)
-            return [];
-        const availableKeys = getSortedSheetKeys_ACU(base);
-        const saved = Array.isArray(settings_ACU.importSelectedTables) ? settings_ACU.importSelectedTables : [];
-        // 未曾手动选择过：默认全选
-        if (!settings_ACU.hasImportTableSelection)
-            return availableKeys;
-        const validSaved = saved.filter(k => availableKeys.includes(k));
-        return validSaved;
-    }
-    function renderImportTableSelector_ACU() {
-        if (!$importTableSelector_ACU || !$importTableSelector_ACU.length)
-            return;
-        const base = getImportBaseTableData_ACU();
-        if (!base) {
-            $importTableSelector_ACU.html('<div class="notes">尚未加载表格结构。</div>');
-            return;
-        }
-        const availableKeys = getSortedSheetKeys_ACU(base);
-        if (availableKeys.length === 0) {
-            $importTableSelector_ACU.html('<div class="notes">暂无表格可选。</div>');
-            return;
-        }
-        const resolvedSelection = getSelectedImportSheetKeys_ACU();
-        const selectedSet = new Set(resolvedSelection);
-        if (!Array.isArray(settings_ACU.importSelectedTables) || JSON.stringify(settings_ACU.importSelectedTables) !== JSON.stringify(resolvedSelection)) {
-            settings_ACU.importSelectedTables = resolvedSelection;
-            saveSettings_ACU();
-        }
-        let html = '<div class="acu-table-selector" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(180px,1fr));gap:8px;max-height:240px;overflow:auto;padding:8px;border:1px solid var(--border-normal);border-radius:8px;background:var(--bg-secondary);">';
-        availableKeys.forEach(key => {
-            const name = base[key]?.name || key;
-            const checked = selectedSet.has(key) ? 'checked' : '';
-            html += `<label style="display:flex;align-items:center;gap:8px;padding:10px;border:1px solid var(--border-normal);border-radius:6px;background:var(--bg-primary);">
-              <input type="checkbox" data-key="${key}" ${checked} style="margin:0;width:14px;height:14px;flex-shrink:0;">
-              <span style="flex:1;word-break:break-all;font-weight:600;">${escapeHtml_ACU(name)}</span>
-          </label>`;
-        });
-        html += '</div>';
-        $importTableSelector_ACU.html(html);
-        $importTableSelector_ACU.off('change', 'input[type="checkbox"]').on('change', 'input[type="checkbox"]', function () {
-            const checkedKeys = [];
-            $importTableSelector_ACU.find('input[type="checkbox"]:checked').each(function () {
-                const key = jQuery_API_ACU(this).data('key');
-                if (key)
-                    checkedKeys.push(key);
-            });
-            settings_ACU.importSelectedTables = checkedKeys;
-            settings_ACU.hasImportTableSelection = true;
-            saveSettings_ACU();
-        });
-    }
-    function getImportSelectionFromUI_ACU() {
-        if ($importTableSelector_ACU && $importTableSelector_ACU.length) {
-            const keys = [];
-            $importTableSelector_ACU.find('input[type="checkbox"]:checked').each(function () {
-                const k = jQuery_API_ACU(this).data('key');
-                if (k)
-                    keys.push(k);
-            });
-            if (keys.length > 0 || settings_ACU.hasImportTableSelection) {
-                settings_ACU.importSelectedTables = keys;
-                settings_ACU.hasImportTableSelection = true;
-                saveSettings_ACU();
-                return keys;
-            }
-        }
-        return getSelectedImportSheetKeys_ACU();
-    }
-    function handleImportSelectAll_ACU() {
-        const base = getImportBaseTableData_ACU();
-        if (!base)
-            return;
-        const keys = getSortedSheetKeys_ACU(base);
-        settings_ACU.importSelectedTables = keys;
-        settings_ACU.hasImportTableSelection = true;
-        saveSettings_ACU();
-        renderImportTableSelector_ACU();
-    }
-    function handleImportSelectNone_ACU() {
-        settings_ACU.importSelectedTables = [];
-        settings_ACU.hasImportTableSelection = true;
-        saveSettings_ACU();
-        renderImportTableSelector_ACU();
-    }
-    function handleManualSelectAll_ACU() {
-        if (!currentJsonTableData_ACU$1)
-            return;
-        const keys = getSortedSheetKeys_ACU(currentJsonTableData_ACU$1);
-        settings_ACU.manualSelectedTables = keys;
-        settings_ACU.hasManualSelection = true;
-        saveSettings_ACU();
-        renderManualTableSelector_ACU();
-    }
-    function handleManualSelectNone_ACU() {
-        settings_ACU.manualSelectedTables = [];
-        settings_ACU.hasManualSelection = true;
-        saveSettings_ACU();
-        renderManualTableSelector_ACU();
-    }
-    // [新增] 统一的手动更新函数（支持按表选择，优先使用模板参数）
-
     /**
      * presentation/components/update-status-display.ts — 运行时状态/更新显示 UI
      * 从 features/runtime/01_runtime_state.js 迁移而来
@@ -3141,871 +2837,1880 @@ $CONTENT
         }
     }
 
-    /**
-     * presentation/components/worldbook-selector.ts — 世界书选择 UI
-     * 从 features/worldbook/01~03 + 04 迁移而来
-     */
-    async function updateWorldbookSourceView_ACU() {
-        if (!$popupInstance_ACU)
+    // table-selector.ts
+    // 从 04_table_selectors.js 整体迁入
+    function renderManualTableSelector_ACU() {
+        if (!$manualTableSelector_ACU || !$manualTableSelector_ACU.length || !currentJsonTableData_ACU$1)
             return;
-        const worldbookConfig = getCurrentWorldbookConfig_ACU();
-        const source = worldbookConfig.source;
-        const $manualBlock = $popupInstance_ACU.find(`#${SCRIPT_ID_PREFIX_ACU}-worldbook-manual-select-block`);
-        if (source === 'manual') {
-            $manualBlock.slideDown();
-            await populateWorldbookList_ACU();
-        }
-        else {
-            $manualBlock.slideUp();
-        }
-        await populateWorldbookEntryList_ACU();
-    }
-    // =========================
-    // [剧情推进] 世界书选择 UI（独立于填表 worldbookConfig）
-    // 复用现有加载逻辑，但使用不同的 DOM id 与不同的配置对象
-    // =========================
-    function getPlotWorldbookConfig_ACU() {
-        if (!settings_ACU.plotSettings)
-            settings_ACU.plotSettings = JSON.parse(JSON.stringify(DEFAULT_PLOT_SETTINGS_ACU));
-        if (!settings_ACU.plotSettings.plotWorldbookConfig) {
-            settings_ACU.plotSettings.plotWorldbookConfig = buildDefaultPlotWorldbookConfig_ACU();
-        }
-        return settings_ACU.plotSettings.plotWorldbookConfig;
-    }
-    async function updatePlotWorldbookSourceView_ACU() {
-        if (!$popupInstance_ACU)
+        const availableKeys = getSortedSheetKeys_ACU(currentJsonTableData_ACU$1);
+        if (availableKeys.length === 0) {
+            $manualTableSelector_ACU.html('<div class="notes">暂无表格可选。</div>');
             return;
-        const cfg = getPlotWorldbookConfig_ACU();
-        const source = cfg.source;
-        const $manualBlock = $popupInstance_ACU.find(`#${SCRIPT_ID_PREFIX_ACU}-plot-worldbook-manual-select-block`);
-        if (source === 'manual') {
-            $manualBlock.slideDown();
-            await populatePlotWorldbookList_ACU();
         }
-        else {
-            $manualBlock.slideUp();
+        const resolvedSelection = getSelectedManualSheetKeys_ACU();
+        const selectedSet = new Set(resolvedSelection);
+        if (!Array.isArray(settings_ACU.manualSelectedTables) || JSON.stringify(settings_ACU.manualSelectedTables) !== JSON.stringify(resolvedSelection)) {
+            settings_ACU.manualSelectedTables = resolvedSelection;
+            saveSettings_ACU();
         }
-        await populatePlotWorldbookEntryList_ACU();
-    }
-    async function populatePlotWorldbookList_ACU() {
-        if (!$popupInstance_ACU)
-            return;
-        const $listContainer = $popupInstance_ACU.find(`#${SCRIPT_ID_PREFIX_ACU}-plot-worldbook-select`);
-        if (!$listContainer.length)
-            return;
-        $listContainer.empty().html('<em>正在加载...</em>');
-        try {
-            const bookNames = await getWorldbookNames_ACU();
-            $listContainer.empty();
-            if (bookNames.length === 0) {
-                $listContainer.html('<em>未找到世界书</em>');
-                return;
-            }
-            const cfg = getPlotWorldbookConfig_ACU();
-            bookNames.forEach(bookName => {
-                const isSelected = (cfg.manualSelection || []).includes(bookName);
-                const itemHtml = `
-                  <div class="qrf_worldbook_list_item ${isSelected ? 'selected' : ''}" data-book-name="${escapeHtml_ACU(bookName)}">
-                      ${escapeHtml_ACU(bookName)}
-                  </div>`;
-                $listContainer.append(itemHtml);
+        let html = '<div class="acu-table-selector" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(180px,1fr));gap:8px;max-height:240px;overflow:auto;padding:8px;border:1px solid var(--border-normal);border-radius:8px;background:var(--bg-secondary);">';
+        availableKeys.forEach(key => {
+            const name = currentJsonTableData_ACU$1[key]?.name || key;
+            const checked = selectedSet.has(key) ? 'checked' : '';
+            html += `<label style="display:flex;align-items:center;gap:8px;padding:10px;border:1px solid var(--border-normal);border-radius:6px;background:var(--bg-primary);">
+              <input type="checkbox" data-key="${key}" ${checked} style="margin:0;width:14px;height:14px;flex-shrink:0;">
+              <span style="flex:1;word-break:break-all;font-weight:600;">${escapeHtml_ACU(name)}</span>
+          </label>`;
+        });
+        html += '</div>';
+        $manualTableSelector_ACU.html(html);
+        $manualTableSelector_ACU.off('change', 'input[type="checkbox"]').on('change', 'input[type="checkbox"]', function () {
+            const checkedKeys = [];
+            $manualTableSelector_ACU.find('input[type="checkbox"]:checked').each(function () {
+                const key = jQuery_API_ACU(this).data('key');
+                if (key)
+                    checkedKeys.push(key);
             });
-            // 应用筛选（若存在）
-            try {
-                const $filter = $popupInstance_ACU.find(`#${SCRIPT_ID_PREFIX_ACU}-plot-worldbook-select-filter`);
-                if ($filter.length)
-                    applyWorldbookListFilter_ACU($listContainer, $filter.val());
-            }
-            catch (e) { }
-        }
-        catch (error) {
-            logError_ACU('[剧情推进] Failed to populate plot worldbook list:', error);
-            $listContainer.html('<em>加载失败</em>');
-        }
+            settings_ACU.manualSelectedTables = checkedKeys;
+            settings_ACU.hasManualSelection = true;
+            saveSettings_ACU();
+        });
     }
-    async function populatePlotWorldbookEntryList_ACU() {
-        if (!$popupInstance_ACU)
-            return;
-        const $list = $popupInstance_ACU.find(`#${SCRIPT_ID_PREFIX_ACU}-plot-worldbook-entry-list`);
-        if (!$list.length)
-            return;
-        $list.empty().html('<em>正在加载条目...</em>');
-        const cfg = getPlotWorldbookConfig_ACU();
-        const source = cfg.source;
-        let bookNames = [];
-        if (source === 'character') {
-            const charLorebooks = await TavernHelper_API_ACU.getCharLorebooks({ type: 'all' });
-            if (charLorebooks.primary)
-                bookNames.push(charLorebooks.primary);
-            if (charLorebooks.additional?.length)
-                bookNames.push(...charLorebooks.additional);
-        }
-        else if (source === 'manual') {
-            bookNames = cfg.manualSelection || [];
-        }
-        bookNames = [...new Set((Array.isArray(bookNames) ? bookNames : []).filter(Boolean))];
-        if (bookNames.length === 0) {
-            $list.html('<em>请先选择世界书或为角色绑定世界书。</em>');
-            return;
-        }
-        try {
-            if (!cfg.enabledEntries)
-                cfg.enabledEntries = {};
-            const entriesMap = await getLorebookEntriesByNames_ACU(bookNames);
-            const groups = [];
-            const expandByDefault = bookNames.length === 1;
-            let settingsChanged = false;
-            for (const bookName of bookNames) {
-                const bookEntries = Array.isArray(entriesMap[bookName]) ? entriesMap[bookName] : [];
-                if (typeof cfg.enabledEntries[bookName] === 'undefined') {
-                    // 默认启用时：仅对“非数据库生成条目”做默认勾选（数据库生成条目不在UI显示，也不需要用户勾选）
-                    cfg.enabledEntries[bookName] = bookEntries
-                        .filter(entry => {
-                        const comment = entry?.comment || entry?.name || '';
-                        let normalizedComment = String(comment).replace(/^ACU-\[[^\]]+\]-/, '');
-                        normalizedComment = normalizedComment.replace(/^外部导入-(?:[^-]+-)?/, '');
-                        // UI 不显示：数据库生成条目（含隔离/外部导入前缀），以及 OutlineTable
-                        if (normalizedComment.startsWith('TavernDB-ACU-OutlineTable'))
-                            return false;
-                        const isDbGenerated = normalizedComment.startsWith('TavernDB-ACU-') ||
-                            normalizedComment.startsWith('重要人物条目') ||
-                            normalizedComment.startsWith('总结条目') ||
-                            normalizedComment.startsWith('小总结条目');
-                        if (isDbGenerated)
-                            return false;
-                        if (isEntryBlocked_ACU$1(entry))
-                            return false;
-                        return true;
-                    })
-                        .map(entry => entry.uid);
-                    settingsChanged = true;
-                }
-                const enabledEntries = Array.isArray(cfg.enabledEntries[bookName]) ? cfg.enabledEntries[bookName] : [];
-                const visibleEntries = [];
-                bookEntries.forEach(entry => {
-                    const comment = entry?.comment || entry?.name || '';
-                    let normalizedComment = String(comment).replace(/^ACU-\[[^\]]+\]-/, '');
-                    normalizedComment = normalizedComment.replace(/^外部导入-(?:[^-]+-)?/, '');
-                    // UI 不显示：数据库生成条目（含隔离/外部导入前缀），以及 OutlineTable
-                    if (normalizedComment.startsWith('TavernDB-ACU-OutlineTable'))
-                        return;
-                    const isDbGenerated = normalizedComment.startsWith('TavernDB-ACU-') ||
-                        normalizedComment.startsWith('重要人物条目') ||
-                        normalizedComment.startsWith('总结条目') ||
-                        normalizedComment.startsWith('小总结条目');
-                    if (isDbGenerated)
-                        return;
-                    if (isEntryBlocked_ACU$1(entry))
-                        return;
-                    visibleEntries.push({
-                        uid: entry.uid,
-                        bookName,
-                        label: entry.comment || `条目 ${entry.uid}`,
-                        searchText: `${bookName} ${entry.comment || entry.name || `条目 ${entry.uid}`}`,
-                        checked: enabledEntries.includes(entry.uid),
-                        disabled: !entry.enabled,
-                        checkboxId: buildWorldbookEntryCheckboxId_ACU('plot-wb-entry', bookName, entry.uid),
-                    });
-                });
-                if (visibleEntries.length > 0) {
-                    groups.push({
-                        bookName,
-                        entries: visibleEntries,
-                        expanded: expandByDefault,
-                    });
-                }
-            }
-            if (settingsChanged) {
+    // 优先从当前UI读取勾选的表，若UI未渲染则回退到已保存选择
+    function getManualSelectionFromUI_ACU() {
+        if ($manualTableSelector_ACU && $manualTableSelector_ACU.length) {
+            const keys = [];
+            $manualTableSelector_ACU.find('input[type="checkbox"]:checked').each(function () {
+                const k = jQuery_API_ACU(this).data('key');
+                if (k)
+                    keys.push(k);
+            });
+            if (keys.length > 0 || settings_ACU.hasManualSelection) {
+                // 如果读取到选择，或曾经明确选择过，则同步到设置
+                settings_ACU.manualSelectedTables = keys;
+                settings_ACU.hasManualSelection = true;
                 saveSettings_ACU();
+                return keys;
             }
-            renderLazyWorldbookEntryList_ACU($list, groups, {
-                checkboxIdPrefix: 'plot-wb-entry',
-                emptyText: '<em>所选世界书中无条目。</em>',
-            });
-            // 应用筛选（若存在）
-            try {
-                const $filter = $popupInstance_ACU.find(`#${SCRIPT_ID_PREFIX_ACU}-plot-worldbook-entry-filter`);
-                if ($filter.length)
-                    applyWorldbookEntryFilter_ACU($list, $filter.val());
-            }
-            catch (e) { }
         }
-        catch (error) {
-            logError_ACU('[剧情推进] Failed to populate plot worldbook entry list:', error);
-            $list.html('<em>加载条目失败。</em>');
-        }
-    }
-    // [新增] 填充注入目标选择器
-    async function populateInjectionTargetSelector_ACU() {
-        if (!$popupInstance_ACU)
-            return;
-        const $select = $popupInstance_ACU.find(`#${SCRIPT_ID_PREFIX_ACU}-worldbook-injection-target`);
-        $select.empty();
-        try {
-            const bookNames = await getWorldbookNames_ACU();
-            // 添加默认选项
-            $select.append(`<option value="character">角色卡绑定世界书</option>`);
-            bookNames.forEach(bookName => {
-                $select.append(`<option value="${escapeHtml_ACU(bookName)}">${escapeHtml_ACU(bookName)}</option>`);
-            });
-            // 设置当前选中的值
-            const worldbookConfig = getCurrentWorldbookConfig_ACU();
-            $select.val(worldbookConfig.injectionTarget || 'character');
-            // 应用筛选（若存在）
-            try {
-                const $filter = $popupInstance_ACU.find(`#${SCRIPT_ID_PREFIX_ACU}-worldbook-injection-target-filter`);
-                if ($filter.length)
-                    applyWorldbookSelectFilter_ACU($select, $filter.val());
-            }
-            catch (e) { }
-        }
-        catch (error) {
-            logError_ACU('Failed to populate injection target selector:', error);
-            $select.append('<option value="character">加载列表失败</option>');
-        }
-    }
-    // [新增] 辅助函数：检查条目是否包含屏蔽词
-    function isEntryBlocked_ACU$1(entry) {
-        if (!entry)
-            return false;
-        const blockedKeywords = ["规则", "思维链", "cot", "MVU", "mvu", "变量", "状态", "Status", "Rule", "rule", "检定", "判断", "叙事", "文风", "InitVar", "格式"];
-        const name = entry.comment || entry.name || ''; // In ST, 'comment' is often the display name
-        return blockedKeywords.some(keyword => name.includes(keyword));
-    }
-    const WORLDBOOK_ENTRY_LAZY_PAGE_SIZE_ACU = 80;
-    function buildWorldbookEntryCheckboxId_ACU(prefix, bookName, uid) {
-        const safePrefix = String(prefix || 'wb-entry').replace(/[^a-zA-Z0-9_-]+/g, '-');
-        const safeBook = String(bookName || 'book')
-            .replace(/[^a-zA-Z0-9_-]+/g, '-')
-            .replace(/^-+|-+$/g, '')
-            .slice(0, 48) || 'book';
-        return `${safePrefix}-${safeBook}-${uid}`;
-    }
-    function createLazyWorldbookEntryViewState_ACU(groups = [], options = {}) {
-        const normalizedGroups = (Array.isArray(groups) ? groups : []).map(group => ({
-            bookName: String(group?.bookName || ''),
-            entries: Array.isArray(group?.entries) ? group.entries.map(entry => ({ ...entry })) : [],
-            filteredEntries: null,
-            loadedCount: 0,
-            expanded: group?.expanded === true,
-            expandedBeforeFilter: undefined,
-        })).filter(group => group.bookName);
-        return {
-            groups: normalizedGroups,
-            pageSize: Number(options?.pageSize) > 0 ? Number(options.pageSize) : WORLDBOOK_ENTRY_LAZY_PAGE_SIZE_ACU,
-            checkboxIdPrefix: String(options?.checkboxIdPrefix || 'wb-entry'),
-            emptyText: options?.emptyText || '<em>所选世界书中无条目。</em>',
-            emptyGroupText: options?.emptyGroupText || '<em>当前分组没有可显示的条目。</em>',
-            isFiltering: false,
-        };
-    }
-    function getLazyWorldbookEntrySource_ACU(group) {
-        if (!group)
-            return [];
-        if (Array.isArray(group.filteredEntries))
-            return group.filteredEntries;
-        return Array.isArray(group.entries) ? group.entries : [];
-    }
-    function findLazyWorldbookEntryGroupState_ACU($list, bookName) {
-        if (!$list || !$list.length)
-            return null;
-        const state = $list.data('acuLazyWorldbookState');
-        if (!state || !Array.isArray(state.groups))
-            return null;
-        return state.groups.find(group => String(group.bookName) === String(bookName)) || null;
-    }
-    function findLazyWorldbookEntryGroupElement_ACU($list, bookName) {
-        if (!$list || !$list.length)
-            return jQuery_API_ACU();
-        return $list.find('.qrf_worldbook_entry_group').filter(function () {
-            return String(jQuery_API_ACU(this).data('book-name') || '') === String(bookName);
-        }).first();
-    }
-    function updateLazyWorldbookEntryGroupMeta_ACU($list, bookName) {
-        if (!$list || !$list.length)
-            return;
-        const state = $list.data('acuLazyWorldbookState');
-        const group = findLazyWorldbookEntryGroupState_ACU($list, bookName);
-        const $group = findLazyWorldbookEntryGroupElement_ACU($list, bookName);
-        if (!state || !group || !$group.length)
-            return;
-        const sourceEntries = getLazyWorldbookEntrySource_ACU(group);
-        const loadedCount = Math.min(group.loadedCount || 0, sourceEntries.length);
-        const metaText = sourceEntries.length === 0
-            ? '0 条'
-            : (loadedCount < sourceEntries.length ? `已加载 ${loadedCount} / ${sourceEntries.length} 条` : `共 ${sourceEntries.length} 条`);
-        $group.find('.qrf_worldbook_entry_group_meta').text(metaText);
-        $group.find('.qrf_worldbook_entry_toggle').text(group.expanded ? '收起' : '展开');
-        $group.find('.qrf_worldbook_entry_group_body').toggle(group.expanded);
-        $group.find('.qrf_worldbook_entry_group_footer').toggle(group.expanded && sourceEntries.length > 0);
-        $group.find('.qrf_worldbook_entry_load_more').toggle(group.expanded && loadedCount < sourceEntries.length);
-    }
-    function renderLazyWorldbookEntryItems_ACU($list, bookName, options = {}) {
-        if (!$list || !$list.length)
-            return;
-        const state = $list.data('acuLazyWorldbookState');
-        const group = findLazyWorldbookEntryGroupState_ACU($list, bookName);
-        const $group = findLazyWorldbookEntryGroupElement_ACU($list, bookName);
-        if (!state || !group || !$group.length)
-            return;
-        const sourceEntries = getLazyWorldbookEntrySource_ACU(group);
-        if (options.reset === true) {
-            group.loadedCount = 0;
-        }
-        const nextCount = options.renderAll === true
-            ? sourceEntries.length
-            : Math.min(sourceEntries.length, (group.loadedCount || 0) + state.pageSize);
-        group.loadedCount = nextCount;
-        const visibleEntries = sourceEntries.slice(0, nextCount);
-        const html = visibleEntries.length > 0
-            ? visibleEntries.map(entry => {
-                const checkboxId = entry.checkboxId || buildWorldbookEntryCheckboxId_ACU(state.checkboxIdPrefix, entry.bookName || bookName, entry.uid);
-                const labelText = entry.label || `条目 ${entry.uid}`;
-                const disabledStyle = entry.disabled ? 'style="opacity:0.6; text-decoration: line-through;"' : '';
-                return `
-                  <div class="qrf_worldbook_entry_item" data-book-name="${escapeHtml_ACU(String(entry.bookName || bookName))}" data-entry-uid="${escapeHtml_ACU(String(entry.uid ?? ''))}">
-                      <input type="checkbox" id="${escapeHtml_ACU(String(checkboxId))}" data-book="${escapeHtml_ACU(String(entry.bookName || bookName))}" data-uid="${escapeHtml_ACU(String(entry.uid ?? ''))}" ${entry.checked ? 'checked' : ''} ${entry.disabled ? 'disabled' : ''}>
-                      <label for="${escapeHtml_ACU(String(checkboxId))}" ${disabledStyle}>${escapeHtml_ACU(String(labelText))}</label>
-                  </div>`;
-            }).join('')
-            : state.emptyGroupText;
-        $group.find('.qrf_worldbook_entry_group_body').html(html);
-        updateLazyWorldbookEntryGroupMeta_ACU($list, bookName);
-    }
-    function renderLazyWorldbookEntryList_ACU($list, groups, options = {}) {
-        if (!$list || !$list.length)
-            return;
-        const state = createLazyWorldbookEntryViewState_ACU(groups, options);
-        $list.data('acuLazyWorldbookState', state);
-        if (!state.groups.length) {
-            $list.html(state.emptyText);
-            return;
-        }
-        const html = state.groups.map(group => `
-          <div class="qrf_worldbook_entry_group" data-book-name="${escapeHtml_ACU(group.bookName)}" style="margin-bottom: 8px;">
-              <div class="qrf_worldbook_entry_header" data-book-name="${escapeHtml_ACU(group.bookName)}" style="display: flex; align-items: center; gap: 8px; margin-bottom: 5px; font-weight: bold; border-bottom: 1px solid; padding-bottom: 4px;">
-                  <button type="button" class="qrf_worldbook_entry_toggle button" style="padding: 2px 8px; font-size: 0.8em;">${group.expanded ? '收起' : '展开'}</button>
-                  <span class="qrf_worldbook_entry_header_text" style="flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">${escapeHtml_ACU(group.bookName)}</span>
-                  <span class="qrf_worldbook_entry_group_meta" style="font-weight: normal; font-size: 0.85em; color: var(--text_secondary);"></span>
-              </div>
-              <div class="qrf_worldbook_entry_group_body" style="display: ${group.expanded ? 'block' : 'none'};"></div>
-              <div class="qrf_worldbook_entry_group_footer" style="display: ${group.expanded ? 'block' : 'none'}; margin-top: 6px;">
-                  <button type="button" class="qrf_worldbook_entry_load_more button" style="padding: 2px 8px; font-size: 0.8em; display: none;">继续加载</button>
-              </div>
-          </div>`).join('');
-        $list.html(html);
-        state.groups.forEach(group => {
-            if (group.expanded) {
-                renderLazyWorldbookEntryItems_ACU($list, group.bookName, { reset: true });
-            }
-            else {
-                updateLazyWorldbookEntryGroupMeta_ACU($list, group.bookName);
-            }
-        });
-    }
-    function toggleLazyWorldbookEntryGroup_ACU($list, bookName, expanded = null) {
-        if (!$list || !$list.length)
-            return;
-        const group = findLazyWorldbookEntryGroupState_ACU($list, bookName);
-        if (!group)
-            return;
-        const nextExpanded = (typeof expanded === 'boolean') ? expanded : !group.expanded;
-        group.expanded = nextExpanded;
-        if (group.expanded && (group.loadedCount || 0) === 0) {
-            renderLazyWorldbookEntryItems_ACU($list, bookName, { reset: true });
-        }
-        else {
-            updateLazyWorldbookEntryGroupMeta_ACU($list, bookName);
-        }
-    }
-    function updateLazyWorldbookEntryCheckedState_ACU($list, bookName, uid, checked) {
-        const group = findLazyWorldbookEntryGroupState_ACU($list, bookName);
-        if (!group)
-            return;
-        const syncCheckedState = entries => {
-            if (!Array.isArray(entries))
-                return;
-            entries.forEach(entry => {
-                if (String(entry?.uid) === String(uid)) {
-                    entry.checked = checked;
-                }
-            });
-        };
-        syncCheckedState(group.entries);
-        syncCheckedState(group.filteredEntries);
-    }
-    function applyLazyWorldbookEntryFilter_ACU($list, rawQuery) {
-        if (!$list || !$list.length)
-            return false;
-        const state = $list.data('acuLazyWorldbookState');
-        if (!state || !Array.isArray(state.groups))
-            return false;
-        const q = normalizeFilterText_ACU(rawQuery);
-        const wasFiltering = state.isFiltering === true;
-        if (q && !wasFiltering) {
-            state.groups.forEach(group => {
-                group.expandedBeforeFilter = group.expanded;
-            });
-        }
-        if (!q) {
-            state.isFiltering = false;
-            state.groups.forEach(group => {
-                group.filteredEntries = null;
-                group.loadedCount = 0;
-                if (typeof group.expandedBeforeFilter === 'boolean') {
-                    group.expanded = group.expandedBeforeFilter;
-                }
-                group.expandedBeforeFilter = undefined;
-                const $group = findLazyWorldbookEntryGroupElement_ACU($list, group.bookName);
-                if ($group.length)
-                    $group.show();
-                if (group.expanded) {
-                    renderLazyWorldbookEntryItems_ACU($list, group.bookName, { reset: true });
-                }
-                else {
-                    updateLazyWorldbookEntryGroupMeta_ACU($list, group.bookName);
-                }
-            });
-            return true;
-        }
-        state.isFiltering = true;
-        state.groups.forEach(group => {
-            const bookText = String(group.bookName || '').toLowerCase();
-            if (bookText.includes(q)) {
-                group.filteredEntries = Array.isArray(group.entries) ? group.entries.slice() : [];
-            }
-            else {
-                group.filteredEntries = (Array.isArray(group.entries) ? group.entries : []).filter(entry => {
-                    const hay = String(entry.searchText || entry.label || `条目 ${entry.uid}`).toLowerCase();
-                    return hay.includes(q);
-                });
-            }
-            const sourceEntries = getLazyWorldbookEntrySource_ACU(group);
-            const $group = findLazyWorldbookEntryGroupElement_ACU($list, group.bookName);
-            group.loadedCount = 0;
-            group.expanded = sourceEntries.length > 0;
-            if ($group.length)
-                $group.toggle(sourceEntries.length > 0);
-            if (sourceEntries.length > 0) {
-                renderLazyWorldbookEntryItems_ACU($list, group.bookName, { reset: true });
-            }
-            else {
-                updateLazyWorldbookEntryGroupMeta_ACU($list, group.bookName);
-            }
-        });
-        return true;
+        return getSelectedManualSheetKeys_ACU();
     }
     // =========================
-    // [UI] 世界书筛选工具：注入目标(select) / 手动选择(list) / 条目列表(entry list)
+    // [外部导入] 注入表格自选（与手动填表一致，但独立存储到 settings_ACU.importSelectedTables）
     // =========================
-    function normalizeFilterText_ACU(v) {
-        return String(v ?? '').trim().toLowerCase();
-    }
-    function applyWorldbookSelectFilter_ACU($select, rawQuery) {
-        if (!$select || !$select.length)
-            return;
-        const q = normalizeFilterText_ACU(rawQuery);
-        const currentVal = String($select.val() ?? '');
-        $select.find('option').each(function () {
-            const val = String(jQuery_API_ACU(this).attr('value') ?? '');
-            const text = String(jQuery_API_ACU(this).text() ?? '');
-            const hay = (val + ' ' + text).toLowerCase();
-            const match = (!q) || hay.includes(q);
-            const keepSelected = (val === currentVal);
-            this.hidden = !(match || keepSelected);
-        });
-    }
-    function applyWorldbookListFilter_ACU($listContainer, rawQuery) {
-        if (!$listContainer || !$listContainer.length)
-            return;
-        const q = normalizeFilterText_ACU(rawQuery);
-        $listContainer.find('.qrf_worldbook_list_item').each(function () {
-            const $it = jQuery_API_ACU(this);
-            const name = String($it.data('book-name') || $it.text() || '').toLowerCase();
-            $it.toggle(!q || name.includes(q));
-        });
-    }
-    function applyWorldbookEntryFilter_ACU($entryList, rawQuery) {
-        if (!$entryList || !$entryList.length)
-            return;
-        if (applyLazyWorldbookEntryFilter_ACU($entryList, rawQuery))
-            return;
-        const q = normalizeFilterText_ACU(rawQuery);
-        const $items = $entryList.find('.qrf_worldbook_entry_item');
-        const $headers = $entryList.find('.qrf_worldbook_entry_header');
-        if (!q) {
-            $items.show();
-            $headers.show();
-            return;
-        }
-        const matchedBooks = new Set();
-        $items.each(function () {
-            const $row = jQuery_API_ACU(this);
-            const $cb = $row.find('input[type="checkbox"]');
-            const book = String($cb.data('book') || '');
-            const labelText = String($row.find('label').text() || '').toLowerCase();
-            const bookText = book.toLowerCase();
-            const match = labelText.includes(q) || bookText.includes(q);
-            $row.toggle(match);
-            if (match)
-                matchedBooks.add(book);
-        });
-        $headers.each(function () {
-            const $h = jQuery_API_ACU(this);
-            const book = String($h.data('book-name') || $h.text() || '');
-            const bookText = book.toLowerCase();
-            const match = bookText.includes(q) || matchedBooks.has(book);
-            $h.toggle(match);
-        });
-    }
-    // [新增] 填充外部导入专用的世界书选择器
-    async function populateImportWorldbookTargetSelector_ACU() {
-        if (!$popupInstance_ACU)
-            return;
-        const $select = $popupInstance_ACU.find(`#${SCRIPT_ID_PREFIX_ACU}-import-worldbook-injection-target`);
-        if (!$select.length)
-            return;
-        $select.empty();
+    function getImportBaseTableData_ACU() {
+        // 优先用“模板表结构”（外部导入的数据库就是从模板重建的）
         try {
-            const bookNames = await getWorldbookNames_ACU();
-            // 只添加世界书选项，不添加角色卡绑定和常规更新目标选项
-            bookNames.forEach(bookName => {
-                $select.append(`<option value="${escapeHtml_ACU(bookName)}">${escapeHtml_ACU(bookName)}</option>`);
-            });
-            // 设置当前选中的值
-            $select.val(settings_ACU.importWorldbookTarget || '');
-            // 应用筛选（若存在）
-            try {
-                const $filter = $popupInstance_ACU.find(`#${SCRIPT_ID_PREFIX_ACU}-import-worldbook-injection-target-filter`);
-                if ($filter.length)
-                    applyWorldbookSelectFilter_ACU($select, $filter.val());
-            }
-            catch (e) { }
-        }
-        catch (error) {
-            logError_ACU('Failed to populate import worldbook target selector:', error);
-        }
-    }
-    async function populateWorldbookList_ACU() {
-        if (!$popupInstance_ACU)
-            return;
-        const $listContainer = $popupInstance_ACU.find(`#${SCRIPT_ID_PREFIX_ACU}-worldbook-select`);
-        $listContainer.empty().html('<em>正在加载...</em>');
-        try {
-            const bookNames = await getWorldbookNames_ACU();
-            $listContainer.empty();
-            if (bookNames.length === 0) {
-                $listContainer.html('<em>未找到世界书</em>');
-                return;
-            }
-            const worldbookConfig = getCurrentWorldbookConfig_ACU();
-            bookNames.forEach(bookName => {
-                const isSelected = worldbookConfig.manualSelection.includes(bookName);
-                const itemHtml = `
-                  <div class="qrf_worldbook_list_item ${isSelected ? 'selected' : ''}" data-book-name="${escapeHtml_ACU(bookName)}">
-                      ${escapeHtml_ACU(bookName)}
-                  </div>`;
-                $listContainer.append(itemHtml);
-            });
-            // 应用筛选（若存在）
-            try {
-                const $filter = $popupInstance_ACU.find(`#${SCRIPT_ID_PREFIX_ACU}-worldbook-select-filter`);
-                if ($filter.length)
-                    applyWorldbookListFilter_ACU($listContainer, $filter.val());
-            }
-            catch (e) { }
-        }
-        catch (error) {
-            logError_ACU('Failed to populate worldbook list:', error);
-            $listContainer.html('<em>加载失败</em>');
-        }
-    }
-    async function populateWorldbookEntryList_ACU() {
-        if (!$popupInstance_ACU)
-            return;
-        const $list = $popupInstance_ACU.find(`#${SCRIPT_ID_PREFIX_ACU}-worldbook-entry-list`);
-        $list.empty().html('<em>正在加载条目...</em>');
-        const worldbookConfig = getCurrentWorldbookConfig_ACU();
-        const source = worldbookConfig.source;
-        let bookNames = [];
-        if (source === 'character') {
-            const charLorebooks = await TavernHelper_API_ACU.getCharLorebooks({ type: 'all' });
-            if (charLorebooks.primary)
-                bookNames.push(charLorebooks.primary);
-            if (charLorebooks.additional?.length)
-                bookNames.push(...charLorebooks.additional);
-        }
-        else if (source === 'manual') {
-            bookNames = worldbookConfig.manualSelection || [];
-        }
-        bookNames = [...new Set((Array.isArray(bookNames) ? bookNames : []).filter(Boolean))];
-        if (bookNames.length === 0) {
-            $list.html('<em>请先选择世界书或为角色绑定世界书。</em>');
-            return;
-        }
-        try {
-            if (!worldbookConfig.enabledEntries)
-                worldbookConfig.enabledEntries = {};
-            const entriesMap = await getLorebookEntriesByNames_ACU(bookNames);
-            const groups = [];
-            const expandByDefault = bookNames.length === 1;
-            let settingsChanged = false; // Flag to check if we need to save settings
-            for (const bookName of bookNames) {
-                const bookEntries = Array.isArray(entriesMap[bookName]) ? entriesMap[bookName] : [];
-                // If no setting exists for this book, default to all entries enabled.
-                if (typeof worldbookConfig.enabledEntries[bookName] === 'undefined') {
-                    // [修改] 默认启用时，过滤掉自动生成的条目
-                    worldbookConfig.enabledEntries[bookName] = bookEntries
-                        .filter(entry => {
-                        const comment = entry.comment || '';
-                        // 过滤自动生成的条目
-                        if (comment.startsWith('TavernDB-ACU-') || comment.startsWith('重要人物条目') || comment.startsWith('总结条目')) {
-                            return false;
-                        }
-                        // [新增] 过滤屏蔽词条目
-                        if (isEntryBlocked_ACU$1(entry)) {
-                            return false;
-                        }
-                        return true;
-                    })
-                        .map(entry => entry.uid);
-                    settingsChanged = true;
-                }
-                const enabledEntries = Array.isArray(worldbookConfig.enabledEntries[bookName]) ? worldbookConfig.enabledEntries[bookName] : [];
-                const visibleEntries = [];
-                bookEntries.forEach(entry => {
-                    // [新增] 在UI列表显示时，也过滤掉自动生成的条目，不显示给用户
-                    const comment = entry.comment || '';
-                    if (comment.startsWith('TavernDB-ACU-') || comment.startsWith('重要人物条目') || comment.startsWith('总结条目')) {
-                        return;
-                    }
-                    // [新增] 过滤屏蔽词条目，不显示在列表中
-                    if (isEntryBlocked_ACU$1(entry)) {
-                        return;
-                    }
-                    visibleEntries.push({
-                        uid: entry.uid,
-                        bookName,
-                        label: entry.comment || `条目 ${entry.uid}`,
-                        searchText: `${bookName} ${entry.comment || `条目 ${entry.uid}`}`,
-                        checked: enabledEntries.includes(entry.uid),
-                        disabled: !entry.enabled,
-                        checkboxId: buildWorldbookEntryCheckboxId_ACU('wb-entry', bookName, entry.uid),
-                    });
-                });
-                if (visibleEntries.length > 0) {
-                    groups.push({
-                        bookName,
-                        entries: visibleEntries,
-                        expanded: expandByDefault,
-                    });
-                }
-            }
-            if (settingsChanged) {
-                saveSettings_ACU();
-            }
-            renderLazyWorldbookEntryList_ACU($list, groups, {
-                checkboxIdPrefix: 'wb-entry',
-                emptyText: '<em>所选世界书中无条目。</em>',
-            });
-            // 应用筛选（若存在）
-            try {
-                const $filter = $popupInstance_ACU.find(`#${SCRIPT_ID_PREFIX_ACU}-worldbook-entry-filter`);
-                if ($filter.length)
-                    applyWorldbookEntryFilter_ACU($list, $filter.val());
-            }
-            catch (e) { }
-        }
-        catch (error) {
-            logError_ACU('Failed to populate worldbook entry list:', error);
-            $list.html('<em>加载条目失败。</em>');
-        }
-    }
-    // --- [新增] 世界书相关功能 ---
-    // --- [新增] 世界书相关功能结束 ---
-
-    // status-display.ts — 对应源文件有跨文件依赖，保留在原位
-    // [T172] 可视化编辑器刷新通知（从 service/worldbook/pipeline.ts 提取）
-    function notifyVisualizerRefresh_ACU() {
-        try {
-            jQuery_API_ACU(document).trigger('acu-visualizer-refresh-data');
-        }
-        catch (e) { }
-    }
-    // [T173] 填表状态消息更新
-    function updateTableFillStatus_ACU(text) {
-        if (!$statusMessageSpan_ACU && $popupInstance_ACU)
-            $statusMessageSpan_ACU = $popupInstance_ACU.find(`#${SCRIPT_ID_PREFIX_ACU}-status-message`);
-        if ($statusMessageSpan_ACU)
-            $statusMessageSpan_ACU.text(text);
-    }
-    // [T173] 填表停止按钮绑定
-    function bindTableFillStopButton_ACU(localAbortController, onStop) {
-        const $stopButton = jQuery_API_ACU('#acu-stop-update-btn');
-        if ($stopButton.length) {
-            $stopButton.off('click.acu_stop').on('click.acu_stop', function (e) {
-                e.stopPropagation();
-                e.preventDefault();
-                if ($manualUpdateCardButton_ACU) {
-                    $manualUpdateCardButton_ACU.prop('disabled', false).text('立即手动更新');
-                }
-                jQuery_API_ACU(this).closest('.toast').remove();
-                if (typeof onStop === 'function')
-                    onStop();
-            });
-        }
-    }
-    // [T173] 重置手动更新按钮状态
-    function resetManualUpdateButton_ACU() {
-        if ($manualUpdateCardButton_ACU) {
-            $manualUpdateCardButton_ACU.prop('disabled', false).text('立即手动更新');
-        }
-    }
-    // [T174] 更新聊天标题显示
-    function updateChatTitleDisplay_ACU(chatIdentifier) {
-        if (!$popupInstance_ACU)
-            return;
-        const $titleElement = $popupInstance_ACU.find('h2#updater-main-title-acu');
-        if ($titleElement.length)
-            $titleElement.html(`当前聊天：${escapeHtml_ACU(chatIdentifier || '未知')}`);
-    }
-    // [T175] 检查弹窗是否打开（供 service 层用布尔判断，不暴露 DOM 引用）
-    function isPopupOpen_ACU() {
-        return !!$popupInstance_ACU;
-    }
-    // [T177] 读取酒馆发送输入框的值
-    function getSendTextareaValue_ACU() {
-        try {
-            return jQuery_API_ACU('#send_textarea').val() || '';
+            const templateData = parseTableTemplateJson_ACU({ stripSeedRows: true });
+            if (templateData)
+                return templateData;
         }
         catch (e) {
-            return '';
+            // ignore
         }
+        // 回退：如果模板解析失败，至少用当前内存数据渲染列表
+        return currentJsonTableData_ACU$1 || null;
     }
-    // [T177] 设置酒馆发送输入框的值并触发 input 事件
-    function setSendTextareaValue_ACU(text) {
-        try {
-            jQuery_API_ACU('#send_textarea').val(text);
-            jQuery_API_ACU('#send_textarea').trigger('input');
+    function getSelectedImportSheetKeys_ACU() {
+        const base = getImportBaseTableData_ACU();
+        if (!base)
+            return [];
+        const availableKeys = getSortedSheetKeys_ACU(base);
+        const saved = Array.isArray(settings_ACU.importSelectedTables) ? settings_ACU.importSelectedTables : [];
+        // 未曾手动选择过：默认全选
+        if (!settings_ACU.hasImportTableSelection)
+            return availableKeys;
+        const validSaved = saved.filter(k => availableKeys.includes(k));
+        return validSaved;
+    }
+    function renderImportTableSelector_ACU() {
+        if (!$importTableSelector_ACU || !$importTableSelector_ACU.length)
+            return;
+        const base = getImportBaseTableData_ACU();
+        if (!base) {
+            $importTableSelector_ACU.html('<div class="notes">尚未加载表格结构。</div>');
+            return;
         }
-        catch (e) { }
-    }
-    // [T178] 将合并/删除设置同步到 UI
-    function syncMergeSettingsToUI_ACU(s) {
-        if (!$popupInstance_ACU)
+        const availableKeys = getSortedSheetKeys_ACU(base);
+        if (availableKeys.length === 0) {
+            $importTableSelector_ACU.html('<div class="notes">暂无表格可选。</div>');
             return;
-        const find = (id) => $popupInstance_ACU.find(`#${SCRIPT_ID_PREFIX_ACU}-${id}`);
-        const setVal = (id, v) => { const $el = find(id); if ($el.length)
-            $el.val(v); };
-        const setChecked = (id, v) => { const $el = find(id); if ($el.length)
-            $el.prop('checked', !!v); };
-        setVal('merge-prompt-template', s.mergeSummaryPrompt || DEFAULT_MERGE_SUMMARY_PROMPT_ACU);
-        setVal('merge-target-count', s.mergeTargetCount || 1);
-        setVal('merge-batch-size', s.mergeBatchSize || 5);
-        setVal('merge-start-index', s.mergeStartIndex || 1);
-        setVal('merge-end-index', s.mergeEndIndex || '');
-        setChecked('auto-merge-enabled', s.autoMergeEnabled);
-        setVal('auto-merge-threshold', s.autoMergeThreshold || 20);
-        setVal('auto-merge-reserve', s.autoMergeReserve || 0);
-        setVal('delete-start-floor', s.deleteStartFloor || 1);
-        setVal('delete-end-floor', s.deleteEndFloor || '');
+        }
+        const resolvedSelection = getSelectedImportSheetKeys_ACU();
+        const selectedSet = new Set(resolvedSelection);
+        if (!Array.isArray(settings_ACU.importSelectedTables) || JSON.stringify(settings_ACU.importSelectedTables) !== JSON.stringify(resolvedSelection)) {
+            settings_ACU.importSelectedTables = resolvedSelection;
+            saveSettings_ACU();
+        }
+        let html = '<div class="acu-table-selector" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(180px,1fr));gap:8px;max-height:240px;overflow:auto;padding:8px;border:1px solid var(--border-normal);border-radius:8px;background:var(--bg-secondary);">';
+        availableKeys.forEach(key => {
+            const name = base[key]?.name || key;
+            const checked = selectedSet.has(key) ? 'checked' : '';
+            html += `<label style="display:flex;align-items:center;gap:8px;padding:10px;border:1px solid var(--border-normal);border-radius:6px;background:var(--bg-primary);">
+              <input type="checkbox" data-key="${key}" ${checked} style="margin:0;width:14px;height:14px;flex-shrink:0;">
+              <span style="flex:1;word-break:break-all;font-weight:600;">${escapeHtml_ACU(name)}</span>
+          </label>`;
+        });
+        html += '</div>';
+        $importTableSelector_ACU.html(html);
+        $importTableSelector_ACU.off('change', 'input[type="checkbox"]').on('change', 'input[type="checkbox"]', function () {
+            const checkedKeys = [];
+            $importTableSelector_ACU.find('input[type="checkbox"]:checked').each(function () {
+                const key = jQuery_API_ACU(this).data('key');
+                if (key)
+                    checkedKeys.push(key);
+            });
+            settings_ACU.importSelectedTables = checkedKeys;
+            settings_ACU.hasImportTableSelection = true;
+            saveSettings_ACU();
+        });
     }
-    // [T179] 将全部设置同步到 UI（从 service/settings/settings-service.ts 提取）
-    function syncAllSettingsToUI_ACU(s) {
-        if (!$popupInstance_ACU)
-            return;
-        if ($customApiUrlInput_ACU)
-            $customApiUrlInput_ACU.val(s.apiConfig.url);
-        if ($customApiKeyInput_ACU)
-            $customApiKeyInput_ACU.val(s.apiConfig.apiKey);
-        if ($maxTokensInput_ACU)
-            $maxTokensInput_ACU.val(s.apiConfig.max_tokens);
-        if ($temperatureInput_ACU)
-            $temperatureInput_ACU.val(s.apiConfig.temperature);
-        if ($customApiModelInput_ACU)
-            $customApiModelInput_ACU.val(s.apiConfig.model || '');
-        if ($customApiModelSelect_ACU) {
-            $customApiModelSelect_ACU.empty().append('<option value="">-- 请先加载模型列表 --</option>');
-            if (s.apiConfig.model) {
-                $customApiModelSelect_ACU.append(`<option value="${escapeHtml_ACU(s.apiConfig.model)}">${escapeHtml_ACU(s.apiConfig.model)}</option>`);
+    function getImportSelectionFromUI_ACU() {
+        if ($importTableSelector_ACU && $importTableSelector_ACU.length) {
+            const keys = [];
+            $importTableSelector_ACU.find('input[type="checkbox"]:checked').each(function () {
+                const k = jQuery_API_ACU(this).data('key');
+                if (k)
+                    keys.push(k);
+            });
+            if (keys.length > 0 || settings_ACU.hasImportTableSelection) {
+                settings_ACU.importSelectedTables = keys;
+                settings_ACU.hasImportTableSelection = true;
+                saveSettings_ACU();
+                return keys;
             }
         }
-        if (typeof updateApiStatusDisplay_ACU === 'function')
-            updateApiStatusDisplay_ACU();
-        if ($charCardPromptSegmentsContainer_ACU)
-            renderPromptSegments_ACU(s.charCardPrompt);
-        if ($autoUpdateThresholdInput_ACU)
-            $autoUpdateThresholdInput_ACU.val(s.autoUpdateThreshold);
-        if ($autoUpdateFrequencyInput_ACU)
-            $autoUpdateFrequencyInput_ACU.val(s.autoUpdateFrequency);
-        if ($autoUpdateTokenThresholdInput_ACU)
-            $autoUpdateTokenThresholdInput_ACU.val(s.autoUpdateTokenThreshold);
-        if ($updateBatchSizeInput_ACU)
-            $updateBatchSizeInput_ACU.val(s.updateBatchSize);
-        if ($maxConcurrentGroupsInput_ACU)
-            $maxConcurrentGroupsInput_ACU.val(s.maxConcurrentGroups || 1);
-        if ($skipUpdateFloorsInput_ACU)
-            $skipUpdateFloorsInput_ACU.val(s.skipUpdateFloors || 0);
-        if ($retainRecentLayersInput_ACU)
-            $retainRecentLayersInput_ACU.val(s.retainRecentLayers || '');
-        if (typeof renderExcludeRuleRows_ACU === 'function') {
-            renderExcludeRuleRows_ACU(`#${SCRIPT_ID_PREFIX_ACU}-table-context-extract-rules`, normalizeExtractRules_ACU(s.tableContextExtractRules, s.tableContextExtractTags || ''), { startPlaceholder: '开始词（例如：<think）', endPlaceholder: '结束词（例如：</think>）' });
-            renderExcludeRuleRows_ACU(`#${SCRIPT_ID_PREFIX_ACU}-table-context-exclude-rules`, normalizeExcludeRules_ACU(s.tableContextExcludeRules, s.tableContextExcludeTags || ''), { startPlaceholder: '开始词（例如：<thinking）', endPlaceholder: '结束词（例如：</thinking>）' });
-        }
-        const find = (id) => $popupInstance_ACU.find(`#${SCRIPT_ID_PREFIX_ACU}-${id}`);
-        const setVal = (id, v) => { const $el = find(id); if ($el.length)
-            $el.val(v); };
-        const setChecked = (id, v) => { const $el = find(id); if ($el.length)
-            $el.prop('checked', !!v); };
-        setVal('import-split-size', s.importSplitSize);
-        setChecked('import-prompt-exclude-imported-worldbook-entries', s.importPromptExcludeImportedWorldbookEntries !== false);
-        if ($autoUpdateEnabledCheckbox_ACU)
-            $autoUpdateEnabledCheckbox_ACU.prop('checked', s.autoUpdateEnabled);
-        if ($standardizedTableFillEnabledCheckbox_ACU)
-            $standardizedTableFillEnabledCheckbox_ACU.prop('checked', s.standardizedTableFillEnabled !== false);
-        if ($toastMuteEnabledCheckbox_ACU)
-            $toastMuteEnabledCheckbox_ACU.prop('checked', !!s.toastMuteEnabled);
-        if ($promptTemplateEnabledCheckbox_ACU)
-            $promptTemplateEnabledCheckbox_ACU.prop('checked', s.promptTemplateSettings?.enabled !== false);
-        if ($tableEditLastPairOnlyCheckbox_ACU)
-            $tableEditLastPairOnlyCheckbox_ACU.prop('checked', s.tableEditLastPairOnly !== false);
-        if ($tableMaxRetriesInput_ACU)
-            $tableMaxRetriesInput_ACU.val(s.tableMaxRetries || 3);
-        syncMergeSettingsToUI_ACU(s);
-        const worldbookConfig = getCurrentWorldbookConfig_ACU();
-        $popupInstance_ACU.find(`input[name="${SCRIPT_ID_PREFIX_ACU}-worldbook-source"]`).filter(`[value="${worldbookConfig.source}"]`).prop('checked', true);
-        if (typeof updateWorldbookSourceView_ACU === 'function')
-            updateWorldbookSourceView_ACU();
-        if (typeof populateInjectionTargetSelector_ACU === 'function')
-            populateInjectionTargetSelector_ACU();
-        const $outlineToggle = find('worldbook-outline-entry-enabled');
-        if ($outlineToggle.length) {
-            let mode = worldbookConfig.zeroTkOccupyMode;
-            if (typeof mode === 'undefined' && typeof worldbookConfig.outlineEntryEnabled !== 'undefined')
-                mode = (worldbookConfig.outlineEntryEnabled === false);
-            $outlineToggle.prop('checked', mode === true);
-        }
-        if ($useMainApiCheckbox_ACU) {
-            $useMainApiCheckbox_ACU.prop('checked', s.apiConfig.useMainApi);
-            if (typeof updateCustomApiInputsState_ACU === 'function')
-                updateCustomApiInputsState_ACU();
-        }
-        if ($streamingEnabledCheckbox_ACU)
-            $streamingEnabledCheckbox_ACU.prop('checked', s.streamingEnabled || false);
-        if ($manualTableSelector_ACU && typeof renderManualTableSelector_ACU === 'function')
-            renderManualTableSelector_ACU();
-        if ($importTableSelector_ACU && typeof renderImportTableSelector_ACU === 'function')
-            renderImportTableSelector_ACU();
-        $popupInstance_ACU.find(`input[name="${SCRIPT_ID_PREFIX_ACU}-api-mode"][value="${s.apiMode}"]`).prop('checked', true);
-        if (typeof updateApiModeView_ACU === 'function')
-            updateApiModeView_ACU(s.apiMode);
+        return getSelectedImportSheetKeys_ACU();
     }
-    // [T180] 模拟点击酒馆发送按钮
-    function clickSendButton_ACU() {
+    function handleImportSelectAll_ACU() {
+        const base = getImportBaseTableData_ACU();
+        if (!base)
+            return;
+        const keys = getSortedSheetKeys_ACU(base);
+        settings_ACU.importSelectedTables = keys;
+        settings_ACU.hasImportTableSelection = true;
+        saveSettings_ACU();
+        renderImportTableSelector_ACU();
+    }
+    function handleImportSelectNone_ACU() {
+        settings_ACU.importSelectedTables = [];
+        settings_ACU.hasImportTableSelection = true;
+        saveSettings_ACU();
+        renderImportTableSelector_ACU();
+    }
+    function handleManualSelectAll_ACU() {
+        if (!currentJsonTableData_ACU$1)
+            return;
+        const keys = getSortedSheetKeys_ACU(currentJsonTableData_ACU$1);
+        settings_ACU.manualSelectedTables = keys;
+        settings_ACU.hasManualSelection = true;
+        saveSettings_ACU();
+        renderManualTableSelector_ACU();
+    }
+    function handleManualSelectNone_ACU() {
+        settings_ACU.manualSelectedTables = [];
+        settings_ACU.hasManualSelection = true;
+        saveSettings_ACU();
+        renderManualTableSelector_ACU();
+    }
+    // [新增] 统一的手动更新函数（支持按表选择，优先使用模板参数）
+
+    /**
+     * service/ai/prompt-builder.ts — AI 输入准备 + JSON清洗 + 表格编辑解析
+     * 从 src/features/ai/01_prompt_prepare.js + 02_api_call.js 合并迁移。
+     */
+    async function prepareAIInput_ACU(messages, updateMode = 'standard', targetSheetKeys = null, options = {}) {
+        // updateMode: 'standard' 表示更新标准表，'summary' 表示更新总结表和总体大纲
+        // targetSheetKeys: 可选，指定要更新的表格key列表
+        // This function is now simplified to only prepare the dynamic content parts.    // The main prompt assembly will happen in callCustomOpenAI_ACU.
+        if (!currentJsonTableData_ACU$1) {
+            logError_ACU('prepareAIInput_ACU: Cannot prepare AI input, currentJsonTableData_ACU is null.');
+            return null;
+        }
+        // [修复] 生成 $0 之前，确保 seedRows 可用（新对话首次填表、或指导表未命中时也能兜底）
+        // - 只把 seedRows 挂到表对象字段，不写入 content
+        let _seedGuideDataForThisPrepare_ACU = null;
         try {
-            jQuery_API_ACU('#send_but').click();
+            _seedGuideDataForThisPrepare_ACU = await ensureChatSheetGuideSeeded_ACU({ reason: 'prepare_ai_input_seedrows' });
+            if (_seedGuideDataForThisPrepare_ACU) {
+                attachSeedRowsToCurrentDataFromGuide_ACU(_seedGuideDataForThisPrepare_ACU);
+            }
         }
         catch (e) { }
+        // 1. Format the current JSON table data into a human-readable text block for $0
+        let tableDataText = '';
+        let _seedRowsTablesUsed_ACU = [];
+        const tableIndexes = getSortedSheetKeys_ACU(currentJsonTableData_ACU$1);
+        tableIndexes.forEach((sheetKey, tableIndex) => {
+            const table = currentJsonTableData_ACU$1[sheetKey];
+            if (!table || !table.name || !table.content)
+                return;
+            // [独立更新检查] 如果指定了 targetSheetKeys，则严格过滤
+            if (targetSheetKeys && Array.isArray(targetSheetKeys)) {
+                if (!targetSheetKeys.includes(sheetKey))
+                    return;
+            }
+            // [新增] 根据更新模式和表格名称决定是否显示数据行
+            // 注意：如果 targetSheetKeys 已指定，上面的检查已经过滤了不需要的表。
+            // 但为了兼容旧模式逻辑（未指定 targetSheetKeys 时），仍保留 mode 检查。
+            // 如果 targetSheetKeys 存在，我们假设调用者知道自己在做什么，shouldShowData 默认为 true。
+            const isSummaryTable = isSummaryOrOutlineTable_ACU(table.name);
+            let shouldShowData = true;
+            if (!targetSheetKeys) {
+                // [逻辑优化] 使用更明确的模式匹配
+                const isUnifiedMode = (updateMode === 'full' || updateMode === 'manual_unified' || updateMode === 'auto_unified');
+                const isStandardMode = (updateMode === 'standard' || updateMode === 'auto_standard' || updateMode === 'manual_standard');
+                const isSummaryMode = (updateMode === 'summary' || updateMode === 'auto_summary_silent' || updateMode === 'manual_summary');
+                if (isUnifiedMode) {
+                    // 统一更新模式：显示所有表
+                    shouldShowData = true;
+                }
+                else if (isStandardMode && isSummaryTable) {
+                    // 标准表更新模式：不显示总结表数据
+                    shouldShowData = false;
+                }
+                else if (isSummaryMode && !isSummaryTable) {
+                    // 总结表更新模式：不显示标准表数据
+                    shouldShowData = false;
+                }
+            }
+            if (!shouldShowData) {
+                return;
+            }
+            const allRows = table.content.slice(1);
+            // seedRows 统一从“当前数据/指导表/模板”解析（避免 seedRows 丢失导致误判为空表）
+            const seedRows = getEffectiveSeedRowsForSheet_ACU(sheetKey, { guideData: _seedGuideDataForThisPrepare_ACU, allowTemplateFallback: true });
+            // 把 seedRows 字段挂回 table，便于后续 applyEdits 物化
+            try {
+                if ((!Array.isArray(table.seedRows) || table.seedRows.length === 0) && Array.isArray(seedRows) && seedRows.length > 0) {
+                    table.seedRows = JSON.parse(JSON.stringify(seedRows));
+                }
+            }
+            catch (e) { }
+            const isUsingSeedRows = (allRows.length === 0 && seedRows.length > 0);
+            if (isUsingSeedRows) {
+                try {
+                    _seedRowsTablesUsed_ACU.push(String(table.name || sheetKey));
+                }
+                catch (e) { }
+            }
+            const effectiveAllRows = (allRows.length > 0) ? allRows : (seedRows.length > 0 ? seedRows : []);
+            // [新增] 当表格数据为空时，简化输出并提示初始化
+            if (effectiveAllRows.length === 0) {
+                tableDataText += `[${tableIndex}:${table.name}]\n`;
+                // [修正] 即使表格为空，也必须输出表头列名，以便AI知道如何初始化（列结构）
+                const headers = table.content[0] ? table.content[0].slice(1).map((h, i) => `[${i}:${h}]`).join(', ') : 'No Headers';
+                tableDataText += `  Columns: ${headers}\n`;
+                if (table.sourceData) {
+                    tableDataText += `  - Note: ${table.sourceData.note || 'N/A'}\n`;
+                    // 只发送 "initNode" 里的内容 (如果没有 initNode 则尝试使用 insertNode)
+                    const initNodeContent = table.sourceData.initNode || table.sourceData.insertNode || 'N/A';
+                    tableDataText += `  - Init Trigger: ${initNodeContent}\n`;
+                }
+                tableDataText += `  (该表格为空，请进行初始化。)\n\n`;
+            }
+            else {
+                tableDataText += `[${tableIndex}:${table.name}]\n`;
+                const headers = table.content[0] ? table.content[0].slice(1).map((h, i) => `[${i}:${h}]`).join(', ') : 'No Headers';
+                tableDataText += `  Columns: ${headers}\n`;
+                if (table.sourceData) {
+                    tableDataText += `  - Note: ${table.sourceData.note || 'N/A'}\n`;
+                    tableDataText += `  - Insert Trigger: ${table.sourceData.insertNode || table.sourceData.initNode || 'N/A'}\n`;
+                    tableDataText += `  - Update Trigger: ${table.sourceData.updateNode || 'N/A'}\n`;
+                    tableDataText += `  - Delete Trigger: ${table.sourceData.deleteNode || 'N/A'}\n`;
+                }
+                if (isUsingSeedRows) {
+                    tableDataText += `  - SeedRows: 已提供模板基础数据（尚未写入聊天楼层数据；本次填表可直接基于这些行更新）\n`;
+                }
+                let rowsToProcess = effectiveAllRows;
+                let startIndex = 0;
+                // [健全机制] 纪要表/总结表：固定使用硬编码的10条限制，不受 sendLatestRows 参数影响
+                // 这是为了保证纪要表的行为一致性，避免用户误配置导致发送过多数据
+                const isSummaryTable = (table.name.trim() === '纪要表' || table.name.trim() === '总结表');
+                if (isSummaryTable && effectiveAllRows.length > 10) {
+                    startIndex = effectiveAllRows.length - 10;
+                    rowsToProcess = effectiveAllRows.slice(-10);
+                    tableDataText += `  - Note: Showing last ${rowsToProcess.length} of ${effectiveAllRows.length} entries (summary table fixed limit).\n`;
+                }
+                else if (!isSummaryTable) {
+                    // [新增] 其他表：使用 sendLatestRows 参数控制发送行数
+                    // -1 = 全部发送，0 = 全部发送（沿用UI全局），正数 = 仅发送最新N条
+                    const sendLatestRows = (table.updateConfig && typeof table.updateConfig.sendLatestRows === 'number')
+                        ? table.updateConfig.sendLatestRows : -1;
+                    if (sendLatestRows > 0 && effectiveAllRows.length > sendLatestRows) {
+                        startIndex = effectiveAllRows.length - sendLatestRows;
+                        rowsToProcess = effectiveAllRows.slice(-sendLatestRows);
+                        tableDataText += `  - Note: Showing last ${rowsToProcess.length} of ${effectiveAllRows.length} entries (sendLatestRows=${sendLatestRows}).\n`;
+                    }
+                }
+                if (rowsToProcess.length > 0) {
+                    rowsToProcess.forEach((row, index) => {
+                        const originalRowIndex = startIndex + index; // 计算原始行索引
+                        const rowData = row.slice(1).join(', ');
+                        tableDataText += `  [${originalRowIndex}] ${rowData}\n`;
+                    });
+                }
+                else {
+                    tableDataText += '  (No data rows)\n';
+                }
+                tableDataText += '\n';
+            }
+        });
+        if (_seedRowsTablesUsed_ACU.length > 0) {
+            logDebug_ACU(`[SeedRows] $0 使用 seedRows 作为基础数据：${_seedRowsTablesUsed_ACU.join('、')}`);
+        }
+        // 2. Format the messages for $1
+        let messagesText = '当前最新对话内容:\n';
+        if (messages && messages.length > 0) {
+            // [上下文筛选] 正文标签提取 + 标签排除（可单独或叠加）
+            const extractTags = (settings_ACU.tableContextExtractTags || '').trim();
+            const extractRules = normalizeExtractRules_ACU(settings_ACU.tableContextExtractRules, extractTags);
+            const excludeTags = (settings_ACU.tableContextExcludeTags || '').trim();
+            const excludeRules = normalizeExcludeRules_ACU(settings_ACU.tableContextExcludeRules, excludeTags);
+            messagesText += messages.map(msg => {
+                const prefix = msg.is_user ? SillyTavern_API_ACU?.name1 || '用户' : msg.name || '角色';
+                let content = msg.mes || msg.message || '';
+                // 对非用户消息应用上下文筛选（User回复不受影响）
+                if (!msg.is_user && (extractTags || extractRules.length > 0 || excludeTags || excludeRules.length > 0)) {
+                    content = applyContextTagFilters_ACU(content, { extractTags, extractRules, excludeTags, excludeRules });
+                }
+                return `${prefix}: ${content}`;
+            }).join('\n');
+        }
+        else {
+            messagesText += '(无最新对话内容)';
+        }
+        // [改动] 世界书初始扫描文本使用“本次实际读取的上下文”（与剧情推进一致）
+        // 用 messagesText（已应用上下文标签提取/排除规则）作为扫描源，避免误用全聊天记录导致触发漂移
+        const worldbookScanText = messagesText;
+        const excludeImportTaggedWorldbookEntries = options?.excludeImportTaggedWorldbookEntries === true;
+        const worldbookContent = await getCombinedWorldbookContent_ACU(worldbookScanText, {
+            excludeImportTaggedEntries: excludeImportTaggedWorldbookEntries,
+        });
+        const manualExtraHintText = manualExtraHint_ACU$1 || '';
+        // Return the dynamic parts for interpolation.
+        return { tableDataText, messagesText, worldbookContent, manualExtraHint: manualExtraHintText };
+    }
+    async function callCustomOpenAI_ACU(dynamicContent, abortController = null, options = null) {
+        // [新增] 创建一个新的 AbortController 用于本次请求
+        const localAbortController = abortController || new AbortController();
+        _set_currentAbortController_ACU$1(localAbortController);
+        trackAbortController_ACU$1(localAbortController);
+        const abortSignal = localAbortController.signal;
+        const skipProfileSwitch = !!options?.skipProfileSwitch;
+        const forceDirectApi = !!options?.forceDirectApi;
+        // [新增] 获取填表使用的API配置（支持API预设）
+        const apiPresetConfig = getApiConfigByPreset_ACU(settings_ACU.tableApiPreset);
+        const effectiveApiMode = apiPresetConfig.apiMode;
+        const effectiveApiConfig = apiPresetConfig.apiConfig;
+        const effectiveTavernProfile = apiPresetConfig.tavernProfile;
+        // 仅用于发给API时的角色归一化（不做A/B强制）
+        const normalizeRoleForApi_ACU = (role) => {
+            const ru = String(role || '').toUpperCase();
+            const rl = String(role || '').toLowerCase();
+            if (ru === 'AI' || ru === 'ASSISTANT' || rl === 'assistant')
+                return 'assistant';
+            if (ru === 'SYSTEM' || rl === 'system')
+                return 'system';
+            if (ru === 'USER' || rl === 'user')
+                return 'user';
+            return 'user';
+        };
+        // This function now assembles the final messages array.
+        const messages = [];
+        const charCardPromptSetting = settings_ACU.charCardPrompt;
+        let promptSegments = [];
+        if (Array.isArray(charCardPromptSetting)) {
+            promptSegments = charCardPromptSetting;
+        }
+        else if (typeof charCardPromptSetting === 'string') {
+            // Handle legacy single-string format
+            promptSegments = [{ role: 'USER', content: charCardPromptSetting }];
+        }
+        // [新增] 构建 $U (用户设定描述) 和 $C (角色描述) 占位符内容
+        // $U: 用户设定描述 (persona_description)
+        let userInfoContent_Table = '';
+        try {
+            // 按优先级尝试获取 persona_description
+            // 1. 从 SillyTavern 全局对象获取 powerUserSettings
+            // 2. 从 (window as any).power_user 获取（酒馆内部变量）
+            // 3. 从 SillyTavern_API_ACU 获取
+            const stContext = window.SillyTavern?.getContext?.();
+            userInfoContent_Table = stContext?.powerUserSettings?.persona_description
+                || window.power_user?.persona_description
+                || SillyTavern_API_ACU?.powerUserSettings?.persona_description
+                || '';
+            logDebug_ACU(`[填表] $U (persona_description) 获取结果: ${userInfoContent_Table ? '成功' : '为空'}`);
+        }
+        catch (e) {
+            logWarn_ACU('[填表] 获取用户设定描述时出错:', e);
+            userInfoContent_Table = '';
+        }
+        // $C: 角色描述 (char_description)
+        let charInfoContent_Table = '';
+        try {
+            // 按优先级尝试获取角色描述
+            // 1. 使用酒馆助手 TavernHelper.getCharData('current') 获取当前角色卡
+            // 2. 从 SillyTavern_API_ACU.characters[this_chid] 获取
+            // 3. 从 (window as any).SillyTavern?.getContext() 获取
+            // 4. 从全局 characters/this_chid 变量获取
+            const stContext = window.SillyTavern?.getContext?.();
+            // 优先使用 TavernHelper.getCharData('current')
+            let character = null;
+            if (TavernHelper_API_ACU$1?.getCharData) {
+                character = TavernHelper_API_ACU$1.getCharData('current');
+            }
+            if (!character) {
+                character = SillyTavern_API_ACU?.characters?.[SillyTavern_API_ACU?.this_chid]
+                    || stContext?.characters?.[stContext?.characterId]
+                    || (typeof window.characters !== 'undefined' && typeof window.this_chid !== 'undefined' ? window.characters[window.this_chid] : null);
+            }
+            charInfoContent_Table = character?.description
+                || character?.data?.description
+                || stContext?.name2_description // 酒馆内部的角色描述变量
+                || '';
+            logDebug_ACU(`[填表] $C (char_description) 获取结果: ${charInfoContent_Table ? '成功，长度=' + charInfoContent_Table.length : '为空'}`);
+        }
+        catch (e) {
+            logWarn_ACU('[填表] 获取角色描述时出错:', e);
+            charInfoContent_Table = '';
+        }
+        // [新增] 读取上一轮剧情规划数据，用于$6占位符
+        const lastPlotContent = getPlotFromHistory_ACU();
+        logDebug_ACU('[填表] $6 上轮规划数据:', lastPlotContent ? `长度=${lastPlotContent.length}` : '(空)');
+        const tableExcludeTags = (settings_ACU.tableContextExcludeTags || '').trim();
+        const tableExcludeRules = normalizeExcludeRules_ACU(settings_ACU.tableContextExcludeRules, tableExcludeTags);
+        const filterTableInjectedContent = (value, placeholderKey = '') => {
+            const text = value !== undefined && value !== null ? String(value) : '';
+            // 仅对注入内容应用规则，避免改写基础提示词本体
+            if (!['$0', '$1', '$4', '$6', '$8', '$U', '$C'].includes(placeholderKey))
+                return text;
+            return applyExcludeRulesToText_ACU(text, { excludeRules: tableExcludeRules, excludeTags: tableExcludeTags });
+        };
+        // Interpolate placeholders in each segment
+        for (const segment of promptSegments) {
+            let finalContent = segment.content;
+            finalContent = finalContent.replace('$0', filterTableInjectedContent(dynamicContent.tableDataText, '$0'));
+            finalContent = finalContent.replace('$1', filterTableInjectedContent(dynamicContent.messagesText, '$1'));
+            finalContent = finalContent.replace('$4', filterTableInjectedContent(dynamicContent.worldbookContent, '$4'));
+            finalContent = finalContent.replace(/\$6/g, filterTableInjectedContent(lastPlotContent || '', '$6')); // [新增] $6 占位符替换为上一轮剧情规划数据（全局替换）
+            finalContent = finalContent.replace('$8', filterTableInjectedContent(dynamicContent.manualExtraHint || '', '$8'));
+            // [新增] $U 和 $C 占位符替换
+            finalContent = finalContent.replace(/\$U/g, filterTableInjectedContent(userInfoContent_Table, '$U'));
+            finalContent = finalContent.replace(/\$C/g, filterTableInjectedContent(charInfoContent_Table, '$C'));
+            // [新增] 先让 st-prompt-template 插件处理提示词（如果存在）
+            if (typeof globalThis.EjsTemplate?.evalTemplate === 'function') {
+                try {
+                    // 不传入 context，让 evalTemplate 自动调用 prepareContext()
+                    // 这样可以确保上下文正确传递给 EJS 模板引擎
+                    finalContent = await globalThis.EjsTemplate.evalTemplate(finalContent);
+                    logDebug_ACU('[填表] 已通过 st-prompt-template 处理提示词');
+                }
+                catch (e) {
+                    logWarn_ACU('[填表] st-prompt-template 处理失败，使用原始内容:', e);
+                }
+            }
+            // [新增] 在 EJS 渲染后进行随机数处理
+            finalContent = parseRandomTags_ACU(finalContent);
+            finalContent = replaceRandomVariables_ACU(finalContent);
+            // [新增] 再让数据库自身的条件模板处理
+            if (settings_ACU.promptTemplateSettings?.enabled !== false) {
+                // 构建条件模板上下文
+                const templateContext = {
+                    seedContent: getLatestAIMessageContent_ACU(),
+                    allTablesJson: currentJsonTableData_ACU$1,
+                    plotContent: lastPlotContent || ''
+                };
+                finalContent = parseIfBlocksInContent_ACU(finalContent, templateContext, 0);
+            }
+            // Convert role to API-safe role
+            messages.push({ role: normalizeRoleForApi_ACU(segment.role), content: finalContent });
+        }
+        // Add the final instruction for the AI
+        logDebug_ACU('Final messages array being sent to API:', messages);
+        logDebug_ACU(`使用API预设: ${settings_ACU.tableApiPreset || '当前配置'}, 模式: ${effectiveApiMode}`);
+        try {
+            if (effectiveApiMode === 'tavern') {
+                const profileId = effectiveTavernProfile;
+                if (!profileId) {
+                    throw new Error('未选择酒馆连接预设。');
+                }
+                if (skipProfileSwitch) {
+                    logDebug_ACU('ACU: 并发模式启用，跳过酒馆预设切换。');
+                }
+                let originalProfile = '';
+                let responsePromise;
+                let rawResult;
+                try {
+                    if (!skipProfileSwitch) {
+                        originalProfile = await TavernHelper_API_ACU$1.triggerSlash('/profile');
+                    }
+                    const targetProfile = SillyTavern_API_ACU.extensionSettings?.connectionManager?.profiles.find(p => p.id === profileId);
+                    if (!targetProfile) {
+                        throw new Error(`无法找到ID为 "${profileId}" 的连接预设。`);
+                    }
+                    if (!targetProfile.api) {
+                        throw new Error(`预设 "${targetProfile.name || targetProfile.id}" 没有配置API。`);
+                    }
+                    if (!targetProfile.preset) {
+                        throw new Error(`预设 "${targetProfile.name || targetProfile.id}" 没有选择预设。`);
+                    }
+                    const targetProfileName = targetProfile.name || targetProfile.id;
+                    if (!skipProfileSwitch) {
+                        const currentProfile = await TavernHelper_API_ACU$1.triggerSlash('/profile');
+                        if (currentProfile !== targetProfileName) {
+                            const escapedProfileName = targetProfileName.replace(/"/g, '\\"');
+                            await TavernHelper_API_ACU$1.triggerSlash(`/profile await=true "${escapedProfileName}"`);
+                        }
+                    }
+                    logDebug_ACU(`ACU: 通过酒馆连接预设 (ID: ${profileId}, Name: ${targetProfileName}) 发送请求...`);
+                    responsePromise = SillyTavern_API_ACU.ConnectionManagerRequestService.sendRequest(profileId, messages, 
+                    // 使用 max_tokens 设置，如果不存在则回退到4096
+                    effectiveApiConfig.max_tokens || 4096);
+                    rawResult = await responsePromise;
+                }
+                catch (error) {
+                    logError_ACU(`ACU: 调用酒馆连接预设时出错:`, error);
+                    // [修正] 确保恢复预设后再抛出错误
+                    try {
+                        if (originalProfile && !skipProfileSwitch) {
+                            const currentProfileAfterCall = await TavernHelper_API_ACU$1.triggerSlash('/profile');
+                            if (originalProfile !== currentProfileAfterCall) {
+                                const escapedOriginalProfile = originalProfile.replace(/"/g, '\\"');
+                                await TavernHelper_API_ACU$1.triggerSlash(`/profile await=true "${escapedOriginalProfile}"`);
+                                logDebug_ACU(`ACU: 已恢复原酒馆连接预设: "${originalProfile}"`);
+                            }
+                        }
+                    }
+                    catch (restoreError) {
+                        logError_ACU(`ACU: 恢复原预设时出错:`, restoreError);
+                    }
+                    throw new Error(`API请求失败 (酒馆预设): ${error.message}`);
+                }
+                finally {
+                    // [修正] 只在成功的情况下恢复预设（错误情况下已在catch中处理）
+                    if (rawResult !== undefined) {
+                        try {
+                            if (!skipProfileSwitch) {
+                                const currentProfileAfterCall = await TavernHelper_API_ACU$1.triggerSlash('/profile');
+                                if (originalProfile && originalProfile !== currentProfileAfterCall) {
+                                    const escapedOriginalProfile = originalProfile.replace(/"/g, '\\"');
+                                    await TavernHelper_API_ACU$1.triggerSlash(`/profile await=true "${escapedOriginalProfile}"`);
+                                    logDebug_ACU(`ACU: 已恢复原酒馆连接预设: "${originalProfile}"`);
+                                }
+                            }
+                        }
+                        catch (restoreError) {
+                            logError_ACU(`ACU: 恢复原预设时出错:`, restoreError);
+                        }
+                    }
+                }
+                if (rawResult && rawResult.ok && rawResult.result?.choices?.[0]?.message?.content) {
+                    return rawResult.result.choices[0].message.content.trim();
+                }
+                else if (rawResult && typeof rawResult.content === 'string') {
+                    return rawResult.content.trim();
+                }
+                else {
+                    const errorMsg = rawResult?.error || JSON.stringify(rawResult);
+                    throw new Error(`酒馆预设API调用返回无效响应: ${errorMsg}`);
+                }
+            }
+            else { // 'custom' mode
+                // --- 使用自定义API ---
+                if (effectiveApiConfig.useMainApi && !forceDirectApi) {
+                    // 模式A: 使用主API（流式传输）
+                    logDebug_ACU('ACU: 通过酒馆主API发送请求（流式传输）...');
+                    if (typeof TavernHelper_API_ACU$1.generateRaw !== 'function') {
+                        throw new Error('TavernHelper.generateRaw 函数不存在。请检查酒馆版本。');
+                    }
+                    const response = await TavernHelper_API_ACU$1.generateRaw({
+                        ordered_prompts: messages,
+                        should_stream: settings_ACU.streamingEnabled || false,
+                    });
+                    if (typeof response !== 'string') {
+                        throw new Error('主API调用未返回预期的文本响应。');
+                    }
+                    return response.trim();
+                }
+                else {
+                    // 模式B: 使用独立配置的API（流式传输）
+                    if (forceDirectApi && effectiveApiConfig.useMainApi) {
+                        if (effectiveApiConfig.url && effectiveApiConfig.model) {
+                            logDebug_ACU('ACU: 并发模式启用，强制使用独立API路径。');
+                        }
+                        else {
+                            logWarn_ACU('ACU: 并发模式要求独立API，但URL或模型未配置，回退主API。');
+                            if (typeof TavernHelper_API_ACU$1.generateRaw !== 'function') {
+                                throw new Error('TavernHelper.generateRaw 函数不存在。请检查酒馆版本。');
+                            }
+                            const response = await TavernHelper_API_ACU$1.generateRaw({
+                                ordered_prompts: messages,
+                                should_stream: settings_ACU.streamingEnabled || false,
+                            });
+                            if (typeof response !== 'string') {
+                                throw new Error('主API调用未返回预期的文本响应。');
+                            }
+                            return response.trim();
+                        }
+                    }
+                    if (!effectiveApiConfig.url || !effectiveApiConfig.model) {
+                        throw new Error('自定义API的URL或模型未配置。');
+                    }
+                    const generateUrl = `/api/backends/chat-completions/generate`;
+                    const headers = { ...SillyTavern.getRequestHeaders(), 'Content-Type': 'application/json' };
+                    const body = JSON.stringify({
+                        "messages": messages,
+                        "model": effectiveApiConfig.model,
+                        "temperature": effectiveApiConfig.temperature,
+                        "top_p": effectiveApiConfig.top_p || 0.9,
+                        "max_tokens": effectiveApiConfig.max_tokens,
+                        "stream": settings_ACU.streamingEnabled || false,
+                        "chat_completion_source": "custom",
+                        "group_names": [],
+                        "include_reasoning": false,
+                        "reasoning_effort": "medium",
+                        "enable_web_search": false,
+                        "request_images": false,
+                        "custom_prompt_post_processing": "strict",
+                        "reverse_proxy": effectiveApiConfig.url,
+                        "proxy_password": "",
+                        "custom_url": effectiveApiConfig.url,
+                        "custom_include_headers": effectiveApiConfig.apiKey ? `Authorization: Bearer ${effectiveApiConfig.apiKey}` : ""
+                    });
+                    logDebug_ACU('ACU: 调用新的后端生成API:', generateUrl, 'Model:', effectiveApiConfig.model);
+                    const response = await fetch(generateUrl, { method: 'POST', headers, body, signal: abortSignal });
+                    if (!response.ok) {
+                        const errTxt = await response.text();
+                        throw new Error(`API请求失败: ${response.status} ${errTxt}`);
+                    }
+                    // 根据streamingEnabled设置选择响应处理方式
+                    const content = await handleApiResponse_ACU(response, abortSignal);
+                    if (content) {
+                        return content.trim();
+                    }
+                    throw new Error('API响应格式不正确或内容为空。');
+                }
+            }
+        }
+        finally {
+            untrackAbortController_ACU$1(localAbortController);
+            if (currentAbortController_ACU$1 === localAbortController) {
+                _set_currentAbortController_ACU$1(null);
+            }
+        }
+    }
+    // ===========================
+    // TableEdit 解析健壮性工具集
+    // - 允许 <tableEdit> 或 </tableEdit> 丢失一端
+    // - 只要 <!-- --> 注释包裹完整，且内部包含 insertRow/updateRow/deleteRow，即可识别
+    // ===========================
+    function normalizeAiResponseForTableEditParsing_ACU(text) {
+        if (typeof text !== 'string')
+            return '';
+        let cleaned = text.trim();
+        // 移除JS风格的字符串拼接：'...' + '...'
+        cleaned = cleaned.replace(/'\s*\+\s*'/g, '');
+        // 移除可能包裹整个响应的单引号
+        if (cleaned.startsWith("'") && cleaned.endsWith("'"))
+            cleaned = cleaned.slice(1, -1);
+        // 将 "\\n" 转换为真实换行
+        cleaned = cleaned.replace(/\\n/g, '\n');
+        // 修复由JS字符串转义符（\\）导致的解析失败
+        cleaned = cleaned.replace(/\\\\"/g, '\\"');
+        // 修复全角冒号导致的 JSON 解析失败
+        cleaned = cleaned.replace(/：/g, ':');
+        return cleaned;
+    }
+    function extractTableEditInner_ACU(text, options = {}) {
+        const { allowNoTableEditTags = true, useLastPairOnly = (settings_ACU?.tableEditLastPairOnly !== false) } = options;
+        const cleaned = normalizeAiResponseForTableEditParsing_ACU(text);
+        if (!cleaned)
+            return null;
+        // 1) 标准格式：<tableEdit>...</tableEdit>
+        if (useLastPairOnly) {
+            const fullRe = /<tableEdit>([\s\S]*?)<\/tableEdit>/ig;
+            let lastMatch = null;
+            let m;
+            while ((m = fullRe.exec(cleaned)) !== null) {
+                lastMatch = m;
+            }
+            if (lastMatch && typeof lastMatch[1] === 'string') {
+                return { inner: lastMatch[1], cleaned, mode: 'full_last' };
+            }
+        }
+        else {
+            const fullMatch = cleaned.match(/<tableEdit>([\s\S]*?)<\/tableEdit>/i);
+            if (fullMatch && typeof fullMatch[1] === 'string') {
+                return { inner: fullMatch[1], cleaned, mode: 'full' };
+            }
+        }
+        // 2) 宽松格式：缺失开/闭标签，但 <!-- --> 包裹完整
+        const lowerCleaned = cleaned.toLowerCase();
+        const openTag = '<tableedit>';
+        const closeTag = '</tableedit>';
+        const hasOpen = lowerCleaned.includes(openTag);
+        const hasClose = lowerCleaned.includes(closeTag);
+        const hasAnyTag = hasOpen || hasClose;
+        const commentRe = /<!--([\s\S]*?)-->/g;
+        const commentBlocks = [];
+        let m;
+        while ((m = commentRe.exec(cleaned)) !== null) {
+            commentBlocks.push({
+                start: m.index,
+                end: commentRe.lastIndex,
+                raw: m[0],
+                content: m[1] || ''
+            });
+        }
+        const hasCommands = (s) => /(insertRow|updateRow|deleteRow)\s*\(/.test(s);
+        const candidates = commentBlocks.filter(b => hasCommands(b.content));
+        if (!candidates.length)
+            return null;
+        let chosen = null;
+        if (hasOpen && !hasClose) {
+            const openIdx = useLastPairOnly ? lowerCleaned.lastIndexOf(openTag) : cleaned.search(/<tableEdit>/i);
+            chosen = candidates.find(b => b.start > openIdx) || (useLastPairOnly ? candidates[candidates.length - 1] : candidates[0]);
+        }
+        else if (!hasOpen && hasClose) {
+            const closeIdx = useLastPairOnly ? lowerCleaned.lastIndexOf(closeTag) : cleaned.search(/<\/tableEdit>/i);
+            for (let i = candidates.length - 1; i >= 0; i--) {
+                if (candidates[i].end < closeIdx) {
+                    chosen = candidates[i];
+                    break;
+                }
+            }
+            chosen = chosen || candidates[candidates.length - 1];
+        }
+        else if (hasAnyTag) {
+            const lastOpenIdx = lowerCleaned.lastIndexOf(openTag);
+            const lastCloseIdx = lowerCleaned.lastIndexOf(closeTag);
+            const tagIdx = useLastPairOnly
+                ? (lastCloseIdx !== -1 ? lastCloseIdx : lastOpenIdx)
+                : (hasOpen ? cleaned.search(/<tableEdit>/i) : cleaned.search(/<\/tableEdit>/i));
+            let bestDist = Infinity;
+            candidates.forEach(b => {
+                const dist = Math.min(Math.abs(b.start - tagIdx), Math.abs(b.end - tagIdx));
+                if (dist < bestDist) {
+                    bestDist = dist;
+                    chosen = b;
+                }
+            });
+        }
+        else if (allowNoTableEditTags) {
+            chosen = useLastPairOnly ? candidates[candidates.length - 1] : candidates[0];
+        }
+        if (!chosen)
+            return null;
+        return { inner: chosen.raw, cleaned, mode: 'comment_fallback', hasOpen, hasClose };
+    }
+    function parseAndApplyTableEdits_ACU(aiResponse, updateMode = 'standard', isImportMode = false) {
+        // updateMode: 'standard' 表示更新标准表，'summary' 表示更新总结表和总体大纲
+        if (!currentJsonTableData_ACU$1) {
+            logError_ACU('Cannot apply edits, currentJsonTableData_ACU is not loaded.');
+            return false;
+        }
+        const extracted = extractTableEditInner_ACU(aiResponse, { allowNoTableEditTags: true });
+        if (!extracted || !extracted.inner) {
+            logWarn_ACU('No recognizable table edit block found (missing <tableEdit> boundary and/or incomplete <!-- --> wrapper).');
+            return true; // Not a failure, just no edits to apply.
+        }
+        const editsString = extracted.inner.replace(/<!--|-->/g, '').trim();
+        if (!editsString) {
+            logDebug_ACU('Empty <tableEdit> block. No edits to apply.');
+            return true;
+        }
+        // [核心修复] 增加指令重组步骤，处理AI生成的多行指令
+        const originalLines = editsString.split('\n');
+        const commandLines = [];
+        let commandReconstructor = '';
+        let isInJsonBlock = false; // [新增] 追踪是否在JSON对象块中
+        originalLines.forEach(line => {
+            const trimmedLine = line.trim();
+            if (trimmedLine === '')
+                return;
+            // [稳健性强化] 移除行尾的注释
+            // 注意：如果是在JSON字符串内部的 // 应该保留，但在指令级应该移除
+            // 这里简单处理：如果不在JSON块中，且包含 //，则移除 // 之后的内容
+            let lineContent = trimmedLine;
+            if (!isInJsonBlock && lineContent.includes('//') && !lineContent.includes('"//') && !lineContent.includes("'//")) {
+                lineContent = lineContent.split('//')[0].trim();
+            }
+            if (lineContent === '')
+                return;
+            // 检查大括号平衡，判断是否进入或离开JSON块
+            // 简单计数：{ +1, } -1
+            // 注意：这只是简单的启发式方法，处理跨行JSON
+            const openBraces = (lineContent.match(/{/g) || []).length;
+            const closeBraces = (lineContent.match(/}/g) || []).length;
+            // 如果当前行以指令开头，并且不在JSON块中
+            if ((lineContent.startsWith('insertRow') || lineContent.startsWith('deleteRow') || lineContent.startsWith('updateRow')) && !isInJsonBlock) {
+                if (commandReconstructor) {
+                    commandLines.push(commandReconstructor);
+                }
+                commandReconstructor = lineContent;
+            }
+            else {
+                // 如果不是指令开头，或者是上一条指令的JSON参数延续，拼接到缓存
+                // 在拼接时添加空格，防止粘连
+                commandReconstructor += ' ' + lineContent;
+            }
+            // 更新JSON块状态
+            // 只有当指令包含 '{' 但不包含 '}' 时，或者虽然包含 '}' 但数量少于 '{' 时，才认为是多行JSON的开始
+            // 但考虑到一行内可能有完整的 {}, 我们需要维护一个累积计数
+            // 这里的 isInJsonBlock 逻辑需要更精细：
+            // 我们可以统计 reconstructor 中的 { 和 } 数量
+            if (commandReconstructor) {
+                const totalOpen = (commandReconstructor.match(/{/g) || []).length;
+                const totalClose = (commandReconstructor.match(/}/g) || []).length;
+                // 如果有左括号，且左括号多于右括号，说明JSON未闭合
+                if (totalOpen > totalClose) {
+                    isInJsonBlock = true;
+                }
+                else {
+                    isInJsonBlock = false;
+                }
+            }
+        });
+        // 将最后一条缓存的指令推入
+        if (commandReconstructor) {
+            commandLines.push(commandReconstructor);
+        }
+        // [新增] 二次处理：处理挤在一行里的多条指令
+        // 有时AI会输出：[0:全局数据表]- Update: ... [1:主要地点表]- Delete: ... 这种非标准格式
+        // 或者标准的：insertRow(...); insertRow(...);
+        const finalCommandLines = [];
+        commandLines.forEach(rawLine => {
+            // 1. 尝试分割用分号分隔的多个标准指令
+            // 使用正则匹配 ; 后紧跟 insertRow/deleteRow/updateRow 的情况
+            // 为了避免分割JSON内部的分号，我们先替换指令间的分号为特殊标记
+            let processedLine = rawLine.replace(/;\s*(?=(insertRow|deleteRow|updateRow))/g, '___COMMAND_SPLIT___');
+            // 2. [针对特定错误的修复] 处理非标准格式的指令堆叠
+            // 错误示例: "[0:全局数据表]- Update: ... [1:主要地点表]- Delete: ..."
+            // 这种格式非常难以直接解析，因为它是描述性语言而非函数调用。
+            // 我们检测到这种格式时，尝试将其转换为标准指令或跳过并警告
+            if (processedLine.match(/\[\d+:.*?\]-\s*(Update|Insert|Delete):/)) {
+                logWarn_ACU(`Detected unstructured AI response format: "${rawLine}". Skipping this line as it is not a valid function call.`);
+                return;
+            }
+            const splitLines = processedLine.split('___COMMAND_SPLIT___');
+            splitLines.forEach(l => {
+                if (l.trim())
+                    finalCommandLines.push(l.trim());
+            });
+        });
+        let appliedEdits = 0;
+        const editCountsByTable = {}; // Map<tableName, count>
+        const sheetKeysForIndexing = getSortedSheetKeys_ACU(currentJsonTableData_ACU$1);
+        const sheets = sheetKeysForIndexing.map(k => currentJsonTableData_ACU$1[k]).filter(Boolean);
+        // [新增] JSON 指令清洗管线：用于修复 AI 输出中的智能引号、未转义双引号、控制字符、尾随逗号等问题
+        const normalizeQuotesLayer_ACU = (jsonStr) => {
+            if (typeof jsonStr !== 'string' || !jsonStr)
+                return jsonStr;
+            return jsonStr.replace(/[“”「」『』＂]/g, '"');
+        };
+        const getNextNonWhitespaceMeta_ACU = (text, startIndex) => {
+            for (let i = startIndex; i < text.length; i++) {
+                if (!/\s/.test(text[i]))
+                    return { char: text[i], index: i };
+            }
+            return { char: '', index: -1 };
+        };
+        const isLikelyJsonValueStart_ACU = (char) => {
+            return !!char && (char === '"' ||
+                char === '{' ||
+                char === '[' ||
+                char === '-' ||
+                /\d/.test(char) ||
+                char === 't' ||
+                char === 'f' ||
+                char === 'n');
+        };
+        const isLikelyStringCloser_ACU = (text, quoteIndex, stringKind, containerType) => {
+            const nextMeta = getNextNonWhitespaceMeta_ACU(text, quoteIndex + 1);
+            const nextChar = nextMeta.char;
+            if (!nextChar)
+                return stringKind !== 'key';
+            if (stringKind === 'key')
+                return nextChar === ':';
+            if (nextChar === '}' || nextChar === ']')
+                return true;
+            if (nextChar !== ',')
+                return false;
+            const afterComma = getNextNonWhitespaceMeta_ACU(text, nextMeta.index + 1).char;
+            if (!afterComma)
+                return true;
+            if (containerType === 'object')
+                return afterComma === '"' || afterComma === '}';
+            if (containerType === 'array')
+                return afterComma === ']' || isLikelyJsonValueStart_ACU(afterComma);
+            return isLikelyJsonValueStart_ACU(afterComma) || afterComma === '}' || afterComma === ']';
+        };
+        const escapeUnescapedQuotesLayer_ACU = (jsonStr) => {
+            if (typeof jsonStr !== 'string') {
+                return { success: false, result: jsonStr, error: 'Input is not a string' };
+            }
+            let result = '';
+            let inString = false;
+            let escapeNext = false;
+            let currentStringKind = null;
+            const containerStack = [];
+            const getTopContainer = () => containerStack.length ? containerStack[containerStack.length - 1] : null;
+            const markParentValueCompleted = () => {
+                const parent = getTopContainer();
+                if (!parent)
+                    return;
+                if (parent.type === 'object' || parent.type === 'array') {
+                    parent.expecting = 'commaOrEnd';
+                }
+            };
+            for (let i = 0; i < jsonStr.length; i++) {
+                const char = jsonStr[i];
+                if (escapeNext) {
+                    result += char;
+                    escapeNext = false;
+                    continue;
+                }
+                if (inString) {
+                    if (char === '\\') {
+                        result += char;
+                        escapeNext = true;
+                        continue;
+                    }
+                    if (char === '"') {
+                        const top = getTopContainer();
+                        const containerType = top?.type || null;
+                        if (isLikelyStringCloser_ACU(jsonStr, i, currentStringKind, containerType)) {
+                            result += char;
+                            inString = false;
+                            if (currentStringKind === 'key' && top && top.type === 'object') {
+                                top.expecting = 'colon';
+                            }
+                            else {
+                                markParentValueCompleted();
+                            }
+                            currentStringKind = null;
+                        }
+                        else {
+                            result += '\\"';
+                        }
+                        continue;
+                    }
+                    result += char;
+                    continue;
+                }
+                if (char === '"') {
+                    result += char;
+                    inString = true;
+                    const top = getTopContainer();
+                    currentStringKind = top && top.type === 'object' && (top.expecting === 'key' || top.expecting === 'keyOrEnd')
+                        ? 'key'
+                        : 'value';
+                    continue;
+                }
+                if (char === '{') {
+                    result += char;
+                    containerStack.push({ type: 'object', expecting: 'keyOrEnd' });
+                    continue;
+                }
+                if (char === '[') {
+                    result += char;
+                    containerStack.push({ type: 'array', expecting: 'valueOrEnd' });
+                    continue;
+                }
+                if (char === ':') {
+                    result += char;
+                    const top = getTopContainer();
+                    if (top && top.type === 'object')
+                        top.expecting = 'value';
+                    continue;
+                }
+                if (char === ',') {
+                    result += char;
+                    const top = getTopContainer();
+                    if (top && top.type === 'object')
+                        top.expecting = 'key';
+                    if (top && top.type === 'array')
+                        top.expecting = 'value';
+                    continue;
+                }
+                if (char === '}' || char === ']') {
+                    result += char;
+                    containerStack.pop();
+                    markParentValueCompleted();
+                    continue;
+                }
+                result += char;
+            }
+            return { success: true, result, error: null };
+        };
+        const sanitizeControlCharsLayer_ACU = (jsonStr) => {
+            if (typeof jsonStr !== 'string' || !jsonStr)
+                return jsonStr;
+            let result = '';
+            let inString = false;
+            let escapeNext = false;
+            for (let i = 0; i < jsonStr.length; i++) {
+                const char = jsonStr[i];
+                if (escapeNext) {
+                    result += char;
+                    escapeNext = false;
+                    continue;
+                }
+                if (char === '\\') {
+                    result += char;
+                    if (inString)
+                        escapeNext = true;
+                    continue;
+                }
+                if (char === '"') {
+                    result += char;
+                    inString = !inString;
+                    continue;
+                }
+                if (inString && char === '\n') {
+                    result += '\\n';
+                    continue;
+                }
+                if (inString && char === '\r') {
+                    result += '\\r';
+                    continue;
+                }
+                if (inString && char === '\t') {
+                    result += '\\t';
+                    continue;
+                }
+                if (inString && char === '\0') {
+                    result += '\\u0000';
+                    continue;
+                }
+                result += char;
+            }
+            return result;
+        };
+        const removeTrailingCommasLayer_ACU = (jsonStr) => {
+            if (typeof jsonStr !== 'string' || !jsonStr)
+                return jsonStr;
+            let result = '';
+            let inString = false;
+            let escapeNext = false;
+            for (let i = 0; i < jsonStr.length; i++) {
+                const char = jsonStr[i];
+                if (escapeNext) {
+                    result += char;
+                    escapeNext = false;
+                    continue;
+                }
+                if (char === '\\') {
+                    result += char;
+                    if (inString)
+                        escapeNext = true;
+                    continue;
+                }
+                if (char === '"') {
+                    result += char;
+                    inString = !inString;
+                    continue;
+                }
+                if (!inString && char === ',') {
+                    const nextChar = getNextNonWhitespaceMeta_ACU(jsonStr, i + 1).char;
+                    if (nextChar === '}' || nextChar === ']')
+                        continue;
+                }
+                result += char;
+            }
+            return result;
+        };
+        const fixNumericKeysLayer_ACU = (jsonStr) => {
+            if (typeof jsonStr !== 'string' || !jsonStr)
+                return jsonStr;
+            return jsonStr.replace(/([{,]\s*)(-?\d+)(\s*:)/g, '$1"$2"$3');
+        };
+        const sanitizeJsonPipeline_ACU = (jsonStr) => {
+            if (typeof jsonStr !== 'string') {
+                return { success: false, result: jsonStr, layersApplied: [], error: 'Input is not a string' };
+            }
+            const layersApplied = [];
+            let current = jsonStr;
+            const normalizedQuotes = normalizeQuotesLayer_ACU(current);
+            if (normalizedQuotes !== current)
+                layersApplied.push('normalizeQuotes');
+            current = normalizedQuotes;
+            const escapedQuotes = escapeUnescapedQuotesLayer_ACU(current);
+            if (!escapedQuotes.success) {
+                return { success: false, result: current, layersApplied, error: escapedQuotes.error };
+            }
+            if (escapedQuotes.result !== current)
+                layersApplied.push('escapeUnescapedQuotes');
+            current = escapedQuotes.result;
+            const sanitizedControlChars = sanitizeControlCharsLayer_ACU(current);
+            if (sanitizedControlChars !== current)
+                layersApplied.push('sanitizeControlChars');
+            current = sanitizedControlChars;
+            const withoutTrailingCommas = removeTrailingCommasLayer_ACU(current);
+            if (withoutTrailingCommas !== current)
+                layersApplied.push('removeTrailingCommas');
+            current = withoutTrailingCommas;
+            const fixedNumericKeys = fixNumericKeysLayer_ACU(current);
+            if (fixedNumericKeys !== current)
+                layersApplied.push('fixNumericKeys');
+            current = fixedNumericKeys;
+            return { success: true, result: current, layersApplied, error: null };
+        };
+        const splitTopLevelSegments_ACU = (text, delimiterChar = ',') => {
+            if (typeof text !== 'string' || !text)
+                return [];
+            const segments = [];
+            let current = '';
+            let inString = false;
+            let escapeNext = false;
+            let braceDepth = 0;
+            let bracketDepth = 0;
+            let parenDepth = 0;
+            for (let i = 0; i < text.length; i++) {
+                const char = text[i];
+                if (escapeNext) {
+                    current += char;
+                    escapeNext = false;
+                    continue;
+                }
+                if (char === '\\') {
+                    current += char;
+                    if (inString)
+                        escapeNext = true;
+                    continue;
+                }
+                if (char === '"') {
+                    current += char;
+                    inString = !inString;
+                    continue;
+                }
+                if (!inString) {
+                    if (char === '{')
+                        braceDepth++;
+                    else if (char === '}')
+                        braceDepth = Math.max(0, braceDepth - 1);
+                    else if (char === '[')
+                        bracketDepth++;
+                    else if (char === ']')
+                        bracketDepth = Math.max(0, bracketDepth - 1);
+                    else if (char === '(')
+                        parenDepth++;
+                    else if (char === ')')
+                        parenDepth = Math.max(0, parenDepth - 1);
+                    else if (char === delimiterChar && braceDepth === 0 && bracketDepth === 0 && parenDepth === 0) {
+                        if (current.trim())
+                            segments.push(current.trim());
+                        current = '';
+                        continue;
+                    }
+                }
+                current += char;
+            }
+            if (current.trim())
+                segments.push(current.trim());
+            return segments;
+        };
+        const findTopLevelDelimiterIndex_ACU = (text, delimiterChar = ':') => {
+            if (typeof text !== 'string' || !text)
+                return -1;
+            let inString = false;
+            let escapeNext = false;
+            let braceDepth = 0;
+            let bracketDepth = 0;
+            let parenDepth = 0;
+            for (let i = 0; i < text.length; i++) {
+                const char = text[i];
+                if (escapeNext) {
+                    escapeNext = false;
+                    continue;
+                }
+                if (char === '\\') {
+                    if (inString)
+                        escapeNext = true;
+                    continue;
+                }
+                if (char === '"') {
+                    inString = !inString;
+                    continue;
+                }
+                if (!inString) {
+                    if (char === '{')
+                        braceDepth++;
+                    else if (char === '}')
+                        braceDepth = Math.max(0, braceDepth - 1);
+                    else if (char === '[')
+                        bracketDepth++;
+                    else if (char === ']')
+                        bracketDepth = Math.max(0, bracketDepth - 1);
+                    else if (char === '(')
+                        parenDepth++;
+                    else if (char === ')')
+                        parenDepth = Math.max(0, parenDepth - 1);
+                    else if (char === delimiterChar && braceDepth === 0 && bracketDepth === 0 && parenDepth === 0)
+                        return i;
+                }
+            }
+            return -1;
+        };
+        const tryParseLooseJsonValue_ACU = (rawValue) => {
+            if (typeof rawValue !== 'string')
+                return { success: true, value: rawValue, error: null };
+            const trimmed = rawValue.trim();
+            if (!trimmed)
+                return { success: false, value: null, error: 'Empty value' };
+            const normalizedValue = (trimmed.startsWith("'") && trimmed.endsWith("'"))
+                ? `"${trimmed.slice(1, -1)
+                .replace(/\\/g, '\\\\')
+                .replace(/"/g, '\\"')
+                .replace(/\r/g, '\\r')
+                .replace(/\n/g, '\\n')
+                .replace(/\t/g, '\\t')}"`
+                : trimmed;
+            const wrappedValue = `[${normalizedValue}]`;
+            try {
+                return { success: true, value: JSON.parse(wrappedValue)[0], error: null };
+            }
+            catch (directError) {
+                const sanitizedWrapped = sanitizeJsonPipeline_ACU(wrappedValue);
+                if (sanitizedWrapped.success) {
+                    try {
+                        return { success: true, value: JSON.parse(sanitizedWrapped.result)[0], error: null };
+                    }
+                    catch (sanitizedError) { }
+                }
+                return { success: false, value: null, error: directError?.message || 'Failed to parse loose value' };
+            }
+        };
+        const parseLooseObjectKey_ACU = (rawKey) => {
+            const trimmed = typeof rawKey === 'string' ? rawKey.trim() : '';
+            if (!trimmed)
+                return null;
+            if (/^-?\d+$/.test(trimmed))
+                return trimmed;
+            const parsedKey = tryParseLooseJsonValue_ACU(trimmed);
+            if (parsedKey.success && (typeof parsedKey.value === 'string' || typeof parsedKey.value === 'number')) {
+                return String(parsedKey.value);
+            }
+            return trimmed.replace(/^["']|["']$/g, '');
+        };
+        const coerceLooseRowObject_ACU = (jsonStr) => {
+            if (typeof jsonStr !== 'string') {
+                return { success: false, result: null, recoveredKeys: [], error: 'Input is not a string' };
+            }
+            const trimmed = jsonStr.trim();
+            if (!trimmed.startsWith('{') || !trimmed.endsWith('}')) {
+                return { success: false, result: null, recoveredKeys: [], error: 'Input is not an object literal' };
+            }
+            const body = trimmed.slice(1, -1).trim();
+            if (!body)
+                return { success: true, result: {}, recoveredKeys: [], error: null };
+            const segments = splitTopLevelSegments_ACU(body, ',').filter(Boolean);
+            if (!segments.length) {
+                return { success: false, result: null, recoveredKeys: [], error: 'No top-level segments detected' };
+            }
+            const result = {};
+            let nextAutoKey = 0;
+            for (const segment of segments) {
+                const colonIndex = findTopLevelDelimiterIndex_ACU(segment, ':');
+                if (colonIndex !== -1) {
+                    const parsedKey = parseLooseObjectKey_ACU(segment.slice(0, colonIndex));
+                    const parsedValue = tryParseLooseJsonValue_ACU(segment.slice(colonIndex + 1));
+                    if (!parsedKey || !parsedValue.success) {
+                        return {
+                            success: false,
+                            result: null,
+                            recoveredKeys: Object.keys(result),
+                            error: `Failed to parse keyed segment: ${segment}`,
+                        };
+                    }
+                    result[parsedKey] = parsedValue.value;
+                    const numericKey = Number.parseInt(parsedKey, 10);
+                    if (!Number.isNaN(numericKey) && String(numericKey) === parsedKey) {
+                        nextAutoKey = Math.max(nextAutoKey, numericKey + 1);
+                    }
+                    continue;
+                }
+                const parsedValue = tryParseLooseJsonValue_ACU(segment);
+                if (!parsedValue.success) {
+                    return {
+                        success: false,
+                        result: null,
+                        recoveredKeys: Object.keys(result),
+                        error: `Failed to parse value-only segment: ${segment}`,
+                    };
+                }
+                while (Object.prototype.hasOwnProperty.call(result, String(nextAutoKey))) {
+                    nextAutoKey++;
+                }
+                result[String(nextAutoKey)] = parsedValue.value;
+                nextAutoKey++;
+            }
+            const recoveredKeys = Object.keys(result).sort((a, b) => parseInt(a, 10) - parseInt(b, 10));
+            if (!recoveredKeys.length) {
+                return { success: false, result: null, recoveredKeys: [], error: 'No recoverable columns found' };
+            }
+            return { success: true, result, recoveredKeys, error: null };
+        };
+        // [新增] 统一解析指令（供预检查与正式应用复用）
+        const parseTableEditCommandLine_ACU = (rawLine) => {
+            try {
+                let commandLineWithoutComment = rawLine;
+                if (commandLineWithoutComment.match(/\)\s*;?\s*\/\/.*$/)) {
+                    commandLineWithoutComment = commandLineWithoutComment.replace(/\/\/.*$/, '').trim();
+                }
+                if (!commandLineWithoutComment)
+                    return null;
+                const match = commandLineWithoutComment.match(/^(insertRow|deleteRow|updateRow)\s*\((.*)\);?$/);
+                if (!match)
+                    return null;
+                const command = match[1];
+                const argsString = match[2];
+                let args;
+                const firstBracket = argsString.indexOf('{');
+                if (firstBracket === -1) {
+                    args = JSON.parse(`[${argsString}]`);
+                }
+                else {
+                    const paramsPart = argsString.substring(0, firstBracket).trim();
+                    let jsonPart = argsString.substring(firstBracket);
+                    const initialArgs = JSON.parse(`[${paramsPart.replace(/,$/, '')}]`);
+                    try {
+                        const jsonData = JSON.parse(jsonPart);
+                        args = [...initialArgs, jsonData];
+                    }
+                    catch (jsonError) {
+                        logError_ACU(`Primary JSON parse failed for: "${jsonPart}". Attempting sanitization pipeline...`, jsonError);
+                        const originalLooseObjectResult = coerceLooseRowObject_ACU(jsonPart);
+                        if (originalLooseObjectResult.success) {
+                            args = [...initialArgs, originalLooseObjectResult.result];
+                            logWarn_ACU(`[JSON Sanitization] Recovered malformed row object from original payload via loose parsing. Keys: ${originalLooseObjectResult.recoveredKeys.join(', ')}`);
+                        }
+                        else {
+                            const sanitizeResult = sanitizeJsonPipeline_ACU(jsonPart);
+                            if (!sanitizeResult.success) {
+                                logError_ACU(`JSON sanitization pipeline failed for: "${jsonPart}"`, new Error(sanitizeResult.error || 'Unknown sanitization error'));
+                                throw jsonError;
+                            }
+                            try {
+                                const jsonData = JSON.parse(sanitizeResult.result);
+                                args = [...initialArgs, jsonData];
+                                if (sanitizeResult.layersApplied.length > 0) {
+                                    logWarn_ACU(`[JSON Sanitization] Applied layers: ${sanitizeResult.layersApplied.join(', ')}`);
+                                }
+                            }
+                            catch (sanitizedJsonError) {
+                                const looseObjectResult = coerceLooseRowObject_ACU(sanitizeResult.result);
+                                if (looseObjectResult.success) {
+                                    args = [...initialArgs, looseObjectResult.result];
+                                    logWarn_ACU(`[JSON Sanitization] Recovered malformed row object from sanitized payload via loose parsing. Keys: ${looseObjectResult.recoveredKeys.join(', ')}`);
+                                }
+                                else {
+                                    const sanitizedPreview = sanitizeResult.result.length > 400
+                                        ? `${sanitizeResult.result.slice(0, 400)}...`
+                                        : sanitizeResult.result;
+                                    logError_ACU(`Sanitized JSON parse failed after layers [${sanitizeResult.layersApplied.join(', ') || 'none'}]: "${sanitizedPreview}"`, sanitizedJsonError);
+                                    logError_ACU(`[JSON Sanitization] Loose row object recovery failed. Original: ${originalLooseObjectResult.error || 'Unknown'}; Sanitized: ${looseObjectResult.error || 'Unknown'}`);
+                                    throw sanitizedJsonError;
+                                }
+                            }
+                        }
+                    }
+                }
+                return { command, args, line: commandLineWithoutComment };
+            }
+            catch (e) {
+                logError_ACU(`Failed to parse command line: "${rawLine}"`, e);
+                return null;
+            }
+        };
+        // [新增] 总结表/总体大纲必须“同时新增一行”才允许写入
+        let summaryInsertCount = 0;
+        let outlineInsertCount = 0;
+        const standardizedFillEnabled = settings_ACU?.standardizedTableFillEnabled !== false;
+        if (standardizedFillEnabled) {
+            finalCommandLines.forEach(line => {
+                try {
+                    const parsed = parseTableEditCommandLine_ACU(line);
+                    if (!parsed || parsed.command !== 'insertRow')
+                        return;
+                    const tableIndex = parsed.args?.[0];
+                    const table = sheets[tableIndex];
+                    if (!table || !table.name)
+                        return;
+                    if (!isSummaryOrOutlineTable_ACU(table.name))
+                        return;
+                    if (table.name === '总结表')
+                        summaryInsertCount++;
+                    if (table.name === '总体大纲')
+                        outlineInsertCount++;
+                }
+                catch (e) {
+                    // 解析失败的不计入，避免“半条成功半条失败”导致误放行
+                }
+            });
+        }
+        const allowSummaryOutlineInsert = !standardizedFillEnabled ||
+            (summaryInsertCount === 1 && outlineInsertCount === 1) ||
+            (summaryInsertCount === 0 && outlineInsertCount === 0);
+        if (standardizedFillEnabled && !allowSummaryOutlineInsert && (summaryInsertCount > 0 || outlineInsertCount > 0)) {
+            logWarn_ACU(`[屏蔽] 总结表/总体大纲新增不同步：总结=${summaryInsertCount}, 大纲=${outlineInsertCount}，本轮两表均不写入。`);
+        }
+        // 如果某表 content 为空，但指导表/模板提供了 seedRows，则在真正应用编辑前先物化到 content，
+        // 避免 AI 基于 $0 中的 seed rows 进行 updateRow/deleteRow 时“找不到行”。
+        const materializeSeedRowsIfNeeded_ACU = (table) => {
+            try {
+                if (!table || typeof table !== 'object')
+                    return;
+                if (!Array.isArray(table.content) || table.content.length !== 1)
+                    return;
+                // [修复] seedRows 可能未挂到表对象：这里按 uid(sheetKey) 再兜底一次
+                let sr = (Array.isArray(table.seedRows) && table.seedRows.length > 0) ? table.seedRows : null;
+                if (!sr && table.uid && String(table.uid).startsWith('sheet_')) {
+                    sr = getEffectiveSeedRowsForSheet_ACU(String(table.uid), { guideData: null, allowTemplateFallback: true });
+                    if (Array.isArray(sr) && sr.length > 0) {
+                        try {
+                            table.seedRows = JSON.parse(JSON.stringify(sr));
+                        }
+                        catch (e) { }
+                    }
+                }
+                if (!Array.isArray(sr) || sr.length === 0)
+                    return;
+                const headerRow = Array.isArray(table.content[0]) ? JSON.parse(JSON.stringify(table.content[0])) : [null];
+                const seed = JSON.parse(JSON.stringify(sr));
+                table.content = [headerRow, ...seed];
+            }
+            catch (e) { }
+        };
+        // [新增] 重置本次参与更新的表格的统计信息
+        // 由于我们不知道哪些表会更新，只能在实际更新时设置。
+        // 但为了清除旧状态，也许应该在保存时处理？
+        // 不，这里是应用编辑。我们只记录本次编辑的数量。
+        finalCommandLines.forEach(line => {
+            const parsed = parseTableEditCommandLine_ACU(line);
+            if (!parsed) {
+                logWarn_ACU(`Skipping malformed or truncated command line: "${line}"`);
+                return;
+            }
+            const { command, args } = parsed;
+            try {
+                switch (command) {
+                    case 'insertRow': {
+                        const [tableIndex, data] = args;
+                        const table = sheets[tableIndex];
+                        if (!table || !table.name) {
+                            logWarn_ACU(`Table at index ${tableIndex} not found or has no name. Skipping insertRow.`);
+                            break;
+                        }
+                        materializeSeedRowsIfNeeded_ACU(table);
+                        const sheetKey = sheetKeysForIndexing[tableIndex];
+                        // [新增] 根据更新模式和表格名称屏蔽不相关的表格操作
+                        // [修复] 统一更新模式（'full'）允许所有操作，不阻止任何表
+                        const isSummaryTable = isSummaryOrOutlineTable_ACU(table.name);
+                        // [逻辑优化] 使用更明确的模式匹配
+                        const isUnifiedMode = (updateMode === 'full' || updateMode === 'manual_unified' || updateMode === 'auto_unified');
+                        const isStandardMode = (updateMode === 'standard' || updateMode === 'auto_standard' || updateMode === 'manual_standard');
+                        const isSummaryMode = (updateMode === 'summary' || updateMode === 'auto_summary' || updateMode === 'auto_summary_silent' || updateMode === 'manual_summary');
+                        const isManualMode = (updateMode && updateMode.startsWith('manual'));
+                        if (isUnifiedMode) {
+                            // 统一更新模式：允许所有操作，不阻止任何表
+                            // 继续处理
+                        }
+                        else if (isStandardMode && isSummaryTable) {
+                            if (isManualMode) {
+                                logDebug_ACU(`[屏蔽] 标准表更新模式(手动)：忽略总结表/总体大纲的insertRow操作 (tableIndex: ${tableIndex}, tableName: ${table.name})`);
+                                break;
+                            }
+                            // 自动模式下不再屏蔽
+                        }
+                        else if (isSummaryMode && !isSummaryTable) {
+                            if (isManualMode) {
+                                logDebug_ACU(`[屏蔽] 总结表更新模式(手动)：忽略标准表的insertRow操作 (tableIndex: ${tableIndex}, tableName: ${table.name})`);
+                                break;
+                            }
+                            // 自动模式下不再屏蔽
+                        }
+                        // [新增] 总结表/总体大纲必须“同时新增一行”
+                        if (isSummaryTable && !allowSummaryOutlineInsert) {
+                            logDebug_ACU(`[屏蔽] 总结表/总体大纲新增不同步：忽略 insertRow (tableIndex: ${tableIndex}, tableName: ${table.name})`);
+                            break;
+                        }
+                        if (table && table.content && typeof data === 'object') {
+                            const newRow = [null];
+                            const headers = table.content[0].slice(1);
+                            const specialIndexCol = (isSummaryTable && sheetKey && isSpecialIndexLockEnabled_ACU(sheetKey))
+                                ? getSummaryIndexColumnIndex_ACU(table)
+                                : -1;
+                            headers.forEach((_, colIndex) => {
+                                let nextVal = data[colIndex] || (data[String(colIndex)] || "");
+                                if (colIndex === specialIndexCol) {
+                                    nextVal = formatSummaryIndexCode_ACU(table.content.length);
+                                }
+                                newRow.push(nextVal);
+                            });
+                            table.content.push(newRow);
+                            if (isSummaryTable && specialIndexCol >= 0) {
+                                applySummaryIndexSequenceToTable_ACU(table, specialIndexCol);
+                            }
+                            logDebug_ACU(`Applied insertRow to table ${tableIndex} (${table.name}) with data:`, data);
+                            appliedEdits++;
+                            editCountsByTable[table.name] = (editCountsByTable[table.name] || 0) + 1;
+                        }
+                        break;
+                    }
+                    case 'deleteRow': {
+                        const [tableIndex, rowIndex] = args;
+                        const table = sheets[tableIndex];
+                        if (!table || !table.name) {
+                            logWarn_ACU(`Table at index ${tableIndex} not found or has no name. Skipping deleteRow.`);
+                            break;
+                        }
+                        materializeSeedRowsIfNeeded_ACU(table);
+                        // [新增] 根据更新模式和表格名称屏蔽不相关的表格操作
+                        // [修复] 统一更新模式（'full'）允许所有操作，不阻止任何表
+                        const isSummaryTable = isSummaryOrOutlineTable_ACU(table.name);
+                        // [优化] 总结表只允许 insertRow 操作，屏蔽 deleteRow 和 updateRow
+                        // 注意：这里是对总结表本身的限制，不论何种模式都生效（总结表不应该被删除行，只能新增）
+                        if (isSummaryTable) {
+                            logDebug_ACU(`[屏蔽] 总结表/总体大纲忽略 deleteRow 操作 (tableIndex: ${tableIndex}, tableName: ${table.name})`);
+                            break;
+                        }
+                        // [逻辑优化] 使用更明确的模式匹配
+                        const isUnifiedMode = (updateMode === 'full' || updateMode === 'manual_unified' || updateMode === 'auto_unified');
+                        const isStandardMode = (updateMode === 'standard' || updateMode === 'auto_standard' || updateMode === 'manual_standard');
+                        const isSummaryMode = (updateMode === 'summary' || updateMode === 'auto_summary' || updateMode === 'auto_summary_silent' || updateMode === 'manual_summary');
+                        const isManualMode = (updateMode && updateMode.startsWith('manual'));
+                        if (isUnifiedMode) {
+                            // 统一更新模式：允许所有操作，不阻止任何表
+                            // 继续处理
+                        }
+                        else if (isStandardMode && isSummaryTable) {
+                            if (isManualMode) {
+                                logDebug_ACU(`[屏蔽] 标准表更新模式(手动)：忽略总结表/总体大纲的deleteRow操作 (tableIndex: ${tableIndex}, tableName: ${table.name})`);
+                                break;
+                            }
+                            // 自动模式下不再屏蔽
+                        }
+                        else if (isSummaryMode && !isSummaryTable) {
+                            if (isManualMode) {
+                                logDebug_ACU(`[屏蔽] 总结表更新模式(手动)：忽略标准表的deleteRow操作 (tableIndex: ${tableIndex}, tableName: ${table.name})`);
+                                break;
+                            }
+                            // 自动模式下不再屏蔽
+                        }
+                        if (table && table.content && table.content.length > rowIndex + 1) {
+                            table.content.splice(rowIndex + 1, 1);
+                            logDebug_ACU(`Applied deleteRow to table ${tableIndex} (${table.name}) at index ${rowIndex}`);
+                            appliedEdits++;
+                            editCountsByTable[table.name] = (editCountsByTable[table.name] || 0) + 1;
+                        }
+                        break;
+                    }
+                    case 'updateRow': {
+                        const [tableIndex, rowIndex, data] = args;
+                        const table = sheets[tableIndex];
+                        if (!table || !table.name) {
+                            logWarn_ACU(`Table at index ${tableIndex} not found or has no name. Skipping updateRow.`);
+                            break;
+                        }
+                        materializeSeedRowsIfNeeded_ACU(table);
+                        const sheetKey = sheetKeysForIndexing[tableIndex];
+                        // [新增] 根据更新模式和表格名称屏蔽不相关的表格操作
+                        // [修复] 统一更新模式（'full'）允许所有操作，不阻止任何表
+                        const isSummaryTable = isSummaryOrOutlineTable_ACU(table.name);
+                        // [优化] 总结表只允许 insertRow 操作，屏蔽 deleteRow 和 updateRow
+                        if (isSummaryTable) {
+                            logDebug_ACU(`[屏蔽] 总结表/总体大纲忽略 updateRow 操作 (tableIndex: ${tableIndex}, tableName: ${table.name})`);
+                            break;
+                        }
+                        // [逻辑优化] 使用更明确的模式匹配
+                        const isUnifiedMode = (updateMode === 'full' || updateMode === 'manual_unified' || updateMode === 'auto_unified');
+                        const isStandardMode = (updateMode === 'standard' || updateMode === 'auto_standard' || updateMode === 'manual_standard');
+                        const isSummaryMode = (updateMode === 'summary' || updateMode === 'auto_summary' || updateMode === 'auto_summary_silent' || updateMode === 'manual_summary');
+                        const isManualMode = (updateMode && updateMode.startsWith('manual'));
+                        if (isUnifiedMode) {
+                            // 统一更新模式：允许所有操作，不阻止任何表
+                            // 继续处理
+                        }
+                        else if (isStandardMode && isSummaryTable) {
+                            if (isManualMode) {
+                                logDebug_ACU(`[屏蔽] 标准表更新模式(手动)：忽略总结表/总体大纲的updateRow操作 (tableIndex: ${tableIndex}, tableName: ${table.name})`);
+                                break;
+                            }
+                            // 自动模式下不再屏蔽
+                        }
+                        else if (isSummaryMode && !isSummaryTable) {
+                            if (isManualMode) {
+                                logDebug_ACU(`[屏蔽] 总结表更新模式(手动)：忽略标准表的updateRow操作 (tableIndex: ${tableIndex}, tableName: ${table.name})`);
+                                break;
+                            }
+                            // 自动模式下不再屏蔽
+                        }
+                        if (table && table.content && table.content.length > rowIndex + 1 && typeof data === 'object') {
+                            const lockState = sheetKey ? getTableLocksForSheet_ACU(sheetKey) : { rows: new Set(), cols: new Set(), cells: new Set() };
+                            if (lockState.rows.has(rowIndex)) {
+                                logDebug_ACU(`[锁定] 行锁定阻止 updateRow (tableIndex: ${tableIndex}, rowIndex: ${rowIndex})`);
+                                break;
+                            }
+                            Object.keys(data).forEach(colIndexStr => {
+                                const colIndex = parseInt(colIndexStr, 10);
+                                if (isNaN(colIndex))
+                                    return;
+                                if (lockState.cols.has(colIndex))
+                                    return;
+                                if (lockState.cells.has(`${rowIndex}:${colIndex}`))
+                                    return;
+                                if (table.content[rowIndex + 1].length > colIndex + 1) {
+                                    table.content[rowIndex + 1][colIndex + 1] = data[colIndexStr];
+                                }
+                            });
+                            if (isSummaryTable && sheetKey && isSpecialIndexLockEnabled_ACU(sheetKey)) {
+                                const specialIndexCol = getSummaryIndexColumnIndex_ACU(table);
+                                if (specialIndexCol >= 0)
+                                    applySummaryIndexSequenceToTable_ACU(table, specialIndexCol);
+                            }
+                            logDebug_ACU(`Applied updateRow to table ${tableIndex} (${table.name}) at index ${rowIndex} with data:`, data);
+                            appliedEdits++;
+                            editCountsByTable[table.name] = (editCountsByTable[table.name] || 0) + 1;
+                        }
+                        break;
+                    }
+                }
+            }
+            catch (e) {
+                logError_ACU(`Failed to parse or apply command: "${line}"`, e);
+            }
+        });
+        // [新增] 将统计信息写入表格对象，以便保存和展示
+        Object.keys(editCountsByTable).forEach(tableName => {
+            const sheetKey = Object.keys(currentJsonTableData_ACU$1).find(k => currentJsonTableData_ACU$1[k].name === tableName);
+            if (sheetKey) {
+                if (!currentJsonTableData_ACU$1[sheetKey]._lastUpdateStats) {
+                    currentJsonTableData_ACU$1[sheetKey]._lastUpdateStats = {};
+                }
+                currentJsonTableData_ACU$1[sheetKey]._lastUpdateStats.changes = editCountsByTable[tableName];
+            }
+        });
+        // [新增] 收集所有被修改的表格 key
+        const modifiedSheetKeys = [];
+        Object.keys(editCountsByTable).forEach(tableName => {
+            if (editCountsByTable[tableName] > 0) {
+                const sheetKey = Object.keys(currentJsonTableData_ACU$1).find(k => currentJsonTableData_ACU$1[k].name === tableName);
+                if (sheetKey)
+                    modifiedSheetKeys.push(sheetKey);
+            }
+        });
+        showToastr_ACU('success', `从AI响应中成功应用了 ${appliedEdits} 个数据库更新。`, { acuToastCategory: ACU_TOAST_CATEGORY_ACU.TABLE_OK });
+        return { success: true, modifiedKeys: modifiedSheetKeys };
+    }
+    // --- 流式响应处理（从 03_runtime_api.js:2025~2110 迁移）---
+    async function streamToText_ACU(response, signal = null) {
+        const reader = response.body.getReader();
+        const decoder = new TextDecoder();
+        let fullContent = '';
+        let buffer = '';
+        try {
+            while (true) {
+                if (signal?.aborted) {
+                    throw new Error('Request aborted');
+                }
+                const { done, value } = await reader.read();
+                if (done)
+                    break;
+                buffer += decoder.decode(value, { stream: true });
+                const lines = buffer.split('\n');
+                buffer = lines.pop() || ''; // 保留不完整的行
+                for (const line of lines) {
+                    if (line.startsWith('data: ')) {
+                        const data = line.slice(6);
+                        if (data === '[DONE]')
+                            continue;
+                        try {
+                            const json = JSON.parse(data);
+                            const content = json?.choices?.[0]?.delta?.content;
+                            if (content) {
+                                fullContent += content;
+                            }
+                        }
+                        catch (e) {
+                            // 忽略解析错误，继续处理下一行
+                        }
+                    }
+                }
+            }
+        }
+        finally {
+            reader.releaseLock();
+        }
+        return fullContent;
+    }
+    /**
+     * 解析非流式API响应，提取文本内容
+     * @param {Response} response - fetch 返回的 Response 对象
+     * @returns {Promise<string|null>} AI 响应文本，失败返回null
+     */
+    async function parseNonStreamResponse_ACU(response) {
+        try {
+            const data = await response.json();
+            // 标准OpenAI格式: choices[0].message.content
+            if (data?.choices?.[0]?.message?.content) {
+                return data.choices[0].message.content;
+            }
+            // 其他可能的格式
+            if (data?.content) {
+                return data.content;
+            }
+            if (typeof data === 'string') {
+                return data;
+            }
+            logError_ACU('[parseNonStreamResponse] Unknown response format:', data);
+            return null;
+        }
+        catch (e) {
+            logError_ACU('[parseNonStreamResponse] Failed to parse response:', e);
+            return null;
+        }
+    }
+    /**
+     * 统一处理API响应，根据streamingEnabled设置自动选择解析方式
+     * @param {Response} response - fetch 返回的 Response 对象
+     * @param {AbortSignal} signal - 可选的中止信号
+     * @returns {Promise<string|null>} AI 响应文本，失败返回null
+     */
+    async function handleApiResponse_ACU(response, signal = null) {
+        if (settings_ACU.streamingEnabled) {
+            return await streamToText_ACU(response, signal);
+        }
+        else {
+            return await parseNonStreamResponse_ACU(response);
+        }
+    }
+
+    // service/ai/api-call.ts — AI 调用编排（剧情推进用）
+    // 从 04_shared_helpers.js 迁入
+    async function callApi_ACU(messages, apiSettings, abortSignal = null) {
+        // [新增] 获取剧情推进使用的API配置（支持API预设）
+        const apiPresetConfig = getApiConfigByPreset_ACU(settings_ACU.plotApiPreset);
+        const effectiveApiMode = apiPresetConfig.apiMode;
+        const effectiveApiConfig = apiPresetConfig.apiConfig;
+        logDebug_ACU(`[剧情推进] 使用API预设: ${settings_ACU.plotApiPreset || '当前配置'}, 模式: ${effectiveApiMode}`);
+        if (effectiveApiMode === 'tavern' || effectiveApiConfig.useMainApi) {
+            // 使用主API或酒馆预设（流式传输）
+            logDebug_ACU('[剧情推进] 通过酒馆主API发送请求（流式传输）...');
+            if (typeof TavernHelper_API_ACU.generateRaw !== 'function') {
+                throw new Error('TavernHelper.generateRaw 函数不存在。请检查酒馆版本。');
+            }
+            const response = await TavernHelper_API_ACU.generateRaw({
+                ordered_prompts: messages,
+                should_stream: settings_ACU.streamingEnabled || false,
+            });
+            if (typeof response !== 'string') {
+                throw new Error('主API调用未返回预期的文本响应。');
+            }
+            return response.trim();
+        }
+        else {
+            // 使用自定义API（流式传输）
+            if (!effectiveApiConfig.url || !effectiveApiConfig.model) {
+                throw new Error('自定义API的URL或模型未配置。');
+            }
+            const requestBody = {
+                messages: messages,
+                model: effectiveApiConfig.model.replace(/^models\//, ''),
+                max_tokens: effectiveApiConfig.maxTokens || effectiveApiConfig.max_tokens || 20000,
+                temperature: effectiveApiConfig.temperature || 0.7,
+                top_p: effectiveApiConfig.topP || effectiveApiConfig.top_p || 0.95,
+                stream: settings_ACU.streamingEnabled || false,
+                chat_completion_source: 'custom',
+                group_names: [],
+                include_reasoning: false,
+                reasoning_effort: 'medium',
+                enable_web_search: false,
+                request_images: false,
+                custom_prompt_post_processing: 'strict',
+                reverse_proxy: effectiveApiConfig.url,
+                proxy_password: '',
+                custom_url: effectiveApiConfig.url,
+                custom_include_headers: effectiveApiConfig.apiKey ? `Authorization: Bearer ${effectiveApiConfig.apiKey}` : '',
+            };
+            const response = await fetch('/api/backends/chat-completions/generate', {
+                method: 'POST',
+                headers: { ...SillyTavern.getRequestHeaders(), 'Content-Type': 'application/json' },
+                body: JSON.stringify(requestBody),
+                signal: abortSignal,
+            });
+            if (!response.ok) {
+                const errTxt = await response.text();
+                throw new Error(`API请求失败: ${response.status} ${errTxt}`);
+            }
+            // 根据streamingEnabled设置选择响应处理方式
+            const content = await handleApiResponse_ACU(response, abortSignal);
+            if (content) {
+                return content.trim();
+            }
+            throw new Error(`API调用返回无效响应`);
+        }
+    }
+    function getApiConfigByPreset_ACU(presetName) {
+        if (!presetName) {
+            // 使用当前配置
+            return {
+                apiMode: settings_ACU.apiMode,
+                apiConfig: settings_ACU.apiConfig,
+                tavernProfile: settings_ACU.tavernProfile
+            };
+        }
+        const preset = settings_ACU.apiPresets.find(p => p.name === presetName);
+        if (preset) {
+            return {
+                apiMode: preset.apiMode,
+                apiConfig: preset.apiConfig,
+                tavernProfile: preset.tavernProfile
+            };
+        }
+        // 预设不存在，回退到当前配置
+        logWarn_ACU(`API预设 "${presetName}" 不存在，使用当前配置。`);
+        return {
+            apiMode: settings_ACU.apiMode,
+            apiConfig: settings_ACU.apiConfig,
+            tavernProfile: settings_ACU.tavernProfile
+        };
+    }
+    async function callCustomOpenAI_ACU_Direct(messages) {
+        // Reuse the logic from callCustomOpenAI_ACU but bypass the prompt replacement part
+        // ... For brevity, I will just call callCustomOpenAI_ACU with a hacked dynamicContent?
+        // No, callCustomOpenAI_ACU relies on settings_ACU.charCardPrompt.
+        // I should refactor callCustomOpenAI_ACU to accept direct messages, or duplicate the API calling part.
+        // Duplicating API calling logic for safety and isolation
+        if (settings_ACU.apiMode === 'tavern') {
+            const profileId = settings_ACU.tavernProfile;
+            return await SillyTavern_API_ACU.ConnectionManagerRequestService.sendRequest(profileId, messages, settings_ACU.apiConfig.max_tokens || 4096).then(r => r.result.choices[0].message.content);
+        }
+        else {
+            // Custom API（流式传输）
+            if (settings_ACU.apiConfig.useMainApi) {
+                return await TavernHelper_API_ACU.generateRaw({ ordered_prompts: messages, should_stream: settings_ACU.streamingEnabled || false });
+            }
+            else {
+                const url = `/api/backends/chat-completions/generate`;
+                const body = JSON.stringify({
+                    messages: messages,
+                    model: settings_ACU.apiConfig.model,
+                    max_tokens: settings_ACU.apiConfig.max_tokens,
+                    stream: settings_ACU.streamingEnabled || false,
+                    chat_completion_source: "custom",
+                    // ... other params
+                    reverse_proxy: settings_ACU.apiConfig.url,
+                    custom_url: settings_ACU.apiConfig.url,
+                    custom_include_headers: settings_ACU.apiConfig.apiKey ? `Authorization: Bearer ${settings_ACU.apiConfig.apiKey}` : ""
+                });
+                const res = await fetch(url, { method: 'POST', headers: { ...SillyTavern.getRequestHeaders(), 'Content-Type': 'application/json' }, body });
+                // 根据streamingEnabled设置选择响应处理方式
+                const content = await handleApiResponse_ACU(res);
+                return content;
+            }
+        }
     }
 
     // 注入点：由 service 层在启动时设置，打破 data→service/presentation 循环依赖
@@ -4281,8 +4986,7 @@ $CONTENT
         logDebug_ACU(`ACU: currentChatFileIdentifier FINAL set to: "${currentChatFileIdentifier_ACU}" (Source: CHAT_CHANGED event)`);
         await loadAllChatMessages_ACU();
         applyTemplateScopeForCurrentChat_ACU();
-        if (typeof updateCardUpdateStatusDisplay_ACU === 'function')
-            updateCardUpdateStatusDisplay_ACU();
+        // updateCardUpdateStatusDisplay 由 presentation 层的 init.ts CHAT_CHANGED 回调执行
         await loadOrCreateJsonTableFromChatHistory_ACU();
         // [核心修复] 切换聊天时，强制刷新可视化编辑器数据
         // 这确保了无论编辑器是否打开（即是否绑定了事件），数据源都被更新，并且如果有监听者则触发
@@ -11163,13 +11867,7 @@ $CONTENT
                     logWarn_ACU('[回溯空数据] 模板解析失败，currentJsonTableData_ACU 设为最小空结构。');
                 }
             }
-            // 刷新 UI 选择器
-            if ($manualTableSelector_ACU$1) {
-                renderManualTableSelector_ACU();
-            }
-            if ($importTableSelector_ACU$1) {
-                renderImportTableSelector_ACU();
-            }
+            // UI 选择器刷新由 presentation 层调用方负责
         }
         else {
             // 更新内存中的数据
@@ -11195,12 +11893,7 @@ $CONTENT
             const stableKeys = getSortedSheetKeys_ACU(mergedData);
             _set_currentJsonTableData_ACU$1(reorderDataBySheetKeys_ACU(mergedData, stableKeys));
             logDebug_ACU('Updated currentJsonTableData_ACU with independently merged data.');
-            if ($manualTableSelector_ACU$1) {
-                renderManualTableSelector_ACU();
-            }
-            if ($importTableSelector_ACU$1) {
-                renderImportTableSelector_ACU();
-            }
+            // UI 选择器刷新由 presentation 层调用方负责
         }
         // 更新世界书（此时 currentJsonTableData_ACU 已是最新状态，空数据也会被正确处理）
         await updateReadableLorebookEntry_ACU(true);
@@ -11221,10 +11914,7 @@ $CONTENT
                 else if (typeof window.ACU_WindowManager !== 'undefined' && window.ACU_WindowManager.isOpen(`${SCRIPT_ID_PREFIX_ACU}-visualizer-window`)) {
                 }
             }, 200);
-            // 3. 刷新当前打开的插件设置弹窗 (UI层负责)
-            if (typeof updateCardUpdateStatusDisplay_ACU === 'function') {
-                updateCardUpdateStatusDisplay_ACU();
-            }
+            // 3. 刷新状态面板由 presentation 层调用方负责
             // [修复] 等待足够的时间，确保前端完成数据读取和UI刷新
             // 使用较长的延迟，确保前端有足够时间处理数据
             setTimeout(() => {
@@ -11567,1575 +12257,883 @@ $CONTENT
     }
 
     /**
-     * service/ai/prompt-builder.ts — AI 输入准备 + JSON清洗 + 表格编辑解析
-     * 从 src/features/ai/01_prompt_prepare.js + 02_api_call.js 合并迁移。
+     * presentation/components/worldbook-selector.ts — 世界书选择 UI
+     * 从 features/worldbook/01~03 + 04 迁移而来
      */
-    async function prepareAIInput_ACU(messages, updateMode = 'standard', targetSheetKeys = null, options = {}) {
-        // updateMode: 'standard' 表示更新标准表，'summary' 表示更新总结表和总体大纲
-        // targetSheetKeys: 可选，指定要更新的表格key列表
-        // This function is now simplified to only prepare the dynamic content parts.    // The main prompt assembly will happen in callCustomOpenAI_ACU.
-        if (!currentJsonTableData_ACU$1) {
-            logError_ACU('prepareAIInput_ACU: Cannot prepare AI input, currentJsonTableData_ACU is null.');
-            return null;
+    async function updateWorldbookSourceView_ACU() {
+        if (!$popupInstance_ACU)
+            return;
+        const worldbookConfig = getCurrentWorldbookConfig_ACU();
+        const source = worldbookConfig.source;
+        const $manualBlock = $popupInstance_ACU.find(`#${SCRIPT_ID_PREFIX_ACU}-worldbook-manual-select-block`);
+        if (source === 'manual') {
+            $manualBlock.slideDown();
+            await populateWorldbookList_ACU();
         }
-        // [修复] 生成 $0 之前，确保 seedRows 可用（新对话首次填表、或指导表未命中时也能兜底）
-        // - 只把 seedRows 挂到表对象字段，不写入 content
-        let _seedGuideDataForThisPrepare_ACU = null;
+        else {
+            $manualBlock.slideUp();
+        }
+        await populateWorldbookEntryList_ACU();
+    }
+    // =========================
+    // [剧情推进] 世界书选择 UI（独立于填表 worldbookConfig）
+    // 复用现有加载逻辑，但使用不同的 DOM id 与不同的配置对象
+    // =========================
+    function getPlotWorldbookConfig_ACU() {
+        if (!settings_ACU.plotSettings)
+            settings_ACU.plotSettings = JSON.parse(JSON.stringify(DEFAULT_PLOT_SETTINGS_ACU));
+        if (!settings_ACU.plotSettings.plotWorldbookConfig) {
+            settings_ACU.plotSettings.plotWorldbookConfig = buildDefaultPlotWorldbookConfig_ACU();
+        }
+        return settings_ACU.plotSettings.plotWorldbookConfig;
+    }
+    async function updatePlotWorldbookSourceView_ACU() {
+        if (!$popupInstance_ACU)
+            return;
+        const cfg = getPlotWorldbookConfig_ACU();
+        const source = cfg.source;
+        const $manualBlock = $popupInstance_ACU.find(`#${SCRIPT_ID_PREFIX_ACU}-plot-worldbook-manual-select-block`);
+        if (source === 'manual') {
+            $manualBlock.slideDown();
+            await populatePlotWorldbookList_ACU();
+        }
+        else {
+            $manualBlock.slideUp();
+        }
+        await populatePlotWorldbookEntryList_ACU();
+    }
+    async function populatePlotWorldbookList_ACU() {
+        if (!$popupInstance_ACU)
+            return;
+        const $listContainer = $popupInstance_ACU.find(`#${SCRIPT_ID_PREFIX_ACU}-plot-worldbook-select`);
+        if (!$listContainer.length)
+            return;
+        $listContainer.empty().html('<em>正在加载...</em>');
         try {
-            _seedGuideDataForThisPrepare_ACU = await ensureChatSheetGuideSeeded_ACU({ reason: 'prepare_ai_input_seedrows' });
-            if (_seedGuideDataForThisPrepare_ACU) {
-                attachSeedRowsToCurrentDataFromGuide_ACU(_seedGuideDataForThisPrepare_ACU);
-            }
-        }
-        catch (e) { }
-        // 1. Format the current JSON table data into a human-readable text block for $0
-        let tableDataText = '';
-        let _seedRowsTablesUsed_ACU = [];
-        const tableIndexes = getSortedSheetKeys_ACU(currentJsonTableData_ACU$1);
-        tableIndexes.forEach((sheetKey, tableIndex) => {
-            const table = currentJsonTableData_ACU$1[sheetKey];
-            if (!table || !table.name || !table.content)
-                return;
-            // [独立更新检查] 如果指定了 targetSheetKeys，则严格过滤
-            if (targetSheetKeys && Array.isArray(targetSheetKeys)) {
-                if (!targetSheetKeys.includes(sheetKey))
-                    return;
-            }
-            // [新增] 根据更新模式和表格名称决定是否显示数据行
-            // 注意：如果 targetSheetKeys 已指定，上面的检查已经过滤了不需要的表。
-            // 但为了兼容旧模式逻辑（未指定 targetSheetKeys 时），仍保留 mode 检查。
-            // 如果 targetSheetKeys 存在，我们假设调用者知道自己在做什么，shouldShowData 默认为 true。
-            const isSummaryTable = isSummaryOrOutlineTable_ACU(table.name);
-            let shouldShowData = true;
-            if (!targetSheetKeys) {
-                // [逻辑优化] 使用更明确的模式匹配
-                const isUnifiedMode = (updateMode === 'full' || updateMode === 'manual_unified' || updateMode === 'auto_unified');
-                const isStandardMode = (updateMode === 'standard' || updateMode === 'auto_standard' || updateMode === 'manual_standard');
-                const isSummaryMode = (updateMode === 'summary' || updateMode === 'auto_summary_silent' || updateMode === 'manual_summary');
-                if (isUnifiedMode) {
-                    // 统一更新模式：显示所有表
-                    shouldShowData = true;
-                }
-                else if (isStandardMode && isSummaryTable) {
-                    // 标准表更新模式：不显示总结表数据
-                    shouldShowData = false;
-                }
-                else if (isSummaryMode && !isSummaryTable) {
-                    // 总结表更新模式：不显示标准表数据
-                    shouldShowData = false;
-                }
-            }
-            if (!shouldShowData) {
+            const bookNames = await getWorldbookNames_ACU();
+            $listContainer.empty();
+            if (bookNames.length === 0) {
+                $listContainer.html('<em>未找到世界书</em>');
                 return;
             }
-            const allRows = table.content.slice(1);
-            // seedRows 统一从“当前数据/指导表/模板”解析（避免 seedRows 丢失导致误判为空表）
-            const seedRows = getEffectiveSeedRowsForSheet_ACU(sheetKey, { guideData: _seedGuideDataForThisPrepare_ACU, allowTemplateFallback: true });
-            // 把 seedRows 字段挂回 table，便于后续 applyEdits 物化
+            const cfg = getPlotWorldbookConfig_ACU();
+            bookNames.forEach(bookName => {
+                const isSelected = (cfg.manualSelection || []).includes(bookName);
+                const itemHtml = `
+                  <div class="qrf_worldbook_list_item ${isSelected ? 'selected' : ''}" data-book-name="${escapeHtml_ACU(bookName)}">
+                      ${escapeHtml_ACU(bookName)}
+                  </div>`;
+                $listContainer.append(itemHtml);
+            });
+            // 应用筛选（若存在）
             try {
-                if ((!Array.isArray(table.seedRows) || table.seedRows.length === 0) && Array.isArray(seedRows) && seedRows.length > 0) {
-                    table.seedRows = JSON.parse(JSON.stringify(seedRows));
-                }
+                const $filter = $popupInstance_ACU.find(`#${SCRIPT_ID_PREFIX_ACU}-plot-worldbook-select-filter`);
+                if ($filter.length)
+                    applyWorldbookListFilter_ACU($listContainer, $filter.val());
             }
             catch (e) { }
-            const isUsingSeedRows = (allRows.length === 0 && seedRows.length > 0);
-            if (isUsingSeedRows) {
-                try {
-                    _seedRowsTablesUsed_ACU.push(String(table.name || sheetKey));
+        }
+        catch (error) {
+            logError_ACU('[剧情推进] Failed to populate plot worldbook list:', error);
+            $listContainer.html('<em>加载失败</em>');
+        }
+    }
+    async function populatePlotWorldbookEntryList_ACU() {
+        if (!$popupInstance_ACU)
+            return;
+        const $list = $popupInstance_ACU.find(`#${SCRIPT_ID_PREFIX_ACU}-plot-worldbook-entry-list`);
+        if (!$list.length)
+            return;
+        $list.empty().html('<em>正在加载条目...</em>');
+        const cfg = getPlotWorldbookConfig_ACU();
+        const source = cfg.source;
+        let bookNames = [];
+        if (source === 'character') {
+            const charLorebooks = await TavernHelper_API_ACU.getCharLorebooks({ type: 'all' });
+            if (charLorebooks.primary)
+                bookNames.push(charLorebooks.primary);
+            if (charLorebooks.additional?.length)
+                bookNames.push(...charLorebooks.additional);
+        }
+        else if (source === 'manual') {
+            bookNames = cfg.manualSelection || [];
+        }
+        bookNames = [...new Set((Array.isArray(bookNames) ? bookNames : []).filter(Boolean))];
+        if (bookNames.length === 0) {
+            $list.html('<em>请先选择世界书或为角色绑定世界书。</em>');
+            return;
+        }
+        try {
+            if (!cfg.enabledEntries)
+                cfg.enabledEntries = {};
+            const entriesMap = await getLorebookEntriesByNames_ACU(bookNames);
+            const groups = [];
+            const expandByDefault = bookNames.length === 1;
+            let settingsChanged = false;
+            for (const bookName of bookNames) {
+                const bookEntries = Array.isArray(entriesMap[bookName]) ? entriesMap[bookName] : [];
+                if (typeof cfg.enabledEntries[bookName] === 'undefined') {
+                    // 默认启用时：仅对“非数据库生成条目”做默认勾选（数据库生成条目不在UI显示，也不需要用户勾选）
+                    cfg.enabledEntries[bookName] = bookEntries
+                        .filter(entry => {
+                        const comment = entry?.comment || entry?.name || '';
+                        let normalizedComment = String(comment).replace(/^ACU-\[[^\]]+\]-/, '');
+                        normalizedComment = normalizedComment.replace(/^外部导入-(?:[^-]+-)?/, '');
+                        // UI 不显示：数据库生成条目（含隔离/外部导入前缀），以及 OutlineTable
+                        if (normalizedComment.startsWith('TavernDB-ACU-OutlineTable'))
+                            return false;
+                        const isDbGenerated = normalizedComment.startsWith('TavernDB-ACU-') ||
+                            normalizedComment.startsWith('重要人物条目') ||
+                            normalizedComment.startsWith('总结条目') ||
+                            normalizedComment.startsWith('小总结条目');
+                        if (isDbGenerated)
+                            return false;
+                        if (isEntryBlocked_ACU$1(entry))
+                            return false;
+                        return true;
+                    })
+                        .map(entry => entry.uid);
+                    settingsChanged = true;
                 }
-                catch (e) { }
+                const enabledEntries = Array.isArray(cfg.enabledEntries[bookName]) ? cfg.enabledEntries[bookName] : [];
+                const visibleEntries = [];
+                bookEntries.forEach(entry => {
+                    const comment = entry?.comment || entry?.name || '';
+                    let normalizedComment = String(comment).replace(/^ACU-\[[^\]]+\]-/, '');
+                    normalizedComment = normalizedComment.replace(/^外部导入-(?:[^-]+-)?/, '');
+                    // UI 不显示：数据库生成条目（含隔离/外部导入前缀），以及 OutlineTable
+                    if (normalizedComment.startsWith('TavernDB-ACU-OutlineTable'))
+                        return;
+                    const isDbGenerated = normalizedComment.startsWith('TavernDB-ACU-') ||
+                        normalizedComment.startsWith('重要人物条目') ||
+                        normalizedComment.startsWith('总结条目') ||
+                        normalizedComment.startsWith('小总结条目');
+                    if (isDbGenerated)
+                        return;
+                    if (isEntryBlocked_ACU$1(entry))
+                        return;
+                    visibleEntries.push({
+                        uid: entry.uid,
+                        bookName,
+                        label: entry.comment || `条目 ${entry.uid}`,
+                        searchText: `${bookName} ${entry.comment || entry.name || `条目 ${entry.uid}`}`,
+                        checked: enabledEntries.includes(entry.uid),
+                        disabled: !entry.enabled,
+                        checkboxId: buildWorldbookEntryCheckboxId_ACU('plot-wb-entry', bookName, entry.uid),
+                    });
+                });
+                if (visibleEntries.length > 0) {
+                    groups.push({
+                        bookName,
+                        entries: visibleEntries,
+                        expanded: expandByDefault,
+                    });
+                }
             }
-            const effectiveAllRows = (allRows.length > 0) ? allRows : (seedRows.length > 0 ? seedRows : []);
-            // [新增] 当表格数据为空时，简化输出并提示初始化
-            if (effectiveAllRows.length === 0) {
-                tableDataText += `[${tableIndex}:${table.name}]\n`;
-                // [修正] 即使表格为空，也必须输出表头列名，以便AI知道如何初始化（列结构）
-                const headers = table.content[0] ? table.content[0].slice(1).map((h, i) => `[${i}:${h}]`).join(', ') : 'No Headers';
-                tableDataText += `  Columns: ${headers}\n`;
-                if (table.sourceData) {
-                    tableDataText += `  - Note: ${table.sourceData.note || 'N/A'}\n`;
-                    // 只发送 "initNode" 里的内容 (如果没有 initNode 则尝试使用 insertNode)
-                    const initNodeContent = table.sourceData.initNode || table.sourceData.insertNode || 'N/A';
-                    tableDataText += `  - Init Trigger: ${initNodeContent}\n`;
-                }
-                tableDataText += `  (该表格为空，请进行初始化。)\n\n`;
+            if (settingsChanged) {
+                saveSettings_ACU();
+            }
+            renderLazyWorldbookEntryList_ACU($list, groups, {
+                checkboxIdPrefix: 'plot-wb-entry',
+                emptyText: '<em>所选世界书中无条目。</em>',
+            });
+            // 应用筛选（若存在）
+            try {
+                const $filter = $popupInstance_ACU.find(`#${SCRIPT_ID_PREFIX_ACU}-plot-worldbook-entry-filter`);
+                if ($filter.length)
+                    applyWorldbookEntryFilter_ACU($list, $filter.val());
+            }
+            catch (e) { }
+        }
+        catch (error) {
+            logError_ACU('[剧情推进] Failed to populate plot worldbook entry list:', error);
+            $list.html('<em>加载条目失败。</em>');
+        }
+    }
+    // [新增] 填充注入目标选择器
+    async function populateInjectionTargetSelector_ACU() {
+        if (!$popupInstance_ACU)
+            return;
+        const $select = $popupInstance_ACU.find(`#${SCRIPT_ID_PREFIX_ACU}-worldbook-injection-target`);
+        $select.empty();
+        try {
+            const bookNames = await getWorldbookNames_ACU();
+            // 添加默认选项
+            $select.append(`<option value="character">角色卡绑定世界书</option>`);
+            bookNames.forEach(bookName => {
+                $select.append(`<option value="${escapeHtml_ACU(bookName)}">${escapeHtml_ACU(bookName)}</option>`);
+            });
+            // 设置当前选中的值
+            const worldbookConfig = getCurrentWorldbookConfig_ACU();
+            $select.val(worldbookConfig.injectionTarget || 'character');
+            // 应用筛选（若存在）
+            try {
+                const $filter = $popupInstance_ACU.find(`#${SCRIPT_ID_PREFIX_ACU}-worldbook-injection-target-filter`);
+                if ($filter.length)
+                    applyWorldbookSelectFilter_ACU($select, $filter.val());
+            }
+            catch (e) { }
+        }
+        catch (error) {
+            logError_ACU('Failed to populate injection target selector:', error);
+            $select.append('<option value="character">加载列表失败</option>');
+        }
+    }
+    // [新增] 辅助函数：检查条目是否包含屏蔽词
+    function isEntryBlocked_ACU$1(entry) {
+        if (!entry)
+            return false;
+        const blockedKeywords = ["规则", "思维链", "cot", "MVU", "mvu", "变量", "状态", "Status", "Rule", "rule", "检定", "判断", "叙事", "文风", "InitVar", "格式"];
+        const name = entry.comment || entry.name || ''; // In ST, 'comment' is often the display name
+        return blockedKeywords.some(keyword => name.includes(keyword));
+    }
+    const WORLDBOOK_ENTRY_LAZY_PAGE_SIZE_ACU = 80;
+    function buildWorldbookEntryCheckboxId_ACU(prefix, bookName, uid) {
+        const safePrefix = String(prefix || 'wb-entry').replace(/[^a-zA-Z0-9_-]+/g, '-');
+        const safeBook = String(bookName || 'book')
+            .replace(/[^a-zA-Z0-9_-]+/g, '-')
+            .replace(/^-+|-+$/g, '')
+            .slice(0, 48) || 'book';
+        return `${safePrefix}-${safeBook}-${uid}`;
+    }
+    function createLazyWorldbookEntryViewState_ACU(groups = [], options = {}) {
+        const normalizedGroups = (Array.isArray(groups) ? groups : []).map(group => ({
+            bookName: String(group?.bookName || ''),
+            entries: Array.isArray(group?.entries) ? group.entries.map(entry => ({ ...entry })) : [],
+            filteredEntries: null,
+            loadedCount: 0,
+            expanded: group?.expanded === true,
+            expandedBeforeFilter: undefined,
+        })).filter(group => group.bookName);
+        return {
+            groups: normalizedGroups,
+            pageSize: Number(options?.pageSize) > 0 ? Number(options.pageSize) : WORLDBOOK_ENTRY_LAZY_PAGE_SIZE_ACU,
+            checkboxIdPrefix: String(options?.checkboxIdPrefix || 'wb-entry'),
+            emptyText: options?.emptyText || '<em>所选世界书中无条目。</em>',
+            emptyGroupText: options?.emptyGroupText || '<em>当前分组没有可显示的条目。</em>',
+            isFiltering: false,
+        };
+    }
+    function getLazyWorldbookEntrySource_ACU(group) {
+        if (!group)
+            return [];
+        if (Array.isArray(group.filteredEntries))
+            return group.filteredEntries;
+        return Array.isArray(group.entries) ? group.entries : [];
+    }
+    function findLazyWorldbookEntryGroupState_ACU($list, bookName) {
+        if (!$list || !$list.length)
+            return null;
+        const state = $list.data('acuLazyWorldbookState');
+        if (!state || !Array.isArray(state.groups))
+            return null;
+        return state.groups.find(group => String(group.bookName) === String(bookName)) || null;
+    }
+    function findLazyWorldbookEntryGroupElement_ACU($list, bookName) {
+        if (!$list || !$list.length)
+            return jQuery_API_ACU();
+        return $list.find('.qrf_worldbook_entry_group').filter(function () {
+            return String(jQuery_API_ACU(this).data('book-name') || '') === String(bookName);
+        }).first();
+    }
+    function updateLazyWorldbookEntryGroupMeta_ACU($list, bookName) {
+        if (!$list || !$list.length)
+            return;
+        const state = $list.data('acuLazyWorldbookState');
+        const group = findLazyWorldbookEntryGroupState_ACU($list, bookName);
+        const $group = findLazyWorldbookEntryGroupElement_ACU($list, bookName);
+        if (!state || !group || !$group.length)
+            return;
+        const sourceEntries = getLazyWorldbookEntrySource_ACU(group);
+        const loadedCount = Math.min(group.loadedCount || 0, sourceEntries.length);
+        const metaText = sourceEntries.length === 0
+            ? '0 条'
+            : (loadedCount < sourceEntries.length ? `已加载 ${loadedCount} / ${sourceEntries.length} 条` : `共 ${sourceEntries.length} 条`);
+        $group.find('.qrf_worldbook_entry_group_meta').text(metaText);
+        $group.find('.qrf_worldbook_entry_toggle').text(group.expanded ? '收起' : '展开');
+        $group.find('.qrf_worldbook_entry_group_body').toggle(group.expanded);
+        $group.find('.qrf_worldbook_entry_group_footer').toggle(group.expanded && sourceEntries.length > 0);
+        $group.find('.qrf_worldbook_entry_load_more').toggle(group.expanded && loadedCount < sourceEntries.length);
+    }
+    function renderLazyWorldbookEntryItems_ACU($list, bookName, options = {}) {
+        if (!$list || !$list.length)
+            return;
+        const state = $list.data('acuLazyWorldbookState');
+        const group = findLazyWorldbookEntryGroupState_ACU($list, bookName);
+        const $group = findLazyWorldbookEntryGroupElement_ACU($list, bookName);
+        if (!state || !group || !$group.length)
+            return;
+        const sourceEntries = getLazyWorldbookEntrySource_ACU(group);
+        if (options.reset === true) {
+            group.loadedCount = 0;
+        }
+        const nextCount = options.renderAll === true
+            ? sourceEntries.length
+            : Math.min(sourceEntries.length, (group.loadedCount || 0) + state.pageSize);
+        group.loadedCount = nextCount;
+        const visibleEntries = sourceEntries.slice(0, nextCount);
+        const html = visibleEntries.length > 0
+            ? visibleEntries.map(entry => {
+                const checkboxId = entry.checkboxId || buildWorldbookEntryCheckboxId_ACU(state.checkboxIdPrefix, entry.bookName || bookName, entry.uid);
+                const labelText = entry.label || `条目 ${entry.uid}`;
+                const disabledStyle = entry.disabled ? 'style="opacity:0.6; text-decoration: line-through;"' : '';
+                return `
+                  <div class="qrf_worldbook_entry_item" data-book-name="${escapeHtml_ACU(String(entry.bookName || bookName))}" data-entry-uid="${escapeHtml_ACU(String(entry.uid ?? ''))}">
+                      <input type="checkbox" id="${escapeHtml_ACU(String(checkboxId))}" data-book="${escapeHtml_ACU(String(entry.bookName || bookName))}" data-uid="${escapeHtml_ACU(String(entry.uid ?? ''))}" ${entry.checked ? 'checked' : ''} ${entry.disabled ? 'disabled' : ''}>
+                      <label for="${escapeHtml_ACU(String(checkboxId))}" ${disabledStyle}>${escapeHtml_ACU(String(labelText))}</label>
+                  </div>`;
+            }).join('')
+            : state.emptyGroupText;
+        $group.find('.qrf_worldbook_entry_group_body').html(html);
+        updateLazyWorldbookEntryGroupMeta_ACU($list, bookName);
+    }
+    function renderLazyWorldbookEntryList_ACU($list, groups, options = {}) {
+        if (!$list || !$list.length)
+            return;
+        const state = createLazyWorldbookEntryViewState_ACU(groups, options);
+        $list.data('acuLazyWorldbookState', state);
+        if (!state.groups.length) {
+            $list.html(state.emptyText);
+            return;
+        }
+        const html = state.groups.map(group => `
+          <div class="qrf_worldbook_entry_group" data-book-name="${escapeHtml_ACU(group.bookName)}" style="margin-bottom: 8px;">
+              <div class="qrf_worldbook_entry_header" data-book-name="${escapeHtml_ACU(group.bookName)}" style="display: flex; align-items: center; gap: 8px; margin-bottom: 5px; font-weight: bold; border-bottom: 1px solid; padding-bottom: 4px;">
+                  <button type="button" class="qrf_worldbook_entry_toggle button" style="padding: 2px 8px; font-size: 0.8em;">${group.expanded ? '收起' : '展开'}</button>
+                  <span class="qrf_worldbook_entry_header_text" style="flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">${escapeHtml_ACU(group.bookName)}</span>
+                  <span class="qrf_worldbook_entry_group_meta" style="font-weight: normal; font-size: 0.85em; color: var(--text_secondary);"></span>
+              </div>
+              <div class="qrf_worldbook_entry_group_body" style="display: ${group.expanded ? 'block' : 'none'};"></div>
+              <div class="qrf_worldbook_entry_group_footer" style="display: ${group.expanded ? 'block' : 'none'}; margin-top: 6px;">
+                  <button type="button" class="qrf_worldbook_entry_load_more button" style="padding: 2px 8px; font-size: 0.8em; display: none;">继续加载</button>
+              </div>
+          </div>`).join('');
+        $list.html(html);
+        state.groups.forEach(group => {
+            if (group.expanded) {
+                renderLazyWorldbookEntryItems_ACU($list, group.bookName, { reset: true });
             }
             else {
-                tableDataText += `[${tableIndex}:${table.name}]\n`;
-                const headers = table.content[0] ? table.content[0].slice(1).map((h, i) => `[${i}:${h}]`).join(', ') : 'No Headers';
-                tableDataText += `  Columns: ${headers}\n`;
-                if (table.sourceData) {
-                    tableDataText += `  - Note: ${table.sourceData.note || 'N/A'}\n`;
-                    tableDataText += `  - Insert Trigger: ${table.sourceData.insertNode || table.sourceData.initNode || 'N/A'}\n`;
-                    tableDataText += `  - Update Trigger: ${table.sourceData.updateNode || 'N/A'}\n`;
-                    tableDataText += `  - Delete Trigger: ${table.sourceData.deleteNode || 'N/A'}\n`;
-                }
-                if (isUsingSeedRows) {
-                    tableDataText += `  - SeedRows: 已提供模板基础数据（尚未写入聊天楼层数据；本次填表可直接基于这些行更新）\n`;
-                }
-                let rowsToProcess = effectiveAllRows;
-                let startIndex = 0;
-                // [健全机制] 纪要表/总结表：固定使用硬编码的10条限制，不受 sendLatestRows 参数影响
-                // 这是为了保证纪要表的行为一致性，避免用户误配置导致发送过多数据
-                const isSummaryTable = (table.name.trim() === '纪要表' || table.name.trim() === '总结表');
-                if (isSummaryTable && effectiveAllRows.length > 10) {
-                    startIndex = effectiveAllRows.length - 10;
-                    rowsToProcess = effectiveAllRows.slice(-10);
-                    tableDataText += `  - Note: Showing last ${rowsToProcess.length} of ${effectiveAllRows.length} entries (summary table fixed limit).\n`;
-                }
-                else if (!isSummaryTable) {
-                    // [新增] 其他表：使用 sendLatestRows 参数控制发送行数
-                    // -1 = 全部发送，0 = 全部发送（沿用UI全局），正数 = 仅发送最新N条
-                    const sendLatestRows = (table.updateConfig && typeof table.updateConfig.sendLatestRows === 'number')
-                        ? table.updateConfig.sendLatestRows : -1;
-                    if (sendLatestRows > 0 && effectiveAllRows.length > sendLatestRows) {
-                        startIndex = effectiveAllRows.length - sendLatestRows;
-                        rowsToProcess = effectiveAllRows.slice(-sendLatestRows);
-                        tableDataText += `  - Note: Showing last ${rowsToProcess.length} of ${effectiveAllRows.length} entries (sendLatestRows=${sendLatestRows}).\n`;
-                    }
-                }
-                if (rowsToProcess.length > 0) {
-                    rowsToProcess.forEach((row, index) => {
-                        const originalRowIndex = startIndex + index; // 计算原始行索引
-                        const rowData = row.slice(1).join(', ');
-                        tableDataText += `  [${originalRowIndex}] ${rowData}\n`;
-                    });
-                }
-                else {
-                    tableDataText += '  (No data rows)\n';
-                }
-                tableDataText += '\n';
+                updateLazyWorldbookEntryGroupMeta_ACU($list, group.bookName);
             }
         });
-        if (_seedRowsTablesUsed_ACU.length > 0) {
-            logDebug_ACU(`[SeedRows] $0 使用 seedRows 作为基础数据：${_seedRowsTablesUsed_ACU.join('、')}`);
-        }
-        // 2. Format the messages for $1
-        let messagesText = '当前最新对话内容:\n';
-        if (messages && messages.length > 0) {
-            // [上下文筛选] 正文标签提取 + 标签排除（可单独或叠加）
-            const extractTags = (settings_ACU.tableContextExtractTags || '').trim();
-            const extractRules = normalizeExtractRules_ACU(settings_ACU.tableContextExtractRules, extractTags);
-            const excludeTags = (settings_ACU.tableContextExcludeTags || '').trim();
-            const excludeRules = normalizeExcludeRules_ACU(settings_ACU.tableContextExcludeRules, excludeTags);
-            messagesText += messages.map(msg => {
-                const prefix = msg.is_user ? SillyTavern_API_ACU?.name1 || '用户' : msg.name || '角色';
-                let content = msg.mes || msg.message || '';
-                // 对非用户消息应用上下文筛选（User回复不受影响）
-                if (!msg.is_user && (extractTags || extractRules.length > 0 || excludeTags || excludeRules.length > 0)) {
-                    content = applyContextTagFilters_ACU(content, { extractTags, extractRules, excludeTags, excludeRules });
-                }
-                return `${prefix}: ${content}`;
-            }).join('\n');
+    }
+    function toggleLazyWorldbookEntryGroup_ACU($list, bookName, expanded = null) {
+        if (!$list || !$list.length)
+            return;
+        const group = findLazyWorldbookEntryGroupState_ACU($list, bookName);
+        if (!group)
+            return;
+        const nextExpanded = (typeof expanded === 'boolean') ? expanded : !group.expanded;
+        group.expanded = nextExpanded;
+        if (group.expanded && (group.loadedCount || 0) === 0) {
+            renderLazyWorldbookEntryItems_ACU($list, bookName, { reset: true });
         }
         else {
-            messagesText += '(无最新对话内容)';
-        }
-        // [改动] 世界书初始扫描文本使用“本次实际读取的上下文”（与剧情推进一致）
-        // 用 messagesText（已应用上下文标签提取/排除规则）作为扫描源，避免误用全聊天记录导致触发漂移
-        const worldbookScanText = messagesText;
-        const excludeImportTaggedWorldbookEntries = options?.excludeImportTaggedWorldbookEntries === true;
-        const worldbookContent = await getCombinedWorldbookContent_ACU(worldbookScanText, {
-            excludeImportTaggedEntries: excludeImportTaggedWorldbookEntries,
-        });
-        const manualExtraHintText = manualExtraHint_ACU$1 || '';
-        // Return the dynamic parts for interpolation.
-        return { tableDataText, messagesText, worldbookContent, manualExtraHint: manualExtraHintText };
-    }
-    async function callCustomOpenAI_ACU(dynamicContent, abortController = null, options = null) {
-        // [新增] 创建一个新的 AbortController 用于本次请求
-        const localAbortController = abortController || new AbortController();
-        _set_currentAbortController_ACU$1(localAbortController);
-        trackAbortController_ACU$1(localAbortController);
-        const abortSignal = localAbortController.signal;
-        const skipProfileSwitch = !!options?.skipProfileSwitch;
-        const forceDirectApi = !!options?.forceDirectApi;
-        // [新增] 获取填表使用的API配置（支持API预设）
-        const apiPresetConfig = getApiConfigByPreset_ACU(settings_ACU.tableApiPreset);
-        const effectiveApiMode = apiPresetConfig.apiMode;
-        const effectiveApiConfig = apiPresetConfig.apiConfig;
-        const effectiveTavernProfile = apiPresetConfig.tavernProfile;
-        // 仅用于发给API时的角色归一化（不做A/B强制）
-        const normalizeRoleForApi_ACU = (role) => {
-            const ru = String(role || '').toUpperCase();
-            const rl = String(role || '').toLowerCase();
-            if (ru === 'AI' || ru === 'ASSISTANT' || rl === 'assistant')
-                return 'assistant';
-            if (ru === 'SYSTEM' || rl === 'system')
-                return 'system';
-            if (ru === 'USER' || rl === 'user')
-                return 'user';
-            return 'user';
-        };
-        // This function now assembles the final messages array.
-        const messages = [];
-        const charCardPromptSetting = settings_ACU.charCardPrompt;
-        let promptSegments = [];
-        if (Array.isArray(charCardPromptSetting)) {
-            promptSegments = charCardPromptSetting;
-        }
-        else if (typeof charCardPromptSetting === 'string') {
-            // Handle legacy single-string format
-            promptSegments = [{ role: 'USER', content: charCardPromptSetting }];
-        }
-        // [新增] 构建 $U (用户设定描述) 和 $C (角色描述) 占位符内容
-        // $U: 用户设定描述 (persona_description)
-        let userInfoContent_Table = '';
-        try {
-            // 按优先级尝试获取 persona_description
-            // 1. 从 SillyTavern 全局对象获取 powerUserSettings
-            // 2. 从 (window as any).power_user 获取（酒馆内部变量）
-            // 3. 从 SillyTavern_API_ACU 获取
-            const stContext = window.SillyTavern?.getContext?.();
-            userInfoContent_Table = stContext?.powerUserSettings?.persona_description
-                || window.power_user?.persona_description
-                || SillyTavern_API_ACU?.powerUserSettings?.persona_description
-                || '';
-            logDebug_ACU(`[填表] $U (persona_description) 获取结果: ${userInfoContent_Table ? '成功' : '为空'}`);
-        }
-        catch (e) {
-            logWarn_ACU('[填表] 获取用户设定描述时出错:', e);
-            userInfoContent_Table = '';
-        }
-        // $C: 角色描述 (char_description)
-        let charInfoContent_Table = '';
-        try {
-            // 按优先级尝试获取角色描述
-            // 1. 使用酒馆助手 TavernHelper.getCharData('current') 获取当前角色卡
-            // 2. 从 SillyTavern_API_ACU.characters[this_chid] 获取
-            // 3. 从 (window as any).SillyTavern?.getContext() 获取
-            // 4. 从全局 characters/this_chid 变量获取
-            const stContext = window.SillyTavern?.getContext?.();
-            // 优先使用 TavernHelper.getCharData('current')
-            let character = null;
-            if (TavernHelper_API_ACU$1?.getCharData) {
-                character = TavernHelper_API_ACU$1.getCharData('current');
-            }
-            if (!character) {
-                character = SillyTavern_API_ACU?.characters?.[SillyTavern_API_ACU?.this_chid]
-                    || stContext?.characters?.[stContext?.characterId]
-                    || (typeof window.characters !== 'undefined' && typeof window.this_chid !== 'undefined' ? window.characters[window.this_chid] : null);
-            }
-            charInfoContent_Table = character?.description
-                || character?.data?.description
-                || stContext?.name2_description // 酒馆内部的角色描述变量
-                || '';
-            logDebug_ACU(`[填表] $C (char_description) 获取结果: ${charInfoContent_Table ? '成功，长度=' + charInfoContent_Table.length : '为空'}`);
-        }
-        catch (e) {
-            logWarn_ACU('[填表] 获取角色描述时出错:', e);
-            charInfoContent_Table = '';
-        }
-        // [新增] 读取上一轮剧情规划数据，用于$6占位符
-        const lastPlotContent = getPlotFromHistory_ACU();
-        logDebug_ACU('[填表] $6 上轮规划数据:', lastPlotContent ? `长度=${lastPlotContent.length}` : '(空)');
-        const tableExcludeTags = (settings_ACU.tableContextExcludeTags || '').trim();
-        const tableExcludeRules = normalizeExcludeRules_ACU(settings_ACU.tableContextExcludeRules, tableExcludeTags);
-        const filterTableInjectedContent = (value, placeholderKey = '') => {
-            const text = value !== undefined && value !== null ? String(value) : '';
-            // 仅对注入内容应用规则，避免改写基础提示词本体
-            if (!['$0', '$1', '$4', '$6', '$8', '$U', '$C'].includes(placeholderKey))
-                return text;
-            return applyExcludeRulesToText_ACU(text, { excludeRules: tableExcludeRules, excludeTags: tableExcludeTags });
-        };
-        // Interpolate placeholders in each segment
-        for (const segment of promptSegments) {
-            let finalContent = segment.content;
-            finalContent = finalContent.replace('$0', filterTableInjectedContent(dynamicContent.tableDataText, '$0'));
-            finalContent = finalContent.replace('$1', filterTableInjectedContent(dynamicContent.messagesText, '$1'));
-            finalContent = finalContent.replace('$4', filterTableInjectedContent(dynamicContent.worldbookContent, '$4'));
-            finalContent = finalContent.replace(/\$6/g, filterTableInjectedContent(lastPlotContent || '', '$6')); // [新增] $6 占位符替换为上一轮剧情规划数据（全局替换）
-            finalContent = finalContent.replace('$8', filterTableInjectedContent(dynamicContent.manualExtraHint || '', '$8'));
-            // [新增] $U 和 $C 占位符替换
-            finalContent = finalContent.replace(/\$U/g, filterTableInjectedContent(userInfoContent_Table, '$U'));
-            finalContent = finalContent.replace(/\$C/g, filterTableInjectedContent(charInfoContent_Table, '$C'));
-            // [新增] 先让 st-prompt-template 插件处理提示词（如果存在）
-            if (typeof globalThis.EjsTemplate?.evalTemplate === 'function') {
-                try {
-                    // 不传入 context，让 evalTemplate 自动调用 prepareContext()
-                    // 这样可以确保上下文正确传递给 EJS 模板引擎
-                    finalContent = await globalThis.EjsTemplate.evalTemplate(finalContent);
-                    logDebug_ACU('[填表] 已通过 st-prompt-template 处理提示词');
-                }
-                catch (e) {
-                    logWarn_ACU('[填表] st-prompt-template 处理失败，使用原始内容:', e);
-                }
-            }
-            // [新增] 在 EJS 渲染后进行随机数处理
-            finalContent = parseRandomTags_ACU(finalContent);
-            finalContent = replaceRandomVariables_ACU(finalContent);
-            // [新增] 再让数据库自身的条件模板处理
-            if (settings_ACU.promptTemplateSettings?.enabled !== false) {
-                // 构建条件模板上下文
-                const templateContext = {
-                    seedContent: getLatestAIMessageContent_ACU(),
-                    allTablesJson: currentJsonTableData_ACU$1,
-                    plotContent: lastPlotContent || ''
-                };
-                finalContent = parseIfBlocksInContent_ACU(finalContent, templateContext, 0);
-            }
-            // Convert role to API-safe role
-            messages.push({ role: normalizeRoleForApi_ACU(segment.role), content: finalContent });
-        }
-        // Add the final instruction for the AI
-        logDebug_ACU('Final messages array being sent to API:', messages);
-        logDebug_ACU(`使用API预设: ${settings_ACU.tableApiPreset || '当前配置'}, 模式: ${effectiveApiMode}`);
-        try {
-            if (effectiveApiMode === 'tavern') {
-                const profileId = effectiveTavernProfile;
-                if (!profileId) {
-                    throw new Error('未选择酒馆连接预设。');
-                }
-                if (skipProfileSwitch) {
-                    logDebug_ACU('ACU: 并发模式启用，跳过酒馆预设切换。');
-                }
-                let originalProfile = '';
-                let responsePromise;
-                let rawResult;
-                try {
-                    if (!skipProfileSwitch) {
-                        originalProfile = await TavernHelper_API_ACU$1.triggerSlash('/profile');
-                    }
-                    const targetProfile = SillyTavern_API_ACU.extensionSettings?.connectionManager?.profiles.find(p => p.id === profileId);
-                    if (!targetProfile) {
-                        throw new Error(`无法找到ID为 "${profileId}" 的连接预设。`);
-                    }
-                    if (!targetProfile.api) {
-                        throw new Error(`预设 "${targetProfile.name || targetProfile.id}" 没有配置API。`);
-                    }
-                    if (!targetProfile.preset) {
-                        throw new Error(`预设 "${targetProfile.name || targetProfile.id}" 没有选择预设。`);
-                    }
-                    const targetProfileName = targetProfile.name || targetProfile.id;
-                    if (!skipProfileSwitch) {
-                        const currentProfile = await TavernHelper_API_ACU$1.triggerSlash('/profile');
-                        if (currentProfile !== targetProfileName) {
-                            const escapedProfileName = targetProfileName.replace(/"/g, '\\"');
-                            await TavernHelper_API_ACU$1.triggerSlash(`/profile await=true "${escapedProfileName}"`);
-                        }
-                    }
-                    logDebug_ACU(`ACU: 通过酒馆连接预设 (ID: ${profileId}, Name: ${targetProfileName}) 发送请求...`);
-                    responsePromise = SillyTavern_API_ACU.ConnectionManagerRequestService.sendRequest(profileId, messages, 
-                    // 使用 max_tokens 设置，如果不存在则回退到4096
-                    effectiveApiConfig.max_tokens || 4096);
-                    rawResult = await responsePromise;
-                }
-                catch (error) {
-                    logError_ACU(`ACU: 调用酒馆连接预设时出错:`, error);
-                    // [修正] 确保恢复预设后再抛出错误
-                    try {
-                        if (originalProfile && !skipProfileSwitch) {
-                            const currentProfileAfterCall = await TavernHelper_API_ACU$1.triggerSlash('/profile');
-                            if (originalProfile !== currentProfileAfterCall) {
-                                const escapedOriginalProfile = originalProfile.replace(/"/g, '\\"');
-                                await TavernHelper_API_ACU$1.triggerSlash(`/profile await=true "${escapedOriginalProfile}"`);
-                                logDebug_ACU(`ACU: 已恢复原酒馆连接预设: "${originalProfile}"`);
-                            }
-                        }
-                    }
-                    catch (restoreError) {
-                        logError_ACU(`ACU: 恢复原预设时出错:`, restoreError);
-                    }
-                    throw new Error(`API请求失败 (酒馆预设): ${error.message}`);
-                }
-                finally {
-                    // [修正] 只在成功的情况下恢复预设（错误情况下已在catch中处理）
-                    if (rawResult !== undefined) {
-                        try {
-                            if (!skipProfileSwitch) {
-                                const currentProfileAfterCall = await TavernHelper_API_ACU$1.triggerSlash('/profile');
-                                if (originalProfile && originalProfile !== currentProfileAfterCall) {
-                                    const escapedOriginalProfile = originalProfile.replace(/"/g, '\\"');
-                                    await TavernHelper_API_ACU$1.triggerSlash(`/profile await=true "${escapedOriginalProfile}"`);
-                                    logDebug_ACU(`ACU: 已恢复原酒馆连接预设: "${originalProfile}"`);
-                                }
-                            }
-                        }
-                        catch (restoreError) {
-                            logError_ACU(`ACU: 恢复原预设时出错:`, restoreError);
-                        }
-                    }
-                }
-                if (rawResult && rawResult.ok && rawResult.result?.choices?.[0]?.message?.content) {
-                    return rawResult.result.choices[0].message.content.trim();
-                }
-                else if (rawResult && typeof rawResult.content === 'string') {
-                    return rawResult.content.trim();
-                }
-                else {
-                    const errorMsg = rawResult?.error || JSON.stringify(rawResult);
-                    throw new Error(`酒馆预设API调用返回无效响应: ${errorMsg}`);
-                }
-            }
-            else { // 'custom' mode
-                // --- 使用自定义API ---
-                if (effectiveApiConfig.useMainApi && !forceDirectApi) {
-                    // 模式A: 使用主API（流式传输）
-                    logDebug_ACU('ACU: 通过酒馆主API发送请求（流式传输）...');
-                    if (typeof TavernHelper_API_ACU$1.generateRaw !== 'function') {
-                        throw new Error('TavernHelper.generateRaw 函数不存在。请检查酒馆版本。');
-                    }
-                    const response = await TavernHelper_API_ACU$1.generateRaw({
-                        ordered_prompts: messages,
-                        should_stream: settings_ACU.streamingEnabled || false,
-                    });
-                    if (typeof response !== 'string') {
-                        throw new Error('主API调用未返回预期的文本响应。');
-                    }
-                    return response.trim();
-                }
-                else {
-                    // 模式B: 使用独立配置的API（流式传输）
-                    if (forceDirectApi && effectiveApiConfig.useMainApi) {
-                        if (effectiveApiConfig.url && effectiveApiConfig.model) {
-                            logDebug_ACU('ACU: 并发模式启用，强制使用独立API路径。');
-                        }
-                        else {
-                            logWarn_ACU('ACU: 并发模式要求独立API，但URL或模型未配置，回退主API。');
-                            if (typeof TavernHelper_API_ACU$1.generateRaw !== 'function') {
-                                throw new Error('TavernHelper.generateRaw 函数不存在。请检查酒馆版本。');
-                            }
-                            const response = await TavernHelper_API_ACU$1.generateRaw({
-                                ordered_prompts: messages,
-                                should_stream: settings_ACU.streamingEnabled || false,
-                            });
-                            if (typeof response !== 'string') {
-                                throw new Error('主API调用未返回预期的文本响应。');
-                            }
-                            return response.trim();
-                        }
-                    }
-                    if (!effectiveApiConfig.url || !effectiveApiConfig.model) {
-                        throw new Error('自定义API的URL或模型未配置。');
-                    }
-                    const generateUrl = `/api/backends/chat-completions/generate`;
-                    const headers = { ...SillyTavern.getRequestHeaders(), 'Content-Type': 'application/json' };
-                    const body = JSON.stringify({
-                        "messages": messages,
-                        "model": effectiveApiConfig.model,
-                        "temperature": effectiveApiConfig.temperature,
-                        "top_p": effectiveApiConfig.top_p || 0.9,
-                        "max_tokens": effectiveApiConfig.max_tokens,
-                        "stream": settings_ACU.streamingEnabled || false,
-                        "chat_completion_source": "custom",
-                        "group_names": [],
-                        "include_reasoning": false,
-                        "reasoning_effort": "medium",
-                        "enable_web_search": false,
-                        "request_images": false,
-                        "custom_prompt_post_processing": "strict",
-                        "reverse_proxy": effectiveApiConfig.url,
-                        "proxy_password": "",
-                        "custom_url": effectiveApiConfig.url,
-                        "custom_include_headers": effectiveApiConfig.apiKey ? `Authorization: Bearer ${effectiveApiConfig.apiKey}` : ""
-                    });
-                    logDebug_ACU('ACU: 调用新的后端生成API:', generateUrl, 'Model:', effectiveApiConfig.model);
-                    const response = await fetch(generateUrl, { method: 'POST', headers, body, signal: abortSignal });
-                    if (!response.ok) {
-                        const errTxt = await response.text();
-                        throw new Error(`API请求失败: ${response.status} ${errTxt}`);
-                    }
-                    // 根据streamingEnabled设置选择响应处理方式
-                    const content = await handleApiResponse_ACU(response, abortSignal);
-                    if (content) {
-                        return content.trim();
-                    }
-                    throw new Error('API响应格式不正确或内容为空。');
-                }
-            }
-        }
-        finally {
-            untrackAbortController_ACU$1(localAbortController);
-            if (currentAbortController_ACU$1 === localAbortController) {
-                _set_currentAbortController_ACU$1(null);
-            }
+            updateLazyWorldbookEntryGroupMeta_ACU($list, bookName);
         }
     }
-    // ===========================
-    // TableEdit 解析健壮性工具集
-    // - 允许 <tableEdit> 或 </tableEdit> 丢失一端
-    // - 只要 <!-- --> 注释包裹完整，且内部包含 insertRow/updateRow/deleteRow，即可识别
-    // ===========================
-    function normalizeAiResponseForTableEditParsing_ACU(text) {
-        if (typeof text !== 'string')
-            return '';
-        let cleaned = text.trim();
-        // 移除JS风格的字符串拼接：'...' + '...'
-        cleaned = cleaned.replace(/'\s*\+\s*'/g, '');
-        // 移除可能包裹整个响应的单引号
-        if (cleaned.startsWith("'") && cleaned.endsWith("'"))
-            cleaned = cleaned.slice(1, -1);
-        // 将 "\\n" 转换为真实换行
-        cleaned = cleaned.replace(/\\n/g, '\n');
-        // 修复由JS字符串转义符（\\）导致的解析失败
-        cleaned = cleaned.replace(/\\\\"/g, '\\"');
-        // 修复全角冒号导致的 JSON 解析失败
-        cleaned = cleaned.replace(/：/g, ':');
-        return cleaned;
-    }
-    function extractTableEditInner_ACU(text, options = {}) {
-        const { allowNoTableEditTags = true, useLastPairOnly = (settings_ACU?.tableEditLastPairOnly !== false) } = options;
-        const cleaned = normalizeAiResponseForTableEditParsing_ACU(text);
-        if (!cleaned)
-            return null;
-        // 1) 标准格式：<tableEdit>...</tableEdit>
-        if (useLastPairOnly) {
-            const fullRe = /<tableEdit>([\s\S]*?)<\/tableEdit>/ig;
-            let lastMatch = null;
-            let m;
-            while ((m = fullRe.exec(cleaned)) !== null) {
-                lastMatch = m;
-            }
-            if (lastMatch && typeof lastMatch[1] === 'string') {
-                return { inner: lastMatch[1], cleaned, mode: 'full_last' };
-            }
-        }
-        else {
-            const fullMatch = cleaned.match(/<tableEdit>([\s\S]*?)<\/tableEdit>/i);
-            if (fullMatch && typeof fullMatch[1] === 'string') {
-                return { inner: fullMatch[1], cleaned, mode: 'full' };
-            }
-        }
-        // 2) 宽松格式：缺失开/闭标签，但 <!-- --> 包裹完整
-        const lowerCleaned = cleaned.toLowerCase();
-        const openTag = '<tableedit>';
-        const closeTag = '</tableedit>';
-        const hasOpen = lowerCleaned.includes(openTag);
-        const hasClose = lowerCleaned.includes(closeTag);
-        const hasAnyTag = hasOpen || hasClose;
-        const commentRe = /<!--([\s\S]*?)-->/g;
-        const commentBlocks = [];
-        let m;
-        while ((m = commentRe.exec(cleaned)) !== null) {
-            commentBlocks.push({
-                start: m.index,
-                end: commentRe.lastIndex,
-                raw: m[0],
-                content: m[1] || ''
-            });
-        }
-        const hasCommands = (s) => /(insertRow|updateRow|deleteRow)\s*\(/.test(s);
-        const candidates = commentBlocks.filter(b => hasCommands(b.content));
-        if (!candidates.length)
-            return null;
-        let chosen = null;
-        if (hasOpen && !hasClose) {
-            const openIdx = useLastPairOnly ? lowerCleaned.lastIndexOf(openTag) : cleaned.search(/<tableEdit>/i);
-            chosen = candidates.find(b => b.start > openIdx) || (useLastPairOnly ? candidates[candidates.length - 1] : candidates[0]);
-        }
-        else if (!hasOpen && hasClose) {
-            const closeIdx = useLastPairOnly ? lowerCleaned.lastIndexOf(closeTag) : cleaned.search(/<\/tableEdit>/i);
-            for (let i = candidates.length - 1; i >= 0; i--) {
-                if (candidates[i].end < closeIdx) {
-                    chosen = candidates[i];
-                    break;
-                }
-            }
-            chosen = chosen || candidates[candidates.length - 1];
-        }
-        else if (hasAnyTag) {
-            const lastOpenIdx = lowerCleaned.lastIndexOf(openTag);
-            const lastCloseIdx = lowerCleaned.lastIndexOf(closeTag);
-            const tagIdx = useLastPairOnly
-                ? (lastCloseIdx !== -1 ? lastCloseIdx : lastOpenIdx)
-                : (hasOpen ? cleaned.search(/<tableEdit>/i) : cleaned.search(/<\/tableEdit>/i));
-            let bestDist = Infinity;
-            candidates.forEach(b => {
-                const dist = Math.min(Math.abs(b.start - tagIdx), Math.abs(b.end - tagIdx));
-                if (dist < bestDist) {
-                    bestDist = dist;
-                    chosen = b;
+    function updateLazyWorldbookEntryCheckedState_ACU($list, bookName, uid, checked) {
+        const group = findLazyWorldbookEntryGroupState_ACU($list, bookName);
+        if (!group)
+            return;
+        const syncCheckedState = entries => {
+            if (!Array.isArray(entries))
+                return;
+            entries.forEach(entry => {
+                if (String(entry?.uid) === String(uid)) {
+                    entry.checked = checked;
                 }
             });
-        }
-        else if (allowNoTableEditTags) {
-            chosen = useLastPairOnly ? candidates[candidates.length - 1] : candidates[0];
-        }
-        if (!chosen)
-            return null;
-        return { inner: chosen.raw, cleaned, mode: 'comment_fallback', hasOpen, hasClose };
+        };
+        syncCheckedState(group.entries);
+        syncCheckedState(group.filteredEntries);
     }
-    function parseAndApplyTableEdits_ACU(aiResponse, updateMode = 'standard', isImportMode = false) {
-        // updateMode: 'standard' 表示更新标准表，'summary' 表示更新总结表和总体大纲
-        if (!currentJsonTableData_ACU$1) {
-            logError_ACU('Cannot apply edits, currentJsonTableData_ACU is not loaded.');
+    function applyLazyWorldbookEntryFilter_ACU($list, rawQuery) {
+        if (!$list || !$list.length)
             return false;
+        const state = $list.data('acuLazyWorldbookState');
+        if (!state || !Array.isArray(state.groups))
+            return false;
+        const q = normalizeFilterText_ACU(rawQuery);
+        const wasFiltering = state.isFiltering === true;
+        if (q && !wasFiltering) {
+            state.groups.forEach(group => {
+                group.expandedBeforeFilter = group.expanded;
+            });
         }
-        const extracted = extractTableEditInner_ACU(aiResponse, { allowNoTableEditTags: true });
-        if (!extracted || !extracted.inner) {
-            logWarn_ACU('No recognizable table edit block found (missing <tableEdit> boundary and/or incomplete <!-- --> wrapper).');
-            return true; // Not a failure, just no edits to apply.
-        }
-        const editsString = extracted.inner.replace(/<!--|-->/g, '').trim();
-        if (!editsString) {
-            logDebug_ACU('Empty <tableEdit> block. No edits to apply.');
+        if (!q) {
+            state.isFiltering = false;
+            state.groups.forEach(group => {
+                group.filteredEntries = null;
+                group.loadedCount = 0;
+                if (typeof group.expandedBeforeFilter === 'boolean') {
+                    group.expanded = group.expandedBeforeFilter;
+                }
+                group.expandedBeforeFilter = undefined;
+                const $group = findLazyWorldbookEntryGroupElement_ACU($list, group.bookName);
+                if ($group.length)
+                    $group.show();
+                if (group.expanded) {
+                    renderLazyWorldbookEntryItems_ACU($list, group.bookName, { reset: true });
+                }
+                else {
+                    updateLazyWorldbookEntryGroupMeta_ACU($list, group.bookName);
+                }
+            });
             return true;
         }
-        // [核心修复] 增加指令重组步骤，处理AI生成的多行指令
-        const originalLines = editsString.split('\n');
-        const commandLines = [];
-        let commandReconstructor = '';
-        let isInJsonBlock = false; // [新增] 追踪是否在JSON对象块中
-        originalLines.forEach(line => {
-            const trimmedLine = line.trim();
-            if (trimmedLine === '')
-                return;
-            // [稳健性强化] 移除行尾的注释
-            // 注意：如果是在JSON字符串内部的 // 应该保留，但在指令级应该移除
-            // 这里简单处理：如果不在JSON块中，且包含 //，则移除 // 之后的内容
-            let lineContent = trimmedLine;
-            if (!isInJsonBlock && lineContent.includes('//') && !lineContent.includes('"//') && !lineContent.includes("'//")) {
-                lineContent = lineContent.split('//')[0].trim();
-            }
-            if (lineContent === '')
-                return;
-            // 检查大括号平衡，判断是否进入或离开JSON块
-            // 简单计数：{ +1, } -1
-            // 注意：这只是简单的启发式方法，处理跨行JSON
-            const openBraces = (lineContent.match(/{/g) || []).length;
-            const closeBraces = (lineContent.match(/}/g) || []).length;
-            // 如果当前行以指令开头，并且不在JSON块中
-            if ((lineContent.startsWith('insertRow') || lineContent.startsWith('deleteRow') || lineContent.startsWith('updateRow')) && !isInJsonBlock) {
-                if (commandReconstructor) {
-                    commandLines.push(commandReconstructor);
-                }
-                commandReconstructor = lineContent;
+        state.isFiltering = true;
+        state.groups.forEach(group => {
+            const bookText = String(group.bookName || '').toLowerCase();
+            if (bookText.includes(q)) {
+                group.filteredEntries = Array.isArray(group.entries) ? group.entries.slice() : [];
             }
             else {
-                // 如果不是指令开头，或者是上一条指令的JSON参数延续，拼接到缓存
-                // 在拼接时添加空格，防止粘连
-                commandReconstructor += ' ' + lineContent;
+                group.filteredEntries = (Array.isArray(group.entries) ? group.entries : []).filter(entry => {
+                    const hay = String(entry.searchText || entry.label || `条目 ${entry.uid}`).toLowerCase();
+                    return hay.includes(q);
+                });
             }
-            // 更新JSON块状态
-            // 只有当指令包含 '{' 但不包含 '}' 时，或者虽然包含 '}' 但数量少于 '{' 时，才认为是多行JSON的开始
-            // 但考虑到一行内可能有完整的 {}, 我们需要维护一个累积计数
-            // 这里的 isInJsonBlock 逻辑需要更精细：
-            // 我们可以统计 reconstructor 中的 { 和 } 数量
-            if (commandReconstructor) {
-                const totalOpen = (commandReconstructor.match(/{/g) || []).length;
-                const totalClose = (commandReconstructor.match(/}/g) || []).length;
-                // 如果有左括号，且左括号多于右括号，说明JSON未闭合
-                if (totalOpen > totalClose) {
-                    isInJsonBlock = true;
-                }
-                else {
-                    isInJsonBlock = false;
-                }
+            const sourceEntries = getLazyWorldbookEntrySource_ACU(group);
+            const $group = findLazyWorldbookEntryGroupElement_ACU($list, group.bookName);
+            group.loadedCount = 0;
+            group.expanded = sourceEntries.length > 0;
+            if ($group.length)
+                $group.toggle(sourceEntries.length > 0);
+            if (sourceEntries.length > 0) {
+                renderLazyWorldbookEntryItems_ACU($list, group.bookName, { reset: true });
+            }
+            else {
+                updateLazyWorldbookEntryGroupMeta_ACU($list, group.bookName);
             }
         });
-        // 将最后一条缓存的指令推入
-        if (commandReconstructor) {
-            commandLines.push(commandReconstructor);
-        }
-        // [新增] 二次处理：处理挤在一行里的多条指令
-        // 有时AI会输出：[0:全局数据表]- Update: ... [1:主要地点表]- Delete: ... 这种非标准格式
-        // 或者标准的：insertRow(...); insertRow(...);
-        const finalCommandLines = [];
-        commandLines.forEach(rawLine => {
-            // 1. 尝试分割用分号分隔的多个标准指令
-            // 使用正则匹配 ; 后紧跟 insertRow/deleteRow/updateRow 的情况
-            // 为了避免分割JSON内部的分号，我们先替换指令间的分号为特殊标记
-            let processedLine = rawLine.replace(/;\s*(?=(insertRow|deleteRow|updateRow))/g, '___COMMAND_SPLIT___');
-            // 2. [针对特定错误的修复] 处理非标准格式的指令堆叠
-            // 错误示例: "[0:全局数据表]- Update: ... [1:主要地点表]- Delete: ..."
-            // 这种格式非常难以直接解析，因为它是描述性语言而非函数调用。
-            // 我们检测到这种格式时，尝试将其转换为标准指令或跳过并警告
-            if (processedLine.match(/\[\d+:.*?\]-\s*(Update|Insert|Delete):/)) {
-                logWarn_ACU(`Detected unstructured AI response format: "${rawLine}". Skipping this line as it is not a valid function call.`);
-                return;
-            }
-            const splitLines = processedLine.split('___COMMAND_SPLIT___');
-            splitLines.forEach(l => {
-                if (l.trim())
-                    finalCommandLines.push(l.trim());
-            });
+        return true;
+    }
+    // =========================
+    // [UI] 世界书筛选工具：注入目标(select) / 手动选择(list) / 条目列表(entry list)
+    // =========================
+    function normalizeFilterText_ACU(v) {
+        return String(v ?? '').trim().toLowerCase();
+    }
+    function applyWorldbookSelectFilter_ACU($select, rawQuery) {
+        if (!$select || !$select.length)
+            return;
+        const q = normalizeFilterText_ACU(rawQuery);
+        const currentVal = String($select.val() ?? '');
+        $select.find('option').each(function () {
+            const val = String(jQuery_API_ACU(this).attr('value') ?? '');
+            const text = String(jQuery_API_ACU(this).text() ?? '');
+            const hay = (val + ' ' + text).toLowerCase();
+            const match = (!q) || hay.includes(q);
+            const keepSelected = (val === currentVal);
+            this.hidden = !(match || keepSelected);
         });
-        let appliedEdits = 0;
-        const editCountsByTable = {}; // Map<tableName, count>
-        const sheetKeysForIndexing = getSortedSheetKeys_ACU(currentJsonTableData_ACU$1);
-        const sheets = sheetKeysForIndexing.map(k => currentJsonTableData_ACU$1[k]).filter(Boolean);
-        // [新增] JSON 指令清洗管线：用于修复 AI 输出中的智能引号、未转义双引号、控制字符、尾随逗号等问题
-        const normalizeQuotesLayer_ACU = (jsonStr) => {
-            if (typeof jsonStr !== 'string' || !jsonStr)
-                return jsonStr;
-            return jsonStr.replace(/[“”「」『』＂]/g, '"');
-        };
-        const getNextNonWhitespaceMeta_ACU = (text, startIndex) => {
-            for (let i = startIndex; i < text.length; i++) {
-                if (!/\s/.test(text[i]))
-                    return { char: text[i], index: i };
-            }
-            return { char: '', index: -1 };
-        };
-        const isLikelyJsonValueStart_ACU = (char) => {
-            return !!char && (char === '"' ||
-                char === '{' ||
-                char === '[' ||
-                char === '-' ||
-                /\d/.test(char) ||
-                char === 't' ||
-                char === 'f' ||
-                char === 'n');
-        };
-        const isLikelyStringCloser_ACU = (text, quoteIndex, stringKind, containerType) => {
-            const nextMeta = getNextNonWhitespaceMeta_ACU(text, quoteIndex + 1);
-            const nextChar = nextMeta.char;
-            if (!nextChar)
-                return stringKind !== 'key';
-            if (stringKind === 'key')
-                return nextChar === ':';
-            if (nextChar === '}' || nextChar === ']')
-                return true;
-            if (nextChar !== ',')
-                return false;
-            const afterComma = getNextNonWhitespaceMeta_ACU(text, nextMeta.index + 1).char;
-            if (!afterComma)
-                return true;
-            if (containerType === 'object')
-                return afterComma === '"' || afterComma === '}';
-            if (containerType === 'array')
-                return afterComma === ']' || isLikelyJsonValueStart_ACU(afterComma);
-            return isLikelyJsonValueStart_ACU(afterComma) || afterComma === '}' || afterComma === ']';
-        };
-        const escapeUnescapedQuotesLayer_ACU = (jsonStr) => {
-            if (typeof jsonStr !== 'string') {
-                return { success: false, result: jsonStr, error: 'Input is not a string' };
-            }
-            let result = '';
-            let inString = false;
-            let escapeNext = false;
-            let currentStringKind = null;
-            const containerStack = [];
-            const getTopContainer = () => containerStack.length ? containerStack[containerStack.length - 1] : null;
-            const markParentValueCompleted = () => {
-                const parent = getTopContainer();
-                if (!parent)
-                    return;
-                if (parent.type === 'object' || parent.type === 'array') {
-                    parent.expecting = 'commaOrEnd';
-                }
-            };
-            for (let i = 0; i < jsonStr.length; i++) {
-                const char = jsonStr[i];
-                if (escapeNext) {
-                    result += char;
-                    escapeNext = false;
-                    continue;
-                }
-                if (inString) {
-                    if (char === '\\') {
-                        result += char;
-                        escapeNext = true;
-                        continue;
-                    }
-                    if (char === '"') {
-                        const top = getTopContainer();
-                        const containerType = top?.type || null;
-                        if (isLikelyStringCloser_ACU(jsonStr, i, currentStringKind, containerType)) {
-                            result += char;
-                            inString = false;
-                            if (currentStringKind === 'key' && top && top.type === 'object') {
-                                top.expecting = 'colon';
-                            }
-                            else {
-                                markParentValueCompleted();
-                            }
-                            currentStringKind = null;
-                        }
-                        else {
-                            result += '\\"';
-                        }
-                        continue;
-                    }
-                    result += char;
-                    continue;
-                }
-                if (char === '"') {
-                    result += char;
-                    inString = true;
-                    const top = getTopContainer();
-                    currentStringKind = top && top.type === 'object' && (top.expecting === 'key' || top.expecting === 'keyOrEnd')
-                        ? 'key'
-                        : 'value';
-                    continue;
-                }
-                if (char === '{') {
-                    result += char;
-                    containerStack.push({ type: 'object', expecting: 'keyOrEnd' });
-                    continue;
-                }
-                if (char === '[') {
-                    result += char;
-                    containerStack.push({ type: 'array', expecting: 'valueOrEnd' });
-                    continue;
-                }
-                if (char === ':') {
-                    result += char;
-                    const top = getTopContainer();
-                    if (top && top.type === 'object')
-                        top.expecting = 'value';
-                    continue;
-                }
-                if (char === ',') {
-                    result += char;
-                    const top = getTopContainer();
-                    if (top && top.type === 'object')
-                        top.expecting = 'key';
-                    if (top && top.type === 'array')
-                        top.expecting = 'value';
-                    continue;
-                }
-                if (char === '}' || char === ']') {
-                    result += char;
-                    containerStack.pop();
-                    markParentValueCompleted();
-                    continue;
-                }
-                result += char;
-            }
-            return { success: true, result, error: null };
-        };
-        const sanitizeControlCharsLayer_ACU = (jsonStr) => {
-            if (typeof jsonStr !== 'string' || !jsonStr)
-                return jsonStr;
-            let result = '';
-            let inString = false;
-            let escapeNext = false;
-            for (let i = 0; i < jsonStr.length; i++) {
-                const char = jsonStr[i];
-                if (escapeNext) {
-                    result += char;
-                    escapeNext = false;
-                    continue;
-                }
-                if (char === '\\') {
-                    result += char;
-                    if (inString)
-                        escapeNext = true;
-                    continue;
-                }
-                if (char === '"') {
-                    result += char;
-                    inString = !inString;
-                    continue;
-                }
-                if (inString && char === '\n') {
-                    result += '\\n';
-                    continue;
-                }
-                if (inString && char === '\r') {
-                    result += '\\r';
-                    continue;
-                }
-                if (inString && char === '\t') {
-                    result += '\\t';
-                    continue;
-                }
-                if (inString && char === '\0') {
-                    result += '\\u0000';
-                    continue;
-                }
-                result += char;
-            }
-            return result;
-        };
-        const removeTrailingCommasLayer_ACU = (jsonStr) => {
-            if (typeof jsonStr !== 'string' || !jsonStr)
-                return jsonStr;
-            let result = '';
-            let inString = false;
-            let escapeNext = false;
-            for (let i = 0; i < jsonStr.length; i++) {
-                const char = jsonStr[i];
-                if (escapeNext) {
-                    result += char;
-                    escapeNext = false;
-                    continue;
-                }
-                if (char === '\\') {
-                    result += char;
-                    if (inString)
-                        escapeNext = true;
-                    continue;
-                }
-                if (char === '"') {
-                    result += char;
-                    inString = !inString;
-                    continue;
-                }
-                if (!inString && char === ',') {
-                    const nextChar = getNextNonWhitespaceMeta_ACU(jsonStr, i + 1).char;
-                    if (nextChar === '}' || nextChar === ']')
-                        continue;
-                }
-                result += char;
-            }
-            return result;
-        };
-        const fixNumericKeysLayer_ACU = (jsonStr) => {
-            if (typeof jsonStr !== 'string' || !jsonStr)
-                return jsonStr;
-            return jsonStr.replace(/([{,]\s*)(-?\d+)(\s*:)/g, '$1"$2"$3');
-        };
-        const sanitizeJsonPipeline_ACU = (jsonStr) => {
-            if (typeof jsonStr !== 'string') {
-                return { success: false, result: jsonStr, layersApplied: [], error: 'Input is not a string' };
-            }
-            const layersApplied = [];
-            let current = jsonStr;
-            const normalizedQuotes = normalizeQuotesLayer_ACU(current);
-            if (normalizedQuotes !== current)
-                layersApplied.push('normalizeQuotes');
-            current = normalizedQuotes;
-            const escapedQuotes = escapeUnescapedQuotesLayer_ACU(current);
-            if (!escapedQuotes.success) {
-                return { success: false, result: current, layersApplied, error: escapedQuotes.error };
-            }
-            if (escapedQuotes.result !== current)
-                layersApplied.push('escapeUnescapedQuotes');
-            current = escapedQuotes.result;
-            const sanitizedControlChars = sanitizeControlCharsLayer_ACU(current);
-            if (sanitizedControlChars !== current)
-                layersApplied.push('sanitizeControlChars');
-            current = sanitizedControlChars;
-            const withoutTrailingCommas = removeTrailingCommasLayer_ACU(current);
-            if (withoutTrailingCommas !== current)
-                layersApplied.push('removeTrailingCommas');
-            current = withoutTrailingCommas;
-            const fixedNumericKeys = fixNumericKeysLayer_ACU(current);
-            if (fixedNumericKeys !== current)
-                layersApplied.push('fixNumericKeys');
-            current = fixedNumericKeys;
-            return { success: true, result: current, layersApplied, error: null };
-        };
-        const splitTopLevelSegments_ACU = (text, delimiterChar = ',') => {
-            if (typeof text !== 'string' || !text)
-                return [];
-            const segments = [];
-            let current = '';
-            let inString = false;
-            let escapeNext = false;
-            let braceDepth = 0;
-            let bracketDepth = 0;
-            let parenDepth = 0;
-            for (let i = 0; i < text.length; i++) {
-                const char = text[i];
-                if (escapeNext) {
-                    current += char;
-                    escapeNext = false;
-                    continue;
-                }
-                if (char === '\\') {
-                    current += char;
-                    if (inString)
-                        escapeNext = true;
-                    continue;
-                }
-                if (char === '"') {
-                    current += char;
-                    inString = !inString;
-                    continue;
-                }
-                if (!inString) {
-                    if (char === '{')
-                        braceDepth++;
-                    else if (char === '}')
-                        braceDepth = Math.max(0, braceDepth - 1);
-                    else if (char === '[')
-                        bracketDepth++;
-                    else if (char === ']')
-                        bracketDepth = Math.max(0, bracketDepth - 1);
-                    else if (char === '(')
-                        parenDepth++;
-                    else if (char === ')')
-                        parenDepth = Math.max(0, parenDepth - 1);
-                    else if (char === delimiterChar && braceDepth === 0 && bracketDepth === 0 && parenDepth === 0) {
-                        if (current.trim())
-                            segments.push(current.trim());
-                        current = '';
-                        continue;
-                    }
-                }
-                current += char;
-            }
-            if (current.trim())
-                segments.push(current.trim());
-            return segments;
-        };
-        const findTopLevelDelimiterIndex_ACU = (text, delimiterChar = ':') => {
-            if (typeof text !== 'string' || !text)
-                return -1;
-            let inString = false;
-            let escapeNext = false;
-            let braceDepth = 0;
-            let bracketDepth = 0;
-            let parenDepth = 0;
-            for (let i = 0; i < text.length; i++) {
-                const char = text[i];
-                if (escapeNext) {
-                    escapeNext = false;
-                    continue;
-                }
-                if (char === '\\') {
-                    if (inString)
-                        escapeNext = true;
-                    continue;
-                }
-                if (char === '"') {
-                    inString = !inString;
-                    continue;
-                }
-                if (!inString) {
-                    if (char === '{')
-                        braceDepth++;
-                    else if (char === '}')
-                        braceDepth = Math.max(0, braceDepth - 1);
-                    else if (char === '[')
-                        bracketDepth++;
-                    else if (char === ']')
-                        bracketDepth = Math.max(0, bracketDepth - 1);
-                    else if (char === '(')
-                        parenDepth++;
-                    else if (char === ')')
-                        parenDepth = Math.max(0, parenDepth - 1);
-                    else if (char === delimiterChar && braceDepth === 0 && bracketDepth === 0 && parenDepth === 0)
-                        return i;
-                }
-            }
-            return -1;
-        };
-        const tryParseLooseJsonValue_ACU = (rawValue) => {
-            if (typeof rawValue !== 'string')
-                return { success: true, value: rawValue, error: null };
-            const trimmed = rawValue.trim();
-            if (!trimmed)
-                return { success: false, value: null, error: 'Empty value' };
-            const normalizedValue = (trimmed.startsWith("'") && trimmed.endsWith("'"))
-                ? `"${trimmed.slice(1, -1)
-                .replace(/\\/g, '\\\\')
-                .replace(/"/g, '\\"')
-                .replace(/\r/g, '\\r')
-                .replace(/\n/g, '\\n')
-                .replace(/\t/g, '\\t')}"`
-                : trimmed;
-            const wrappedValue = `[${normalizedValue}]`;
-            try {
-                return { success: true, value: JSON.parse(wrappedValue)[0], error: null };
-            }
-            catch (directError) {
-                const sanitizedWrapped = sanitizeJsonPipeline_ACU(wrappedValue);
-                if (sanitizedWrapped.success) {
-                    try {
-                        return { success: true, value: JSON.parse(sanitizedWrapped.result)[0], error: null };
-                    }
-                    catch (sanitizedError) { }
-                }
-                return { success: false, value: null, error: directError?.message || 'Failed to parse loose value' };
-            }
-        };
-        const parseLooseObjectKey_ACU = (rawKey) => {
-            const trimmed = typeof rawKey === 'string' ? rawKey.trim() : '';
-            if (!trimmed)
-                return null;
-            if (/^-?\d+$/.test(trimmed))
-                return trimmed;
-            const parsedKey = tryParseLooseJsonValue_ACU(trimmed);
-            if (parsedKey.success && (typeof parsedKey.value === 'string' || typeof parsedKey.value === 'number')) {
-                return String(parsedKey.value);
-            }
-            return trimmed.replace(/^["']|["']$/g, '');
-        };
-        const coerceLooseRowObject_ACU = (jsonStr) => {
-            if (typeof jsonStr !== 'string') {
-                return { success: false, result: null, recoveredKeys: [], error: 'Input is not a string' };
-            }
-            const trimmed = jsonStr.trim();
-            if (!trimmed.startsWith('{') || !trimmed.endsWith('}')) {
-                return { success: false, result: null, recoveredKeys: [], error: 'Input is not an object literal' };
-            }
-            const body = trimmed.slice(1, -1).trim();
-            if (!body)
-                return { success: true, result: {}, recoveredKeys: [], error: null };
-            const segments = splitTopLevelSegments_ACU(body, ',').filter(Boolean);
-            if (!segments.length) {
-                return { success: false, result: null, recoveredKeys: [], error: 'No top-level segments detected' };
-            }
-            const result = {};
-            let nextAutoKey = 0;
-            for (const segment of segments) {
-                const colonIndex = findTopLevelDelimiterIndex_ACU(segment, ':');
-                if (colonIndex !== -1) {
-                    const parsedKey = parseLooseObjectKey_ACU(segment.slice(0, colonIndex));
-                    const parsedValue = tryParseLooseJsonValue_ACU(segment.slice(colonIndex + 1));
-                    if (!parsedKey || !parsedValue.success) {
-                        return {
-                            success: false,
-                            result: null,
-                            recoveredKeys: Object.keys(result),
-                            error: `Failed to parse keyed segment: ${segment}`,
-                        };
-                    }
-                    result[parsedKey] = parsedValue.value;
-                    const numericKey = Number.parseInt(parsedKey, 10);
-                    if (!Number.isNaN(numericKey) && String(numericKey) === parsedKey) {
-                        nextAutoKey = Math.max(nextAutoKey, numericKey + 1);
-                    }
-                    continue;
-                }
-                const parsedValue = tryParseLooseJsonValue_ACU(segment);
-                if (!parsedValue.success) {
-                    return {
-                        success: false,
-                        result: null,
-                        recoveredKeys: Object.keys(result),
-                        error: `Failed to parse value-only segment: ${segment}`,
-                    };
-                }
-                while (Object.prototype.hasOwnProperty.call(result, String(nextAutoKey))) {
-                    nextAutoKey++;
-                }
-                result[String(nextAutoKey)] = parsedValue.value;
-                nextAutoKey++;
-            }
-            const recoveredKeys = Object.keys(result).sort((a, b) => parseInt(a, 10) - parseInt(b, 10));
-            if (!recoveredKeys.length) {
-                return { success: false, result: null, recoveredKeys: [], error: 'No recoverable columns found' };
-            }
-            return { success: true, result, recoveredKeys, error: null };
-        };
-        // [新增] 统一解析指令（供预检查与正式应用复用）
-        const parseTableEditCommandLine_ACU = (rawLine) => {
-            try {
-                let commandLineWithoutComment = rawLine;
-                if (commandLineWithoutComment.match(/\)\s*;?\s*\/\/.*$/)) {
-                    commandLineWithoutComment = commandLineWithoutComment.replace(/\/\/.*$/, '').trim();
-                }
-                if (!commandLineWithoutComment)
-                    return null;
-                const match = commandLineWithoutComment.match(/^(insertRow|deleteRow|updateRow)\s*\((.*)\);?$/);
-                if (!match)
-                    return null;
-                const command = match[1];
-                const argsString = match[2];
-                let args;
-                const firstBracket = argsString.indexOf('{');
-                if (firstBracket === -1) {
-                    args = JSON.parse(`[${argsString}]`);
-                }
-                else {
-                    const paramsPart = argsString.substring(0, firstBracket).trim();
-                    let jsonPart = argsString.substring(firstBracket);
-                    const initialArgs = JSON.parse(`[${paramsPart.replace(/,$/, '')}]`);
-                    try {
-                        const jsonData = JSON.parse(jsonPart);
-                        args = [...initialArgs, jsonData];
-                    }
-                    catch (jsonError) {
-                        logError_ACU(`Primary JSON parse failed for: "${jsonPart}". Attempting sanitization pipeline...`, jsonError);
-                        const originalLooseObjectResult = coerceLooseRowObject_ACU(jsonPart);
-                        if (originalLooseObjectResult.success) {
-                            args = [...initialArgs, originalLooseObjectResult.result];
-                            logWarn_ACU(`[JSON Sanitization] Recovered malformed row object from original payload via loose parsing. Keys: ${originalLooseObjectResult.recoveredKeys.join(', ')}`);
-                        }
-                        else {
-                            const sanitizeResult = sanitizeJsonPipeline_ACU(jsonPart);
-                            if (!sanitizeResult.success) {
-                                logError_ACU(`JSON sanitization pipeline failed for: "${jsonPart}"`, new Error(sanitizeResult.error || 'Unknown sanitization error'));
-                                throw jsonError;
-                            }
-                            try {
-                                const jsonData = JSON.parse(sanitizeResult.result);
-                                args = [...initialArgs, jsonData];
-                                if (sanitizeResult.layersApplied.length > 0) {
-                                    logWarn_ACU(`[JSON Sanitization] Applied layers: ${sanitizeResult.layersApplied.join(', ')}`);
-                                }
-                            }
-                            catch (sanitizedJsonError) {
-                                const looseObjectResult = coerceLooseRowObject_ACU(sanitizeResult.result);
-                                if (looseObjectResult.success) {
-                                    args = [...initialArgs, looseObjectResult.result];
-                                    logWarn_ACU(`[JSON Sanitization] Recovered malformed row object from sanitized payload via loose parsing. Keys: ${looseObjectResult.recoveredKeys.join(', ')}`);
-                                }
-                                else {
-                                    const sanitizedPreview = sanitizeResult.result.length > 400
-                                        ? `${sanitizeResult.result.slice(0, 400)}...`
-                                        : sanitizeResult.result;
-                                    logError_ACU(`Sanitized JSON parse failed after layers [${sanitizeResult.layersApplied.join(', ') || 'none'}]: "${sanitizedPreview}"`, sanitizedJsonError);
-                                    logError_ACU(`[JSON Sanitization] Loose row object recovery failed. Original: ${originalLooseObjectResult.error || 'Unknown'}; Sanitized: ${looseObjectResult.error || 'Unknown'}`);
-                                    throw sanitizedJsonError;
-                                }
-                            }
-                        }
-                    }
-                }
-                return { command, args, line: commandLineWithoutComment };
-            }
-            catch (e) {
-                logError_ACU(`Failed to parse command line: "${rawLine}"`, e);
-                return null;
-            }
-        };
-        // [新增] 总结表/总体大纲必须“同时新增一行”才允许写入
-        let summaryInsertCount = 0;
-        let outlineInsertCount = 0;
-        const standardizedFillEnabled = settings_ACU?.standardizedTableFillEnabled !== false;
-        if (standardizedFillEnabled) {
-            finalCommandLines.forEach(line => {
-                try {
-                    const parsed = parseTableEditCommandLine_ACU(line);
-                    if (!parsed || parsed.command !== 'insertRow')
-                        return;
-                    const tableIndex = parsed.args?.[0];
-                    const table = sheets[tableIndex];
-                    if (!table || !table.name)
-                        return;
-                    if (!isSummaryOrOutlineTable_ACU(table.name))
-                        return;
-                    if (table.name === '总结表')
-                        summaryInsertCount++;
-                    if (table.name === '总体大纲')
-                        outlineInsertCount++;
-                }
-                catch (e) {
-                    // 解析失败的不计入，避免“半条成功半条失败”导致误放行
-                }
+    }
+    function applyWorldbookListFilter_ACU($listContainer, rawQuery) {
+        if (!$listContainer || !$listContainer.length)
+            return;
+        const q = normalizeFilterText_ACU(rawQuery);
+        $listContainer.find('.qrf_worldbook_list_item').each(function () {
+            const $it = jQuery_API_ACU(this);
+            const name = String($it.data('book-name') || $it.text() || '').toLowerCase();
+            $it.toggle(!q || name.includes(q));
+        });
+    }
+    function applyWorldbookEntryFilter_ACU($entryList, rawQuery) {
+        if (!$entryList || !$entryList.length)
+            return;
+        if (applyLazyWorldbookEntryFilter_ACU($entryList, rawQuery))
+            return;
+        const q = normalizeFilterText_ACU(rawQuery);
+        const $items = $entryList.find('.qrf_worldbook_entry_item');
+        const $headers = $entryList.find('.qrf_worldbook_entry_header');
+        if (!q) {
+            $items.show();
+            $headers.show();
+            return;
+        }
+        const matchedBooks = new Set();
+        $items.each(function () {
+            const $row = jQuery_API_ACU(this);
+            const $cb = $row.find('input[type="checkbox"]');
+            const book = String($cb.data('book') || '');
+            const labelText = String($row.find('label').text() || '').toLowerCase();
+            const bookText = book.toLowerCase();
+            const match = labelText.includes(q) || bookText.includes(q);
+            $row.toggle(match);
+            if (match)
+                matchedBooks.add(book);
+        });
+        $headers.each(function () {
+            const $h = jQuery_API_ACU(this);
+            const book = String($h.data('book-name') || $h.text() || '');
+            const bookText = book.toLowerCase();
+            const match = bookText.includes(q) || matchedBooks.has(book);
+            $h.toggle(match);
+        });
+    }
+    // [新增] 填充外部导入专用的世界书选择器
+    async function populateImportWorldbookTargetSelector_ACU() {
+        if (!$popupInstance_ACU)
+            return;
+        const $select = $popupInstance_ACU.find(`#${SCRIPT_ID_PREFIX_ACU}-import-worldbook-injection-target`);
+        if (!$select.length)
+            return;
+        $select.empty();
+        try {
+            const bookNames = await getWorldbookNames_ACU();
+            // 只添加世界书选项，不添加角色卡绑定和常规更新目标选项
+            bookNames.forEach(bookName => {
+                $select.append(`<option value="${escapeHtml_ACU(bookName)}">${escapeHtml_ACU(bookName)}</option>`);
             });
-        }
-        const allowSummaryOutlineInsert = !standardizedFillEnabled ||
-            (summaryInsertCount === 1 && outlineInsertCount === 1) ||
-            (summaryInsertCount === 0 && outlineInsertCount === 0);
-        if (standardizedFillEnabled && !allowSummaryOutlineInsert && (summaryInsertCount > 0 || outlineInsertCount > 0)) {
-            logWarn_ACU(`[屏蔽] 总结表/总体大纲新增不同步：总结=${summaryInsertCount}, 大纲=${outlineInsertCount}，本轮两表均不写入。`);
-        }
-        // 如果某表 content 为空，但指导表/模板提供了 seedRows，则在真正应用编辑前先物化到 content，
-        // 避免 AI 基于 $0 中的 seed rows 进行 updateRow/deleteRow 时“找不到行”。
-        const materializeSeedRowsIfNeeded_ACU = (table) => {
+            // 设置当前选中的值
+            $select.val(settings_ACU.importWorldbookTarget || '');
+            // 应用筛选（若存在）
             try {
-                if (!table || typeof table !== 'object')
-                    return;
-                if (!Array.isArray(table.content) || table.content.length !== 1)
-                    return;
-                // [修复] seedRows 可能未挂到表对象：这里按 uid(sheetKey) 再兜底一次
-                let sr = (Array.isArray(table.seedRows) && table.seedRows.length > 0) ? table.seedRows : null;
-                if (!sr && table.uid && String(table.uid).startsWith('sheet_')) {
-                    sr = getEffectiveSeedRowsForSheet_ACU(String(table.uid), { guideData: null, allowTemplateFallback: true });
-                    if (Array.isArray(sr) && sr.length > 0) {
-                        try {
-                            table.seedRows = JSON.parse(JSON.stringify(sr));
-                        }
-                        catch (e) { }
-                    }
-                }
-                if (!Array.isArray(sr) || sr.length === 0)
-                    return;
-                const headerRow = Array.isArray(table.content[0]) ? JSON.parse(JSON.stringify(table.content[0])) : [null];
-                const seed = JSON.parse(JSON.stringify(sr));
-                table.content = [headerRow, ...seed];
+                const $filter = $popupInstance_ACU.find(`#${SCRIPT_ID_PREFIX_ACU}-import-worldbook-injection-target-filter`);
+                if ($filter.length)
+                    applyWorldbookSelectFilter_ACU($select, $filter.val());
             }
             catch (e) { }
-        };
-        // [新增] 重置本次参与更新的表格的统计信息
-        // 由于我们不知道哪些表会更新，只能在实际更新时设置。
-        // 但为了清除旧状态，也许应该在保存时处理？
-        // 不，这里是应用编辑。我们只记录本次编辑的数量。
-        finalCommandLines.forEach(line => {
-            const parsed = parseTableEditCommandLine_ACU(line);
-            if (!parsed) {
-                logWarn_ACU(`Skipping malformed or truncated command line: "${line}"`);
+        }
+        catch (error) {
+            logError_ACU('Failed to populate import worldbook target selector:', error);
+        }
+    }
+    async function populateWorldbookList_ACU() {
+        if (!$popupInstance_ACU)
+            return;
+        const $listContainer = $popupInstance_ACU.find(`#${SCRIPT_ID_PREFIX_ACU}-worldbook-select`);
+        $listContainer.empty().html('<em>正在加载...</em>');
+        try {
+            const bookNames = await getWorldbookNames_ACU();
+            $listContainer.empty();
+            if (bookNames.length === 0) {
+                $listContainer.html('<em>未找到世界书</em>');
                 return;
             }
-            const { command, args } = parsed;
+            const worldbookConfig = getCurrentWorldbookConfig_ACU();
+            bookNames.forEach(bookName => {
+                const isSelected = worldbookConfig.manualSelection.includes(bookName);
+                const itemHtml = `
+                  <div class="qrf_worldbook_list_item ${isSelected ? 'selected' : ''}" data-book-name="${escapeHtml_ACU(bookName)}">
+                      ${escapeHtml_ACU(bookName)}
+                  </div>`;
+                $listContainer.append(itemHtml);
+            });
+            // 应用筛选（若存在）
             try {
-                switch (command) {
-                    case 'insertRow': {
-                        const [tableIndex, data] = args;
-                        const table = sheets[tableIndex];
-                        if (!table || !table.name) {
-                            logWarn_ACU(`Table at index ${tableIndex} not found or has no name. Skipping insertRow.`);
-                            break;
-                        }
-                        materializeSeedRowsIfNeeded_ACU(table);
-                        const sheetKey = sheetKeysForIndexing[tableIndex];
-                        // [新增] 根据更新模式和表格名称屏蔽不相关的表格操作
-                        // [修复] 统一更新模式（'full'）允许所有操作，不阻止任何表
-                        const isSummaryTable = isSummaryOrOutlineTable_ACU(table.name);
-                        // [逻辑优化] 使用更明确的模式匹配
-                        const isUnifiedMode = (updateMode === 'full' || updateMode === 'manual_unified' || updateMode === 'auto_unified');
-                        const isStandardMode = (updateMode === 'standard' || updateMode === 'auto_standard' || updateMode === 'manual_standard');
-                        const isSummaryMode = (updateMode === 'summary' || updateMode === 'auto_summary' || updateMode === 'auto_summary_silent' || updateMode === 'manual_summary');
-                        const isManualMode = (updateMode && updateMode.startsWith('manual'));
-                        if (isUnifiedMode) {
-                            // 统一更新模式：允许所有操作，不阻止任何表
-                            // 继续处理
-                        }
-                        else if (isStandardMode && isSummaryTable) {
-                            if (isManualMode) {
-                                logDebug_ACU(`[屏蔽] 标准表更新模式(手动)：忽略总结表/总体大纲的insertRow操作 (tableIndex: ${tableIndex}, tableName: ${table.name})`);
-                                break;
-                            }
-                            // 自动模式下不再屏蔽
-                        }
-                        else if (isSummaryMode && !isSummaryTable) {
-                            if (isManualMode) {
-                                logDebug_ACU(`[屏蔽] 总结表更新模式(手动)：忽略标准表的insertRow操作 (tableIndex: ${tableIndex}, tableName: ${table.name})`);
-                                break;
-                            }
-                            // 自动模式下不再屏蔽
-                        }
-                        // [新增] 总结表/总体大纲必须“同时新增一行”
-                        if (isSummaryTable && !allowSummaryOutlineInsert) {
-                            logDebug_ACU(`[屏蔽] 总结表/总体大纲新增不同步：忽略 insertRow (tableIndex: ${tableIndex}, tableName: ${table.name})`);
-                            break;
-                        }
-                        if (table && table.content && typeof data === 'object') {
-                            const newRow = [null];
-                            const headers = table.content[0].slice(1);
-                            const specialIndexCol = (isSummaryTable && sheetKey && isSpecialIndexLockEnabled_ACU(sheetKey))
-                                ? getSummaryIndexColumnIndex_ACU(table)
-                                : -1;
-                            headers.forEach((_, colIndex) => {
-                                let nextVal = data[colIndex] || (data[String(colIndex)] || "");
-                                if (colIndex === specialIndexCol) {
-                                    nextVal = formatSummaryIndexCode_ACU(table.content.length);
-                                }
-                                newRow.push(nextVal);
-                            });
-                            table.content.push(newRow);
-                            if (isSummaryTable && specialIndexCol >= 0) {
-                                applySummaryIndexSequenceToTable_ACU(table, specialIndexCol);
-                            }
-                            logDebug_ACU(`Applied insertRow to table ${tableIndex} (${table.name}) with data:`, data);
-                            appliedEdits++;
-                            editCountsByTable[table.name] = (editCountsByTable[table.name] || 0) + 1;
-                        }
-                        break;
-                    }
-                    case 'deleteRow': {
-                        const [tableIndex, rowIndex] = args;
-                        const table = sheets[tableIndex];
-                        if (!table || !table.name) {
-                            logWarn_ACU(`Table at index ${tableIndex} not found or has no name. Skipping deleteRow.`);
-                            break;
-                        }
-                        materializeSeedRowsIfNeeded_ACU(table);
-                        // [新增] 根据更新模式和表格名称屏蔽不相关的表格操作
-                        // [修复] 统一更新模式（'full'）允许所有操作，不阻止任何表
-                        const isSummaryTable = isSummaryOrOutlineTable_ACU(table.name);
-                        // [优化] 总结表只允许 insertRow 操作，屏蔽 deleteRow 和 updateRow
-                        // 注意：这里是对总结表本身的限制，不论何种模式都生效（总结表不应该被删除行，只能新增）
-                        if (isSummaryTable) {
-                            logDebug_ACU(`[屏蔽] 总结表/总体大纲忽略 deleteRow 操作 (tableIndex: ${tableIndex}, tableName: ${table.name})`);
-                            break;
-                        }
-                        // [逻辑优化] 使用更明确的模式匹配
-                        const isUnifiedMode = (updateMode === 'full' || updateMode === 'manual_unified' || updateMode === 'auto_unified');
-                        const isStandardMode = (updateMode === 'standard' || updateMode === 'auto_standard' || updateMode === 'manual_standard');
-                        const isSummaryMode = (updateMode === 'summary' || updateMode === 'auto_summary' || updateMode === 'auto_summary_silent' || updateMode === 'manual_summary');
-                        const isManualMode = (updateMode && updateMode.startsWith('manual'));
-                        if (isUnifiedMode) {
-                            // 统一更新模式：允许所有操作，不阻止任何表
-                            // 继续处理
-                        }
-                        else if (isStandardMode && isSummaryTable) {
-                            if (isManualMode) {
-                                logDebug_ACU(`[屏蔽] 标准表更新模式(手动)：忽略总结表/总体大纲的deleteRow操作 (tableIndex: ${tableIndex}, tableName: ${table.name})`);
-                                break;
-                            }
-                            // 自动模式下不再屏蔽
-                        }
-                        else if (isSummaryMode && !isSummaryTable) {
-                            if (isManualMode) {
-                                logDebug_ACU(`[屏蔽] 总结表更新模式(手动)：忽略标准表的deleteRow操作 (tableIndex: ${tableIndex}, tableName: ${table.name})`);
-                                break;
-                            }
-                            // 自动模式下不再屏蔽
-                        }
-                        if (table && table.content && table.content.length > rowIndex + 1) {
-                            table.content.splice(rowIndex + 1, 1);
-                            logDebug_ACU(`Applied deleteRow to table ${tableIndex} (${table.name}) at index ${rowIndex}`);
-                            appliedEdits++;
-                            editCountsByTable[table.name] = (editCountsByTable[table.name] || 0) + 1;
-                        }
-                        break;
-                    }
-                    case 'updateRow': {
-                        const [tableIndex, rowIndex, data] = args;
-                        const table = sheets[tableIndex];
-                        if (!table || !table.name) {
-                            logWarn_ACU(`Table at index ${tableIndex} not found or has no name. Skipping updateRow.`);
-                            break;
-                        }
-                        materializeSeedRowsIfNeeded_ACU(table);
-                        const sheetKey = sheetKeysForIndexing[tableIndex];
-                        // [新增] 根据更新模式和表格名称屏蔽不相关的表格操作
-                        // [修复] 统一更新模式（'full'）允许所有操作，不阻止任何表
-                        const isSummaryTable = isSummaryOrOutlineTable_ACU(table.name);
-                        // [优化] 总结表只允许 insertRow 操作，屏蔽 deleteRow 和 updateRow
-                        if (isSummaryTable) {
-                            logDebug_ACU(`[屏蔽] 总结表/总体大纲忽略 updateRow 操作 (tableIndex: ${tableIndex}, tableName: ${table.name})`);
-                            break;
-                        }
-                        // [逻辑优化] 使用更明确的模式匹配
-                        const isUnifiedMode = (updateMode === 'full' || updateMode === 'manual_unified' || updateMode === 'auto_unified');
-                        const isStandardMode = (updateMode === 'standard' || updateMode === 'auto_standard' || updateMode === 'manual_standard');
-                        const isSummaryMode = (updateMode === 'summary' || updateMode === 'auto_summary' || updateMode === 'auto_summary_silent' || updateMode === 'manual_summary');
-                        const isManualMode = (updateMode && updateMode.startsWith('manual'));
-                        if (isUnifiedMode) {
-                            // 统一更新模式：允许所有操作，不阻止任何表
-                            // 继续处理
-                        }
-                        else if (isStandardMode && isSummaryTable) {
-                            if (isManualMode) {
-                                logDebug_ACU(`[屏蔽] 标准表更新模式(手动)：忽略总结表/总体大纲的updateRow操作 (tableIndex: ${tableIndex}, tableName: ${table.name})`);
-                                break;
-                            }
-                            // 自动模式下不再屏蔽
-                        }
-                        else if (isSummaryMode && !isSummaryTable) {
-                            if (isManualMode) {
-                                logDebug_ACU(`[屏蔽] 总结表更新模式(手动)：忽略标准表的updateRow操作 (tableIndex: ${tableIndex}, tableName: ${table.name})`);
-                                break;
-                            }
-                            // 自动模式下不再屏蔽
-                        }
-                        if (table && table.content && table.content.length > rowIndex + 1 && typeof data === 'object') {
-                            const lockState = sheetKey ? getTableLocksForSheet_ACU(sheetKey) : { rows: new Set(), cols: new Set(), cells: new Set() };
-                            if (lockState.rows.has(rowIndex)) {
-                                logDebug_ACU(`[锁定] 行锁定阻止 updateRow (tableIndex: ${tableIndex}, rowIndex: ${rowIndex})`);
-                                break;
-                            }
-                            Object.keys(data).forEach(colIndexStr => {
-                                const colIndex = parseInt(colIndexStr, 10);
-                                if (isNaN(colIndex))
-                                    return;
-                                if (lockState.cols.has(colIndex))
-                                    return;
-                                if (lockState.cells.has(`${rowIndex}:${colIndex}`))
-                                    return;
-                                if (table.content[rowIndex + 1].length > colIndex + 1) {
-                                    table.content[rowIndex + 1][colIndex + 1] = data[colIndexStr];
-                                }
-                            });
-                            if (isSummaryTable && sheetKey && isSpecialIndexLockEnabled_ACU(sheetKey)) {
-                                const specialIndexCol = getSummaryIndexColumnIndex_ACU(table);
-                                if (specialIndexCol >= 0)
-                                    applySummaryIndexSequenceToTable_ACU(table, specialIndexCol);
-                            }
-                            logDebug_ACU(`Applied updateRow to table ${tableIndex} (${table.name}) at index ${rowIndex} with data:`, data);
-                            appliedEdits++;
-                            editCountsByTable[table.name] = (editCountsByTable[table.name] || 0) + 1;
-                        }
-                        break;
-                    }
-                }
+                const $filter = $popupInstance_ACU.find(`#${SCRIPT_ID_PREFIX_ACU}-worldbook-select-filter`);
+                if ($filter.length)
+                    applyWorldbookListFilter_ACU($listContainer, $filter.val());
             }
-            catch (e) {
-                logError_ACU(`Failed to parse or apply command: "${line}"`, e);
-            }
-        });
-        // [新增] 将统计信息写入表格对象，以便保存和展示
-        Object.keys(editCountsByTable).forEach(tableName => {
-            const sheetKey = Object.keys(currentJsonTableData_ACU$1).find(k => currentJsonTableData_ACU$1[k].name === tableName);
-            if (sheetKey) {
-                if (!currentJsonTableData_ACU$1[sheetKey]._lastUpdateStats) {
-                    currentJsonTableData_ACU$1[sheetKey]._lastUpdateStats = {};
-                }
-                currentJsonTableData_ACU$1[sheetKey]._lastUpdateStats.changes = editCountsByTable[tableName];
-            }
-        });
-        // [新增] 收集所有被修改的表格 key
-        const modifiedSheetKeys = [];
-        Object.keys(editCountsByTable).forEach(tableName => {
-            if (editCountsByTable[tableName] > 0) {
-                const sheetKey = Object.keys(currentJsonTableData_ACU$1).find(k => currentJsonTableData_ACU$1[k].name === tableName);
-                if (sheetKey)
-                    modifiedSheetKeys.push(sheetKey);
-            }
-        });
-        showToastr_ACU('success', `从AI响应中成功应用了 ${appliedEdits} 个数据库更新。`, { acuToastCategory: ACU_TOAST_CATEGORY_ACU.TABLE_OK });
-        return { success: true, modifiedKeys: modifiedSheetKeys };
-    }
-    // --- 流式响应处理（从 03_runtime_api.js:2025~2110 迁移）---
-    async function streamToText_ACU(response, signal = null) {
-        const reader = response.body.getReader();
-        const decoder = new TextDecoder();
-        let fullContent = '';
-        let buffer = '';
-        try {
-            while (true) {
-                if (signal?.aborted) {
-                    throw new Error('Request aborted');
-                }
-                const { done, value } = await reader.read();
-                if (done)
-                    break;
-                buffer += decoder.decode(value, { stream: true });
-                const lines = buffer.split('\n');
-                buffer = lines.pop() || ''; // 保留不完整的行
-                for (const line of lines) {
-                    if (line.startsWith('data: ')) {
-                        const data = line.slice(6);
-                        if (data === '[DONE]')
-                            continue;
-                        try {
-                            const json = JSON.parse(data);
-                            const content = json?.choices?.[0]?.delta?.content;
-                            if (content) {
-                                fullContent += content;
-                            }
-                        }
-                        catch (e) {
-                            // 忽略解析错误，继续处理下一行
-                        }
-                    }
-                }
-            }
+            catch (e) { }
         }
-        finally {
-            reader.releaseLock();
+        catch (error) {
+            logError_ACU('Failed to populate worldbook list:', error);
+            $listContainer.html('<em>加载失败</em>');
         }
-        return fullContent;
     }
-    /**
-     * 解析非流式API响应，提取文本内容
-     * @param {Response} response - fetch 返回的 Response 对象
-     * @returns {Promise<string|null>} AI 响应文本，失败返回null
-     */
-    async function parseNonStreamResponse_ACU(response) {
+    async function populateWorldbookEntryList_ACU() {
+        if (!$popupInstance_ACU)
+            return;
+        const $list = $popupInstance_ACU.find(`#${SCRIPT_ID_PREFIX_ACU}-worldbook-entry-list`);
+        $list.empty().html('<em>正在加载条目...</em>');
+        const worldbookConfig = getCurrentWorldbookConfig_ACU();
+        const source = worldbookConfig.source;
+        let bookNames = [];
+        if (source === 'character') {
+            const charLorebooks = await TavernHelper_API_ACU.getCharLorebooks({ type: 'all' });
+            if (charLorebooks.primary)
+                bookNames.push(charLorebooks.primary);
+            if (charLorebooks.additional?.length)
+                bookNames.push(...charLorebooks.additional);
+        }
+        else if (source === 'manual') {
+            bookNames = worldbookConfig.manualSelection || [];
+        }
+        bookNames = [...new Set((Array.isArray(bookNames) ? bookNames : []).filter(Boolean))];
+        if (bookNames.length === 0) {
+            $list.html('<em>请先选择世界书或为角色绑定世界书。</em>');
+            return;
+        }
         try {
-            const data = await response.json();
-            // 标准OpenAI格式: choices[0].message.content
-            if (data?.choices?.[0]?.message?.content) {
-                return data.choices[0].message.content;
+            if (!worldbookConfig.enabledEntries)
+                worldbookConfig.enabledEntries = {};
+            const entriesMap = await getLorebookEntriesByNames_ACU(bookNames);
+            const groups = [];
+            const expandByDefault = bookNames.length === 1;
+            let settingsChanged = false; // Flag to check if we need to save settings
+            for (const bookName of bookNames) {
+                const bookEntries = Array.isArray(entriesMap[bookName]) ? entriesMap[bookName] : [];
+                // If no setting exists for this book, default to all entries enabled.
+                if (typeof worldbookConfig.enabledEntries[bookName] === 'undefined') {
+                    // [修改] 默认启用时，过滤掉自动生成的条目
+                    worldbookConfig.enabledEntries[bookName] = bookEntries
+                        .filter(entry => {
+                        const comment = entry.comment || '';
+                        // 过滤自动生成的条目
+                        if (comment.startsWith('TavernDB-ACU-') || comment.startsWith('重要人物条目') || comment.startsWith('总结条目')) {
+                            return false;
+                        }
+                        // [新增] 过滤屏蔽词条目
+                        if (isEntryBlocked_ACU$1(entry)) {
+                            return false;
+                        }
+                        return true;
+                    })
+                        .map(entry => entry.uid);
+                    settingsChanged = true;
+                }
+                const enabledEntries = Array.isArray(worldbookConfig.enabledEntries[bookName]) ? worldbookConfig.enabledEntries[bookName] : [];
+                const visibleEntries = [];
+                bookEntries.forEach(entry => {
+                    // [新增] 在UI列表显示时，也过滤掉自动生成的条目，不显示给用户
+                    const comment = entry.comment || '';
+                    if (comment.startsWith('TavernDB-ACU-') || comment.startsWith('重要人物条目') || comment.startsWith('总结条目')) {
+                        return;
+                    }
+                    // [新增] 过滤屏蔽词条目，不显示在列表中
+                    if (isEntryBlocked_ACU$1(entry)) {
+                        return;
+                    }
+                    visibleEntries.push({
+                        uid: entry.uid,
+                        bookName,
+                        label: entry.comment || `条目 ${entry.uid}`,
+                        searchText: `${bookName} ${entry.comment || `条目 ${entry.uid}`}`,
+                        checked: enabledEntries.includes(entry.uid),
+                        disabled: !entry.enabled,
+                        checkboxId: buildWorldbookEntryCheckboxId_ACU('wb-entry', bookName, entry.uid),
+                    });
+                });
+                if (visibleEntries.length > 0) {
+                    groups.push({
+                        bookName,
+                        entries: visibleEntries,
+                        expanded: expandByDefault,
+                    });
+                }
             }
-            // 其他可能的格式
-            if (data?.content) {
-                return data.content;
+            if (settingsChanged) {
+                saveSettings_ACU();
             }
-            if (typeof data === 'string') {
-                return data;
+            renderLazyWorldbookEntryList_ACU($list, groups, {
+                checkboxIdPrefix: 'wb-entry',
+                emptyText: '<em>所选世界书中无条目。</em>',
+            });
+            // 应用筛选（若存在）
+            try {
+                const $filter = $popupInstance_ACU.find(`#${SCRIPT_ID_PREFIX_ACU}-worldbook-entry-filter`);
+                if ($filter.length)
+                    applyWorldbookEntryFilter_ACU($list, $filter.val());
             }
-            logError_ACU('[parseNonStreamResponse] Unknown response format:', data);
-            return null;
+            catch (e) { }
+        }
+        catch (error) {
+            logError_ACU('Failed to populate worldbook entry list:', error);
+            $list.html('<em>加载条目失败。</em>');
+        }
+    }
+    // --- [新增] 世界书相关功能 ---
+    // --- [新增] 世界书相关功能结束 ---
+
+    // status-display.ts — 对应源文件有跨文件依赖，保留在原位
+    // [T172] 可视化编辑器刷新通知（从 service/worldbook/pipeline.ts 提取）
+    function notifyVisualizerRefresh_ACU() {
+        try {
+            jQuery_API_ACU(document).trigger('acu-visualizer-refresh-data');
+        }
+        catch (e) { }
+    }
+    // [T173] 填表状态消息更新
+    function updateTableFillStatus_ACU(text) {
+        if (!$statusMessageSpan_ACU && $popupInstance_ACU)
+            $statusMessageSpan_ACU = $popupInstance_ACU.find(`#${SCRIPT_ID_PREFIX_ACU}-status-message`);
+        if ($statusMessageSpan_ACU)
+            $statusMessageSpan_ACU.text(text);
+    }
+    // [T173] 填表停止按钮绑定
+    function bindTableFillStopButton_ACU(localAbortController, onStop) {
+        const $stopButton = jQuery_API_ACU('#acu-stop-update-btn');
+        if ($stopButton.length) {
+            $stopButton.off('click.acu_stop').on('click.acu_stop', function (e) {
+                e.stopPropagation();
+                e.preventDefault();
+                if ($manualUpdateCardButton_ACU) {
+                    $manualUpdateCardButton_ACU.prop('disabled', false).text('立即手动更新');
+                }
+                jQuery_API_ACU(this).closest('.toast').remove();
+                if (typeof onStop === 'function')
+                    onStop();
+            });
+        }
+    }
+    // [T173] 重置手动更新按钮状态
+    function resetManualUpdateButton_ACU() {
+        if ($manualUpdateCardButton_ACU) {
+            $manualUpdateCardButton_ACU.prop('disabled', false).text('立即手动更新');
+        }
+    }
+    // [T174] 更新聊天标题显示
+    function updateChatTitleDisplay_ACU(chatIdentifier) {
+        if (!$popupInstance_ACU)
+            return;
+        const $titleElement = $popupInstance_ACU.find('h2#updater-main-title-acu');
+        if ($titleElement.length)
+            $titleElement.html(`当前聊天：${escapeHtml_ACU(chatIdentifier || '未知')}`);
+    }
+    // [T175] 检查弹窗是否打开（供 service 层用布尔判断，不暴露 DOM 引用）
+    function isPopupOpen_ACU() {
+        return !!$popupInstance_ACU;
+    }
+    // [T177] 读取酒馆发送输入框的值
+    function getSendTextareaValue_ACU() {
+        try {
+            return jQuery_API_ACU('#send_textarea').val() || '';
         }
         catch (e) {
-            logError_ACU('[parseNonStreamResponse] Failed to parse response:', e);
-            return null;
+            return '';
         }
     }
+    // [T177] 设置酒馆发送输入框的值并触发 input 事件
+    function setSendTextareaValue_ACU(text) {
+        try {
+            jQuery_API_ACU('#send_textarea').val(text);
+            jQuery_API_ACU('#send_textarea').trigger('input');
+        }
+        catch (e) { }
+    }
+    // [T178] 将合并/删除设置同步到 UI
+    function syncMergeSettingsToUI_ACU(s) {
+        if (!$popupInstance_ACU)
+            return;
+        const find = (id) => $popupInstance_ACU.find(`#${SCRIPT_ID_PREFIX_ACU}-${id}`);
+        const setVal = (id, v) => { const $el = find(id); if ($el.length)
+            $el.val(v); };
+        const setChecked = (id, v) => { const $el = find(id); if ($el.length)
+            $el.prop('checked', !!v); };
+        setVal('merge-prompt-template', s.mergeSummaryPrompt || DEFAULT_MERGE_SUMMARY_PROMPT_ACU);
+        setVal('merge-target-count', s.mergeTargetCount || 1);
+        setVal('merge-batch-size', s.mergeBatchSize || 5);
+        setVal('merge-start-index', s.mergeStartIndex || 1);
+        setVal('merge-end-index', s.mergeEndIndex || '');
+        setChecked('auto-merge-enabled', s.autoMergeEnabled);
+        setVal('auto-merge-threshold', s.autoMergeThreshold || 20);
+        setVal('auto-merge-reserve', s.autoMergeReserve || 0);
+        setVal('delete-start-floor', s.deleteStartFloor || 1);
+        setVal('delete-end-floor', s.deleteEndFloor || '');
+    }
+    // [T179] 将全部设置同步到 UI（从 service/settings/settings-service.ts 提取）
+    function syncAllSettingsToUI_ACU(s) {
+        if (!$popupInstance_ACU)
+            return;
+        if ($customApiUrlInput_ACU)
+            $customApiUrlInput_ACU.val(s.apiConfig.url);
+        if ($customApiKeyInput_ACU)
+            $customApiKeyInput_ACU.val(s.apiConfig.apiKey);
+        if ($maxTokensInput_ACU)
+            $maxTokensInput_ACU.val(s.apiConfig.max_tokens);
+        if ($temperatureInput_ACU)
+            $temperatureInput_ACU.val(s.apiConfig.temperature);
+        if ($customApiModelInput_ACU)
+            $customApiModelInput_ACU.val(s.apiConfig.model || '');
+        if ($customApiModelSelect_ACU) {
+            $customApiModelSelect_ACU.empty().append('<option value="">-- 请先加载模型列表 --</option>');
+            if (s.apiConfig.model) {
+                $customApiModelSelect_ACU.append(`<option value="${escapeHtml_ACU(s.apiConfig.model)}">${escapeHtml_ACU(s.apiConfig.model)}</option>`);
+            }
+        }
+        if (typeof updateApiStatusDisplay_ACU === 'function')
+            updateApiStatusDisplay_ACU();
+        if ($charCardPromptSegmentsContainer_ACU)
+            renderPromptSegments_ACU(s.charCardPrompt);
+        if ($autoUpdateThresholdInput_ACU)
+            $autoUpdateThresholdInput_ACU.val(s.autoUpdateThreshold);
+        if ($autoUpdateFrequencyInput_ACU)
+            $autoUpdateFrequencyInput_ACU.val(s.autoUpdateFrequency);
+        if ($autoUpdateTokenThresholdInput_ACU)
+            $autoUpdateTokenThresholdInput_ACU.val(s.autoUpdateTokenThreshold);
+        if ($updateBatchSizeInput_ACU)
+            $updateBatchSizeInput_ACU.val(s.updateBatchSize);
+        if ($maxConcurrentGroupsInput_ACU)
+            $maxConcurrentGroupsInput_ACU.val(s.maxConcurrentGroups || 1);
+        if ($skipUpdateFloorsInput_ACU)
+            $skipUpdateFloorsInput_ACU.val(s.skipUpdateFloors || 0);
+        if ($retainRecentLayersInput_ACU)
+            $retainRecentLayersInput_ACU.val(s.retainRecentLayers || '');
+        if (typeof renderExcludeRuleRows_ACU === 'function') {
+            renderExcludeRuleRows_ACU(`#${SCRIPT_ID_PREFIX_ACU}-table-context-extract-rules`, normalizeExtractRules_ACU(s.tableContextExtractRules, s.tableContextExtractTags || ''), { startPlaceholder: '开始词（例如：<think）', endPlaceholder: '结束词（例如：</think>）' });
+            renderExcludeRuleRows_ACU(`#${SCRIPT_ID_PREFIX_ACU}-table-context-exclude-rules`, normalizeExcludeRules_ACU(s.tableContextExcludeRules, s.tableContextExcludeTags || ''), { startPlaceholder: '开始词（例如：<thinking）', endPlaceholder: '结束词（例如：</thinking>）' });
+        }
+        const find = (id) => $popupInstance_ACU.find(`#${SCRIPT_ID_PREFIX_ACU}-${id}`);
+        const setVal = (id, v) => { const $el = find(id); if ($el.length)
+            $el.val(v); };
+        const setChecked = (id, v) => { const $el = find(id); if ($el.length)
+            $el.prop('checked', !!v); };
+        setVal('import-split-size', s.importSplitSize);
+        setChecked('import-prompt-exclude-imported-worldbook-entries', s.importPromptExcludeImportedWorldbookEntries !== false);
+        if ($autoUpdateEnabledCheckbox_ACU)
+            $autoUpdateEnabledCheckbox_ACU.prop('checked', s.autoUpdateEnabled);
+        if ($standardizedTableFillEnabledCheckbox_ACU)
+            $standardizedTableFillEnabledCheckbox_ACU.prop('checked', s.standardizedTableFillEnabled !== false);
+        if ($toastMuteEnabledCheckbox_ACU)
+            $toastMuteEnabledCheckbox_ACU.prop('checked', !!s.toastMuteEnabled);
+        if ($promptTemplateEnabledCheckbox_ACU)
+            $promptTemplateEnabledCheckbox_ACU.prop('checked', s.promptTemplateSettings?.enabled !== false);
+        if ($tableEditLastPairOnlyCheckbox_ACU)
+            $tableEditLastPairOnlyCheckbox_ACU.prop('checked', s.tableEditLastPairOnly !== false);
+        if ($tableMaxRetriesInput_ACU)
+            $tableMaxRetriesInput_ACU.val(s.tableMaxRetries || 3);
+        syncMergeSettingsToUI_ACU(s);
+        const worldbookConfig = getCurrentWorldbookConfig_ACU();
+        $popupInstance_ACU.find(`input[name="${SCRIPT_ID_PREFIX_ACU}-worldbook-source"]`).filter(`[value="${worldbookConfig.source}"]`).prop('checked', true);
+        if (typeof updateWorldbookSourceView_ACU === 'function')
+            updateWorldbookSourceView_ACU();
+        if (typeof populateInjectionTargetSelector_ACU === 'function')
+            populateInjectionTargetSelector_ACU();
+        const $outlineToggle = find('worldbook-outline-entry-enabled');
+        if ($outlineToggle.length) {
+            let mode = worldbookConfig.zeroTkOccupyMode;
+            if (typeof mode === 'undefined' && typeof worldbookConfig.outlineEntryEnabled !== 'undefined')
+                mode = (worldbookConfig.outlineEntryEnabled === false);
+            $outlineToggle.prop('checked', mode === true);
+        }
+        if ($useMainApiCheckbox_ACU) {
+            $useMainApiCheckbox_ACU.prop('checked', s.apiConfig.useMainApi);
+            if (typeof updateCustomApiInputsState_ACU === 'function')
+                updateCustomApiInputsState_ACU();
+        }
+        if ($streamingEnabledCheckbox_ACU)
+            $streamingEnabledCheckbox_ACU.prop('checked', s.streamingEnabled || false);
+        if ($manualTableSelector_ACU && typeof renderManualTableSelector_ACU === 'function')
+            renderManualTableSelector_ACU();
+        if ($importTableSelector_ACU && typeof renderImportTableSelector_ACU === 'function')
+            renderImportTableSelector_ACU();
+        $popupInstance_ACU.find(`input[name="${SCRIPT_ID_PREFIX_ACU}-api-mode"][value="${s.apiMode}"]`).prop('checked', true);
+        if (typeof updateApiModeView_ACU === 'function')
+            updateApiModeView_ACU(s.apiMode);
+    }
+    // [T180] 模拟点击酒馆发送按钮
+    function clickSendButton_ACU() {
+        try {
+            jQuery_API_ACU('#send_but').click();
+        }
+        catch (e) { }
+    }
+
     /**
-     * 统一处理API响应，根据streamingEnabled设置自动选择解析方式
-     * @param {Response} response - fetch 返回的 Response 对象
-     * @param {AbortSignal} signal - 可选的中止信号
-     * @returns {Promise<string|null>} AI 响应文本，失败返回null
+     * presentation/components/settings-ui-helpers.ts
+     * 从 settings-service.ts 搬出的 UI 相关便捷函数
      */
-    async function handleApiResponse_ACU(response, signal = null) {
-        if (settings_ACU.streamingEnabled) {
-            return await streamToText_ACU(response, signal);
-        }
-        else {
-            return await parseNonStreamResponse_ACU(response);
-        }
+    /**
+     * 加载设置后刷新 UI（presentation 层便捷函数）
+     */
+    function loadSettingsAndRefreshUI_ACU() {
+        loadSettings_ACU();
+        if (typeof syncAllSettingsToUI_ACU === 'function')
+            syncAllSettingsToUI_ACU(settings_ACU);
     }
 
     // merge-logic.ts
@@ -13451,8 +13449,7 @@ $CONTENT
             await saveIndependentTableToChatHistory_ACU(SillyTavern_API_ACU.chat.length - 1, keysToSave, keysToSave);
             await updateReadableLorebookEntry_ACU(true);
             topLevelWindow_ACU.AutoCardUpdaterAPI._notifyTableUpdate();
-            if (typeof updateCardUpdateStatusDisplay_ACU === 'function')
-                updateCardUpdateStatusDisplay_ACU();
+            // updateCardUpdateStatusDisplay 由 presentation 层调用方在合并完成后执行
             // 清除进度提示框
             if (progressToast) {
                 progressToast.remove();
@@ -15246,6 +15243,8 @@ $CONTENT
             // [新增] 在自动更新全部完成后检测自动合并总结
             try {
                 await checkAndTriggerAutoMergeSummary_ACU();
+                if (typeof updateCardUpdateStatusDisplay_ACU === 'function')
+                    updateCardUpdateStatusDisplay_ACU();
             }
             catch (e) {
                 logWarn_ACU('自动合并总结检测失败:', e);
@@ -16117,8 +16116,7 @@ $CONTENT
      */
     function cancelContentOptimization_ACU(reason = '正文优化已由用户终止。') {
         contentOptimizationAbortRequested_ACU = true;
-        hideOptimizationOverlay_ACU();
-        hideOptimizationProgressToast_ACU();
+        // hideOptimizationOverlay / hideOptimizationProgressToast 由 presentation 层调用方执行
         showToastr_ACU('warning', reason);
         return true;
     }
@@ -16196,6 +16194,8 @@ $CONTENT
             e.preventDefault();
             e.stopPropagation();
             cancelContentOptimization_ACU('正文优化已取消。');
+            hideOptimizationOverlay_ACU();
+            hideOptimizationProgressToast_ACU();
         });
     }
     /**
@@ -16214,6 +16214,8 @@ $CONTENT
                     e.preventDefault();
                     e.stopPropagation();
                     cancelContentOptimization_ACU('正文优化已取消。');
+                    hideOptimizationOverlay_ACU();
+                    hideOptimizationProgressToast_ACU();
                     jQuery_API_ACU$1(this).closest('.toast').remove();
                 });
             }
@@ -18291,13 +18293,7 @@ $CONTENT
         }
         logDebug_ACU('Settings loaded:', settings_ACU);
     }
-    // [拆分] loadSettings 的 presentation 版本：加载数据后刷新 UI
-    // presentation 层调用此版本；service 层内部调用上面的 loadSettings_ACU（不触发 UI）
-    function loadSettingsAndRefreshUI_ACU() {
-        loadSettings_ACU();
-        if (typeof syncAllSettingsToUI_ACU === 'function')
-            syncAllSettingsToUI_ACU(settings_ACU);
-    }
+    // loadSettingsAndRefreshUI_ACU 已搬到 presentation/components/settings-ui-helpers.ts
     function loadTemplateFromStorage_ACU(codeOverride = null) {
         const code = normalizeIsolationCode_ACU((codeOverride !== null && typeof codeOverride !== 'undefined')
             ? codeOverride
@@ -26597,6 +26593,8 @@ $CONTENT
             // [新增] 在手动更新全部完成后检测自动合并总结
             try {
                 await checkAndTriggerAutoMergeSummary_ACU();
+                if (typeof updateCardUpdateStatusDisplay_ACU === 'function')
+                    updateCardUpdateStatusDisplay_ACU();
             }
             catch (e) {
                 logWarn_ACU('自动合并总结检测失败:', e);

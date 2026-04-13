@@ -33,7 +33,8 @@ import {
   $importTableSelectAll_ACU, $importTableSelectNone_ACU,
   _assignUIPlaceholders_ACU
 } from '../../service/runtime/state-manager';
-import { applyTemplateScopeForCurrentChat_ACU, loadSettingsAndRefreshUI_ACU, saveSettings_ACU, switchIsolationProfile_ACU } from '../../service/settings/settings-service';
+import { applyTemplateScopeForCurrentChat_ACU, saveSettings_ACU, switchIsolationProfile_ACU } from '../../service/settings/settings-service';
+import { loadSettingsAndRefreshUI_ACU } from '../components/settings-ui-helpers';
 import { handleManualUpdate_ACU } from '../../service/table/update-process';
 import { getChatSheetGuideDataForIsolationKey_ACU, getCurrentChatPlotScopeState_ACU, getCurrentChatTemplateScopeState_ACU, sanitizeTemplateSnapshotForChat_ACU } from '../../service/template/chat-scope';
 import { deleteAllGeneratedEntries_ACU, getLorebookEntriesByNames_ACU, getWorldBooks_ACU, refreshMergedDataAndNotify_ACU, updateReadableLorebookEntry_ACU } from '../../service/worldbook/pipeline';

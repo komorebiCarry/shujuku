@@ -9,7 +9,6 @@ import { topLevelWindow_ACU } from '../../shared/env';
 import { cleanChatName_ACU, getChatFirstLayerMessage_ACU, logDebug_ACU, logError_ACU, logWarn_ACU, parseTableTemplateJson_ACU } from '../../shared/utils';
 import { loadOrCreateJsonTableFromChatHistory_ACU } from '../../data/repositories/table-repo';
 import { getImportBatchPrefix_ACU } from '../../shared/constants';
-import { updateCardUpdateStatusDisplay_ACU } from '../../presentation/components/update-status-display';
 import { formatJsonToReadable_ACU, maybeLiftWorldbookSuppression_ACU, mergeAllIndependentTables_ACU, shouldSuppressWorldbookInjection_ACU } from '../runtime/helpers-remaining';
 /**
  * service/worldbook/injection-engine.ts — 世界书注入/导出/清理引擎
@@ -72,7 +71,7 @@ import { formatJsonToReadable_ACU, maybeLiftWorldbookSuppression_ACU, mergeAllIn
     await loadAllChatMessages_ACU();
     applyTemplateScopeForCurrentChat_ACU();
     
-    if (typeof updateCardUpdateStatusDisplay_ACU === 'function') updateCardUpdateStatusDisplay_ACU();
+    // updateCardUpdateStatusDisplay 由 presentation 层的 init.ts CHAT_CHANGED 回调执行
 
     await loadOrCreateJsonTableFromChatHistory_ACU();
 

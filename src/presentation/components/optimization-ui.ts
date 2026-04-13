@@ -71,6 +71,8 @@ import { applyContextTagFilters_ACU } from '../../service/runtime/helpers-remain
       e.preventDefault();
       e.stopPropagation();
       cancelContentOptimization_ACU('正文优化已取消。');
+      hideOptimizationOverlay_ACU();
+      hideOptimizationProgressToast_ACU();
     });
   }
 
@@ -90,6 +92,8 @@ import { applyContextTagFilters_ACU } from '../../service/runtime/helpers-remain
           e.preventDefault();
           e.stopPropagation();
           cancelContentOptimization_ACU('正文优化已取消。');
+          hideOptimizationOverlay_ACU();
+          hideOptimizationProgressToast_ACU();
           jQuery_API_ACU(this).closest('.toast').remove();
         });
       }

@@ -1,5 +1,4 @@
 import { getCurrentWorldbookConfig_ACU } from '../../data/repositories/character-settings-repo';
-import { renderImportTableSelector_ACU, renderManualTableSelector_ACU } from '../../presentation/components/table-selector';
 import { showToastr_ACU } from '../runtime/toast-service';
 import { SillyTavern_API_ACU, TavernHelper_API_ACU, allChatMessages_ACU, coreApisAreReady_ACU, currentChatFileIdentifier_ACU, currentJsonTableData_ACU, getCurrentIsolationKey_ACU, settings_ACU, $manualTableSelector_ACU, $importTableSelector_ACU, _set_currentJsonTableData_ACU, _set_allChatMessages_ACU} from '../runtime/state-manager';
 import { saveSettings_ACU } from '../settings/settings-service';
@@ -7,7 +6,6 @@ import { getChatSheetGuideDataForIsolationKey_ACU, getSortedSheetKeys_ACU, mater
 import { SCRIPT_ID_PREFIX_ACU, getImportBatchPrefix_ACU, getImportStablePrefix_ACU } from '../../shared/constants';
 import { topLevelWindow_ACU } from '../../shared/env';
 import { logDebug_ACU, logError_ACU, logWarn_ACU, parseTableTemplateJson_ACU } from '../../shared/utils';
-import { updateCardUpdateStatusDisplay_ACU } from '../../presentation/components/update-status-display';
 import { isEntryBlocked_ACU } from '../../shared/utils';
 import { formatJsonToReadable_ACU, maybeLiftWorldbookSuppression_ACU, mergeAllIndependentTables_ACU, shouldSuppressWorldbookInjection_ACU } from '../runtime/helpers-remaining';
 import { allocConsecutiveOrderBlock_ACU, applyPlacementToEntry_ACU, buildDefaultGlobalInjectionConfig_ACU, buildUsedOrderSet_ACU, ensureExportConfigDefaults_ACU, ensureGlobalInjectionConfigDefaults_ACU, getEntryOrderNumber_ACU, getFixedPlacementDefaultsForTable_ACU, getInjectionTargetLorebook_ACU, getIsolationPrefix_ACU, isEntryPlacementMatched_ACU, normalizeLorebookPosition_ACU, normalizePlacementConfig_ACU, updateCustomTableExports_ACU, updateImportantPersonsRelatedEntries_ACU, updateOutlineTableEntry_ACU, updateSummaryTableEntries_ACU } from './injection-engine';
@@ -572,13 +570,7 @@ export   async function refreshMergedDataAndNotify_ACU() {
                 logWarn_ACU('[回溯空数据] 模板解析失败，currentJsonTableData_ACU 设为最小空结构。');
             }
         }
-        // 刷新 UI 选择器
-        if ($manualTableSelector_ACU) {
-            renderManualTableSelector_ACU();
-        }
-        if ($importTableSelector_ACU) {
-            renderImportTableSelector_ACU();
-        }
+        // UI 选择器刷新由 presentation 层调用方负责
     } else {
         // 更新内存中的数据
         // [新增] 数据完整性检查：在加载数据时为AM编码的条目自动添加auto_merged标记
@@ -605,12 +597,7 @@ export   async function refreshMergedDataAndNotify_ACU() {
         const stableKeys = getSortedSheetKeys_ACU(mergedData);
         _set_currentJsonTableData_ACU(reorderDataBySheetKeys_ACU(mergedData, stableKeys));
         logDebug_ACU('Updated currentJsonTableData_ACU with independently merged data.');
-        if ($manualTableSelector_ACU) {
-            renderManualTableSelector_ACU();
-        }
-        if ($importTableSelector_ACU) {
-            renderImportTableSelector_ACU();
-        }
+        // UI 选择器刷新由 presentation 层调用方负责
     }
           
     // 更新世界书（此时 currentJsonTableData_ACU 已是最新状态，空数据也会被正确处理）
@@ -634,10 +621,7 @@ export   async function refreshMergedDataAndNotify_ACU() {
              }
         }, 200);
 
-        // 3. 刷新当前打开的插件设置弹窗 (UI层负责)
-        if (typeof updateCardUpdateStatusDisplay_ACU === 'function') {
-             updateCardUpdateStatusDisplay_ACU();
-        }
+        // 3. 刷新状态面板由 presentation 层调用方负责
               
         // [修复] 等待足够的时间，确保前端完成数据读取和UI刷新
         // 使用较长的延迟，确保前端有足够时间处理数据
