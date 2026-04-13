@@ -11,7 +11,7 @@ import { addAutoCardMenuItem_ACU } from './startup';
 import { newMessageDebounceTimer_ACU, _set_newMessageDebounceTimer_ACU} from '../../service/runtime/state-manager';
 import { showToastr_ACU } from '../../service/runtime/toast-service';
 import { attemptToLoadCoreApis_ACU } from '../triggers/settings-ui-sync';
-import { handleChatCompletionReady_ACU, loadPresetAndCleanCharacterData_ACU, stopAutoLoop_ACU } from '../../service/runtime/helpers-remaining';
+import { handleChatCompletionReady_ACU, loadPresetAndCleanCharacterData_ACU } from '../../service/runtime/helpers-remaining';
 import { SillyTavern_API_ACU, currentChatFileIdentifier_ACU, generationGate_ACU, installSendIntentCaptureHooks_ACU, isProcessing_Plot_ACU, isQuietLikeGeneration_ACU, isRecentUserSendIntent_ACU, loopState_ACU, recordGenerationContext_ACU, recordLastUserSend_ACU, settings_ACU, shouldProcessAutoTableUpdateForGenerationEnded_ACU, shouldProcessPlotForGeneration_ACU, _set_isProcessing_Plot_ACU} from '../../service/runtime/state-manager';
 import { applyTemplateScopeForCurrentChat_ACU, loadSettings_ACU } from '../../service/settings/settings-service';
 import { resetScriptStateForNewChat_ACU } from '../../service/worldbook/injection-engine';
@@ -21,7 +21,8 @@ import { markPlotIntercept_ACU, shouldSkipPlotIntercept_ACU } from '../../servic
 import { getSendTextareaValue_ACU, setSendTextareaValue_ACU } from '../components/status-display';
 import { updateCardUpdateStatusDisplay_ACU } from '../components/update-status-display';
 import { handleNewMessageDebounced_ACU } from '../triggers/settings-ui-sync';
-import { enterLoopRetryFlow_ACU, onLoopGenerationEnded_ACU, runOptimizationLogic_ACU } from '../../service/runtime/helpers-remaining';
+import { enterLoopRetryFlow_ACU, onLoopGenerationEnded_ACU } from '../triggers/auto-loop';
+import { runOptimizationLogic_ACU } from '../../service/runtime/helpers-remaining';
 
 export   function mainInitialize_ACU() {
     // 注入 data 层依赖（打破 data→service 的循环依赖）

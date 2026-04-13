@@ -11,7 +11,7 @@ import { ACU_TOAST_CATEGORY_ACU, showToastr_ACU } from '../theme/toast';
 import { importCombinedSettings_ACU } from '../triggers/admin-ui';
 import { clearImportLocalStorage_ACU, clearImportedEntries_ACU, deleteImportedEntries_ACU, handleInjectImportedTxtSelected_ACU } from '../../service/import/import-process';
 import { buildDefaultContentOptimizationPromptGroup_ACU } from '../../service/optimization/content-optimization';
-import { stopAutoLoop_ACU } from '../../service/runtime/helpers-remaining';
+import { stopAutoLoop_ACU } from '../triggers/auto-loop';
 import {
   currentChatFileIdentifier_ACU, currentJsonTableData_ACU, getCurrentIsolationKey_ACU, settings_ACU,
   jQuery_API_ACU, toastr_API_ACU, TavernHelper_API_ACU, $popupInstance_ACU,
@@ -52,7 +52,8 @@ import { deleteLocalDataInChat_ACU, exportCurrentJsonData_ACU, exportTableTempla
 import { clearApiConfig_ACU, deleteApiPreset_ACU, exportCharCardPromptToJson_ACU, fetchModelsAndConnect_ACU, loadApiPreset_ACU, loadCharCardPromptFromJson_ACU, loadTavernApiProfiles_ACU, refreshApiPresetSelectors_ACU, resetDefaultCharCardPrompt_ACU, saveApiConfig_ACU, saveApiPreset_ACU, saveAutoUpdateFrequency_ACU, saveAutoUpdateThreshold_ACU, saveAutoUpdateTokenThreshold_ACU, saveCustomCharCardPrompt_ACU, saveImportSplitSize_ACU, saveMaxConcurrentGroups_ACU, saveRetainRecentLayers_ACU, saveSkipUpdateFloors_ACU, saveTableMaxRetries_ACU, saveUpdateBatchSize_ACU, updateApiModeView_ACU, updateCustomApiInputsState_ACU } from '../triggers/settings-ui-sync';
 import { exportCombinedSettings_ACU, handleManualMergeSummary_ACU } from '../triggers/update-trigger';
 import { performContentOptimization_ACU } from '../../service/optimization/content-optimization';
-import { formatJsonToReadable_ACU, startAutoLoop_ACU } from '../../service/runtime/helpers-remaining';
+import { formatJsonToReadable_ACU } from '../../service/runtime/helpers-remaining';
+import { startAutoLoop_ACU } from '../triggers/auto-loop';
 import { getInjectionTargetLorebook_ACU, getIsolationPrefix_ACU, updateOutlineTableEntry_ACU } from '../../service/worldbook/injection-engine';
 /**
  * presentation/pages/popup-bindings.ts — 主弹窗事件绑定
