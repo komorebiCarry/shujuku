@@ -14,7 +14,7 @@ import { importCombinedSettings_ACU } from '../triggers/admin-ui';
 import { clearImportLocalStorage_ACU, clearImportedEntries_ACU, deleteImportedEntries_ACU, handleInjectImportedTxtSelected_ACU } from '../triggers/import-process';
 import { SillyTavern_API_ACU, TavernHelper_API_ACU, currentJsonTableData_ACU, getCurrentIsolationKey_ACU, settings_ACU, _set_currentJsonTableData_ACU } from '../../service/runtime/state-manager';
 import { saveSettings_ACU } from '../../service/settings/settings-service';
-import { handleManualUpdate_ACU, proceedWithCardUpdate_ACU, saveCurrentDataForTable_ACU } from '../../service/table/update-process';
+import { handleManualUpdate_ACU, proceedWithCardUpdate_ACU, saveCurrentDataForTable_ACU } from '../triggers/update-process';
 import { getSortedSheetKeys_ACU, overwriteChatSheetGuideFromTemplate_ACU, sanitizeChatSheetsObject_ACU, sanitizeSheetForStorage_ACU } from '../../service/template/chat-scope';
 import { deleteAllGeneratedEntries_ACU, loadAllChatMessages_ACU, refreshMergedDataAndNotify_ACU, updateReadableLorebookEntry_ACU } from '../../service/worldbook/pipeline';
 import { topLevelWindow_ACU } from '../../shared/env';

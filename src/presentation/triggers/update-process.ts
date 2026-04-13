@@ -1,23 +1,23 @@
-// update-process.ts
+// update-process.ts — 表格更新编排（presentation 层：涉及 UI 读取和按钮操作）
 // 从 01_update_process.js 迁入
 
-import { abortAllActiveRequests_ACU, isAutoUpdatingCard_ACU, wasStoppedByUser_ACU, _set_isAutoUpdatingCard_ACU, _set_manualExtraHint_ACU, _set_wasStoppedByUser_ACU} from '../runtime/state-manager';
-import { getManualSelectionFromUI_ACU } from '../../presentation/components/table-selector';
-import { showToastr_ACU } from '../runtime/toast-service';
+import { abortAllActiveRequests_ACU, isAutoUpdatingCard_ACU, wasStoppedByUser_ACU, _set_isAutoUpdatingCard_ACU, _set_manualExtraHint_ACU, _set_wasStoppedByUser_ACU} from '../../service/runtime/state-manager';
+import { getManualSelectionFromUI_ACU } from '../components/table-selector';
+import { showToastr_ACU } from '../../service/runtime/toast-service';
 import { ACU_TOAST_CATEGORY_ACU } from '../../shared/constants';
-import { callCustomOpenAI_ACU } from '../ai/prompt-builder';
-import { SillyTavern_API_ACU, coreApisAreReady_ACU, currentJsonTableData_ACU, getCurrentIsolationKey_ACU, settings_ACU, toastr_API_ACU, $statusMessageSpan_ACU, _set_currentJsonTableData_ACU} from '../runtime/state-manager';
-import { checkAndTriggerAutoMergeSummary_ACU } from '../summary/merge-logic';
-import { getChatSheetGuideDataForIsolationKey_ACU } from '../template/chat-scope';
-import { loadAllChatMessages_ACU, refreshMergedDataAndNotify_ACU, updateReadableLorebookEntry_ACU } from '../worldbook/pipeline';
+import { callCustomOpenAI_ACU } from '../../service/ai/prompt-builder';
+import { SillyTavern_API_ACU, coreApisAreReady_ACU, currentJsonTableData_ACU, getCurrentIsolationKey_ACU, settings_ACU, toastr_API_ACU, $statusMessageSpan_ACU, _set_currentJsonTableData_ACU} from '../../service/runtime/state-manager';
+import { checkAndTriggerAutoMergeSummary_ACU } from '../../service/summary/merge-logic';
+import { getChatSheetGuideDataForIsolationKey_ACU } from '../../service/template/chat-scope';
+import { loadAllChatMessages_ACU, refreshMergedDataAndNotify_ACU, updateReadableLorebookEntry_ACU } from '../../service/worldbook/pipeline';
 import { topLevelWindow_ACU } from '../../shared/env';
 import { isSummaryOrOutlineTable_ACU, logDebug_ACU, logError_ACU, logWarn_ACU, parseTableTemplateJson_ACU } from '../../shared/utils';
 import { checkIfFirstTimeInit_ACU, saveIndependentTableToChatHistory_ACU } from '../../data/repositories/table-repo';
-import { bindTableFillStopButton_ACU, resetManualUpdateButton_ACU } from '../../presentation/components/status-display';
-import { updateCardUpdateStatusDisplay_ACU } from '../../presentation/components/update-status-display';
-import { collectManualExtraHint_ACU } from '../../presentation/triggers/settings-ui-sync';
-import { parseAndApplyTableEdits_ACU, prepareAIInput_ACU } from '../ai/prompt-builder';
-import { buildGuidedBaseDataFromSheetGuide_ACU, getSortedSheetKeys_ACU, sanitizeSheetForStorage_ACU } from '../template/chat-scope';
+import { bindTableFillStopButton_ACU, resetManualUpdateButton_ACU } from '../components/status-display';
+import { updateCardUpdateStatusDisplay_ACU } from '../components/update-status-display';
+import { collectManualExtraHint_ACU } from './settings-ui-sync';
+import { parseAndApplyTableEdits_ACU, prepareAIInput_ACU } from '../../service/ai/prompt-builder';
+import { buildGuidedBaseDataFromSheetGuide_ACU, getSortedSheetKeys_ACU, sanitizeSheetForStorage_ACU } from '../../service/template/chat-scope';
 
 export   async function processUpdates_ACU(indicesToUpdate, mode = 'auto', options: any = {}) {
       if (!indicesToUpdate || indicesToUpdate.length === 0) {

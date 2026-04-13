@@ -35,7 +35,7 @@ import {
 } from '../../service/runtime/state-manager';
 import { applyTemplateScopeForCurrentChat_ACU, saveSettings_ACU, switchIsolationProfile_ACU } from '../../service/settings/settings-service';
 import { loadSettingsAndRefreshUI_ACU } from '../components/settings-ui-helpers';
-import { handleManualUpdate_ACU } from '../../service/table/update-process';
+import { handleManualUpdate_ACU } from '../triggers/update-process';
 import { getChatSheetGuideDataForIsolationKey_ACU, getCurrentChatPlotScopeState_ACU, getCurrentChatTemplateScopeState_ACU, sanitizeTemplateSnapshotForChat_ACU } from '../../service/template/chat-scope';
 import { deleteAllGeneratedEntries_ACU, getLorebookEntriesByNames_ACU, getWorldBooks_ACU, refreshMergedDataAndNotify_ACU, updateReadableLorebookEntry_ACU } from '../../service/worldbook/pipeline';
 import { SCRIPT_ID_PREFIX_ACU } from '../../shared/constants';

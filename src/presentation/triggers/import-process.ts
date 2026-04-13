@@ -10,7 +10,7 @@ import { showToastr_ACU } from '../../service/runtime/toast-service';
 import { ACU_TOAST_CATEGORY_ACU, IMPORTED_ENTRY_PREFIX_ACU, getImportJsonStorageComment_ACU } from '../../shared/constants';
 import { TavernHelper_API_ACU, currentJsonTableData_ACU, settings_ACU, _set_currentJsonTableData_ACU} from '../../service/runtime/state-manager';
 import { saveSettings_ACU } from '../../service/settings/settings-service';
-import { proceedWithCardUpdate_ACU } from '../../service/table/update-process';
+import { proceedWithCardUpdate_ACU } from './update-process';
 import { updateReadableLorebookEntry_ACU } from '../../service/worldbook/pipeline';
 import { logDebug_ACU, logError_ACU, logWarn_ACU, parseTableTemplateJson_ACU } from '../../shared/utils';
 import { setImportInjectButtonEnabled_ACU } from '../components/import-status-ui';

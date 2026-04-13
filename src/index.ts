@@ -38,7 +38,7 @@ import './data/repositories/table-repo';
 import './service/settings/settings-service';
 import './service/ai/api-call';
 import './service/ai/prompt-builder';
-import './service/table/update-process';
+import './presentation/triggers/update-process';
 import './service/worldbook/pipeline';
 import './service/worldbook/injection-engine';
 import './presentation/triggers/admin-ui';

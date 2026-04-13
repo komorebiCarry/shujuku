@@ -13199,7 +13199,7 @@ $CONTENT
         }
     }
 
-    // update-process.ts
+    // update-process.ts — 表格更新编排（presentation 层：涉及 UI 读取和按钮操作）
     // 从 01_update_process.js 迁入
     async function processUpdates_ACU(indicesToUpdate, mode = 'auto', options = {}) {
         if (!indicesToUpdate || indicesToUpdate.length === 0) {

@@ -7,7 +7,7 @@ import { NEW_MESSAGE_DEBOUNCE_DELAY_ACU, SillyTavern_API_ACU, TavernHelper_API_A
 import { saveSettings_ACU } from '../../service/settings/settings-service';
 import { loadSettingsAndRefreshUI_ACU } from '../components/settings-ui-helpers';
 import { checkAndTriggerAutoMergeSummary_ACU } from '../../service/summary/merge-logic';
-import { processUpdates_ACU } from '../../service/table/update-process';
+import { processUpdates_ACU } from './update-process';
 import { getSortedSheetKeys_ACU } from '../../service/template/chat-scope';
 import { loadAllChatMessages_ACU, refreshMergedDataAndNotify_ACU } from '../../service/worldbook/pipeline';
 import { SCRIPT_ID_PREFIX_ACU } from '../../shared/constants';

@@ -4,7 +4,7 @@ import { ACU_TOAST_CATEGORY_ACU, showToastr_ACU } from '../theme/toast';
 import { callCustomOpenAI_ACU, handleApiResponse_ACU } from '../../service/ai/prompt-builder';
 import { SillyTavern_API_ACU, jQuery_API_ACU, TavernHelper_API_ACU, toastr_API_ACU, $popupInstance_ACU, $statusMessageSpan_ACU, $manualUpdateCardButton_ACU, $apiConfigAreaDiv_ACU, $apiConfigSectionToggle_ACU, currentJsonTableData_ACU, settings_ACU, _assignUIPlaceholders_ACU } from '../../service/runtime/state-manager';
 import { checkAndTriggerAutoMergeSummary_ACU } from '../../service/summary/merge-logic';
-import { processUpdates_ACU } from '../../service/table/update-process';
+import { processUpdates_ACU } from './update-process';
 import { getSortedSheetKeys_ACU, sanitizeChatSheetsObject_ACU } from '../../service/template/chat-scope';
 import { loadAllChatMessages_ACU, refreshMergedDataAndNotify_ACU, updateReadableLorebookEntry_ACU } from '../../service/worldbook/pipeline';
 import { SCRIPT_ID_PREFIX_ACU } from '../../shared/constants';
