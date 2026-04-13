@@ -11,7 +11,7 @@ import { ACU_TOAST_CATEGORY_ACU } from '../../shared/constants';
 import { getApiConfigByPreset_ACU } from '../../service/ai/api-call';
 import { handleApiResponse_ACU } from '../../service/ai/prompt-builder';
 import { importCombinedSettings_ACU } from '../triggers/admin-ui';
-import { clearImportLocalStorage_ACU, clearImportedEntries_ACU, deleteImportedEntries_ACU, handleInjectImportedTxtSelected_ACU } from '../../service/import/import-process';
+import { clearImportLocalStorage_ACU, clearImportedEntries_ACU, deleteImportedEntries_ACU, handleInjectImportedTxtSelected_ACU } from '../triggers/import-process';
 import { SillyTavern_API_ACU, TavernHelper_API_ACU, currentJsonTableData_ACU, getCurrentIsolationKey_ACU, settings_ACU, _set_currentJsonTableData_ACU } from '../../service/runtime/state-manager';
 import { saveSettings_ACU } from '../../service/settings/settings-service';
 import { handleManualUpdate_ACU, proceedWithCardUpdate_ACU, saveCurrentDataForTable_ACU } from '../../service/table/update-process';

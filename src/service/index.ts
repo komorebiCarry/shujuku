@@ -12,7 +12,7 @@ export * from './worldbook/injection-engine';
 export * from './data-admin/config-export';
 export * from './data-admin/chat-data-admin';
 export * from './summary/merge-logic';
-export * from './import/import-process';
+// import-process.ts 已搬到 presentation/triggers/import-process.ts
 export * from './import/import-orchestrator';
 export * from './import/txt-splitter';
 export * from './import/snapshot-manager';

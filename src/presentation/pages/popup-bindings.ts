@@ -9,7 +9,7 @@ import { getTemplatePreset_ACU } from '../components/template-preset-ui';
 import { openNewVisualizer_ACU } from './visualizer';
 import { ACU_TOAST_CATEGORY_ACU, showToastr_ACU } from '../theme/toast';
 import { importCombinedSettings_ACU } from '../triggers/admin-ui';
-import { clearImportLocalStorage_ACU, clearImportedEntries_ACU, deleteImportedEntries_ACU, handleInjectImportedTxtSelected_ACU } from '../../service/import/import-process';
+import { clearImportLocalStorage_ACU, clearImportedEntries_ACU, deleteImportedEntries_ACU, handleInjectImportedTxtSelected_ACU } from '../triggers/import-process';
 import { buildDefaultContentOptimizationPromptGroup_ACU } from '../../service/optimization/content-optimization';
 import { stopAutoLoop_ACU } from '../triggers/auto-loop';
 import {

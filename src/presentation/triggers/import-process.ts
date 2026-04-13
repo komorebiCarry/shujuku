@@ -1,21 +1,21 @@
-// import-process.ts
+// import-process.ts — 导入编排逻辑（presentation 层：涉及 UI 读取和状态更新）
 
 
 import { STORAGE_KEY_IMPORTED_ENTRIES_ACU, STORAGE_KEY_IMPORTED_STATUS_ACU, STORAGE_KEY_IMPORTED_STATUS_FULL_ACU, STORAGE_KEY_IMPORTED_STATUS_STANDARD_ACU, STORAGE_KEY_IMPORTED_STATUS_SUMMARY_ACU } from '../../data/constants';
 
 import { importTempGet_ACU, importTempRemove_ACU, importTempSet_ACU } from '../../data/storage/idb-import-temp';
-import { getImportWorldbookTarget_ACU, updateImportStatusUI_ACU } from '../../presentation/components/import-status-ui';
-import { getImportSelectionFromUI_ACU } from '../../presentation/components/table-selector';
-import { showToastr_ACU } from '../runtime/toast-service';
+import { getImportWorldbookTarget_ACU, updateImportStatusUI_ACU } from '../components/import-status-ui';
+import { getImportSelectionFromUI_ACU } from '../components/table-selector';
+import { showToastr_ACU } from '../../service/runtime/toast-service';
 import { ACU_TOAST_CATEGORY_ACU, IMPORTED_ENTRY_PREFIX_ACU, getImportJsonStorageComment_ACU } from '../../shared/constants';
-import { TavernHelper_API_ACU, currentJsonTableData_ACU, settings_ACU, _set_currentJsonTableData_ACU} from '../runtime/state-manager';
-import { saveSettings_ACU } from '../settings/settings-service';
-import { proceedWithCardUpdate_ACU } from '../table/update-process';
-import { updateReadableLorebookEntry_ACU } from '../worldbook/pipeline';
+import { TavernHelper_API_ACU, currentJsonTableData_ACU, settings_ACU, _set_currentJsonTableData_ACU} from '../../service/runtime/state-manager';
+import { saveSettings_ACU } from '../../service/settings/settings-service';
+import { proceedWithCardUpdate_ACU } from '../../service/table/update-process';
+import { updateReadableLorebookEntry_ACU } from '../../service/worldbook/pipeline';
 import { logDebug_ACU, logError_ACU, logWarn_ACU, parseTableTemplateJson_ACU } from '../../shared/utils';
-import { IMPORTED_ENTRY_PREFIX_ACU, getImportJsonStorageComment_ACU, setImportInjectButtonEnabled_ACU } from '../../presentation/components/import-status-ui';
-import { getSortedSheetKeys_ACU } from '../template/chat-scope';
-import { allocOrder_ACU, buildUsedOrderSet_ACU, getInjectionTargetLorebook_ACU, getIsolationPrefix_ACU } from '../worldbook/injection-engine';
+import { setImportInjectButtonEnabled_ACU } from '../components/import-status-ui';
+import { getSortedSheetKeys_ACU } from '../../service/template/chat-scope';
+import { allocOrder_ACU, buildUsedOrderSet_ACU, getInjectionTargetLorebook_ACU, getIsolationPrefix_ACU } from '../../service/worldbook/injection-engine';
 
 export   async function processImportedTxtAsUpdates_ACU() {
       // 外部导入：按"自选表格"处理与注入（与手动填表一致的表选择体验）

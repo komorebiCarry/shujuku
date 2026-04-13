@@ -21488,7 +21488,7 @@ $CONTENT
             $btn.prop('disabled', !enabled);
     }
 
-    // import-process.ts
+    // import-process.ts — 导入编排逻辑（presentation 层：涉及 UI 读取和状态更新）
     async function processImportedTxtAsUpdates_ACU() {
         // 外部导入：按"自选表格"处理与注入（与手动填表一致的表选择体验）
         const $injectButton = null; // 旧闭包变量，现在通过 UI 层控制

@@ -2,7 +2,7 @@ import { STORAGE_KEY_IMPORTED_ENTRIES_ACU, STORAGE_KEY_IMPORTED_STATUS_ACU, STOR
 import { importTempGet_ACU, importTempRemove_ACU, importTempSet_ACU } from '../../data/storage/idb-import-temp';
 import { getImportSelectionFromUI_ACU, renderImportTableSelector_ACU } from './table-selector';
 import { ACU_TOAST_CATEGORY_ACU, showToastr_ACU } from '../theme/toast';
-import { handleInjectImportedTxtSelected_ACU } from '../../service/import/import-process';
+import { handleInjectImportedTxtSelected_ACU } from '../triggers/import-process';
 import { settings_ACU } from '../../service/runtime/state-manager';
 import { SCRIPT_ID_PREFIX_ACU } from '../../shared/constants';
 import { logDebug_ACU } from '../../shared/utils';

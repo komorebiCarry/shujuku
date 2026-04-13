@@ -43,7 +43,7 @@ import './service/worldbook/pipeline';
 import './service/worldbook/injection-engine';
 import './presentation/triggers/admin-ui';
 import './service/summary/merge-logic';
-import './service/import/import-process';
+import './presentation/triggers/import-process';
 import './presentation/bootstrap/init';
 import './service/runtime/state-manager';
 import './service/runtime/event-bus';
