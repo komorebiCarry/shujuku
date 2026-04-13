@@ -1,4 +1,4 @@
-import { TABLE_TEMPLATE_ACU } from '../../data/models/defaults-json.js';
+import { TABLE_TEMPLATE_ACU } from '../../shared/defaults-json.js';
 import { getCurrentWorldbookConfig_ACU } from '../../data/repositories/character-settings-repo';
 import { globalMeta_ACU, saveGlobalMeta_ACU } from '../../data/repositories/profile-repo';
 import { deriveTemplatePresetNameForImport_ACU, normalizeTemplatePresetSelectionValue_ACU } from '../../data/repositories/template-preset-repo';

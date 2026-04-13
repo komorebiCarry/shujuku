@@ -1,4 +1,4 @@
-import { DEFAULT_CONTENT_OPTIMIZATION_PROMPT_GROUP_ACU } from '../../data/models/defaults-json.js';
+import { DEFAULT_CONTENT_OPTIMIZATION_PROMPT_GROUP_ACU } from '../../shared/defaults-json.js';
 import { flushCurrentPlotTaskEditorState_ACU, loadCurrentPlotTaskToUI_ACU, renderPlotTaskList_ACU } from '../components/plot-editors';
 import { showToastr_ACU } from '../theme/toast';
 import { loopState_ACU, settings_ACU } from '../../service/runtime/state-manager';

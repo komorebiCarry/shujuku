@@ -3,7 +3,7 @@
  * 从 features/startup/01_ready_and_menu.js 迁移而来
  */
 
-import { MENU_ITEM_CONTAINER_ID_ACU } from '../../data/constants';
+import { MENU_ITEM_CONTAINER_ID_ACU } from '../../shared/data-constants';
 import { openAutoCardPopup_ACU } from '../pages/main-popup';
 import { SillyTavern_API_ACU, jQuery_API_ACU } from '../../service/runtime/state-manager';
 import { MENU_ITEM_ID_ACU, SCRIPT_ID_PREFIX_ACU } from '../../shared/constants';

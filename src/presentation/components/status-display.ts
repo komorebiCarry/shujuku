@@ -1,4 +1,4 @@
-import { DEFAULT_MERGE_SUMMARY_PROMPT_ACU } from '../../data/models/defaults-json.js';
+import { DEFAULT_MERGE_SUMMARY_PROMPT_ACU } from '../../shared/defaults-json.js';
 import { getCurrentWorldbookConfig_ACU } from '../../data/repositories/character-settings-repo';
 import { renderPromptSegments_ACU } from './plot-editors';
 import { renderImportTableSelector_ACU, renderManualTableSelector_ACU } from './table-selector';

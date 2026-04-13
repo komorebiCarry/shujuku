@@ -1,7 +1,7 @@
 // plot-editors.ts
 // 从 02_shared_editors_and_selectors.js 整体迁入
 
-import { DEFAULT_CHAR_CARD_PROMPT_ACU, DEFAULT_PLOT_PROMPT_GROUP_ACU, DEFAULT_PLOT_SETTINGS_ACU } from '../../data/models/defaults-json.js';
+import { DEFAULT_CHAR_CARD_PROMPT_ACU, DEFAULT_PLOT_PROMPT_GROUP_ACU, DEFAULT_PLOT_SETTINGS_ACU } from '../../shared/defaults-json.js';
 import { showToastr_ACU } from '../theme/toast';
 
 import { settings_ACU } from '../../service/runtime/state-manager';

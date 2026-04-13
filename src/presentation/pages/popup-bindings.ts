@@ -1,4 +1,4 @@
-import { DEFAULT_MERGE_SUMMARY_PROMPT_ACU, DEFAULT_PLOT_SETTINGS_ACU, TABLE_TEMPLATE_ACU } from '../../data/models/defaults-json.js';
+import { DEFAULT_MERGE_SUMMARY_PROMPT_ACU, DEFAULT_PLOT_SETTINGS_ACU, TABLE_TEMPLATE_ACU } from '../../shared/defaults-json.js';
 import { getCurrentWorldbookConfig_ACU } from '../../data/repositories/character-settings-repo';
 import { getDataIsolationHistory_ACU, removeDataIsolationHistory_ACU } from '../../data/repositories/isolation-repo';
 import { globalMeta_ACU, saveGlobalMeta_ACU } from '../../data/repositories/profile-repo';

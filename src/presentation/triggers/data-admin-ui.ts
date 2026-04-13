@@ -1,4 +1,4 @@
-import { DEFAULT_CHAR_CARD_PROMPT_ACU, TABLE_TEMPLATE_ACU } from '../../data/models/defaults-json.js';
+import { DEFAULT_CHAR_CARD_PROMPT_ACU, TABLE_TEMPLATE_ACU } from '../../shared/defaults-json.js';
 import { deriveTemplatePresetNameForImport_ACU, getCurrentTemplatePresetName_ACU, normalizeTemplatePresetSelectionValue_ACU, sanitizeFilenameComponent_ACU } from '../../data/repositories/template-preset-repo';
 import { renderPromptSegments_ACU } from '../components/plot-editors';
 import { getDefaultTemplateSnapshot_ACU, getTemplatePreset_ACU } from '../components/template-preset-ui';

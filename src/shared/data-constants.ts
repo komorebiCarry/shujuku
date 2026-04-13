@@ -5,7 +5,7 @@
  * 依赖 shared/constants.ts 中的 SCRIPT_ID_PREFIX_ACU。
  */
 
-import { SCRIPT_ID_PREFIX_ACU } from '../shared/constants';
+import { SCRIPT_ID_PREFIX_ACU } from './constants';
 
 // ═══════════════════════════════════════════════════════════════
 // 存储键常量

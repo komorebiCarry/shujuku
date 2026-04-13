@@ -3,7 +3,7 @@
 // ═══════════════════════════════════════════════════════════════
 
 // 存储键常量 + Profile 工具函数
-export * from './constants';
+export * from '../shared/data-constants';
 
 // 默认常量（简单部分）
 // 注意：defaults.ts 已从 tsconfig exclude（巨型 JSON 字符串导致 TS 解析误报），但 rollup 正常编译

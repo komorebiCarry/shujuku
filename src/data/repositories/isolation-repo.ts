@@ -5,9 +5,9 @@
  */
 
 import { logWarn_ACU } from '../../shared/utils';
-import { normalizeIsolationCode_ACU } from '../constants';
+import { normalizeIsolationCode_ACU } from '../../shared/data-constants';
 import { globalMeta_ACU, saveGlobalMeta_ACU, readProfileSettingsFromStorage_ACU, writeProfileSettingsToStorage_ACU, readProfileTemplateFromStorage_ACU, writeProfileTemplateToStorage_ACU, sanitizeSettingsForProfileSave_ACU } from './profile-repo';
-import { TABLE_TEMPLATE_ACU, DEFAULT_TABLE_TEMPLATE_ACU } from '../models/defaults-json.js';
+import { TABLE_TEMPLATE_ACU, DEFAULT_TABLE_TEMPLATE_ACU } from '../../shared/defaults-json.js';
 
 // 注入点：由 service 层在启动时设置
 let _settingsRef: () => any = () => ({});

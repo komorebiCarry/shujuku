@@ -19,12 +19,12 @@ import './shared/text-optimization';
 // ═══════════════════════════════════════════════════════════════
 // data 层
 // ═══════════════════════════════════════════════════════════════
-import './data/constants';
+import './shared/data-constants';
 import './data/storage/idb-import-temp';
 import './data/storage/tavern-storage';
 import './data/storage/chat-history';
-import './data/models/defaults';
-import './data/models/defaults-json.js';
+import './shared/defaults';
+import './shared/defaults-json.js';
 import './data/storage/config-storage';
 import './data/repositories/profile-repo';
 import './data/repositories/isolation-repo';

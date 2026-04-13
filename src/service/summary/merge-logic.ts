@@ -1,7 +1,7 @@
 // merge-logic.ts
 
 
-import { DEFAULT_CHAR_CARD_PROMPT_ACU, DEFAULT_MERGE_SUMMARY_PROMPT_ACU } from '../../data/models/defaults-json.js';
+import { DEFAULT_CHAR_CARD_PROMPT_ACU, DEFAULT_MERGE_SUMMARY_PROMPT_ACU } from '../../shared/defaults-json.js';
 import { showToastr_ACU } from '../runtime/toast-service';
 import { ACU_TOAST_CATEGORY_ACU } from '../../shared/constants';
 import { handleApiResponse_ACU } from '../ai/prompt-builder';

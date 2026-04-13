@@ -8,7 +8,7 @@
 /**
  * 清洗聊天文件名：去除路径前缀和扩展名后缀
  */
-import { TABLE_TEMPLATE_ACU, _set_TABLE_TEMPLATE_ACU} from '../data/models/defaults-json.js';
+import { TABLE_TEMPLATE_ACU, _set_TABLE_TEMPLATE_ACU} from './defaults-json.js';
 import { saveCurrentProfileTemplate_ACU } from '../data/repositories/profile-repo';
 import { TABLE_ORDER_FIELD_ACU } from '../service/runtime/state-manager';
 import { getCurrentChatTemplateScopeState_ACU, migrateLegacyTemplateScopeForCurrentChat_ACU } from '../service/template/chat-scope';

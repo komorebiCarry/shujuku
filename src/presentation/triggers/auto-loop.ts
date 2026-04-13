@@ -5,7 +5,7 @@
  */
 
 import { showToastr_ACU } from '../../service/runtime/toast-service';
-import { DEFAULT_PLOT_SETTINGS_ACU } from '../../data/models/defaults-json.js';
+import { DEFAULT_PLOT_SETTINGS_ACU } from '../../shared/defaults-json.js';
 import { SillyTavern_API_ACU, loopState_ACU, planningGuard_ACU, settings_ACU } from '../../service/runtime/state-manager';
 import { ensureLoopPromptsArray_ACU } from '../../service/plot/plot-logic';
 import { logDebug_ACU, logError_ACU, logWarn_ACU } from '../../shared/utils';

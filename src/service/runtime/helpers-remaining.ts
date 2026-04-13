@@ -1,4 +1,4 @@
-import { DEFAULT_PLOT_SETTINGS_ACU } from '../../data/models/defaults-json.js';
+import { DEFAULT_PLOT_SETTINGS_ACU } from '../../shared/defaults-json.js';
 import { deriveTemplatePresetNameForImport_ACU } from '../../data/repositories/template-preset-repo';
 import { currentPlotTaskEditorId_ACU , _set_currentPlotTaskEditorId_ACU} from './state-manager';
 import { showToastr_ACU } from '../runtime/toast-service';

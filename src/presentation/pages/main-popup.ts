@@ -1,7 +1,7 @@
 // main-popup.ts
 // 从 05_main_popup.js 整体迁入
 
-import { DEFAULT_AUTO_UPDATE_FREQUENCY_ACU, DEFAULT_AUTO_UPDATE_THRESHOLD_ACU, DEFAULT_AUTO_UPDATE_TOKEN_THRESHOLD_ACU } from '../../data/models/defaults';
+import { DEFAULT_AUTO_UPDATE_FREQUENCY_ACU, DEFAULT_AUTO_UPDATE_THRESHOLD_ACU, DEFAULT_AUTO_UPDATE_TOKEN_THRESHOLD_ACU } from '../../shared/defaults';
 import { DEFAULT_TEMPLATE_PRESET_OPTION_VALUE_ACU } from '../../data/repositories/template-preset-repo';
 import { showToastr_ACU } from '../theme/toast';
 import { coreApisAreReady_ACU, currentChatFileIdentifier_ACU, $popupInstance_ACU, _set_$popupInstance_ACU} from '../../service/runtime/state-manager';

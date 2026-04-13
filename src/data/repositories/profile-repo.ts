@@ -6,9 +6,9 @@
 
 import { safeJsonParse_ACU, safeJsonStringify_ACU } from '../../shared/json-helpers';
 import { logWarn_ACU } from '../../shared/utils';
-import { STORAGE_KEY_GLOBAL_META_ACU, normalizeIsolationCode_ACU, getProfileSettingsKey_ACU, getProfileTemplateKey_ACU } from '../constants';
+import { STORAGE_KEY_GLOBAL_META_ACU, normalizeIsolationCode_ACU, getProfileSettingsKey_ACU, getProfileTemplateKey_ACU } from '../../shared/data-constants';
 import { getConfigStorage_ACU } from '../storage/config-storage';
-import { TABLE_TEMPLATE_ACU } from '../models/defaults-json.js';
+import { TABLE_TEMPLATE_ACU } from '../../shared/defaults-json.js';
 
 // 注入点：由 service 层在启动时设置
 let _settingsRef: () => any = () => ({});

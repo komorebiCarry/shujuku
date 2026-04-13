@@ -1,5 +1,5 @@
-import { DEFAULT_CHAR_CARD_PROMPT_ACU } from '../../data/models/defaults-json.js';
-import { AUTO_UPDATE_FLOOR_INCREASE_DELAY_ACU } from '../../data/models/defaults';
+import { DEFAULT_CHAR_CARD_PROMPT_ACU } from '../../shared/defaults-json.js';
+import { AUTO_UPDATE_FLOOR_INCREASE_DELAY_ACU } from '../../shared/defaults';
 import { updateCardUpdateStatusDisplay_ACU } from '../components/update-status-display';
 import { getCharCardPromptFromUI_ACU, isAutoUpdatingCard_ACU, manualExtraHint_ACU, newMessageDebounceTimer_ACU, renderPromptSegments_ACU, wasStoppedByUser_ACU , _set_isAutoUpdatingCard_ACU, _set_manualExtraHint_ACU, _set_newMessageDebounceTimer_ACU} from '../components/plot-editors';
 import { ACU_TOAST_CATEGORY_ACU, showToastr_ACU } from '../theme/toast';

@@ -1,5 +1,5 @@
-import { STORAGE_KEY_TEMPLATE_PRESETS_ACU } from '../../data/constants';
-import { DEFAULT_TABLE_TEMPLATE_ACU, TABLE_TEMPLATE_ACU , _set_TABLE_TEMPLATE_ACU} from '../../data/models/defaults-json.js';
+import { STORAGE_KEY_TEMPLATE_PRESETS_ACU } from '../../shared/data-constants';
+import { DEFAULT_TABLE_TEMPLATE_ACU, TABLE_TEMPLATE_ACU , _set_TABLE_TEMPLATE_ACU} from '../../shared/defaults-json.js';
 import { saveCurrentProfileTemplate_ACU } from '../../data/repositories/profile-repo';
 import { DEFAULT_TEMPLATE_PRESET_OPTION_VALUE_ACU, getCurrentTemplatePresetName_ACU, isDefaultTemplatePresetSelection_ACU, normalizeTemplatePresetSelectionValue_ACU, persistCurrentTemplatePresetName_ACU } from '../../data/repositories/template-preset-repo';
 import { getConfigStorage_ACU } from '../../data/storage/tavern-storage';

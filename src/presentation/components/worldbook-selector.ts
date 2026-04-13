@@ -1,5 +1,5 @@
-import { DEFAULT_PLOT_SETTINGS_ACU } from '../../data/models/defaults-json.js';
-import { buildDefaultPlotWorldbookConfig_ACU } from '../../data/models/defaults';
+import { DEFAULT_PLOT_SETTINGS_ACU } from '../../shared/defaults-json.js';
+import { buildDefaultPlotWorldbookConfig_ACU } from '../../shared/defaults';
 import { getCurrentWorldbookConfig_ACU } from '../../data/repositories/character-settings-repo';
 import { settings_ACU } from '../../service/runtime/state-manager';
 import { saveSettings_ACU } from '../../service/settings/settings-service';

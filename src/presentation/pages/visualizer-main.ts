@@ -2,7 +2,7 @@
  * presentation/pages/visualizer-main.ts — 可视化编辑器主区域 + 保存
  * 从 visualizer.ts 拆出
  */
-import { TABLE_TEMPLATE_ACU } from '../../data/models/defaults-json.js';
+import { TABLE_TEMPLATE_ACU } from '../../shared/defaults-json.js';
 import { isDefaultTemplatePresetSelection_ACU, normalizeTemplatePresetSelectionValue_ACU } from '../../data/repositories/template-preset-repo';
 import { getOrderedSheetKeys_ACU } from './visualizer-sidebar';
 import { showToastr_ACU } from '../theme/toast';

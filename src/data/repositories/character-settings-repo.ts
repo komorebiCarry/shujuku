@@ -4,7 +4,7 @@
 // ═══════════════════════════════════════════════════════════════
 
 import { logDebug_ACU, deepMerge_ACU } from '../../shared/utils';
-import { defaultWorldbookConfig_ACU } from '../models/defaults';
+import { defaultWorldbookConfig_ACU } from '../../shared/defaults';
 import { globalMeta_ACU } from './profile-repo';
 
 // 注入点：由 service 层在启动时设置

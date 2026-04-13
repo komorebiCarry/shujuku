@@ -10,7 +10,7 @@
  */
 
 import { logError_ACU } from '../../shared/utils';
-import { normalizeIsolationCode_ACU, getProfileSettingsKey_ACU } from '../constants';
+import { normalizeIsolationCode_ACU, getProfileSettingsKey_ACU } from '../../shared/data-constants';
 import { globalMeta_ACU, saveGlobalMeta_ACU, sanitizeSettingsForProfileSave_ACU } from '../repositories/profile-repo';
 import { addDataIsolationHistory_ACU, normalizeDataIsolationHistory_ACU } from '../repositories/isolation-repo';
 

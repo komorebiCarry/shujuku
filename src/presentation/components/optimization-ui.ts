@@ -1,4 +1,4 @@
-import { DEFAULT_PLOT_SETTINGS_ACU } from '../../data/models/defaults-json.js';
+import { DEFAULT_PLOT_SETTINGS_ACU } from '../../shared/defaults-json.js';
 import { activePlotEditorSettings_ACU, buildDefaultPlotPromptGroup_ACU, currentEditablePlotPresetState_ACU, currentPlotTaskEditorId_ACU, ensurePlotPromptGroup_ACU , _set_currentEditablePlotPresetState_ACU, _set_activePlotEditorSettings_ACU, _set_currentPlotTaskEditorId_ACU} from './plot-editors';
 import { showToastr_ACU } from '../theme/toast';
 import { SillyTavern_API_ACU, jQuery_API_ACU, toastr_API_ACU, $popupInstance_ACU, currentChatFileIdentifier_ACU, settings_ACU } from '../../service/runtime/state-manager';

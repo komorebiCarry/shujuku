@@ -1,4 +1,4 @@
-import { DEFAULT_CHAR_CARD_PROMPT_ACU, DEFAULT_MERGE_SUMMARY_PROMPT_ACU } from '../../data/models/defaults-json.js';
+import { DEFAULT_CHAR_CARD_PROMPT_ACU, DEFAULT_MERGE_SUMMARY_PROMPT_ACU } from '../../shared/defaults-json.js';
 import { abortAllActiveRequests_ACU, getCharCardPromptFromUI_ACU, isAutoUpdatingCard_ACU, wasStoppedByUser_ACU , _set_isAutoUpdatingCard_ACU, _set_wasStoppedByUser_ACU} from '../components/plot-editors';
 import { ACU_TOAST_CATEGORY_ACU, showToastr_ACU } from '../theme/toast';
 import { callCustomOpenAI_ACU, handleApiResponse_ACU } from '../../service/ai/prompt-builder';

@@ -6,7 +6,7 @@ import { _injectIsolationRepoDeps } from '../../data/repositories/isolation-repo
 import { _injectProfileRepoDeps } from '../../data/repositories/profile-repo';
 import { _injectTableRepoDeps } from '../../data/repositories/table-repo';
 
-import { DEFAULT_PLOT_SETTINGS_ACU } from '../../data/models/defaults-json.js';
+import { DEFAULT_PLOT_SETTINGS_ACU } from '../../shared/defaults-json.js';
 import { addAutoCardMenuItem_ACU } from './startup';
 import { newMessageDebounceTimer_ACU, _set_newMessageDebounceTimer_ACU} from '../../service/runtime/state-manager';
 import { showToastr_ACU } from '../../service/runtime/toast-service';
