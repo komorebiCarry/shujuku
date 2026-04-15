@@ -1,7 +1,9 @@
 import { DEFAULT_PLOT_SETTINGS_ACU } from '../../shared/defaults-json.js';
 import { buildDefaultPlotWorldbookConfig_ACU } from '../../shared/defaults';
 import { getCurrentWorldbookConfig_ACU } from '../../service/settings/settings-service';
-import { settings_ACU, jQuery_API_ACU, TavernHelper_API_ACU } from '../../service/runtime/state-manager';
+import { jQuery_API_ACU } from '../../shared/host-api';
+import { getCharLorebooks_ACU } from '../../data/gateways/worldbook-gateway';
+import { settings_ACU } from '../../service/runtime/state-manager';
 import { saveSettingsAndNotify_ACU } from './settings-ui-helpers';
 import { getLorebookEntriesByNames_ACU, getWorldbookNames_ACU } from '../../service/worldbook/pipeline';
 import { SCRIPT_ID_PREFIX_ACU } from '../../shared/constants';
@@ -95,7 +97,7 @@ import { $popupInstance_ACU } from '../state/ui-refs';
       let bookNames = [];
 
       if (source === 'character') {
-          const charLorebooks = await TavernHelper_API_ACU.getCharLorebooks({ type: 'all' });
+        const charLorebooks = await getCharLorebooks_ACU({ type: 'all' });
           if (charLorebooks.primary) bookNames.push(charLorebooks.primary);
           if (charLorebooks.additional?.length) bookNames.push(...charLorebooks.additional);
       } else if (source === 'manual') {
@@ -275,7 +277,7 @@ import { $popupInstance_ACU } from '../state/ui-refs';
       return state.groups.find(group => String(group.bookName) === String(bookName)) || null;
   }
 
-  function findLazyWorldbookEntryGroupElement_ACU($list, bookName) {
+  function findLazyWorldbookEntryGroupElement_ACU($list: JQuery<HTMLElement>, bookName) {
       if (!$list || !$list.length) return jQuery_API_ACU();
       return $list.find('.qrf_worldbook_entry_group').filter(function() {
           return String(jQuery_API_ACU(this).data('book-name') || '') === String(bookName);
@@ -465,7 +467,7 @@ import { $popupInstance_ACU } from '../state/ui-refs';
       return String(v ?? '').trim().toLowerCase();
   }
 
-  export function applyWorldbookSelectFilter_ACU($select, rawQuery) {
+  export function applyWorldbookSelectFilter_ACU($select: JQuery<HTMLElement>, rawQuery) {
       if (!$select || !$select.length) return;
       const q = normalizeFilterText_ACU(rawQuery);
       const currentVal = String($select.val() ?? '');
@@ -479,7 +481,7 @@ import { $popupInstance_ACU } from '../state/ui-refs';
       });
   }
 
-  export function applyWorldbookListFilter_ACU($listContainer, rawQuery) {
+  export function applyWorldbookListFilter_ACU($listContainer: JQuery<HTMLElement>, rawQuery) {
       if (!$listContainer || !$listContainer.length) return;
       const q = normalizeFilterText_ACU(rawQuery);
       $listContainer.find('.qrf_worldbook_list_item').each(function() {
@@ -489,7 +491,7 @@ import { $popupInstance_ACU } from '../state/ui-refs';
       });
   }
 
-  export function applyWorldbookEntryFilter_ACU($entryList, rawQuery) {
+  export function applyWorldbookEntryFilter_ACU($entryList: JQuery<HTMLElement>, rawQuery) {
       if (!$entryList || !$entryList.length) return;
       if (applyLazyWorldbookEntryFilter_ACU($entryList, rawQuery)) return;
 
@@ -589,7 +591,7 @@ import { $popupInstance_ACU } from '../state/ui-refs';
       let bookNames = [];
 
       if (source === 'character') {
-          const charLorebooks = await TavernHelper_API_ACU.getCharLorebooks({ type: 'all' });
+        const charLorebooks = await getCharLorebooks_ACU({ type: 'all' });
           if (charLorebooks.primary) bookNames.push(charLorebooks.primary);
           if (charLorebooks.additional?.length) bookNames.push(...charLorebooks.additional);
       } else if (source === 'manual') {

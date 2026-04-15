@@ -1,8 +1,11 @@
 import { DEFAULT_CONTENT_OPTIMIZATION_PROMPT_GROUP_ACU } from '../../shared/defaults-json.js';
-import { SillyTavern_API_ACU, TavernHelper_API_ACU, currentJsonTableData_ACU, settings_ACU } from '../runtime/state-manager';
+import { currentJsonTableData_ACU, settings_ACU } from '../runtime/state-manager';
+import { getChatArray_ACU } from '../../data/gateways/chat-gateway';
 import { topLevelWindow_ACU } from '../../shared/env';
+import { getPersonaDescription_ACU, getCharDescription_ACU } from '../../data/gateways/host-state-gateway';
 import { applyOptimizations_ACU } from '../../shared/text-optimization';
 import { logDebug_ACU, logError_ACU, logWarn_ACU } from '../../shared/utils';
+import { saveOptimizationBaseToCache_ACU, loadOptimizationBaseFromCache_ACU } from '../../data/storage/optimization-cache-storage';
 import { formatOutlineTableForPlot_ACU, formatSummaryIndexForPlot_ACU, getLatestAIMessageContent_ACU, getPlotFromHistory_ACU, getWorldbookContentForPlot_ACU, parseCalcTags_ACU, parseIfBlockRecursive_ACU, parseMaxTags_ACU, parseMinTags_ACU, parseRandomTags_ACU, replaceCalcVariables_ACU, replaceMaxVariables_ACU, replaceMinVariables_ACU, replaceRandomVariables_ACU } from '../runtime/helpers-remaining';
 /**
  * service/optimization/content-optimization.ts — 正文优化服务逻辑
@@ -79,7 +82,7 @@ import { formatOutlineTableForPlot_ACU, formatSummaryIndexForPlot_ACU, getLatest
 
     try {
       // $7: 前文上下文（仅AI输出）
-      const chat = SillyTavern_API_ACU.chat || [];
+      const chat = getChatArray_ACU();
       const contextMessages = chat
         .filter(msg => !msg.is_user)
         .slice(-10) // 最近10条AI消息
@@ -93,11 +96,7 @@ import { formatOutlineTableForPlot_ACU, formatSummaryIndexForPlot_ACU, getLatest
 
     try {
       // $U: 用户设定描述 (persona_description)
-      const stContext = (topLevelWindow_ACU as any)?.SillyTavern?.getContext?.();
-      placeholders.$U = stContext?.powerUserSettings?.persona_description
-        || (topLevelWindow_ACU as any)?.power_user?.persona_description
-        || SillyTavern_API_ACU?.powerUserSettings?.persona_description
-        || '';
+      placeholders.$U = getPersonaDescription_ACU(topLevelWindow_ACU);
       logDebug_ACU('[正文优化] $U 用户设定:', placeholders.$U ? '成功' : '(空)');
     } catch (e) {
       logWarn_ACU('[正文优化] 获取用户设定失败:', e);
@@ -105,20 +104,7 @@ import { formatOutlineTableForPlot_ACU, formatSummaryIndexForPlot_ACU, getLatest
 
     try {
       // $C: 角色描述 (char_description)
-      const stContext = (topLevelWindow_ACU as any)?.SillyTavern?.getContext?.();
-      let character = null;
-      if (TavernHelper_API_ACU?.getCharData) {
-        character = TavernHelper_API_ACU.getCharData('current');
-      }
-      if (!character) {
-        character = SillyTavern_API_ACU?.characters?.[SillyTavern_API_ACU?.this_chid]
-          || stContext?.characters?.[stContext?.characterId]
-          || ((globalThis as any).characters?.[(globalThis as any).this_chid] ?? null);
-      }
-      placeholders.$C = character?.description
-        || character?.data?.description
-        || stContext?.name2_description
-        || '';
+      placeholders.$C = getCharDescription_ACU(topLevelWindow_ACU);
       logDebug_ACU('[正文优化] $C 角色描述:', placeholders.$C ? '成功' : '(空)');
     } catch (e) {
       logWarn_ACU('[正文优化] 获取角色描述失败:', e);
@@ -628,19 +614,7 @@ import { formatOutlineTableForPlot_ACU, formatSummaryIndexForPlot_ACU, getLatest
     };
 
     lastOptimizedMessageMeta_ACU = cache;
-
-    try {
-      const targetWindow = topLevelWindow_ACU || window;
-      (targetWindow as any).__ACU_LAST_OPTIMIZATION_BASE__ = cache;
-    } catch (error) {
-      logDebug_ACU('[正文优化] 写入浏览器侧正文优化基础缓存失败（window）:', error);
-    }
-
-    try {
-      localStorage.setItem('ACU_LAST_OPTIMIZATION_BASE', JSON.stringify(cache));
-    } catch (error) {
-      logDebug_ACU('[正文优化] 写入浏览器侧正文优化基础缓存失败（localStorage）:', error);
-    }
+    saveOptimizationBaseToCache_ACU(cache);
 
     return cache;
   }
@@ -650,28 +624,10 @@ import { formatOutlineTableForPlot_ACU, formatSummaryIndexForPlot_ACU, getLatest
       return lastOptimizedMessageMeta_ACU;
     }
 
-    try {
-      const targetWindow = topLevelWindow_ACU || window;
-      const windowCache = (targetWindow as any).__ACU_LAST_OPTIMIZATION_BASE__;
-      if (windowCache?.baseContent) {
-        lastOptimizedMessageMeta_ACU = windowCache;
-        return windowCache;
-      }
-    } catch (error) {
-      logDebug_ACU('[正文优化] 读取浏览器侧正文优化基础缓存失败（window）:', error);
-    }
-
-    try {
-      const raw = localStorage.getItem('ACU_LAST_OPTIMIZATION_BASE');
-      if (raw) {
-        const parsed = JSON.parse(raw);
-        if (parsed?.baseContent) {
-          lastOptimizedMessageMeta_ACU = parsed;
-          return parsed;
-        }
-      }
-    } catch (error) {
-      logDebug_ACU('[正文优化] 读取浏览器侧正文优化基础缓存失败（localStorage）:', error);
+    const cachedBase = loadOptimizationBaseFromCache_ACU();
+    if (cachedBase?.baseContent) {
+      lastOptimizedMessageMeta_ACU = cachedBase;
+      return cachedBase;
     }
 
     return null;

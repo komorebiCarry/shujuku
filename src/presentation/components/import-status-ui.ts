@@ -114,8 +114,8 @@ import { $popupInstance_ACU, $importTableSelector_ACU } from '../state/ui-refs';
       const $splitSizeInput = $popupInstance_ACU.find(`#${SCRIPT_ID_PREFIX_ACU}-import-split-size`);
       const $encodingSelect = $popupInstance_ACU.find(`#${SCRIPT_ID_PREFIX_ACU}-import-encoding`); // 新增
       const $statusDisplay = $popupInstance_ACU.find(`#${SCRIPT_ID_PREFIX_ACU}-import-status`);
-      const splitSize = parseInt($splitSizeInput.val(), 10);
-      const encoding = $encodingSelect.val() || 'UTF-8'; // 新增
+      const splitSize = parseInt($splitSizeInput.val() as string, 10);
+      const encoding = ($encodingSelect.val() as string) || 'UTF-8'; // 新增
 
       if (isNaN(splitSize) || splitSize <= 0) {
           showToastr_ACU('error', '请输入有效的字符分割数。', { acuToastCategory: ACU_TOAST_CATEGORY_ACU.ERROR });
@@ -124,7 +124,7 @@ import { $popupInstance_ACU, $importTableSelector_ACU } from '../state/ui-refs';
 
       const $fileInput = $popupInstance_ACU.find(`#${SCRIPT_ID_PREFIX_ACU}-hidden-file-input`);
       $fileInput.off('change.acu_import').on('change.acu_import', function(e) {
-          const file = e.target.files[0];
+          const file = (e.target as HTMLInputElement).files[0];
           if (!file) return;
 
           $statusDisplay.text('状态：正在读取和拆分文件...').css('color', '#61afef');

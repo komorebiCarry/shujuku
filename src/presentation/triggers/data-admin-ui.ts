@@ -4,7 +4,9 @@ import { renderPromptSegments_ACU } from '../components/plot-editors';
 import { getDefaultTemplateSnapshot_ACU, getTemplatePreset_ACU } from '../../service/template/template-preset-service';
 import { showToastr_ACU } from '../theme/toast';
 import { ACU_TOAST_CATEGORY_ACU } from '../../shared/constants';
-import { SillyTavern_API_ACU, TavernHelper_API_ACU, currentChatFileIdentifier_ACU, currentJsonTableData_ACU, getCurrentIsolationKey_ACU, settings_ACU } from '../../service/runtime/state-manager';
+import { getChatArray_ACU, saveChatToHost_ACU } from '../../data/gateways/chat-gateway';
+import { getLorebookEntries_ACU, deleteLorebookEntries_ACU, isWorldbookApiAvailable_ACU } from '../../data/gateways/worldbook-gateway';
+import { currentChatFileIdentifier_ACU, currentJsonTableData_ACU, getCurrentIsolationKey_ACU, settings_ACU } from '../../service/runtime/state-manager';
 import { $popupInstance_ACU } from '../state/ui-refs';
 import { saveSettingsAndNotify_ACU } from '../components/settings-ui-helpers';
 import { loadSettingsAndRefreshUI_ACU } from '../components/settings-ui-helpers';
@@ -169,7 +171,7 @@ import { buildDefaultExportConfig_ACU, ensureExportConfigDefaults_ACU, getInject
   export async function deleteLocalDataInChat_ACU(mode = 'current', startFloor = null, endFloor = null) {
       // mode: 'current' (删除当前标识的数据) | 'all' (删除所有数据)
       // startFloor/endFloor: 楼层范围 (1-based, null表示不限制)
-      const chat = SillyTavern_API_ACU.chat;
+      const chat = getChatArray_ACU();
       if (!chat || chat.length === 0) {
           showToastr_ACU('warning', '聊天记录为空，无法执行删除操作。');
           return;
@@ -271,7 +273,7 @@ import { buildDefaultExportConfig_ACU, ensureExportConfigDefaults_ACU, getInject
       }
 
       if (deletedCount > 0) {
-          await SillyTavern_API_ACU.saveChat();
+          await saveChatToHost_ACU();
           // 刷新内存和UI
           await loadOrCreateJsonTableFromChatHistory_ACU();
           await refreshMergedDataAndNotifyWithUI_ACU();
@@ -279,14 +281,14 @@ import { buildDefaultExportConfig_ACU, ensureExportConfigDefaults_ACU, getInject
           // [新增] 删除 WrapperStart 和 WrapperEnd 世界书条目
           try {
               const primaryLorebookName = await getInjectionTargetLorebook_ACU();
-              if (primaryLorebookName && TavernHelper_API_ACU) {
+              if (primaryLorebookName && isWorldbookApiAvailable_ACU()) {
                   const isoPrefix = getIsolationPrefix_ACU();
                   const WRAPPER_START_COMMENT = isoPrefix + 'TavernDB-ACU-WrapperStart';
                   const WRAPPER_END_COMMENT = isoPrefix + 'TavernDB-ACU-WrapperEnd';
                   const WRAPPER_START_IMPORT_COMMENT = isoPrefix + '外部导入-TavernDB-ACU-WrapperStart';
                   const WRAPPER_END_IMPORT_COMMENT = isoPrefix + '外部导入-TavernDB-ACU-WrapperEnd';
 
-                  const allEntries = await TavernHelper_API_ACU.getLorebookEntries(primaryLorebookName);
+                  const allEntries = await getLorebookEntries_ACU(primaryLorebookName);
                   const wrapperUidsToDelete = allEntries
                       .filter(e =>
                           e.comment === WRAPPER_START_COMMENT ||
@@ -297,7 +299,7 @@ import { buildDefaultExportConfig_ACU, ensureExportConfigDefaults_ACU, getInject
                       .map(e => e.uid);
 
                   if (wrapperUidsToDelete.length > 0) {
-                      await TavernHelper_API_ACU.deleteLorebookEntries(primaryLorebookName, wrapperUidsToDelete);
+                      await deleteLorebookEntries_ACU(primaryLorebookName, wrapperUidsToDelete);
                       logDebug_ACU('Deleted Wrapper entries: ' + wrapperUidsToDelete.length);
                   }
               }
@@ -308,7 +310,7 @@ import { buildDefaultExportConfig_ACU, ensureExportConfigDefaults_ACU, getInject
     // [新增] 删除 PersonsHeader 世界书条目
     try {
         const primaryLorebookName2 = await getInjectionTargetLorebook_ACU();
-        if (primaryLorebookName2 && TavernHelper_API_ACU) {
+        if (primaryLorebookName2 && isWorldbookApiAvailable_ACU()) {
             const isoPrefix2 = getIsolationPrefix_ACU();
             const PERSONS_HEADER_COMMENT = isoPrefix2 + 'TavernDB-ACU-PersonsHeader';
             const MEMORY_START_COMMENT = isoPrefix2 + 'TavernDB-ACU-MemoryStart';
@@ -317,7 +319,7 @@ import { buildDefaultExportConfig_ACU, ensureExportConfigDefaults_ACU, getInject
             const MEMORY_START_IMPORT_COMMENT = isoPrefix2 + '外部导入-TavernDB-ACU-MemoryStart';
             const MEMORY_END_IMPORT_COMMENT = isoPrefix2 + '外部导入-TavernDB-ACU-MemoryEnd';
 
-            const allEntries2 = await TavernHelper_API_ACU.getLorebookEntries(primaryLorebookName2);
+            const allEntries2 = await getLorebookEntries_ACU(primaryLorebookName2);
             const headerUidsToDelete = allEntries2
                 .filter(e =>
                     e.comment === PERSONS_HEADER_COMMENT ||
@@ -330,7 +332,7 @@ import { buildDefaultExportConfig_ACU, ensureExportConfigDefaults_ACU, getInject
                 .map(e => e.uid);
 
             if (headerUidsToDelete.length > 0) {
-                await TavernHelper_API_ACU.deleteLorebookEntries(primaryLorebookName2, headerUidsToDelete);
+                await deleteLorebookEntries_ACU(primaryLorebookName2, headerUidsToDelete);
                 logDebug_ACU('Deleted PersonsHeader and Memory wrapper entries: ' + headerUidsToDelete.length);
             }
         }
@@ -518,10 +520,9 @@ import { buildDefaultExportConfig_ACU, ensureExportConfigDefaults_ACU, getInject
           return;
       }
 
-      const chat = SillyTavern_API_ACU.chat;
+      const chat = getChatArray_ACU();
       if (!chat || chat.length === 0) {
-          showToastr_ACU('error', '聊天记录为空，无法执行覆盖操作。');
-          return;
+          showToastr_ACU('error', '聊天记录为空，无法执行覆盖操作。');          return;
       }
 
       // 获取当前隔离标签
@@ -590,7 +591,7 @@ import { buildDefaultExportConfig_ACU, ensureExportConfigDefaults_ACU, getInject
           tagData.updateGroupKeys = tagData.modifiedKeys;
 
           // 保存聊天记录
-          await SillyTavern_API_ACU.saveChat();
+          await saveChatToHost_ACU();
 
           // 刷新内存和UI
           await loadOrCreateJsonTableFromChatHistory_ACU();

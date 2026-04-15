@@ -12,7 +12,8 @@ import { getConfigStorage_ACU } from '../../data/storage/tavern-storage';
 import { saveCurrentProfileTemplate_ACU } from '../../data/repositories/profile-repo';
 import { persistCurrentTemplatePresetName_ACU, saveSettings_ACU } from '../settings/settings-service';
 import { applyTemplateScopeForCurrentChat_ACU } from '../settings/settings-service';
-import { getCurrentIsolationKey_ACU, settings_ACU, SillyTavern_API_ACU } from '../runtime/state-manager';
+import { getCurrentIsolationKey_ACU, settings_ACU } from '../runtime/state-manager';
+import { saveChatToHost_ACU } from '../../data/gateways/chat-gateway';
 import { activateChatTemplatePresetSelection_ACU, buildChatSheetGuideDataFromTemplateObj_ACU, buildChatTemplatePresetLinkState_ACU, buildChatTemplateScopeStateFromCurrent_ACU, clearChatSheetGuideDataForIsolationKey_ACU, getCurrentChatTemplateScopeState_ACU, listChatTemplatePresetEntries_ACU, migrateLegacyTemplateScopeForCurrentChat_ACU, normalizeTemplateScopeIsolationKey_ACU, normalizeTemplateScopeMode_ACU, sanitizeChatSheetsObject_ACU, sanitizeTemplateSnapshotForChat_ACU, setCurrentChatTemplateScopeState_ACU, upsertChatTemplatePresetEntry_ACU } from '../template/chat-scope';
 import { refreshMergedDataAndNotify_ACU } from '../worldbook/pipeline';
 import { safeJsonParse_ACU, safeJsonStringify_ACU } from '../../shared/json-helpers';
@@ -283,9 +284,9 @@ export function persistTemplateScopeSelectionState_ACU(presetName, { source = 'u
         if (shouldSaveSettings) {
             saveSettings_ACU();
         }
-        if (shouldSaveChat && typeof SillyTavern_API_ACU?.saveChat === 'function') {
+        if (shouldSaveChat) {
             Promise.resolve()
-                .then(() => SillyTavern_API_ACU.saveChat())
+                .then(() => saveChatToHost_ACU())
                 .catch(error => logWarn_ACU('[TemplateScope] 保存聊天级模板状态失败:', error));
         }
     }

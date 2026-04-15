@@ -6,7 +6,9 @@
 
 import { showToastr_ACU } from '../theme/toast';
 import { DEFAULT_PLOT_SETTINGS_ACU } from '../../shared/defaults-json.js';
-import { SillyTavern_API_ACU, loopState_ACU, planningGuard_ACU, settings_ACU } from '../../service/runtime/state-manager';
+import { getChatArray_ACU, deleteLastMessage_ACU } from '../../data/gateways/chat-gateway';
+import { getCurrentCharacterFallback_ACU } from '../../data/gateways/host-state-gateway';
+import { loopState_ACU, planningGuard_ACU, settings_ACU } from '../../service/runtime/state-manager';
 import { ensureLoopPromptsArray_ACU } from '../../service/plot/plot-logic';
 import { logDebug_ACU, logError_ACU, logWarn_ACU } from '../../shared/utils';
 import { clickSendButton_ACU, setSendTextareaValue_ACU } from '../components/status-display';
@@ -147,16 +149,12 @@ export async function enterLoopRetryFlow_ACU({ loopSettings, shouldDeleteAiReply
     }
 
     if (shouldDeleteAiReply) {
-        const chat = SillyTavern_API_ACU.chat;
+        const chat = getChatArray_ACU();
         const last = chat?.length ? chat[chat.length - 1] : null;
         if (last && !last.is_user) {
             logDebug_ACU('[剧情推进] [重试] 删除缺失标签的AI楼层...');
             try {
-                if (typeof SillyTavern_API_ACU.deleteLastMessage === 'function') {
-                    await SillyTavern_API_ACU.deleteLastMessage();
-                } else if ((window as any).SillyTavern?.deleteLastMessage) {
-                    await (window as any).SillyTavern.deleteLastMessage();
-                }
+                await deleteLastMessage_ACU();
             } catch (e) {
                 logError_ACU('[剧情推进] 删除楼层失败:', e);
             }
@@ -200,7 +198,7 @@ export async function onLoopGenerationEnded_ACU() {
     if (!loopState_ACU.isLooping || !loopState_ACU.awaitingReply) return;
 
     const loopSettings = settings_ACU.plotSettings.loopSettings || DEFAULT_PLOT_SETTINGS_ACU.loopSettings;
-    const chat = SillyTavern_API_ACU.chat;
+    const chat = getChatArray_ACU();
     if (!chat || chat.length === 0) return;
 
     let lastMessage = chat[chat.length - 1];
@@ -212,7 +210,7 @@ export async function onLoopGenerationEnded_ACU() {
     if (lastMessage.is_user) {
         logWarn_ACU('[剧情推进] [Loop] 生成结束但最后一条是用户消息（无规划标记），等待2s后重试检测...');
         await new Promise(resolve => setTimeout(resolve, 2000));
-        const updatedChat = SillyTavern_API_ACU.chat;
+        const updatedChat = getChatArray_ACU();
         lastMessage = updatedChat?.length ? updatedChat[updatedChat.length - 1] : null;
     }
 
@@ -223,7 +221,7 @@ export async function onLoopGenerationEnded_ACU() {
         return;
     }
 
-    const activeChar = SillyTavern_API_ACU.characters?.[SillyTavern_API_ACU.this_chid];
+    const activeChar = getCurrentCharacterFallback_ACU();
     const activeCharName = activeChar?.name;
     if (activeCharName && lastMessage.name && lastMessage.name !== activeCharName) {
         logDebug_ACU(

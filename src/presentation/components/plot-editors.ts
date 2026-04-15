@@ -13,7 +13,7 @@ import { ensurePlotTasksCompat_ACU, getActivePlotEditorSettings_ACU, getPlotProm
 import { activePlotEditorSettings_ACU, currentPlotTaskEditorId_ACU, _set_currentPlotTaskEditorId_ACU, buildDefaultPlotPromptGroup_ACU, ensurePlotPromptGroup_ACU } from '../../service/plot/plot-state';
 import { $popupInstance_ACU, $charCardPromptSegmentsContainer_ACU, $plotPromptSegmentsContainer_ACU, $plotTaskListContainer_ACU, _assignUIPlaceholders_ACU } from '../state/ui-refs';
 import { DEFAULT_PLOT_SETTINGS_ACU } from '../../shared/defaults-json.js';
-import { jQuery_API_ACU } from '../../service/runtime/state-manager';
+import { jQuery_API_ACU } from '../../shared/host-api';
 
   export function renderPromptSegments_ACU(segments) {
       if (!$charCardPromptSegmentsContainer_ACU) return;
@@ -322,9 +322,9 @@ import { jQuery_API_ACU } from '../../service/runtime/state-manager';
 
       const taskNameRaw = $popupInstance_ACU.find(`#${SCRIPT_ID_PREFIX_ACU}-plot-task-name`).val();
       const taskExtractTagsRaw = $popupInstance_ACU.find(`#${SCRIPT_ID_PREFIX_ACU}-plot-extract-tags`).val();
-      const taskMinLengthRaw = parseInt($popupInstance_ACU.find(`#${SCRIPT_ID_PREFIX_ACU}-plot-min-length`).val(), 10);
-      const taskStageRaw = parseInt($popupInstance_ACU.find(`#${SCRIPT_ID_PREFIX_ACU}-plot-task-stage`).val(), 10);
-      const taskMaxRetriesRaw = parseInt($popupInstance_ACU.find(`#${SCRIPT_ID_PREFIX_ACU}-plot-task-max-retries`).val(), 10);
+      const taskMinLengthRaw = parseInt($popupInstance_ACU.find(`#${SCRIPT_ID_PREFIX_ACU}-plot-min-length`).val() as string, 10);
+      const taskStageRaw = parseInt($popupInstance_ACU.find(`#${SCRIPT_ID_PREFIX_ACU}-plot-task-stage`).val() as string, 10);
+      const taskMaxRetriesRaw = parseInt($popupInstance_ACU.find(`#${SCRIPT_ID_PREFIX_ACU}-plot-task-max-retries`).val() as string, 10);
       const updatedTask = normalizePlotTask_ACU({
           ...selectedTask,
           name: String(taskNameRaw || '').trim() || selectedTask.name || `剧情任务${selectedIndex + 1}`,

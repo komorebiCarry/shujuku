@@ -2,13 +2,13 @@
  * presentation/pages/visualizer-sidebar.ts — 可视化编辑器侧栏
  * 从 visualizer.ts 拆出
  */
-import { renderVisualizerMain_ACU } from './visualizer-main';
+import { renderVisualizerMain_ACU } from './visualizer-main-render';
 import { TABLE_ORDER_FIELD_ACU } from '../../shared/constants';
 import { escapeHtml_ACU } from '../../shared/html-helpers';
 import { applySheetOrderNumbers_ACU } from '../../shared/utils';
 import { getSortedSheetKeys_ACU } from '../../service/template/chat-scope';
 import { buildDefaultExportConfig_ACU } from '../../service/worldbook/injection-engine';
-import { jQuery_API_ACU } from '../../service/runtime/state-manager';
+import { jQuery_API_ACU } from '../../shared/host-api';
 import { _acuVisState } from './visualizer';
 
   export function getOrderedSheetKeys_ACU() {

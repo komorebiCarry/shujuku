@@ -2,7 +2,8 @@
 // 从 04_shared_helpers.js 迁入
 
 import { handleApiResponse_ACU } from './prompt-builder';
-import { SillyTavern_API_ACU, TavernHelper_API_ACU, settings_ACU } from '../runtime/state-manager';
+import { settings_ACU } from '../runtime/state-manager';
+import { isGenerateRawAvailable_ACU, generateRaw_ACU, sendConnectionManagerRequest_ACU } from '../../data/gateways/ai-gateway';
 import { logDebug_ACU, logWarn_ACU } from '../../shared/utils';
 
 export   async function callApi_ACU(messages, apiSettings, abortSignal = null) {
@@ -16,10 +17,10 @@ export   async function callApi_ACU(messages, apiSettings, abortSignal = null) {
     if (effectiveApiMode === 'tavern' || effectiveApiConfig.useMainApi) {
       // 使用主API或酒馆预设（流式传输）
       logDebug_ACU('[剧情推进] 通过酒馆主API发送请求（流式传输）...');
-      if (typeof TavernHelper_API_ACU.generateRaw !== 'function') {
+      if (!isGenerateRawAvailable_ACU()) {
         throw new Error('TavernHelper.generateRaw 函数不存在。请检查酒馆版本。');
       }
-      const response = await TavernHelper_API_ACU.generateRaw({
+      const response = await generateRaw_ACU({
         ordered_prompts: messages,
         should_stream: settings_ACU.streamingEnabled || false,
       });
@@ -114,13 +115,13 @@ export   async function callCustomOpenAI_ACU_Direct(messages) {
       // Duplicating API calling logic for safety and isolation
       if (settings_ACU.apiMode === 'tavern') {
           const profileId = settings_ACU.tavernProfile;
-          return await SillyTavern_API_ACU.ConnectionManagerRequestService.sendRequest(
+          return await sendConnectionManagerRequest_ACU(
                 profileId, messages, settings_ACU.apiConfig.max_tokens || 4096
           ).then(r => r.result.choices[0].message.content);
       } else {
           // Custom API（流式传输）
           if (settings_ACU.apiConfig.useMainApi) {
-             return await TavernHelper_API_ACU.generateRaw({ ordered_prompts: messages, should_stream: settings_ACU.streamingEnabled || false });
+             return await generateRaw_ACU({ ordered_prompts: messages, should_stream: settings_ACU.streamingEnabled || false });
           } else {
              const url = `/api/backends/chat-completions/generate`;
              const body = JSON.stringify({

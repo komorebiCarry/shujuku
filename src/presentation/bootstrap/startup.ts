@@ -5,7 +5,7 @@
 
 import { MENU_ITEM_CONTAINER_ID_ACU } from '../../shared/data-constants';
 import { openAutoCardPopup_ACU } from '../pages/main-popup';
-import { SillyTavern_API_ACU, jQuery_API_ACU } from '../../service/runtime/state-manager';
+import { SillyTavern_API_ACU, jQuery_API_ACU } from '../../shared/host-api';
 import { MENU_ITEM_ID_ACU, SCRIPT_ID_PREFIX_ACU } from '../../shared/constants';
 import { logDebug_ACU, logError_ACU } from '../../shared/utils';
 

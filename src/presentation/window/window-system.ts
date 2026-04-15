@@ -6,7 +6,7 @@ import { applyACUThemeToDocument_ACU, injectACUWindowStyles, syncACUThemeButtons
 import { SCRIPT_ID_PREFIX_ACU } from '../../shared/constants';
 import { topLevelWindow_ACU } from '../../shared/env';
 import { safeJsonParse_ACU, safeJsonStringify_ACU } from '../../shared/json-helpers';
-import { jQuery_API_ACU } from '../../service/runtime/state-manager';
+import { jQuery_API_ACU } from '../../shared/host-api';
 
   export const ACU_WindowManager = {
     windows: new Map(), // id -> { $el, zIndex, ... }
@@ -365,19 +365,19 @@ import { jQuery_API_ACU } from '../../service/runtime/state-manager';
       let resizeType = '';
       let resizeStartX: number, resizeStartY: number, startWidth: number, startHeight: number, startLeft: number, startTop: number;
       
-      $window.find('.acu-window-resize-handle').on('mousedown', function(e: any) {
+      $window.find('.acu-window-resize-handle').on('mousedown', function(this: HTMLElement, e: any) {
         if (isMaximized) return;
         
         isResizing = true;
         resizeType = '';
-        if ($(this).hasClass('se')) resizeType = 'se';
-        else if ($(this).hasClass('e')) resizeType = 'e';
-        else if ($(this).hasClass('s')) resizeType = 's';
-        else if ($(this).hasClass('w')) resizeType = 'w';
-        else if ($(this).hasClass('n')) resizeType = 'n';
-        else if ($(this).hasClass('nw')) resizeType = 'nw';
-        else if ($(this).hasClass('ne')) resizeType = 'ne';
-        else if ($(this).hasClass('sw')) resizeType = 'sw';
+        if (jQuery_API_ACU(this).hasClass('se')) resizeType = 'se';
+        else if (jQuery_API_ACU(this).hasClass('e')) resizeType = 'e';
+        else if (jQuery_API_ACU(this).hasClass('s')) resizeType = 's';
+        else if (jQuery_API_ACU(this).hasClass('w')) resizeType = 'w';
+        else if (jQuery_API_ACU(this).hasClass('n')) resizeType = 'n';
+        else if (jQuery_API_ACU(this).hasClass('nw')) resizeType = 'nw';
+        else if (jQuery_API_ACU(this).hasClass('ne')) resizeType = 'ne';
+        else if (jQuery_API_ACU(this).hasClass('sw')) resizeType = 'sw';
         
         resizeStartX = e.clientX;
         resizeStartY = e.clientY;

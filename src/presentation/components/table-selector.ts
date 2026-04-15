@@ -7,7 +7,7 @@ import { escapeHtml_ACU } from '../../shared/html-helpers';
 import { parseTableTemplateJson_ACU } from '../../shared/utils';
 import { getSelectedManualSheetKeys_ACU } from '../triggers/settings-ui-sync';
 import { getSortedSheetKeys_ACU } from '../../service/template/chat-scope';
-import { jQuery_API_ACU } from '../../service/runtime/state-manager';
+import { jQuery_API_ACU } from '../../shared/host-api';
 import { $manualTableSelector_ACU, $importTableSelector_ACU } from '../state/ui-refs';
 
   export function renderManualTableSelector_ACU() {

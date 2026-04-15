@@ -8,7 +8,8 @@ import { getImportWorldbookTarget_ACU, updateImportStatusUI_ACU } from '../compo
 import { getImportSelectionFromUI_ACU } from '../components/table-selector';
 import { showToastr_ACU } from '../theme/toast';
 import { ACU_TOAST_CATEGORY_ACU, IMPORTED_ENTRY_PREFIX_ACU, getImportJsonStorageComment_ACU } from '../../shared/constants';
-import { TavernHelper_API_ACU, currentJsonTableData_ACU, settings_ACU, _set_currentJsonTableData_ACU} from '../../service/runtime/state-manager';
+import { getLorebookEntries_ACU, deleteLorebookEntries_ACU, setLorebookEntries_ACU, createLorebookEntries_ACU, getCurrentCharPrimaryLorebook_ACU, isWorldbookApiAvailable_ACU } from '../../data/gateways/worldbook-gateway';
+import { currentJsonTableData_ACU, settings_ACU, _set_currentJsonTableData_ACU} from '../../service/runtime/state-manager';
 import { saveSettingsAndNotify_ACU } from '../components/settings-ui-helpers';
 import { proceedWithCardUpdate_ACU } from './update-process';
 import { updateReadableLorebookEntry_ACU } from '../../service/worldbook/pipeline';
@@ -46,7 +47,7 @@ export   async function processImportedTxtAsUpdates_ACU() {
           return;
       }
       const importTarget = importTargetLorebook === 'character'
-          ? await TavernHelper_API_ACU.getCurrentCharPrimaryLorebook()
+        ? await getCurrentCharPrimaryLorebook_ACU()
           : importTargetLorebook;
       if (!importTarget) {
           showToastr_ACU('error', '无法注入：未找到实际导入目标世界书。');
@@ -218,7 +219,7 @@ export   async function processImportedTxtAsUpdates_ACU() {
       try {
           const IMPORT_PREFIX = '外部导入-';
           const isoPrefix = getIsolationPrefix_ACU();
-          const allTargetEntries = await TavernHelper_API_ACU.getLorebookEntries(importTarget);
+    const allTargetEntries = await getLorebookEntries_ACU(importTarget);
           
           // 从模板数据中提取所有表格的 entryName 和其他标识信息（用于清理自定义导出条目）
           const templateEntryNames = [];
@@ -277,7 +278,7 @@ export   async function processImportedTxtAsUpdates_ACU() {
           
           if (entriesToDelete.length > 0) {
               const uidsToDelete = entriesToDelete.map(e => e.uid);
-              await TavernHelper_API_ACU.deleteLorebookEntries(importTarget, uidsToDelete);
+        await deleteLorebookEntries_ACU(importTarget, uidsToDelete);
               logDebug_ACU(`[外部导入] Cleaned up ${uidsToDelete.length} old entries (non-import prefixed) from target worldbook.`);
               showToastr_ACU('info', `外部导入完成：已清理 ${uidsToDelete.length} 个旧数据库条目。`);
           }
@@ -350,7 +351,7 @@ export   async function clearImportedEntries_ACU(notify = true) {
     }
 
     try {
-        const allEntries = await TavernHelper_API_ACU.getLorebookEntries(targetLorebook);
+        const allEntries = await getLorebookEntries_ACU(targetLorebook);
         
         const prefixesToDelete = [
             '外部导入-', // Catches all new prefixed entries
@@ -363,7 +364,7 @@ export   async function clearImportedEntries_ACU(notify = true) {
             .map(entry => entry.uid);
 
         if (uidsToDelete.length > 0) {
-            await TavernHelper_API_ACU.deleteLorebookEntries(targetLorebook, uidsToDelete);
+        await deleteLorebookEntries_ACU(targetLorebook, uidsToDelete);
             logDebug_ACU(`Successfully deleted ${uidsToDelete.length} imported txt entries.`);
             if (notify) showToastr_ACU('success', `成功清除了 ${uidsToDelete.length} 个导入条目。`, { acuToastCategory: ACU_TOAST_CATEGORY_ACU.IMPORT });
         } else {
@@ -386,7 +387,7 @@ export   async function deleteImportedEntries_ACU() {
       }
 
       try {
-          const allEntries = await TavernHelper_API_ACU.getLorebookEntries(targetLorebook);
+          const allEntries = await getLorebookEntries_ACU(targetLorebook);
           
           // [修改] 根据隔离标识代码删除对应的条目
           const IMPORT_PREFIX = '外部导入-';
@@ -409,7 +410,7 @@ export   async function deleteImportedEntries_ACU() {
               .map(entry => entry.uid);
 
           if (uidsToDelete.length > 0) {
-              await TavernHelper_API_ACU.deleteLorebookEntries(targetLorebook, uidsToDelete);
+        await deleteLorebookEntries_ACU(targetLorebook, uidsToDelete);
               logDebug_ACU(`Successfully deleted ${uidsToDelete.length} imported entries from ${targetLorebook} (Isolation: ${settings_ACU.dataIsolationEnabled}).`);
               showToastr_ACU('success', `成功删除了 ${uidsToDelete.length} 个外部导入注入的条目。`, { acuToastCategory: ACU_TOAST_CATEGORY_ACU.IMPORT });
           } else {
@@ -428,9 +429,9 @@ export   async function deleteImportedEntries_ACU() {
 
 
 export   async function loadImportedJsonDataFromLorebook_ACU(targetLorebook, modeSuffix = '-Selected') {
-      if (!TavernHelper_API_ACU || !targetLorebook) return null;
+    if (!isWorldbookApiAvailable_ACU() || !targetLorebook) return null;
       const jsonStorageComment = getImportJsonStorageComment_ACU(modeSuffix);
-      const allEntries = await TavernHelper_API_ACU.getLorebookEntries(targetLorebook);
+      const allEntries = await getLorebookEntries_ACU(targetLorebook);
       const existingEntry = allEntries.find(entry => entry.comment === jsonStorageComment);
       if (!existingEntry || !existingEntry.content) return null;
       try {
@@ -443,9 +444,9 @@ export   async function loadImportedJsonDataFromLorebook_ACU(targetLorebook, mod
 
 
 export   async function saveImportedJsonDataToLorebook_ACU(targetLorebook, jsonData, modeSuffix = '-Selected') {
-      if (!TavernHelper_API_ACU || !targetLorebook || !jsonData) return false;
+      if (!isWorldbookApiAvailable_ACU() || !targetLorebook || !jsonData) return false;
       const jsonStorageComment = getImportJsonStorageComment_ACU(modeSuffix);
-      const allEntries = await TavernHelper_API_ACU.getLorebookEntries(targetLorebook);
+      const allEntries = await getLorebookEntries_ACU(targetLorebook);
       const usedOrders = buildUsedOrderSet_ACU(allEntries);
       const existingEntry = allEntries.find(entry => entry.comment === jsonStorageComment);
       const finalJsonString = JSON.stringify(jsonData, null, 2);
@@ -460,10 +461,10 @@ export   async function saveImportedJsonDataToLorebook_ACU(targetLorebook, jsonD
       };
 
       if (existingEntry) {
-          await TavernHelper_API_ACU.setLorebookEntries(targetLorebook, [{ ...newEntryData, uid: existingEntry.uid }]);
+          await setLorebookEntries_ACU(targetLorebook, [{ ...newEntryData, uid: existingEntry.uid }]);
           logDebug_ACU('[外部导入] Updated ImportedJsonData source entry in target lorebook.');
       } else {
-          await TavernHelper_API_ACU.createLorebookEntries(targetLorebook, [newEntryData]);
+          await createLorebookEntries_ACU(targetLorebook, [newEntryData]);
           logDebug_ACU('[外部导入] Created ImportedJsonData source entry in target lorebook.');
       }
       return true;
@@ -471,11 +472,11 @@ export   async function saveImportedJsonDataToLorebook_ACU(targetLorebook, jsonD
 
 
 export   async function deleteImportedJsonDataFromLorebook_ACU(targetLorebook, modeSuffix = '-Selected') {
-      if (!TavernHelper_API_ACU || !targetLorebook) return false;
+      if (!isWorldbookApiAvailable_ACU() || !targetLorebook) return false;
       const jsonStorageComment = getImportJsonStorageComment_ACU(modeSuffix);
-      const entriesNow = await TavernHelper_API_ACU.getLorebookEntries(targetLorebook);
+      const entriesNow = await getLorebookEntries_ACU(targetLorebook);
       const jsonEntry = entriesNow.find(e => e.comment === jsonStorageComment);
       if (!jsonEntry) return false;
-      await TavernHelper_API_ACU.deleteLorebookEntries(targetLorebook, [jsonEntry.uid]);
+      await deleteLorebookEntries_ACU(targetLorebook, [jsonEntry.uid]);
       return true;
   }

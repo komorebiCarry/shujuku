@@ -2,7 +2,9 @@
 
 import { DEFAULT_CHAR_CARD_PROMPT_ACU, DEFAULT_MERGE_SUMMARY_PROMPT_ACU } from '../../shared/defaults-json.js';
 import { handleApiResponse_ACU } from '../ai/prompt-builder';
-import { SillyTavern_API_ACU, currentJsonTableData_ACU, settings_ACU } from '../runtime/state-manager';
+import { currentJsonTableData_ACU, settings_ACU } from '../runtime/state-manager';
+import { sendConnectionManagerRequest_ACU, isGenerateRawAvailable_ACU, generateRaw_ACU } from '../../data/gateways/ai-gateway';
+import { getLastMessageIndex_ACU } from '../../data/gateways/chat-gateway';
 import { updateReadableLorebookEntry_ACU } from '../worldbook/pipeline';
 import { logDebug_ACU, logError_ACU, logWarn_ACU } from '../../shared/utils';
 import { saveIndependentTableToChatHistory_ACU } from '../table/table-service';
@@ -190,12 +192,14 @@ export async function executeAutoMergeBatch_ACU(
             const finalMessages = messagesToUse.map(m => ({ role: m.role.toLowerCase(), content: m.content }));
 
             if (settings_ACU.apiMode === 'tavern') {
-                const result = await SillyTavern_API_ACU.ConnectionManagerRequestService.sendRequest(settings_ACU.tavernProfile, finalMessages, settings_ACU.apiConfig.max_tokens || 4096);
+                const result = await sendConnectionManagerRequest_ACU(settings_ACU.tavernProfile, finalMessages, settings_ACU.apiConfig.max_tokens || 4096);
                 if (result && result.ok) aiResponseText = result.result.choices[0].message.content;
                 else throw new Error('API请求返回不成功状态');
             } else {
                 if (settings_ACU.apiConfig.useMainApi) {
-                    aiResponseText = await (SillyTavern_API_ACU as any).TavernHelper?.generateRaw?.({ ordered_prompts: finalMessages, should_stream: settings_ACU.streamingEnabled || false }) || '';
+                    aiResponseText = isGenerateRawAvailable_ACU()
+                        ? await generateRaw_ACU({ ordered_prompts: finalMessages, should_stream: settings_ACU.streamingEnabled || false })
+                        : '';
                 } else {
                     const res = await fetch(`/api/backends/chat-completions/generate`, {
                         method: 'POST',
@@ -302,7 +306,7 @@ export async function finalizeAutoMerge_ACU(
     });
 
     const keysToSave = [summaryKey];
-    await saveIndependentTableToChatHistory_ACU(SillyTavern_API_ACU.chat.length - 1, keysToSave, keysToSave);
+    await saveIndependentTableToChatHistory_ACU(getLastMessageIndex_ACU(), keysToSave, keysToSave);
     await updateReadableLorebookEntry_ACU(true);
 
     return { mergedRows: accumulatedSummary.length };

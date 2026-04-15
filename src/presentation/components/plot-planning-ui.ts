@@ -3,7 +3,8 @@
  * 负责：进度 toast、中止按钮事件绑定、根据 service 层结果弹 toast 通知
  */
 import { showToastr_ACU } from '../theme/toast';
-import { toastr_API_ACU, abortController_ACU, _set_isProcessing_Plot_ACU } from '../../service/runtime/state-manager';
+import { toastr_API_ACU } from '../../shared/host-api';
+import { abortController_ACU, _set_isProcessing_Plot_ACU } from '../../service/runtime/state-manager';
 import { ACU_TOAST_CATEGORY_ACU } from '../../shared/constants';
 import { runOptimizationLogic_ACU } from '../../service/runtime/helpers-remaining';
 import { logDebug_ACU, logWarn_ACU } from '../../shared/utils';

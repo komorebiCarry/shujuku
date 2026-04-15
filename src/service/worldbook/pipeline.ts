@@ -1,5 +1,8 @@
 import { getCurrentWorldbookConfig_ACU } from '../settings/settings-service';
-import { SillyTavern_API_ACU, TavernHelper_API_ACU, allChatMessages_ACU, coreApisAreReady_ACU, currentChatFileIdentifier_ACU, currentJsonTableData_ACU, getCurrentIsolationKey_ACU, settings_ACU, _set_currentJsonTableData_ACU, _set_allChatMessages_ACU} from '../runtime/state-manager';
+import { allChatMessages_ACU, coreApisAreReady_ACU, currentChatFileIdentifier_ACU, currentJsonTableData_ACU, getCurrentIsolationKey_ACU, settings_ACU, _set_currentJsonTableData_ACU, _set_allChatMessages_ACU} from '../runtime/state-manager';
+import { getLorebookEntries_ACU as gwGetLorebookEntries_ACU, setLorebookEntries_ACU as gwSetLorebookEntries_ACU, createLorebookEntries_ACU as gwCreateLorebookEntries_ACU, deleteLorebookEntries_ACU as gwDeleteLorebookEntries_ACU, listLorebooks_ACU, getWorldBooks_ACU as gwGetWorldBooks_ACU, isWorldbookApiAvailable_ACU } from '../../data/gateways/worldbook-gateway';
+import { getCharLorebooks_ACU, getChatMessages_ACU } from '../../data/gateways/character-gateway';
+import { getChatLength_ACU } from '../../data/gateways/chat-gateway';
 import { saveSettings_ACU } from '../settings/settings-service';
 import { getChatSheetGuideDataForIsolationKey_ACU, getSortedSheetKeys_ACU, materializeDataFromSheetGuide_ACU, reorderDataBySheetKeys_ACU } from '../template/chat-scope';
 import { getImportBatchPrefix_ACU, getImportStablePrefix_ACU } from '../../shared/constants';
@@ -132,7 +135,7 @@ export   async function updateReadableLorebookEntry_ACU(createIfNeeded = false, 
             const WRAPPER_START_COMMENT = isoPrefix + (isImport ? `${IMPORT_PREFIX}TavernDB-ACU-WrapperStart` : 'TavernDB-ACU-WrapperStart');
             const WRAPPER_END_COMMENT = isoPrefix + (isImport ? `${IMPORT_PREFIX}TavernDB-ACU-WrapperEnd` : 'TavernDB-ACU-WrapperEnd');
             
-            const entries = await TavernHelper_API_ACU.getLorebookEntries(primaryLorebookName);
+            const entries = await gwGetLorebookEntries_ACU(primaryLorebookName);
             const usedOrders = buildUsedOrderSet_ACU(entries);
             const db2Entry = entries.find(e => e.comment === READABLE_LOREBOOK_COMMENT);
             const templateObjForGlobalCfg = parseTableTemplateJson_ACU({ stripSeedRows: false });
@@ -171,7 +174,7 @@ export   async function updateReadableLorebookEntry_ACU(createIfNeeded = false, 
                 if (memoryEndOld) toDelete.push(memoryEndOld.uid);
 
                 if (toDelete.length > 0) {
-                    await TavernHelper_API_ACU.deleteLorebookEntries(primaryLorebookName, toDelete);
+                    await gwDeleteLorebookEntries_ACU(primaryLorebookName, toDelete);
                     logDebug_ACU(`Deleted ${toDelete.length} lorebook entries because database is empty/reset (readable + wrappers).`);
                 }
                 return; // 数据库为空时，不再继续创建或更新
@@ -203,7 +206,7 @@ export   async function updateReadableLorebookEntry_ACU(createIfNeeded = false, 
                         order: globalContentOrder,
                         prevent_recursion: true,
                     }, globalFixedIndexPlacement);
-                    await TavernHelper_API_ACU.setLorebookEntries(primaryLorebookName, [updatedDb2Entry]);
+                    await gwSetLorebookEntries_ACU(primaryLorebookName, [updatedDb2Entry]);
                     logDebug_ACU('Successfully updated the global readable lorebook entry.');
                 } else {
                     logDebug_ACU('Global readable lorebook entry is already up-to-date.');
@@ -218,7 +221,7 @@ export   async function updateReadableLorebookEntry_ACU(createIfNeeded = false, 
                     order: globalContentOrder,
                     prevent_recursion: true,
                 }, globalFixedIndexPlacement);
-                await TavernHelper_API_ACU.createLorebookEntries(primaryLorebookName, [newDb2Entry]);
+                await gwCreateLorebookEntries_ACU(primaryLorebookName, [newDb2Entry]);
                 logDebug_ACU('Global readable lorebook entry not found. Created a new one.');
             }
 
@@ -226,7 +229,7 @@ export   async function updateReadableLorebookEntry_ACU(createIfNeeded = false, 
             const wrapperStartEntry = entries.find(e => e.comment === WRAPPER_START_COMMENT);
             const wrapperStartContent = '<最新数据与记录>\n以下是在这个时间点，当前场景下剧情相关的最新数据与记录，你在进行剧情分析时必须以此最新的数据为准，以下数据与记录的优先级高于其他任何背景设定：\n\n';
             if (!wrapperStartEntry) {
-                await TavernHelper_API_ACU.createLorebookEntries(primaryLorebookName, [applyPlacementToEntry_ACU({
+                await gwCreateLorebookEntries_ACU(primaryLorebookName, [applyPlacementToEntry_ACU({
                     comment: WRAPPER_START_COMMENT,
                     content: wrapperStartContent,
                     keys: ['TavernDB-ACU-WrapperStart-Key'],
@@ -245,7 +248,7 @@ export   async function updateReadableLorebookEntry_ACU(createIfNeeded = false, 
                     getEntryOrderNumber_ACU(wrapperStartEntry) !== wrapperStartOrder ||
                     !isEntryPlacementMatched_ACU(wrapperStartEntry, globalFixedIndexPlacement);
                 if (wrapperStartNeedsUpdate) {
-                    await TavernHelper_API_ACU.setLorebookEntries(primaryLorebookName, [
+                    await gwSetLorebookEntries_ACU(primaryLorebookName, [
                         applyPlacementToEntry_ACU({
                             uid: wrapperStartEntry.uid,
                             content: wrapperStartContent,
@@ -274,7 +277,7 @@ export   async function updateReadableLorebookEntry_ACU(createIfNeeded = false, 
                 if (memoryEndEntry) memoryEntriesToDelete.push(memoryEndEntry.uid);
                 
                 if (memoryEntriesToDelete.length > 0) {
-                    await TavernHelper_API_ACU.deleteLorebookEntries(primaryLorebookName, memoryEntriesToDelete);
+                    await gwDeleteLorebookEntries_ACU(primaryLorebookName, memoryEntriesToDelete);
                     logDebug_ACU(`Deleted ${memoryEntriesToDelete.length} MemoryStart/MemoryEnd entries because summary table is empty.`);
                 }
             } else {
@@ -312,7 +315,7 @@ export   async function updateReadableLorebookEntry_ACU(createIfNeeded = false, 
                     return c.startsWith(SUMMARY_ENTRY_PREFIX2) || c.startsWith(SMALL_SUMMARY_PREFIX2);
                 });
                 if (summaryEntriesToReorder.length > 0) {
-                    await TavernHelper_API_ACU.setLorebookEntries(
+                    await gwSetLorebookEntries_ACU(
                         primaryLorebookName,
                         summaryEntriesToReorder.map(e => applyPlacementToEntry_ACU({ uid: e.uid, order: summaryDataOrder }, summaryFixedEntryPlacement))
                     );
@@ -320,7 +323,7 @@ export   async function updateReadableLorebookEntry_ACU(createIfNeeded = false, 
                 
                 if (!memoryStartEntry) {
                     // 创建新条目
-                    await TavernHelper_API_ACU.createLorebookEntries(primaryLorebookName, [applyPlacementToEntry_ACU({
+                    await gwCreateLorebookEntries_ACU(primaryLorebookName, [applyPlacementToEntry_ACU({
                             comment: MEMORY_START_COMMENT,
                             content: memoryStartContent,
                             keys: ['AM'],
@@ -336,7 +339,7 @@ export   async function updateReadableLorebookEntry_ACU(createIfNeeded = false, 
                         (getEntryOrderNumber_ACU(memoryStartEntry) !== memoryStartOrder) ||
                         !isEntryPlacementMatched_ACU(memoryStartEntry, summaryFixedIndexPlacement);
                     if (needsUpdate) {
-                        await TavernHelper_API_ACU.setLorebookEntries(primaryLorebookName, [{
+                        await gwSetLorebookEntries_ACU(primaryLorebookName, [{
                             ...applyPlacementToEntry_ACU({
                                 uid: memoryStartEntry.uid,
                                 content: memoryStartContent,
@@ -352,7 +355,7 @@ export   async function updateReadableLorebookEntry_ACU(createIfNeeded = false, 
 
                 // [新增] 创建 MemoryEnd 条目
                 if (!memoryEndEntry) {
-                    await TavernHelper_API_ACU.createLorebookEntries(primaryLorebookName, [applyPlacementToEntry_ACU({
+                    await gwCreateLorebookEntries_ACU(primaryLorebookName, [applyPlacementToEntry_ACU({
                             comment: MEMORY_END_COMMENT,
                             content: '</过往记忆>',
                             keys: ['AM'],
@@ -366,7 +369,7 @@ export   async function updateReadableLorebookEntry_ACU(createIfNeeded = false, 
                         (getEntryOrderNumber_ACU(memoryEndEntry) !== memoryEndOrder) ||
                         !isEntryPlacementMatched_ACU(memoryEndEntry, summaryFixedIndexPlacement);
                     if (needsUpdate) {
-                        await TavernHelper_API_ACU.setLorebookEntries(primaryLorebookName, [{
+                        await gwSetLorebookEntries_ACU(primaryLorebookName, [{
                             ...applyPlacementToEntry_ACU({
                                 uid: memoryEndEntry.uid,
                                 order: memoryEndOrder,
@@ -385,7 +388,7 @@ export   async function updateReadableLorebookEntry_ACU(createIfNeeded = false, 
             const wrapperEndEntry = entries.find(e => e.comment === WRAPPER_END_COMMENT);
             const wrapperEndContent = '</最新数据与记录>';
             if (!wrapperEndEntry) {
-                await TavernHelper_API_ACU.createLorebookEntries(primaryLorebookName, [applyPlacementToEntry_ACU({
+                await gwCreateLorebookEntries_ACU(primaryLorebookName, [applyPlacementToEntry_ACU({
                     comment: WRAPPER_END_COMMENT,
                     content: wrapperEndContent,
                     keys: ['TavernDB-ACU-WrapperEnd-Key'],
@@ -404,7 +407,7 @@ export   async function updateReadableLorebookEntry_ACU(createIfNeeded = false, 
                     getEntryOrderNumber_ACU(wrapperEndEntry) !== wrapperEndOrder ||
                     !isEntryPlacementMatched_ACU(wrapperEndEntry, globalFixedIndexPlacement);
                 if (wrapperEndNeedsUpdate) {
-                    await TavernHelper_API_ACU.setLorebookEntries(primaryLorebookName, [
+                    await gwSetLorebookEntries_ACU(primaryLorebookName, [
                         applyPlacementToEntry_ACU({
                             uid: wrapperEndEntry.uid,
                             content: wrapperEndContent,
@@ -428,7 +431,7 @@ export   async function deleteAllGeneratedEntries_ACU(targetLorebook = null) {
     if (!primaryLorebookName) return;
 
     try {
-        const allEntries = await TavernHelper_API_ACU.getLorebookEntries(primaryLorebookName);
+        const allEntries = await gwGetLorebookEntries_ACU(primaryLorebookName);
         
         // [修改] 根据隔离状态构建删除逻辑
         const isolationPrefix = getIsolationPrefix_ACU();
@@ -517,7 +520,7 @@ export   async function deleteAllGeneratedEntries_ACU(targetLorebook = null) {
             .map(entry => entry.uid);
 
         if (uidsToDelete.length > 0) {
-            await TavernHelper_API_ACU.deleteLorebookEntries(primaryLorebookName, uidsToDelete);
+            await gwDeleteLorebookEntries_ACU(primaryLorebookName, uidsToDelete);
             logDebug_ACU(`Successfully deleted ${uidsToDelete.length} generated database entries for new chat.`);
             
             // [新增] 清理 knownCustomEntryNames 中属于当前隔离环境的记录
@@ -607,19 +610,16 @@ export   async function refreshMergedDataAndNotify_ACU() {
 
 
 export   async function loadAllChatMessages_ACU() {
-    if (!coreApisAreReady_ACU || !TavernHelper_API_ACU) return;
+    if (!coreApisAreReady_ACU || !isWorldbookApiAvailable_ACU()) return;
     try {
-      const lastMessageId = TavernHelper_API_ACU.getLastMessageId
-        ? TavernHelper_API_ACU.getLastMessageId()
-        : SillyTavern_API_ACU.chat?.length
-        ? SillyTavern_API_ACU.chat.length - 1
-        : -1;
+      const chatLen = getChatLength_ACU();
+      const lastMessageId = chatLen > 0 ? chatLen - 1 : -1;
       if (lastMessageId < 0) {
         _set_allChatMessages_ACU([]);
         logDebug_ACU('No chat messages (ACU).');
         return;
       }
-      const messagesFromApi = await TavernHelper_API_ACU.getChatMessages(`0-${lastMessageId}`, {
+      const messagesFromApi = await getChatMessages_ACU(`0-${lastMessageId}`, {
         include_swipes: false,
       });
       if (messagesFromApi && messagesFromApi.length > 0) {
@@ -636,16 +636,10 @@ export   async function loadAllChatMessages_ACU() {
 
 
 export   async function getWorldbookNames_ACU() {
-      if (TavernHelper_API_ACU && typeof TavernHelper_API_ACU.getLorebooks === 'function') {
-          const bookNames = await Promise.resolve(TavernHelper_API_ACU.getLorebooks());
-          return (Array.isArray(bookNames) ? bookNames : [])
-              .map(name => String(name || '').trim())
-              .filter(Boolean);
-      }
-      if (SillyTavern_API_ACU && typeof SillyTavern_API_ACU.getWorldBooks === 'function') {
-          const books = await SillyTavern_API_ACU.getWorldBooks();
-          return (Array.isArray(books) ? books : [])
-              .map(book => String(book?.name || '').trim())
+      const bookNames = await listLorebooks_ACU();
+      if (Array.isArray(bookNames) && bookNames.length > 0) {
+          return bookNames
+              .map(name => String(typeof name === 'object' ? (name as any)?.name || '' : name || '').trim())
               .filter(Boolean);
       }
       return [];
@@ -655,18 +649,18 @@ export   async function getWorldbookNames_ACU() {
 export   async function getLorebookEntriesByNames_ACU(bookNames = []) {
       const uniqueNames = [...new Set((Array.isArray(bookNames) ? bookNames : []).map(name => String(name || '').trim()).filter(Boolean))];
       const entriesMap = {};
-      const canUseTavernHelper = TavernHelper_API_ACU && typeof TavernHelper_API_ACU.getLorebookEntries === 'function';
+      const canUseTavernHelper = isWorldbookApiAvailable_ACU();
       let fallbackBooks = null;
 
-      if (!canUseTavernHelper && SillyTavern_API_ACU && typeof SillyTavern_API_ACU.getWorldBooks === 'function') {
-          fallbackBooks = await SillyTavern_API_ACU.getWorldBooks();
+      if (!canUseTavernHelper) {
+          fallbackBooks = await gwGetWorldBooks_ACU();
       }
 
       for (const name of uniqueNames) {
           try {
               let entries = [];
               if (canUseTavernHelper) {
-                  entries = await TavernHelper_API_ACU.getLorebookEntries(name);
+                  entries = await gwGetLorebookEntries_ACU(name);
               } else if (Array.isArray(fallbackBooks)) {
                   const matchedBook = fallbackBooks.find(book => book?.name === name);
                   entries = matchedBook?.entries || [];
@@ -900,8 +894,8 @@ export   async function getCombinedWorldbookContent_ACU(initialScanTextOverride 
     const worldbookConfig = getCurrentWorldbookConfig_ACU();
     const excludeImportTaggedEntries = options?.excludeImportTaggedEntries === true;
 
-    if (!TavernHelper_API_ACU || !SillyTavern_API_ACU) {
-        logWarn_ACU('[ACU] TavernHelper or SillyTavern API not available, cannot get worldbook content.');
+    if (!isWorldbookApiAvailable_ACU()) {
+        logWarn_ACU('[ACU] Worldbook API not available, cannot get worldbook content.');
         return '';
     }
 
@@ -912,7 +906,7 @@ export   async function getCombinedWorldbookContent_ACU(initialScanTextOverride 
             bookNames = worldbookConfig.manualSelection || [];
         } else { // 'character' mode
             try {
-                const charLorebooks = await TavernHelper_API_ACU.getCharLorebooks({ type: 'all' });
+                const charLorebooks = await getCharLorebooks_ACU({ type: 'all' });
                 if (charLorebooks.primary) bookNames.push(charLorebooks.primary);
                 if (charLorebooks.additional?.length) bookNames.push(...charLorebooks.additional);
             } catch (e) {

@@ -3,7 +3,10 @@ import { abortAllActiveRequests_ACU, getCharCardPromptFromUI_ACU, isAutoUpdating
 import { showToastr_ACU } from '../theme/toast';
 import { ACU_TOAST_CATEGORY_ACU } from '../../shared/constants';
 import { callCustomOpenAI_ACU, handleApiResponse_ACU } from '../../service/ai/prompt-builder';
-import { SillyTavern_API_ACU, jQuery_API_ACU, TavernHelper_API_ACU, toastr_API_ACU, currentJsonTableData_ACU, settings_ACU } from '../../service/runtime/state-manager';
+import { getChatArray_ACU, getLastMessageIndex_ACU, stopGeneration_ACU } from '../../data/gateways/chat-gateway';
+import { sendConnectionManagerRequest_ACU, generateRaw_ACU } from '../../data/gateways/ai-gateway';
+import { jQuery_API_ACU, toastr_API_ACU } from '../../shared/host-api';
+import { currentJsonTableData_ACU, settings_ACU } from '../../service/runtime/state-manager';
 import { $popupInstance_ACU, $statusMessageSpan_ACU, $manualUpdateCardButton_ACU, $apiConfigAreaDiv_ACU, $apiConfigSectionToggle_ACU, _assignUIPlaceholders_ACU } from '../state/ui-refs';
 import { checkAutoMergeTrigger_ACU, prepareAutoMergeBatches_ACU, executeAutoMergeBatch_ACU, finalizeAutoMerge_ACU } from '../../service/summary/merge-logic';
 import { processUpdates_ACU } from './update-process';
@@ -433,7 +436,7 @@ import { getEffectiveAutoUpdateThreshold_ACU } from '../../service/runtime/helpe
                   e.preventDefault();
                   _set_wasStoppedByUser_ACU(true);
                   abortAllActiveRequests_ACU();
-                  if (SillyTavern_API_ACU && typeof SillyTavern_API_ACU.stopGeneration === 'function') SillyTavern_API_ACU.stopGeneration();
+                  stopGeneration_ACU();
                   jQuery_API_ACU(this).closest('.toast').remove();
                   showToastr_ACU('warning', '合并操作已由用户终止。');
                   _set_isAutoUpdatingCard_ACU(false);
@@ -519,7 +522,7 @@ import { getEffectiveAutoUpdateThreshold_ACU } from '../../service/runtime/helpe
                           e.preventDefault();
                           _set_wasStoppedByUser_ACU(true);
                           abortAllActiveRequests_ACU();
-                          if (SillyTavern_API_ACU && typeof SillyTavern_API_ACU.stopGeneration === 'function') SillyTavern_API_ACU.stopGeneration();
+                          stopGeneration_ACU();
                           jQuery_API_ACU(this).closest('.toast').remove();
                           showToastr_ACU('warning', '合并操作已由用户终止。');
                           _set_isAutoUpdatingCard_ACU(false);
@@ -540,12 +543,12 @@ import { getEffectiveAutoUpdateThreshold_ACU } from '../../service/runtime/helpe
 
                   try {
                       if (settings_ACU.apiMode === 'tavern') {
-                           const result = await SillyTavern_API_ACU.ConnectionManagerRequestService.sendRequest(settings_ACU.tavernProfile, finalMessages, settings_ACU.apiConfig.max_tokens || 4096);
+                           const result = await sendConnectionManagerRequest_ACU(settings_ACU.tavernProfile, finalMessages, settings_ACU.apiConfig.max_tokens || 4096);
                           if (result && result.ok) aiResponseText = result.result.choices[0].message.content;
                           else throw new Error('API请求返回不成功状态');
                       } else {
                           if (settings_ACU.apiConfig.useMainApi) {
-                               aiResponseText = await TavernHelper_API_ACU.generateRaw({ ordered_prompts: finalMessages, should_stream: settings_ACU.streamingEnabled || false });
+                               aiResponseText = await generateRaw_ACU({ ordered_prompts: finalMessages, should_stream: settings_ACU.streamingEnabled || false });
                            } else {
                                 const res = await fetch(`/api/backends/chat-completions/generate`, {
                                     method: 'POST',
@@ -623,7 +626,7 @@ import { getEffectiveAutoUpdateThreshold_ACU } from '../../service/runtime/helpe
           }
 
           const keysToSave = [summaryKey];
-          await saveIndependentTableToChatHistory_ACU(SillyTavern_API_ACU.chat.length - 1, keysToSave, keysToSave);
+          await saveIndependentTableToChatHistory_ACU(getLastMessageIndex_ACU(), keysToSave, keysToSave);
           await updateReadableLorebookEntry_ACU(true);
           
           (topLevelWindow_ACU as any).AutoCardUpdaterAPI._notifyTableUpdate();
@@ -662,7 +665,7 @@ import { getEffectiveAutoUpdateThreshold_ACU } from '../../service/runtime/helpe
     if ($manualUpdateCardButton_ACU) $manualUpdateCardButton_ACU.prop('disabled', true).text('更新中...');
     
     await loadAllChatMessages_ACU();
-    const liveChat = SillyTavern_API_ACU.chat || [];
+    const liveChat = getChatArray_ACU();
     const threshold = getEffectiveAutoUpdateThreshold_ACU('manual_update');
     
     // 1. 严格按照“上下文层数”从最新消息往前读取，找出这个范围内的所有AI楼层

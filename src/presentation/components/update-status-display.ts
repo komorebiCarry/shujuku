@@ -1,4 +1,5 @@
-import { SillyTavern_API_ACU, currentJsonTableData_ACU, getCurrentIsolationKey_ACU, settings_ACU } from '../../service/runtime/state-manager';
+import { getChatArray_ACU } from '../../data/gateways/chat-gateway';
+import { currentJsonTableData_ACU, getCurrentIsolationKey_ACU, settings_ACU } from '../../service/runtime/state-manager';
 import { getSortedSheetKeys_ACU } from '../../service/template/chat-scope';
 import { SCRIPT_ID_PREFIX_ACU } from '../../shared/constants';
 import { escapeHtml_ACU } from '../../shared/html-helpers';
@@ -33,7 +34,7 @@ import { $popupInstance_ACU, $cardUpdateStatusDisplay_ACU } from '../state/ui-re
       return;
     }
 
-    const chatHistory = SillyTavern_API_ACU.chat || [];
+    const chatHistory = getChatArray_ACU();
     const totalMessages = chatHistory.filter(msg => !msg.is_user).length;
     $totalMessagesDisplay.text(`上下文总层数: ${totalMessages} (仅计算AI回复楼层)`);
 

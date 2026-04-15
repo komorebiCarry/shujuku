@@ -10,11 +10,8 @@
  * 后续逐步将各文件的 import 路径改为直接引用新位置。
  */
 
-// ═══ 从 shared/host-api.ts re-export ═══
-export {
-  SillyTavern_API_ACU, TavernHelper_API_ACU, jQuery_API_ACU, toastr_API_ACU,
-  _set_SillyTavern_API_ACU, _set_TavernHelper_API_ACU, _set_jQuery_API_ACU, _set_toastr_API_ACU
-} from '../../shared/host-api';
+// ═══ 宿主 API re-export 已移除 ═══
+// 消费方应直接从 shared/host-api import 宿主 API 符号
 
 // ═══ ui-refs re-export 已移除（P5）═══
 // 消费方应直接从 presentation/state/ui-refs import $xxx 变量
@@ -23,7 +20,7 @@ export {
 
 import { DEFAULT_CHAR_CARD_PROMPT_ACU, DEFAULT_PLOT_SETTINGS_ACU } from '../../shared/defaults-json.js';
 import { DEFAULT_AUTO_UPDATE_FREQUENCY_ACU, DEFAULT_AUTO_UPDATE_THRESHOLD_ACU, DEFAULT_AUTO_UPDATE_TOKEN_THRESHOLD_ACU } from '../../shared/defaults';
-import { SillyTavern_API_ACU } from '../../shared/host-api';
+import { getChatArray_ACU } from '../../data/gateways/chat-gateway';
 
 export const NEW_MESSAGE_DEBOUNCE_DELAY_ACU = 500;
 
@@ -70,7 +67,7 @@ export function isRecentUserSendIntent_ACU() {
 
 export function recordLastUserSend_ACU(messageId) {
   try {
-    const chat = SillyTavern_API_ACU?.chat;
+    const chat = getChatArray_ACU();
     const msg = (chat && typeof messageId === 'number') ? chat[messageId] : null;
     if (!msg || !msg.is_user) return;
     generationGate_ACU.lastUserMessageId = messageId;
@@ -101,7 +98,7 @@ export function shouldProcessPlotForGeneration_ACU(type, params, dryRun) {
   if (!settings_ACU?.plotSettings?.enabled) return false;
   if (isQuietLikeGeneration_ACU(type, params)) return false;
   if (params?.automatic_trigger) return false;
-  const chat = SillyTavern_API_ACU?.chat;
+  const chat = getChatArray_ACU();
   const id = generationGate_ACU.lastUserMessageId;
   const msg = (chat && typeof id === 'number') ? chat[id] : null;
   const hasFreshUserMessage = !!(msg && msg.is_user && id === (chat.length - 1) && isRecentUserSend_ACU());

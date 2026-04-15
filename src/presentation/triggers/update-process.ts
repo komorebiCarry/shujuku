@@ -6,7 +6,9 @@ import { getManualSelectionFromUI_ACU } from '../components/table-selector';
 import { showToastr_ACU } from '../theme/toast';
 import { ACU_TOAST_CATEGORY_ACU } from '../../shared/constants';
 import { callCustomOpenAI_ACU } from '../../service/ai/prompt-builder';
-import { SillyTavern_API_ACU, coreApisAreReady_ACU, currentJsonTableData_ACU, getCurrentIsolationKey_ACU, settings_ACU, toastr_API_ACU, _set_currentJsonTableData_ACU} from '../../service/runtime/state-manager';
+import { getChatArray_ACU, saveChatToHost_ACU } from '../../data/gateways/chat-gateway';
+import { toastr_API_ACU } from '../../shared/host-api';
+import { coreApisAreReady_ACU, currentJsonTableData_ACU, getCurrentIsolationKey_ACU, settings_ACU, _set_currentJsonTableData_ACU} from '../../service/runtime/state-manager';
 import { $statusMessageSpan_ACU } from '../state/ui-refs';
 import { checkAutoMergeTrigger_ACU, prepareAutoMergeBatches_ACU, executeAutoMergeBatch_ACU, finalizeAutoMerge_ACU } from '../../service/summary/merge-logic';
 import { getChatSheetGuideDataForIsolationKey_ACU } from '../../service/template/chat-scope';
@@ -43,7 +45,7 @@ export   async function processUpdates_ACU(indicesToUpdate, mode = 'auto', optio
       logDebug_ACU(`[${mode}] Processing ${indicesToUpdate.length} updates in ${batches.length} batches of size ${batchSize} (${isSummaryMode ? '总结表模式' : '标准表模式'}). Target Sheets: ${targetSheetKeys ? targetSheetKeys.length : 'All'}`);
 
       let overallSuccess = true;
-      const chatHistory = SillyTavern_API_ACU.chat || [];
+      const chatHistory = getChatArray_ACU();
 
           for (let i = 0; i < batches.length; i++) {
               const batchIndices = batches[i];
@@ -293,7 +295,7 @@ export   async function handleManualUpdate_ACU() {
             showToastr_ACU('error', '数据库未加载。');
             return;
         }
-        const liveChat = SillyTavern_API_ACU.chat;
+        const liveChat = getChatArray_ACU();
         if (!liveChat || liveChat.length === 0) {
             showToastr_ACU('warning', '聊天记录为空，无法更新。');
             return;
@@ -667,7 +669,7 @@ export   async function saveCurrentDataForTable_ACU(sheetKey) {
               return;
           }
           
-          const chat = SillyTavern_API_ACU.chat;
+          const chat = getChatArray_ACU();
           if (!chat || chat.length === 0) {
               logWarn_ACU('saveCurrentDataForTable_ACU: No chat history.');
               return;
@@ -706,7 +708,7 @@ export   async function saveCurrentDataForTable_ACU(sheetKey) {
                   }
                   
                   // 保存聊天记录
-                  await SillyTavern_API_ACU.saveChat();
+                  await saveChatToHost_ACU();
                   break;
               }
           }

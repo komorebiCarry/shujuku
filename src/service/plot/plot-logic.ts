@@ -7,7 +7,8 @@
 
 import { DEFAULT_PLOT_SETTINGS_ACU } from '../../shared/defaults-json.js';
 import { activePlotEditorSettings_ACU, buildDefaultPlotPromptGroup_ACU, currentEditablePlotPresetState_ACU, ensurePlotPromptGroup_ACU, _set_currentEditablePlotPresetState_ACU, _set_activePlotEditorSettings_ACU, _set_currentPlotTaskEditorId_ACU } from './plot-state';
-import { SillyTavern_API_ACU, currentChatFileIdentifier_ACU, settings_ACU } from '../runtime/state-manager';
+import { currentChatFileIdentifier_ACU, settings_ACU } from '../runtime/state-manager';
+import { getChatArray_ACU, saveChatToHost_ACU } from '../../data/gateways/chat-gateway';
 import { saveSettings_ACU } from '../settings/settings-service';
 import { buildChatPlotScopeStateFromSettings_ACU, clearCurrentChatPlotScopeState_ACU, getCurrentChatPlotScopeState_ACU, sanitizePlotSettingsSnapshotForChat_ACU, setCurrentChatPlotScopeState_ACU } from '../template/chat-scope';
 import { cleanChatName_ACU, logDebug_ACU, logWarn_ACU, normalizeExcludeRules_ACU, normalizeExtractRules_ACU, normalizeNonNegativeInteger_ACU, normalizePositiveInteger_ACU } from '../../shared/utils';
@@ -585,9 +586,8 @@ export function shouldSkipPlotIntercept_ACU(text, windowMs = 5000) {
 // ═══ 预设持久化（纯数据操作） ═══
 
 function queueSaveCurrentChatPlotScope_ACU(source = 'ui_plot_scope') {
-    if (typeof SillyTavern_API_ACU?.saveChat !== 'function') return;
     Promise.resolve()
-      .then(() => SillyTavern_API_ACU.saveChat())
+      .then(() => saveChatToHost_ACU())
       .catch(error => logWarn_ACU(`[剧情推进] 保存聊天级预设快照失败(${source}):`, error));
 }
 
@@ -622,9 +622,9 @@ export function persistPlotPresetSelectionState_ACU(presetName, { source = 'ui',
 
     if (save) {
       saveSettings_ACU();
-      if (shouldSaveChat && typeof SillyTavern_API_ACU?.saveChat === 'function') {
+      if (shouldSaveChat) {
         Promise.resolve()
-          .then(() => SillyTavern_API_ACU.saveChat())
+          .then(() => saveChatToHost_ACU())
           .catch(error => logWarn_ACU('[剧情推进] 保存聊天级预设快照失败:', error));
       }
     }
@@ -737,7 +737,7 @@ export function applyGlobalPlotPresetSelectionForEditor_ACU(presetName, { source
 // ═══ 优化相关 ═══
 
 export function getLastOptimizedMessageIndex_ACU() {
-    const chat = SillyTavern_API_ACU.chat || [];
+    const chat = getChatArray_ACU();
     const cachedBase = getLastOptimizationBase_ACU();
 
     if (cachedBase?.messageId != null) {

@@ -3,7 +3,7 @@
 // 从 data/repositories/table-repo.ts 迁入（消除 data 层越权）
 // ═══════════════════════════════════════════════════════════════
 
-import { SillyTavern_API_ACU } from '../../shared/host-api';
+import { getChatArray_ACU, saveChatToHost_ACU } from '../../data/gateways/chat-gateway';
 import { isSummaryOrOutlineTable_ACU, logDebug_ACU, logError_ACU, logWarn_ACU, parseTableTemplateJson_ACU } from '../../shared/utils';
 import { currentJsonTableData_ACU, getCurrentIsolationKey_ACU, settings_ACU, _set_currentJsonTableData_ACU } from '../runtime/state-manager';
 import { applyTemplateScopeForCurrentChat_ACU } from '../settings/settings-service';
@@ -18,6 +18,7 @@ import {
 } from '../template/chat-scope';
 import { deleteAllGeneratedEntries_ACU } from '../worldbook/pipeline';
 import { mergeAllIndependentTables_ACU } from '../runtime/helpers-remaining';
+import { cloneIsolatedData_ACU, writeIsolatedTagData_ACU, writeMessageIdentity_ACU, writeLegacyCompatData_ACU, writeLegacyStandardAndSummary_ACU, readIsolatedTagData_ACU, readLegacyIndependentData_ACU, isLegacyMatchForIsolation_ACU } from '../../data/repositories/chat-message-data-repo';
 
 /**
  * 保存独立表格数据到聊天记录。
@@ -35,7 +36,7 @@ export async function saveIndependentTableToChatHistory_ACU(
     return { saved: false, error: 'currentJsonTableData is null' };
   }
 
-  const chat = SillyTavern_API_ACU.chat;
+  const chat = getChatArray_ACU();
   if (!chat || chat.length === 0) {
     logError_ACU('Save failed: Chat history is empty.');
     return { saved: false, error: 'chat history is empty' };
@@ -81,7 +82,7 @@ export async function saveIndependentTableToChatHistory_ACU(
     logWarn_ACU('[SheetGuide] Failed to create sheet guide on first fill:', e);
   }
 
-  let isolatedData = targetMessage.TavernDB_ACU_IsolatedData ? JSON.parse(JSON.stringify(targetMessage.TavernDB_ACU_IsolatedData)) : {};
+  let isolatedData = cloneIsolatedData_ACU(targetMessage);
 
   if (!isolatedData[currentIsolationKey]) {
     isolatedData[currentIsolationKey] = {
@@ -125,18 +126,14 @@ export async function saveIndependentTableToChatHistory_ACU(
     logDebug_ACU(`[Merge Update Failed] No tables were modified for tag [${currentIsolationKey || '无标签'}]. Group keys NOT recorded: ${updateGroupKeys.join(', ')}`);
   }
 
-  isolatedData[currentIsolationKey] = currentTagData;
-  targetMessage.TavernDB_ACU_IsolatedData = isolatedData;
+  writeIsolatedTagData_ACU(targetMessage, currentIsolationKey, currentTagData);
 
-  if (settings_ACU.dataIsolationEnabled) {
-    targetMessage.TavernDB_ACU_Identity = settings_ACU.dataIsolationCode;
-  } else {
-    delete targetMessage.TavernDB_ACU_Identity;
-  }
+  writeMessageIdentity_ACU(targetMessage, {
+    enabled: settings_ACU.dataIsolationEnabled,
+    code: settings_ACU.dataIsolationCode,
+  });
 
-  targetMessage.TavernDB_ACU_IndependentData = independentData;
-  targetMessage.TavernDB_ACU_ModifiedKeys = currentTagData.modifiedKeys;
-  targetMessage.TavernDB_ACU_UpdateGroupKeys = currentTagData.updateGroupKeys;
+  writeLegacyCompatData_ACU(targetMessage, independentData, currentTagData.modifiedKeys, currentTagData.updateGroupKeys);
 
   logDebug_ACU(`Saved ${keysToSave.length} tables for tag [${currentIsolationKey || '无标签'}] to message at index ${finalIndex}. Actually modified: ${actuallyModifiedKeys.length} tables.`);
 
@@ -154,14 +151,9 @@ export async function saveIndependentTableToChatHistory_ACU(
     }
   });
 
-  if (Object.keys(legacyStandardData).some(k => k.startsWith('sheet_'))) {
-    targetMessage.TavernDB_ACU_Data = legacyStandardData;
-  }
-  if (Object.keys(legacySummaryData).some(k => k.startsWith('sheet_'))) {
-    targetMessage.TavernDB_ACU_SummaryData = legacySummaryData;
-  }
+  writeLegacyStandardAndSummary_ACU(targetMessage, legacyStandardData, legacySummaryData);
 
-  await SillyTavern_API_ACU.saveChat();
+  await saveChatToHost_ACU();
 
   await new Promise(resolve => setTimeout(resolve, 500));
 
@@ -172,7 +164,7 @@ export async function saveIndependentTableToChatHistory_ACU(
  * 检查当前聊天是否为首次初始化（无任何已有表格数据）。
  */
 export async function checkIfFirstTimeInit_ACU(): Promise<boolean> {
-  const chat = SillyTavern_API_ACU.chat;
+  const chat = getChatArray_ACU();
   if (!chat || chat.length === 0) return true;
 
   const currentIsolationKey = getCurrentIsolationKey_ACU();
@@ -181,22 +173,15 @@ export async function checkIfFirstTimeInit_ACU(): Promise<boolean> {
     const message = chat[i];
     if (message.is_user) continue;
 
-    if (message.TavernDB_ACU_IsolatedData && message.TavernDB_ACU_IsolatedData[currentIsolationKey]) {
-      const tagData = message.TavernDB_ACU_IsolatedData[currentIsolationKey];
-      if (tagData.independentData && Object.keys(tagData.independentData).some(k => k.startsWith('sheet_'))) {
-        return false;
-      }
+    const tagData = readIsolatedTagData_ACU(message, currentIsolationKey);
+    if (tagData?.independentData && Object.keys(tagData.independentData).some(k => k.startsWith('sheet_'))) {
+      return false;
     }
 
-    if (message.TavernDB_ACU_IndependentData) {
-      const msgIdentity = message.TavernDB_ACU_Identity;
-      let isMatch = false;
-      if (settings_ACU.dataIsolationEnabled) {
-        isMatch = (msgIdentity === settings_ACU.dataIsolationCode);
-      } else {
-        isMatch = !msgIdentity;
-      }
-      if (isMatch && Object.keys(message.TavernDB_ACU_IndependentData).some(k => k.startsWith('sheet_'))) {
+    const isolationConfig = { enabled: settings_ACU.dataIsolationEnabled, code: settings_ACU.dataIsolationCode };
+    if (isLegacyMatchForIsolation_ACU(message, isolationConfig)) {
+      const legacyIndep = readLegacyIndependentData_ACU(message);
+      if (legacyIndep && Object.keys(legacyIndep).some(k => k.startsWith('sheet_'))) {
         return false;
       }
     }
@@ -258,7 +243,7 @@ export async function loadOrCreateJsonTableFromChatHistory_ACU(): Promise<{
   _set_currentJsonTableData_ACU(null);
   logDebug_ACU('Attempting to load database from chat history...');
 
-  const chat = SillyTavern_API_ACU.chat;
+  const chat = getChatArray_ACU();
   applyTemplateScopeForCurrentChat_ACU();
   if (!chat || chat.length === 0) {
     logDebug_ACU('Chat history is empty. Initializing new database.');

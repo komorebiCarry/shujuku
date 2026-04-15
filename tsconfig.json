@@ -7,6 +7,9 @@
     "checkJs": false,
     "noEmit": true,
     "strict": false,
+    "strictBindCallApply": true,
+    "strictFunctionTypes": true,
+    "noImplicitThis": true,
     "esModuleInterop": true,
     "skipLibCheck": true,
     "forceConsistentCasingInFileNames": true,
@@ -19,7 +22,7 @@
       "@service/*": ["src/service/*"],
       "@presentation/*": ["src/presentation/*"]
     },
-    "types": ["function"],
+    "types": ["function", "jquery"],
     "typeRoots": ["./@types", "./node_modules/@types"]
   },
   "include": [

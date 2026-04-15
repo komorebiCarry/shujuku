@@ -268,7 +268,7 @@ function _acuShouldShowToast_ACU(type: any, title: any, message: any, options: a
   }
 }
 
-export function showToastr_ACU(type: any, message: any, titleOrOptions: any = {}, maybeOptions: any = {}) {
+export function showToastr_ACU(type: string, message: string, titleOrOptions: any = {}, maybeOptions: any = {}): JQuery<HTMLElement> | null {
   if (!toastr_API_ACU) {
     logDebug_ACU(`Toastr (${type}): ${message}`);
     return null;
@@ -283,5 +283,5 @@ export function showToastr_ACU(type: any, message: any, titleOrOptions: any = {}
     if (now - last < 1200) return null;
     _acuToastDedup_ACU.set(key, now);
   } catch (e) {}
-  return toastr_API_ACU[type](message, title, finalOptions);
+  return (toastr_API_ACU as unknown as Record<string, (message: string, title: string, options: Record<string, unknown>) => JQuery<HTMLElement> | null>)[type]?.(message, title, finalOptions) ?? null;
 }
