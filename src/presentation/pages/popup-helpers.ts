@@ -6,7 +6,7 @@ import { loopState_ACU, settings_ACU } from '../../service/runtime/state-manager
 import { saveSettingsAndNotify_ACU } from '../components/settings-ui-helpers';
 import { getCurrentChatPlotScopeState_ACU } from '../../service/template/chat-scope';
 import { SCRIPT_ID_PREFIX_ACU } from '../../shared/constants';
-import { escapeHtml_ACU } from '../../shared/html-helpers';
+import { escapeHtml_ACU, renderOption_ACU } from '../../shared/html-helpers';
 import { normalizeExcludeRules_ACU, normalizeExtractRules_ACU } from '../../shared/utils';
 import { DEFAULT_PRESET_OPTION_VALUE_ACU, applyGlobalPlotPresetSelectionForEditor_ACU, applyPlotPresetToSettings_ACU, ensureLoopPromptsArray_ACU, ensurePlotPromptsArray_ACU, ensurePlotTasksCompat_ACU, findPlotPresetByName_ACU, getActivePlotEditorSettings_ACU, getCurrentRuntimePlotPresetName_ACU, getLegacyPromptTextsFromPromptGroup_ACU, getPlotPresetBindingForChat_ACU, getPlotPromptContentByIdFromSettings_ACU, getPlotPromptGroupFromSource_ACU, normalizePlotPresetExcludeRules_ACU, normalizePlotPresetSelectionValue_ACU, normalizePlotTasks_ACU, persistPlotPresetSelectionState_ACU, readExcludeRulesFromRows_ACU, renderExcludeRuleRows_ACU, renderLoopPromptsList_ACU, resolveActivePlotPresetName_ACU, setActivePlotEditorSettings_ACU, setCurrentEditablePlotPresetState_ACU, setPlotPromptContentByIdForSettings_ACU } from '../components/optimization-ui';
 import { getDefaultPlotContextExcludeRules_ACU, getDefaultPlotContextExtractRules_ACU } from '../../service/runtime/helpers-remaining';
@@ -99,7 +99,7 @@ import { $popupInstance_ACU, $plotPromptSegmentsContainer_ACU, $plotTaskListCont
 
       presets.forEach((preset: any) => {
         if (preset && preset.name) {
-          $select.append(`<option value="${preset.name}">${preset.name}</option>`);
+$select.append(renderOption_ACU(preset.name, preset.name));
         }
       });
 
@@ -371,12 +371,12 @@ import { $popupInstance_ACU, $plotPromptSegmentsContainer_ACU, $plotTaskListCont
         const presetName = normalizePlotPresetSelectionValue_ACU(preset?.name);
         if (!presetName || normalizedPresetNames.has(presetName)) return;
         normalizedPresetNames.add(presetName);
-        $select.append(`<option value="${escapeHtml_ACU(presetName)}">${escapeHtml_ACU(presetName)}</option>`);
+$select.append(renderOption_ACU(presetName, presetName));
       });
 
       if (normalizedExtraPresetName && !normalizedPresetNames.has(normalizedExtraPresetName)) {
-        $select.append(
-          `<option value="${escapeHtml_ACU(normalizedExtraPresetName)}">${escapeHtml_ACU(normalizedExtraPresetName)}（仅当前聊天快照）</option>`
+$select.append(
+          renderOption_ACU(normalizedExtraPresetName, `${normalizedExtraPresetName}（仅当前聊天快照）`)
         );
       }
     }

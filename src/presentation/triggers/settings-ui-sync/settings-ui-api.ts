@@ -21,7 +21,7 @@ import { getSortedSheetKeys_ACU } from '../../../service/template/chat-scope';
 import { loadAllChatMessages_ACU } from '../../../service/worldbook/pipeline';
 import { refreshMergedDataAndNotifyWithUI_ACU } from '../../components/pipeline-ui-helpers';
 import { SCRIPT_ID_PREFIX_ACU } from '../../../shared/constants';
-import { escapeHtml_ACU } from '../../../shared/html-helpers';
+import { escapeHtml_ACU, renderOption_ACU } from '../../../shared/html-helpers';
 import { topLevelWindow_ACU } from '../../../shared/env';
 import { isSummaryOrOutlineTable_ACU, logDebug_ACU, logError_ACU, logWarn_ACU } from '../../../shared/utils';
 import { executeContentOptimization_ACU } from '../../components/optimization-ui';
@@ -258,7 +258,7 @@ import { maybeLiftWorldbookSuppression_ACU } from '../../../service/runtime/help
     if ($apiPresetSelect.length) {
       $apiPresetSelect.empty().append('<option value="">-- 选择预设 --</option>');
       presets.forEach((p: any) => {
-        $apiPresetSelect.append(`<option value="${p.name}">${p.name}</option>`);
+$apiPresetSelect.append(renderOption_ACU(p.name, p.name));
       });
     }
     
@@ -267,7 +267,7 @@ import { maybeLiftWorldbookSuppression_ACU } from '../../../service/runtime/help
     if ($tableApiPresetSelect.length) {
       $tableApiPresetSelect.empty().append('<option value="">使用当前API配置</option>');
       presets.forEach((p: any) => {
-        $tableApiPresetSelect.append(`<option value="${p.name}">${p.name}</option>`);
+$tableApiPresetSelect.append(renderOption_ACU(p.name, p.name));
       });
       $tableApiPresetSelect.val(settings_ACU.tableApiPreset || '');
     }
@@ -277,7 +277,7 @@ import { maybeLiftWorldbookSuppression_ACU } from '../../../service/runtime/help
     if ($plotApiPresetSelect.length) {
       $plotApiPresetSelect.empty().append('<option value="">使用当前API配置</option>');
       presets.forEach((p: any) => {
-        $plotApiPresetSelect.append(`<option value="${p.name}">${p.name}</option>`);
+$plotApiPresetSelect.append(renderOption_ACU(p.name, p.name));
       });
       $plotApiPresetSelect.val(settings_ACU.plotApiPreset || '');
     }
@@ -287,7 +287,7 @@ import { maybeLiftWorldbookSuppression_ACU } from '../../../service/runtime/help
     if ($optimizationApiPresetSelect.length) {
       $optimizationApiPresetSelect.empty().append('<option value="">使用当前API配置</option>');
       presets.forEach((p: any) => {
-        $optimizationApiPresetSelect.append(`<option value="${p.name}">${p.name}</option>`);
+$optimizationApiPresetSelect.append(renderOption_ACU(p.name, p.name));
       });
       $optimizationApiPresetSelect.val(settings_ACU.contentOptimizationSettings?.apiPreset || '');
     }

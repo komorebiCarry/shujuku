@@ -13,7 +13,7 @@ import { $popupInstance_ACU } from '../../state/ui-refs';
 import { saveSettingsAndNotify_ACU } from '../settings-ui-helpers';
 import { buildChatPlotScopeStateFromSettings_ACU, clearCurrentChatPlotScopeState_ACU, getCurrentChatPlotScopeState_ACU, sanitizePlotSettingsSnapshotForChat_ACU, setCurrentChatPlotScopeState_ACU } from '../../../service/template/chat-scope';
 import { SCRIPT_ID_PREFIX_ACU } from '../../../shared/constants';
-import { escapeHtml_ACU } from '../../../shared/html-helpers';
+import { escapeHtml_ACU, renderStopButton_ACU } from '../../../shared/html-helpers';
 import { cleanChatName_ACU, logDebug_ACU, logError_ACU, logWarn_ACU, normalizeExcludeRules_ACU, normalizeExtractRules_ACU, normalizeNonNegativeInteger_ACU, normalizePositiveInteger_ACU } from '../../../shared/utils';
 import { triggerAutomaticUpdateIfNeeded_ACU } from '../../triggers/settings-ui-sync';
 import { cancelContentOptimization_ACU, contentOptimizationAbortRequested_ACU, ensureOptimizationNotCancelled_ACU, getLastOptimizationBase_ACU, optimizationProgressToast_ACU, performContentOptimization_ACU, setLastOptimizationBase_ACU, _set_optimizationProgressToast_ACU, _set_contentOptimizationAbortRequested_ACU } from '../../../service/optimization/content-optimization';
@@ -89,7 +89,7 @@ import { getActivePlotEditorSettings_ACU, getPlotPromptContentByIdFromSettings_A
    */
   export function showOptimizationProgressToast_ACU(message = '正在进行正文优化...') {
     hideOptimizationProgressToast_ACU();
-    const stopButtonHtml = `<button id="acu-opt-stop-btn" style="border: 1px solid #ffc107; color: #ffc107; background: transparent; padding: 5px 10px; border-radius: 4px; cursor: pointer; float: right; margin-left: 15px; font-size: 0.9em; transition: all 0.2s ease;" onmouseover="this.style.backgroundColor='#ffc107'; this.style.color='#1a1d24';" onmouseout="this.style.backgroundColor='transparent'; this.style.color='#ffc107';">取消优化</button>`;
+    const stopButtonHtml = renderStopButton_ACU('acu-opt-stop-btn', '取消优化');
     _set_optimizationProgressToast_ACU(showToastr_ACU('info', `<div>${message}${stopButtonHtml}</div>`, {
       timeOut: 0,
       extendedTimeOut: 0,

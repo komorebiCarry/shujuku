@@ -16,6 +16,7 @@ import { loadAllChatMessages_ACU, updateReadableLorebookEntry_ACU } from '../../
 import { refreshMergedDataAndNotifyWithUI_ACU } from '../components/pipeline-ui-helpers';
 import { SCRIPT_ID_PREFIX_ACU } from '../../shared/constants';
 import { topLevelWindow_ACU } from '../../shared/env';
+import { renderStopButton_ACU } from '../../shared/html-helpers';
 import { ensureSheetOrderNumbers_ACU, isSummaryOrOutlineTable_ACU, logDebug_ACU, logError_ACU, logWarn_ACU, parseTableTemplateJson_ACU } from '../../shared/utils';
 import { checkIfFirstTimeInit_ACU, loadOrCreateJsonTableFromChatHistory_ACU, saveIndependentTableToChatHistory_ACU } from '../../service/table/table-service';
 import { updateCardUpdateStatusDisplay_ACU } from '../components/update-status-display';
@@ -49,13 +50,7 @@ import { getEffectiveAutoUpdateThreshold_ACU } from '../../service/runtime/helpe
         
         // [新增] 静默模式下不显示toast提示
         if (!isSilentMode && batchToastMessage) {
-        const stopButtonHtml = `
-            <button id="acu-stop-update-btn" 
-                    style="border: 1px solid #ffc107; color: #ffc107; background: transparent; padding: 5px 10px; border-radius: 4px; cursor: pointer; float: right; margin-left: 15px; font-size: 0.9em; transition: all 0.2s ease;"
-                    onmouseover="this.style.backgroundColor='#ffc107'; this.style.color='#1a1d24';"
-                    onmouseout="this.style.backgroundColor='transparent'; this.style.color='#ffc107';">
-                终止
-            </button>`;
+        const stopButtonHtml = renderStopButton_ACU('acu-stop-update-btn', '终止');
         const toastMessage = `<div>${batchToastMessage}${stopButtonHtml}</div>`;
         
             loadingToast = showToastr_ACU('info', toastMessage, { 
@@ -427,7 +422,7 @@ import { getEffectiveAutoUpdateThreshold_ACU } from '../../service/runtime/helpe
       _set_isAutoUpdatingCard_ACU(true);
       $btn.prop('disabled', true).text('正在合并 (0%)...');
 
-      const stopButtonHtml = `<button id="acu-merge-stop-btn" style="border: 1px solid #ffc107; color: #ffc107; background: transparent; padding: 5px 10px; border-radius: 4px; cursor: pointer; float: right; margin-left: 15px; font-size: 0.9em; transition: all 0.2s ease;" onmouseover="this.style.backgroundColor='#ffc107'; this.style.color='#1a1d24';" onmouseout="this.style.backgroundColor='transparent'; this.style.color='#ffc107';">终止</button>`;
+      const stopButtonHtml = renderStopButton_ACU('acu-merge-stop-btn', '终止');
       let progressToast = showToastr_ACU('info', `<div>正在合并纪要...${stopButtonHtml}</div>`, {
           timeOut: 0, extendedTimeOut: 0, tapToDismiss: false,
           acuToastCategory: ACU_TOAST_CATEGORY_ACU.MERGE_TABLE,

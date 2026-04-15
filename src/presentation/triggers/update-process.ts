@@ -21,6 +21,7 @@ import { bindTableFillStopButton_ACU, resetManualUpdateButton_ACU } from '../com
 import { updateCardUpdateStatusDisplay_ACU } from '../components/update-status-display';
 import { collectManualExtraHint_ACU } from './settings-ui-sync';
 import { parseAndApplyTableEdits_ACU, prepareAIInput_ACU } from '../../service/ai/prompt-builder';
+import { renderStopButton_ACU } from '../../shared/html-helpers';
 import { buildGuidedBaseDataFromSheetGuide_ACU, getSortedSheetKeys_ACU, sanitizeSheetForStorage_ACU } from '../../service/template/chat-scope';
 
 export   async function processUpdates_ACU(indicesToUpdate: number[], mode = 'auto', options: any = {}) {
@@ -421,13 +422,7 @@ export   async function proceedWithCardUpdate_ACU(messagesToUse: any[], batchToa
         
         // [新增] 静默模式下不显示toast提示
         if (!isSilentMode && batchToastMessage) {
-        const stopButtonHtml = `
-            <button id="acu-stop-update-btn" 
-                    style="border: 1px solid #ffc107; color: #ffc107; background: transparent; padding: 5px 10px; border-radius: 4px; cursor: pointer; float: right; margin-left: 15px; font-size: 0.9em; transition: all 0.2s ease;"
-                    onmouseover="this.style.backgroundColor='#ffc107'; this.style.color='#1a1d24';"
-                    onmouseout="this.style.backgroundColor='transparent'; this.style.color='#ffc107';">
-                终止
-            </button>`;
+        const stopButtonHtml = renderStopButton_ACU('acu-stop-update-btn', '终止');
         const toastMessage = `<div>${batchToastMessage}${stopButtonHtml}</div>`;
         
             loadingToast = showToastr_ACU('info', toastMessage, { 
