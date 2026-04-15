@@ -4,7 +4,7 @@
 import { showToastr_ACU } from '../theme/toast';
 import { SCRIPT_ID_PREFIX_ACU } from '../../shared/constants';
 import { logDebug_ACU, logError_ACU, logWarn_ACU } from '../../shared/utils';
-import { jQuery_API_ACU } from '../../shared/host-api';
+import { jQuery_API_ACU } from '../dom-utils';
 import { getCharLorebooks_ACU, getLorebookEntries_ACU, setLorebookEntries_ACU, isWorldbookApiAvailable_ACU } from '../../data/gateways/worldbook-gateway';
 import { settings_ACU, currentJsonTableData_ACU } from '../../service/runtime/state-manager';
 import { $popupInstance_ACU } from '../state/ui-refs';

@@ -1,7 +1,7 @@
 import { DEFAULT_CONTENT_OPTIMIZATION_PROMPT_GROUP_ACU } from '../../shared/defaults-json.js';
 import { flushCurrentPlotTaskEditorState_ACU, loadCurrentPlotTaskToUI_ACU, renderPlotTaskList_ACU } from '../components/plot-editors';
 import { showToastr_ACU } from '../theme/toast';
-import { jQuery_API_ACU } from '../../shared/host-api';
+import { jQuery_API_ACU } from '../dom-utils';
 import { loopState_ACU, settings_ACU } from '../../service/runtime/state-manager';
 import { saveSettingsAndNotify_ACU } from '../components/settings-ui-helpers';
 import { getCurrentChatPlotScopeState_ACU } from '../../service/template/chat-scope';

@@ -13,7 +13,7 @@ import { ensurePlotTasksCompat_ACU, getActivePlotEditorSettings_ACU, getPlotProm
 import { activePlotEditorSettings_ACU, currentPlotTaskEditorId_ACU, _set_currentPlotTaskEditorId_ACU, buildDefaultPlotPromptGroup_ACU, ensurePlotPromptGroup_ACU } from '../../service/plot/plot-state';
 import { $popupInstance_ACU, $charCardPromptSegmentsContainer_ACU, $plotPromptSegmentsContainer_ACU, $plotTaskListContainer_ACU, _assignUIPlaceholders_ACU } from '../state/ui-refs';
 import { DEFAULT_PLOT_SETTINGS_ACU } from '../../shared/defaults-json.js';
-import { jQuery_API_ACU } from '../../shared/host-api';
+import { jQuery_API_ACU } from '../dom-utils';
 
   export function renderPromptSegments_ACU(segments: any) {
       if (!$charCardPromptSegmentsContainer_ACU) return;

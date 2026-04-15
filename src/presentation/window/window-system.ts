@@ -6,7 +6,7 @@ import { applyACUThemeToDocument_ACU, injectACUWindowStyles, syncACUThemeButtons
 import { SCRIPT_ID_PREFIX_ACU } from '../../shared/constants';
 import { topLevelWindow_ACU } from '../../shared/env';
 import { safeJsonParse_ACU, safeJsonStringify_ACU } from '../../shared/json-helpers';
-import { jQuery_API_ACU } from '../../shared/host-api';
+import { jQuery_API_ACU } from '../dom-utils';
 
   export const ACU_WindowManager = {
     windows: new Map(), // id -> { $el, zIndex, ... }

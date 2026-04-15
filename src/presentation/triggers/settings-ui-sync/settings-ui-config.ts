@@ -7,7 +7,8 @@ import { updateCardUpdateStatusDisplay_ACU } from '../../components/update-statu
 import { getCharCardPromptFromUI_ACU, isAutoUpdatingCard_ACU, manualExtraHint_ACU, newMessageDebounceTimer_ACU, renderPromptSegments_ACU, wasStoppedByUser_ACU , _set_isAutoUpdatingCard_ACU, _set_manualExtraHint_ACU, _set_newMessageDebounceTimer_ACU} from '../../components/plot-editors';
 import { showToastr_ACU } from '../../theme/toast';
 import { ACU_TOAST_CATEGORY_ACU } from '../../../shared/constants';
-import { SillyTavern_API_ACU, TavernHelper_API_ACU, jQuery_API_ACU, toastr_API_ACU, _set_SillyTavern_API_ACU, _set_TavernHelper_API_ACU, _set_jQuery_API_ACU, _set_toastr_API_ACU } from '../../../shared/host-api';
+import { SillyTavern_API_ACU, TavernHelper_API_ACU, toastr_API_ACU, _set_SillyTavern_API_ACU, _set_TavernHelper_API_ACU, _set_jQuery_API_ACU, _set_toastr_API_ACU } from '../../../shared/host-api';
+import { jQuery_API_ACU } from '../../dom-utils';
 import { getChatArray_ACU, saveChatToHost_ACU } from '../../../data/gateways/chat-gateway';
 import { getConnectionManagerProfiles_ACU } from '../../../data/gateways/ai-gateway';
 import { getCurrentCharacterFallback_ACU } from '../../../data/gateways/host-state-gateway';

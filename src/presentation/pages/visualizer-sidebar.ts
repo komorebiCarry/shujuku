@@ -8,7 +8,7 @@ import { escapeHtml_ACU } from '../../shared/html-helpers';
 import { applySheetOrderNumbers_ACU } from '../../shared/utils';
 import { getSortedSheetKeys_ACU } from '../../service/template/chat-scope';
 import { buildDefaultExportConfig_ACU } from '../../service/worldbook/injection-engine';
-import { jQuery_API_ACU } from '../../shared/host-api';
+import { jQuery_API_ACU } from '../dom-utils';
 import { _acuVisState } from './visualizer';
 
   export function getOrderedSheetKeys_ACU() {

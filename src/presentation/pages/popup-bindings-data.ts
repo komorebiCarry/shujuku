@@ -8,7 +8,7 @@ import { ACU_TOAST_CATEGORY_ACU, SCRIPT_ID_PREFIX_ACU } from '../../shared/const
 import { topLevelWindow_ACU } from '../../shared/env';
 import { escapeHtml_ACU } from '../../shared/html-helpers';
 import { logDebug_ACU, logError_ACU, logWarn_ACU } from '../../shared/utils';
-import { jQuery_API_ACU } from '../../shared/host-api';
+import { jQuery_API_ACU } from '../dom-utils';
 import { settings_ACU, currentChatFileIdentifier_ACU, currentJsonTableData_ACU, getCurrentIsolationKey_ACU } from '../../service/runtime/state-manager';
 import { $popupInstance_ACU, $charCardPromptToggle_ACU, $charCardPromptAreaDiv_ACU, $saveCharCardPromptButton_ACU, $resetCharCardPromptButton_ACU, $loadModelsButton_ACU, $saveApiConfigButton_ACU, $clearApiConfigButton_ACU, $useMainApiCheckbox_ACU, $streamingEnabledCheckbox_ACU, $customApiModelInput_ACU, $customApiModelSelect_ACU } from '../state/ui-refs';
 import { saveSettingsAndNotify_ACU, loadSettingsAndRefreshUI_ACU } from '../components/settings-ui-helpers';

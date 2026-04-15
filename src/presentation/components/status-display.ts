@@ -8,7 +8,7 @@ import { normalizeExcludeRules_ACU, normalizeExtractRules_ACU } from '../../shar
 import { renderExcludeRuleRows_ACU } from './optimization-ui';
 import { populateInjectionTargetSelector_ACU, updateWorldbookSourceView_ACU } from './worldbook-selector';
 import { updateApiModeView_ACU, updateApiStatusDisplay_ACU, updateCustomApiInputsState_ACU } from '../triggers/settings-ui-sync';
-import { jQuery_API_ACU } from '../../shared/host-api';
+import { jQuery_API_ACU } from '../dom-utils';
 import { $popupInstance_ACU, $statusMessageSpan_ACU, $manualUpdateCardButton_ACU, $customApiUrlInput_ACU, $customApiKeyInput_ACU, $maxTokensInput_ACU, $temperatureInput_ACU, $customApiModelInput_ACU, $customApiModelSelect_ACU, $charCardPromptSegmentsContainer_ACU, $autoUpdateThresholdInput_ACU, $autoUpdateFrequencyInput_ACU, $autoUpdateTokenThresholdInput_ACU, $updateBatchSizeInput_ACU, $maxConcurrentGroupsInput_ACU, $skipUpdateFloorsInput_ACU, $retainRecentLayersInput_ACU, $autoUpdateEnabledCheckbox_ACU, $standardizedTableFillEnabledCheckbox_ACU, $toastMuteEnabledCheckbox_ACU, $promptTemplateEnabledCheckbox_ACU, $tableEditLastPairOnlyCheckbox_ACU, $tableMaxRetriesInput_ACU, $useMainApiCheckbox_ACU, $streamingEnabledCheckbox_ACU, $manualTableSelector_ACU, $importTableSelector_ACU, _assignUIPlaceholders_ACU } from '../state/ui-refs';
 // status-display.ts — 对应源文件有跨文件依赖，保留在原位
 

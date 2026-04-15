@@ -5,7 +5,7 @@ import { DEFAULT_PLOT_SETTINGS_ACU } from '../../shared/defaults-json.js';
 import { showToastr_ACU } from '../theme/toast';
 import { SCRIPT_ID_PREFIX_ACU } from '../../shared/constants';
 import { logDebug_ACU, logError_ACU, logWarn_ACU, normalizeExcludeRules_ACU, normalizeExtractRules_ACU } from '../../shared/utils';
-import { jQuery_API_ACU } from '../../shared/host-api';
+import { jQuery_API_ACU } from '../dom-utils';
 import { getCharLorebooks_ACU, getLorebookEntries_ACU } from '../../data/gateways/worldbook-gateway';
 import { settings_ACU, currentChatFileIdentifier_ACU } from '../../service/runtime/state-manager';
 import { $popupInstance_ACU, $plotPromptSegmentsContainer_ACU, $plotTaskListContainer_ACU, _assignUIPlaceholders_ACU } from '../state/ui-refs';

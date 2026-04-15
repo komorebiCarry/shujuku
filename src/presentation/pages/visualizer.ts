@@ -4,7 +4,7 @@ import { renderVisualizerSidebar_ACU } from './visualizer-sidebar';
 import { showToastr_ACU } from '../theme/toast';
 import { toggleACUTheme_ACU } from '../window/window-styles';
 import { closeACUWindow, createACUWindow, ACU_WindowManager } from '../window/window-system';
-import { jQuery_API_ACU } from '../../shared/host-api';
+import { jQuery_API_ACU } from '../dom-utils';
 import { currentJsonTableData_ACU , _set_currentJsonTableData_ACU} from '../../service/runtime/state-manager';
 import { getSortedSheetKeys_ACU, reorderDataBySheetKeys_ACU } from '../../service/template/chat-scope';
 import { loadAllChatMessages_ACU } from '../../service/worldbook/pipeline';
