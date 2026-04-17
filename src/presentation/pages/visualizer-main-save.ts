@@ -67,38 +67,36 @@ import { closeACUWindow } from '../window/window-system';
       // First, apply changes to local variable (使用排序后的数据)
       _set_currentJsonTableData_ACU(JSON.parse(JSON.stringify(orderedData)));
 
-      // [新增] 可视化编辑器属于“用户显式修改表结构/表名/顺序”的入口：
-      // 覆盖式更新聊天第一层的“空白指导表”（仅表头+参数，无数据行），让后续合并/显示/填表参数都以此为准。
-      // 仅“保存到当前聊天”会把这次修改沉淀为当前聊天模板预设；“保存到全局”只更新全局预设与当前全局选择，不会自动清除当前聊天本地预设。
-      if (!saveToTemplate) {
-          try {
-              const isolationKey = getCurrentIsolationKey_ACU();
-              // 需求4（澄清版）：可视化编辑器触发指导表更新时，只更新表名/表头/表格参数，不修改指导表基础数据（seedRows）。
-              // - 若当前聊天/标签已存在指导表：必须继承其 seedRows
-              // - 若不存在指导表：从当前模板提取预置数据作为 seedRows（需求1）
-              const existingGuide = getChatSheetGuideDataForIsolationKey_ACU(isolationKey);
-              const templateObjForSeed = parseTableTemplateJson_ACU({ stripSeedRows: false });
-              const guideData = buildChatSheetGuideDataFromData_ACU(currentJsonTableData_ACU, {
-                  preserveSeedRowsFromGuideData: existingGuide,
-                  seedRowsFromTemplateObj: templateObjForSeed,
+      // [修复] 可视化编辑器属于"用户显式修改表结构/表名/顺序"的入口：
+      // 覆盖式更新聊天第一层的"空白指导表"（仅表头+参数，无数据行），让后续合并/显示/填表参数都以此为准。
+      // [Bug Fix] 无论"保存到当前聊天"还是"保存到全局"，都必须更新指导表，
+      // 否则"保存到全局"后点击填表时，指导表中的旧表头会覆盖用户的修改。
+      try {
+          const guideIsolationKey = getCurrentIsolationKey_ACU();
+          // 需求4（澄清版）：可视化编辑器触发指导表更新时，只更新表名/表头/表格参数，不修改指导表基础数据（seedRows）。
+          // - 若当前聊天/标签已存在指导表：必须继承其 seedRows
+          // - 若不存在指导表：从当前模板提取预置数据作为 seedRows（需求1）
+          const existingGuide = getChatSheetGuideDataForIsolationKey_ACU(guideIsolationKey);
+          const templateObjForSeed = parseTableTemplateJson_ACU({ stripSeedRows: false });
+          const guideData = buildChatSheetGuideDataFromData_ACU(currentJsonTableData_ACU, {
+              preserveSeedRowsFromGuideData: existingGuide,
+              seedRowsFromTemplateObj: templateObjForSeed,
+          });
+          if (guideData && Object.keys(guideData).some(k => k.startsWith('sheet_'))) {
+              const syncTemplateScope = !saveToTemplate; // "保存到全局"时不同步模板作用域（由 applyTemplatePresetToCurrent 处理）
+              const templateScopeSource = materializeDataFromSheetGuide_ACU(guideData, { includeSeedRows: true });
+              setChatSheetGuideDataForIsolationKey_ACU(guideIsolationKey, guideData, {
+                  reason: 'visualizer_save',
+                  syncTemplateScope,
+                  templateSource: templateScopeSource,
+                  presetName: resolveActiveTemplatePresetName_ACU({ fallbackToGlobal: true, isolationKey: guideIsolationKey }),
+                  source: 'visualizer_save',
               });
-              if (guideData && Object.keys(guideData).some(k => k.startsWith('sheet_'))) {
-                  const syncTemplateScope = true;
-                  const templateScopeSource = materializeDataFromSheetGuide_ACU(guideData, { includeSeedRows: true });
-                  setChatSheetGuideDataForIsolationKey_ACU(isolationKey, guideData, {
-                      reason: 'visualizer_save',
-                      syncTemplateScope,
-                      templateSource: templateScopeSource,
-                      presetName: resolveActiveTemplatePresetName_ACU({ fallbackToGlobal: true, isolationKey }),
-                      source: 'visualizer_save',
-                  });
-                  logDebug_ACU(`[SheetGuide] Overwrote chat sheet guide from visualizer for tag [${isolationKey || '无标签'}] (tables=${Object.keys(guideData).filter(k => k.startsWith('sheet_')).length}).`);
-              }
-          } catch (e) {
-              logWarn_ACU('[SheetGuide] Failed to overwrite sheet guide from visualizer:', e);
+              logDebug_ACU(`[SheetGuide] Overwrote chat sheet guide from visualizer for tag [${guideIsolationKey || '无标签'}] (tables=${Object.keys(guideData).filter(k => k.startsWith('sheet_')).length}, saveToTemplate=${saveToTemplate}).`);
           }
+      } catch (e) {
+          logWarn_ACU('[SheetGuide] Failed to overwrite sheet guide from visualizer:', e);
       }
-
       // [新机制] 不再使用 settings_ACU.tableKeyOrder 强制固定顺序（顺序由每张表的 orderNo 决定）
       // 记录本次需要彻底清理的 key（真正清理会在“写回所有楼层”之后执行，防止后续写回把旧表带回）
       const deletedKeysToPurge_ACU = Array.isArray(_acuVisState.deletedSheetKeys) ? [..._acuVisState.deletedSheetKeys] : [];

@@ -27,7 +27,7 @@ import {
 import { mergeAllIndependentTables_ACU } from '../runtime/helpers-data-merge';
 import { logDebug_ACU, logError_ACU, logWarn_ACU, parseTableTemplateJson_ACU } from '../../shared/utils';
 import { buildGlobalNameMapper, disposeGlobalNameMapper } from '../runtime/template-vars/name-mapper';
-import { parseDDLTableName } from '../../data/sqlite/schema-mapper';
+import { parseDDLTableName, generateDDL } from '../../data/sqlite/schema-mapper';
 
 export class SqlTableService implements ITableStorageProvider {
   readonly mode = 'sqlite' as const;
@@ -297,19 +297,19 @@ export class SqlTableService implements ITableStorageProvider {
    * 按需建表：每次执行 SQL 操作前，检查模板中的表是否都已存在于 SQLite。
    *
    * 三种场景：
-   * 1. 新卡第一次填表：SQLite 中无任何用户表 → 全量从模板建表
+   * 1. 新卡第一次填表：SQLite 中无任何用户表 → 全量建表
    * 2. 老卡正常运行：所有表都已存在 → 直接返回（幂等）
    * 3. 中途加表：模板中新增了一张表，但 SQLite 中没有 → 只建缺失的表
    *
-   * 设计意图：建表延迟到第一次 applyEdits/executeQuery/executeMutation，
-   * 确保使用的是「此刻」最新的模板 DDL，而非「进入聊天那一刻」的快照。
+   * DDL 来源优先级：
+   * 1. currentJsonTableData_ACU 中的 sourceData.ddl（可能来自指导表，包含用户在可视化编辑器中的修改）
+   * 2. 全局模板中的 sourceData.ddl（fallback）
    */
   private _ensureTablesFromTemplate(): void {
     const existingTables = new Set(this.engine.getTableNames());
 
     const templateData = parseTableTemplateJson_ACU({ stripSeedRows: true }) as TableDataObject_ACU | null;
     if (!templateData) {
-      // 没有模板（可能模板未配置），如果已有表则正常运行，否则报错
       if (existingTables.size > 0) return;
       throw new Error('[SqlTableService] 模板解析失败，无法建表。请检查模板格式。');
     }
@@ -319,11 +319,29 @@ export class SqlTableService implements ITableStorageProvider {
     const missingSheets: Record<string, any> = {};
 
     for (const key of sheetKeys) {
-      const sheet = templateData[key] as any;
-      if (!sheet || !sheet.sourceData?.ddl) continue;
-      const tableName = parseDDLTableName(sheet.sourceData.ddl);
+      // [修复] 优先从 currentJsonTableData_ACU 获取 sheet 数据（可能包含指导表中用户修改过的 DDL），
+      // fallback 到全局模板。这样用户在可视化编辑器中修改 DDL 后，建表时用的是新 DDL。
+      const liveSheet = (currentJsonTableData_ACU as any)?.[key];
+      const sheet = liveSheet || templateData[key] as any;
+      if (!sheet) continue;
+      const ddl = generateDDL(sheet);
+      const tableName = parseDDLTableName(ddl);
       if (tableName && !existingTables.has(tableName)) {
         missingSheets[key] = sheet;
+      }
+    }
+
+    // 同时检查 currentJsonTableData_ACU 中是否有模板中不存在的表（用户可能在指导表中新增了表）
+    if (currentJsonTableData_ACU) {
+      const liveSheetKeys = Object.keys(currentJsonTableData_ACU).filter(k => k.startsWith('sheet_'));
+      for (const key of liveSheetKeys) {
+        if (missingSheets[key]) continue; // 已在上面处理过
+        const sheet = (currentJsonTableData_ACU as any)[key];
+        if (!sheet?.sourceData?.ddl) continue;
+        const tableName = parseDDLTableName(sheet.sourceData.ddl);
+        if (tableName && !existingTables.has(tableName)) {
+          missingSheets[key] = sheet;
+        }
       }
     }
 
@@ -332,7 +350,7 @@ export class SqlTableService implements ITableStorageProvider {
 
     logDebug_ACU(`[SqlTableService] 发现 ${Object.keys(missingSheets).length} 张缺失表，按需建表: ${Object.keys(missingSheets).join(', ')}`);
 
-    // 构造只包含缺失表的 templateData 子集，交给 syncBridge 建表
+    // 构造只包含缺失表的数据子集，交给 syncBridge 建表
     const partialData: TableDataObject_ACU = { mate: templateData.mate };
     for (const [key, sheet] of Object.entries(missingSheets)) {
       (partialData as any)[key] = sheet;

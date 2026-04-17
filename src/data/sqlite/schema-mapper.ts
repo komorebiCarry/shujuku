@@ -337,6 +337,76 @@ export function buildColumnNameMap(ddl: string): {
   return { sqlToChinese, chineseToSql };
 }
 
+/**
+ * 根据列在 DDL 中的位置索引获取英文列名
+ * 索引从 0 开始，对应 content[0] 中的位置（包含 row_id）
+ *
+ * @param ddl CREATE TABLE 语句
+ * @param index 列索引（对应 content[0] 的位置，0 通常是 row_id）
+ * @returns 英文列名，找不到返回 null
+ */
+export function getDDLColumnNameByIndex(ddl: string, index: number): string | null {
+  const columns = parseDDLColumnNames(ddl);
+  if (index < 0 || index >= columns.length) return null;
+  return columns[index];
+}
+
+/**
+ * 更新 DDL 中指定列的注释（中文名）
+ * 按行扫描 DDL，找到指定列名的行，替换其 `-- 注释` 部分。
+ * 如果该行没有注释，则在行尾添加 `-- 新注释`。
+ *
+ * @param ddl 原始 CREATE TABLE 语句
+ * @param columnName 要更新注释的英文列名
+ * @param newComment 新的注释内容（中文名）
+ * @returns 更新后的 DDL 字符串；如果找不到列名则返回原 DDL
+ */
+export function updateDDLColumnComment(ddl: string, columnName: string, newComment: string): string {
+  if (!ddl || !columnName || !newComment) return ddl;
+
+  const lines = ddl.split('\n');
+  let found = false;
+
+  for (let i = 0; i < lines.length; i++) {
+    const trimmed = lines[i].trim();
+    if (!trimmed) continue;
+
+    // 检查该行是否以目标列名开头（列定义行）
+    const colMatch = trimmed.match(/^(\w+)\s+/);
+    if (!colMatch || colMatch[1] !== columnName) continue;
+
+    // 找到目标列，替换或添加注释
+    found = true;
+    const line = lines[i];
+
+    // 情况 1：行内已有 `-- 注释`，替换注释内容
+    const commentMatch = line.match(/^(.*?)(--\s*).+?(,?\s*)$/);
+    if (commentMatch) {
+      lines[i] = `${commentMatch[1]}-- ${newComment}${commentMatch[3]}`;
+      break;
+    }
+
+    // 情况 2：行内没有注释，需要添加
+    // 先检查行尾是否有逗号
+    const trailingCommaMatch = line.match(/^(.*?)(,\s*)$/);
+    if (trailingCommaMatch) {
+      // 有逗号：在逗号前插入注释 → `  col TEXT, -- 注释`
+      // 按照项目约定格式：逗号在注释前 → `  col TEXT, -- 注释`
+      lines[i] = `${trailingCommaMatch[1]}, -- ${newComment}`;
+    } else {
+      // 无逗号（最后一列）：直接在行尾添加注释
+      lines[i] = `${line.trimEnd()} -- ${newComment}`;
+    }
+    break;
+  }
+
+  if (!found) {
+    logWarn_ACU(`[Schema] updateDDLColumnComment: 未找到列 "${columnName}"，DDL 未修改`);
+  }
+
+  return lines.join('\n');
+}
+
 // ═══════════════════════════════════════════════════════════════
 // 内部工具函数
 // ═══════════════════════════════════════════════════════════════

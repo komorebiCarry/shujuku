@@ -32,6 +32,7 @@ import { _acuVisState } from './visualizer';
 import { $popupInstance_ACU } from '../state/ui-refs';
 import { closeACUWindow } from '../window/window-system';
 import { isSqliteMode } from '../../service/table/storage-mode';
+import { updateDDLColumnComment, parseDDLColumnNames } from '../../data/sqlite/schema-mapper';
 
 // 循环 import — 运行时安全
 import { renderVisualizerMain_ACU } from './visualizer-main-render';
@@ -417,7 +418,22 @@ export function validateDDLText(ddlText: string, tableHeaders: string[]): { vali
       // Bind Config Events
       $colList.on('input', '.acu-col-input', function() {
           const idx = parseInt(jQuery_API_ACU(this).data('idx'));
-          headers[idx] = jQuery_API_ACU(this).val();
+          const newValue = jQuery_API_ACU(this).val();
+          headers[idx] = newValue;
+
+          // [方案B] SQLite 模式下，用户改表头时自动同步更新 DDL 注释
+          if (isSqliteMode() && sheet.sourceData?.ddl) {
+              const ddlColumns = parseDDLColumnNames(sheet.sourceData.ddl);
+              // idx 对应 content[0] 的位置（包含 row_id），DDL 列名顺序与 content[0] 一致
+              if (idx >= 0 && idx < ddlColumns.length && ddlColumns[idx] !== 'row_id') {
+                  sheet.sourceData.ddl = updateDDLColumnComment(sheet.sourceData.ddl, ddlColumns[idx], newValue);
+                  // 同步更新 DDL 编辑器的显示（如果可见）
+                  const $ddlTextarea = jQuery_API_ACU('#cfg-ddl');
+                  if ($ddlTextarea.length) {
+                      $ddlTextarea.val(sheet.sourceData.ddl);
+                  }
+              }
+          }
       });
       
       $colList.on('click', '.acu-col-btn', function() {

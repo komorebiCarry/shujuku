@@ -73,6 +73,30 @@ export interface ManualUpdateResult {
  * 加载批次基础数据：从聊天记录中为每个表格查找最新数据
  * 纯业务逻辑，不涉及任何 UI 操作
  */
+/**
+ * [辅助] 从聊天记录加载旧数据覆盖 sheet 后，恢复指导表基底中的关键结构字段。
+ *
+ * 背景：loadBatchBaseData_ACU 从聊天记录中加载旧数据时，会整体覆盖 mergedBatchData[sheetKey]。
+ * 但指导表基底中可能包含用户在可视化编辑器中修改过的 sourceData.ddl 和表头（content[0]），
+ * 这些结构信息不应该被聊天记录中的旧数据覆盖。
+ *
+ * 只恢复 sourceData（含 DDL）和表头（content[0]），其他字段（name/uid/updateConfig/exportConfig）
+ * 保留聊天记录中的值，因为它们可能在聊天过程中被合法修改。
+ */
+function restoreGuideStructure(mergedSheet: any, guideSheet: any): void {
+    if (!guideSheet || typeof guideSheet !== 'object') return;
+    if (!mergedSheet || typeof mergedSheet !== 'object') return;
+
+    // 恢复 sourceData（包含 DDL、note 等用户在可视化编辑器中修改的关键配置）
+    if (guideSheet.sourceData) mergedSheet.sourceData = JSON.parse(JSON.stringify(guideSheet.sourceData));
+
+    // 恢复表头（content[0]）——指导表中的表头是用户最新编辑的
+    if (Array.isArray(guideSheet.content) && guideSheet.content.length > 0 &&
+        Array.isArray(mergedSheet.content) && mergedSheet.content.length > 0) {
+        mergedSheet.content[0] = JSON.parse(JSON.stringify(guideSheet.content[0]));
+    }
+}
+
 export function loadBatchBaseData_ACU(
     chatHistory: any[],
     firstMessageIndexOfBatch: number,
@@ -82,6 +106,15 @@ export function loadBatchBaseData_ACU(
 ): { foundCount: number; totalCount: number } {
     const batchFoundSheets: Record<string, boolean> = {};
     batchSheetKeys.forEach(k => batchFoundSheets[k] = false);
+
+    // [修复] 保存指导表基底中每个 sheet 的结构快照（sourceData/DDL/表头/表名等），
+    // 以便从聊天记录加载旧数据覆盖后恢复。防止旧数据中的旧 DDL/旧表头覆盖用户在可视化编辑器中的修改。
+    const guideSnapshots: Record<string, any> = {};
+    batchSheetKeys.forEach(k => {
+        if (mergedBatchData[k] && typeof mergedBatchData[k] === 'object') {
+            guideSnapshots[k] = mergedBatchData[k];
+        }
+    });
 
     for (let j = firstMessageIndexOfBatch - 1; j >= 0; j--) {
         const msg = chatHistory[j];
@@ -95,6 +128,7 @@ export function loadBatchBaseData_ACU(
             Object.keys(independentData).forEach(storedSheetKey => {
                 if (batchFoundSheets[storedSheetKey] === false && mergedBatchData[storedSheetKey]) {
                     mergedBatchData[storedSheetKey] = JSON.parse(JSON.stringify(independentData[storedSheetKey]));
+                    restoreGuideStructure(mergedBatchData[storedSheetKey], guideSnapshots[storedSheetKey]);
                     batchFoundSheets[storedSheetKey] = true;
                 }
             });
@@ -115,6 +149,7 @@ export function loadBatchBaseData_ACU(
                 Object.keys(independentData).forEach(storedSheetKey => {
                     if (batchFoundSheets[storedSheetKey] === false && mergedBatchData[storedSheetKey]) {
                         mergedBatchData[storedSheetKey] = JSON.parse(JSON.stringify(independentData[storedSheetKey]));
+                        restoreGuideStructure(mergedBatchData[storedSheetKey], guideSnapshots[storedSheetKey]);
                         batchFoundSheets[storedSheetKey] = true;
                     }
                 });
@@ -125,6 +160,7 @@ export function loadBatchBaseData_ACU(
                 Object.keys(standardData).forEach(k => {
                     if (k.startsWith('sheet_') && batchFoundSheets[k] === false && mergedBatchData[k]) {
                         mergedBatchData[k] = JSON.parse(JSON.stringify(standardData[k]));
+                        restoreGuideStructure(mergedBatchData[k], guideSnapshots[k]);
                         batchFoundSheets[k] = true;
                     }
                 });
@@ -135,6 +171,7 @@ export function loadBatchBaseData_ACU(
                 Object.keys(summaryData).forEach(k => {
                     if (k.startsWith('sheet_') && batchFoundSheets[k] === false && mergedBatchData[k]) {
                         mergedBatchData[k] = JSON.parse(JSON.stringify(summaryData[k]));
+                        restoreGuideStructure(mergedBatchData[k], guideSnapshots[k]);
                         batchFoundSheets[k] = true;
                     }
                 });
@@ -545,6 +582,15 @@ export async function orchestrateManualUpdate_ACU(
             });
             if (!batchResult.success) {
                 _set_isAutoUpdatingCard_ACU(false);
+                // [修复] 填表失败时，processUpdatesBatch 内部的 loadBatchBaseData 已经用聊天记录中的旧数据
+                // 覆盖了 currentJsonTableData_ACU（包括旧表头）。必须调用 refreshData 恢复到正确状态，
+                // 否则用户重新打开可视化编辑器时会看到旧表头（指导表中的新表头不会被应用）。
+                try {
+                    await loadAllChatMessages_ACU();
+                    await refreshData();
+                } catch (e) {
+                    logWarn_ACU('[Manual Update] 填表失败后恢复数据时出错:', e);
+                }
                 return { success: false, error: batchResult.error || '手动更新失败或被终止。' };
             }
             await loadAllChatMessages_ACU();
