@@ -7,3 +7,6 @@ node_modules/
 
 # 构建产物
 dist/
+
+# macOS
+.DS_Store
