@@ -14,6 +14,46 @@ import { getTemplateSheetKeys_ACU } from '../template/chat-scope';
 import { upsertTemplatePreset_ACU } from '../template/template-preset-service';
 import { readIsolatedTagData_ACU, readLegacyIndependentData_ACU, readLegacyStandardData_ACU, readLegacySummaryData_ACU, readModifiedKeys_ACU, readUpdateGroupKeys_ACU, readMessageIdentity_ACU, isLegacyMatchForIsolation_ACU, initIsolatedTagSlot_ACU, writeLegacyCompatData_ACU } from '../../data/repositories/chat-message-data-repo';
 
+  /**
+   * 旧数据兼容层：将 content 数组中的 null 占位列迁移为行号 row_id
+   * - 表头行 content[0][0]：null → "row_id"
+   * - 数据行 content[i][0]：null → 行号字符串 ("1", "2", "3"...)
+   * - 幂等：已迁移过的数据不会重复处理
+   */
+  export function migrateContentNullToRowId(data: Record<string, any> | null): Record<string, any> | null {
+      if (!data || typeof data !== 'object') return data;
+      Object.keys(data).forEach(k => {
+          if (!k.startsWith('sheet_')) return;
+          const sheet = data[k];
+          if (!sheet || !Array.isArray(sheet.content) || sheet.content.length === 0) return;
+          const headerRow = sheet.content[0];
+          if (!Array.isArray(headerRow) || headerRow.length === 0) return;
+          // 幂等检查：如果表头已经是 "row_id"，说明已迁移过
+          if (headerRow[0] === 'row_id') return;
+          // 只处理表头第一列为 null 的情况
+          if (headerRow[0] !== null) return;
+          // 迁移表头行
+          headerRow[0] = 'row_id';
+          // 迁移数据行
+          for (let i = 1; i < sheet.content.length; i++) {
+              const row = sheet.content[i];
+              if (Array.isArray(row) && row[0] === null) {
+                  row[0] = String(i);
+              }
+          }
+          // 迁移 seedRows（如果存在）
+          if (Array.isArray(sheet.seedRows)) {
+              for (let i = 0; i < sheet.seedRows.length; i++) {
+                  const row = sheet.seedRows[i];
+                  if (Array.isArray(row) && row[0] === null) {
+                      row[0] = String(i + 1);
+                  }
+              }
+          }
+      });
+      return data;
+  }
+
   export async function mergeAllIndependentTables_ACU() {
       const chat = getChatArray_ACU();
       if (!chat || chat.length === 0) {
@@ -180,7 +220,7 @@ import { readIsolatedTagData_ACU, readLegacyIndependentData_ACU, readLegacyStand
               // 直接物化：仅表头（seedRows 保留在字段中，但不作为"当前对话真实数据行"展示）
               const base = materializeDataFromSheetGuide_ACU(sheetGuideData, { includeSeedRows: false });
               const orderedKeys = getSortedSheetKeys_ACU(base);
-              return reorderDataBySheetKeys_ACU(base, orderedKeys);
+              return migrateContentNullToRowId(reorderDataBySheetKeys_ACU(base, orderedKeys));
           }
           return null;
       }
@@ -224,7 +264,7 @@ import { readIsolatedTagData_ACU, readLegacyIndependentData_ACU, readLegacyStand
                   const guideHeader = (guideSheet && Array.isArray(guideSheet.content) && Array.isArray(guideSheet.content[0]))
                       ? JSON.parse(JSON.stringify(guideSheet.content[0]))
                       : null;
-                  if (!Array.isArray(next.content)) next.content = guideHeader ? [guideHeader] : [[null]];
+if (!Array.isArray(next.content)) next.content = guideHeader ? [guideHeader] : [["row_id"]];
                   if (guideHeader) {
                       next.content[0] = guideHeader;
                       const targetLen = guideHeader.length;
@@ -264,7 +304,7 @@ import { readIsolatedTagData_ACU, readLegacyIndependentData_ACU, readLegacyStand
       // [修复] 合并结果按"用户手动顺序/模板顺序"重排，避免合并过程导致的随机乱序
       const orderedKeys = getSortedSheetKeys_ACU(mergedData);
       mergedData = reorderDataBySheetKeys_ACU(mergedData, orderedKeys);
-      return mergedData;
+      return migrateContentNullToRowId(mergedData);
   }
 
   // [重构] 刷新合并数据并通知前端和更新世界书
@@ -330,9 +370,9 @@ import { readIsolatedTagData_ACU, readLegacyIndependentData_ACU, readLegacyStand
   // 目标：像填表一样，开场白楼层就拥有一份"当前模板"的数据库基底（模板有数据就带数据，没有就为空表）
   // 注意：此动作不触发世界书注入链路，只做本地数据写入 + 前端显示刷新
   // =========================
-  const GREETING_LOCAL_BASE_STATE_MARKER_ACU = 'ACU_TEMPLATE_BASE_STATE_LOCAL_V1';
+  export const GREETING_LOCAL_BASE_STATE_MARKER_ACU = 'ACU_TEMPLATE_BASE_STATE_LOCAL_V1';
 
-  function isNewChatGreetingStage_ACU(chat: any[]) {
+  export function isNewChatGreetingStage_ACU(chat: any[]) {
       if (!Array.isArray(chat) || chat.length === 0) return false;
       const hasAnyUserMessage = chat.some(m => m && m.is_user);
       if (hasAnyUserMessage) return false;
@@ -341,7 +381,7 @@ import { readIsolatedTagData_ACU, readLegacyIndependentData_ACU, readLegacyStand
   }
 
   // [健全性] 你要求的监视点：任何"仅单一AI楼层、没有任何User回复"的聊天记录，都不进行世界书注入
-  function isSingleAiNoUserChat_ACU(chat: any[]) {
+  export function isSingleAiNoUserChat_ACU(chat: any[]) {
       if (!Array.isArray(chat) || chat.length === 0) return false;
       const userCount = chat.filter(m => m && m.is_user).length;
       const aiCount = chat.filter(m => m && !m.is_user).length;
@@ -365,7 +405,7 @@ import { readIsolatedTagData_ACU, readLegacyIndependentData_ACU, readLegacyStand
       }
   }
 
-  function buildTemplateBaseStateDataForLocalStorage_ACU(templateObj: Record<string, any> | null) {
+  export function buildTemplateBaseStateDataForLocalStorage_ACU(templateObj: Record<string, any> | null) {
       if (!templateObj || typeof templateObj !== 'object') return null;
       const out: Record<string, any> = { mate: { type: 'chatSheets', version: 1 } };
       const sheetKeys = Object.keys(templateObj).filter(k => k.startsWith('sheet_'));
@@ -376,7 +416,7 @@ import { readIsolatedTagData_ACU, readLegacyIndependentData_ACU, readLegacyStand
       return out;
   }
 
-  async function seedGreetingLocalDataFromTemplate_ACU() {
+  export async function seedGreetingLocalDataFromTemplate_ACU() {
       try {
           const chat = getChatArray_ACU();
           if (!isNewChatGreetingStage_ACU(chat)) return false;
@@ -532,7 +572,7 @@ import { readIsolatedTagData_ACU, readLegacyIndependentData_ACU, readLegacyStand
       }
   }
 
-  function parseReadableToJson_ACU(text: string) {
+  export function parseReadableToJson_ACU(text: string) {
     if (!currentJsonTableData_ACU) {
         logError_ACU("Parsing failed: currentJsonTableData_ACU is not available.");
         return null;
@@ -568,8 +608,8 @@ import { readIsolatedTagData_ACU, readLegacyIndependentData_ACU, readLegacyStand
                 // Split by '|', remove the first and last empty elements, and trim whitespace.
                 const columns = line.split('|').slice(1, -1).map(c => c.trim());
                 
-                // Start row with null placeholder
-                const newRow = [null, ...columns];
+                // Start row with row_id (行号，从1开始)
+                const newRow = [String(newContent.length), ...columns];
                 
                 // Pad or truncate the row to match the header's column count for consistency.
                 if (newRow.length < originalHeaderRow.length) {

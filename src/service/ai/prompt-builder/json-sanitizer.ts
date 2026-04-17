@@ -3,6 +3,7 @@
  * AI 响应 JSON 清洗管线 + 松散对象解析
  * 从 prompt-builder.ts 的 parseAndApplyTableEdits_ACU 内部提取的纯函数集合
  */
+import { logDebug_ACU, logWarn_ACU } from '../../../shared/utils';
 
 /** 将全角/中文引号统一为标准双引号 */
 export function normalizeQuotesLayer_ACU(jsonStr: string) {
@@ -255,6 +256,7 @@ export function sanitizeJsonPipeline_ACU(jsonStr: string) {
 
     const layersApplied: string[] = [];
     let current = jsonStr;
+    logDebug_ACU(`[JSON清洗] sanitizeJsonPipeline: 输入长度=${jsonStr.length}`);
 
     const normalizedQuotes = normalizeQuotesLayer_ACU(current);
     if (normalizedQuotes !== current) layersApplied.push('normalizeQuotes');
@@ -434,6 +436,7 @@ export function coerceLooseRowObject_ACU(jsonStr: string) {
     if (!body) return { success: true, result: {}, recoveredKeys: [], error: null };
 
     const segments = splitTopLevelSegments_ACU(body, ',').filter(Boolean);
+    logDebug_ACU(`[JSON清洗] coerceLooseRowObject: ${segments.length} 个段落`);
     if (!segments.length) {
         return { success: false, result: null, recoveredKeys: [], error: 'No top-level segments detected' };
     }

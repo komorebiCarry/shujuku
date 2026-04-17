@@ -15,11 +15,13 @@ import { saveIndependentTableToChatHistory_ACU } from '../../../service/table/ta
 import { saveCurrentDataForTable_ACU } from '../../triggers/update-process';
 import { refreshMergedDataAndNotifyWithUI_ACU } from '../../components/pipeline-ui-helpers';
 import type { ApiGroupContext } from './callback-api';
+import { isSqliteMode } from '../../../service/table/storage-mode';
+import { getStorageProvider } from '../../../service/table/table-storage-strategy';
 
 /**
  * 查找指定表格的目标 sheet 和 sheetKey
  */
-function findTargetSheet(tableName: string): { sheet: any; sheetKey: string } | null {
+export function findTargetSheet(tableName: string): { sheet: any; sheetKey: string } | null {
     if (!currentJsonTableData_ACU) return null;
     for (const sheetKey in currentJsonTableData_ACU) {
         if (sheetKey.startsWith('sheet_') && currentJsonTableData_ACU[sheetKey].name === tableName) {
@@ -133,17 +135,22 @@ export function createTableCrudApi(ctx: ApiGroupContext): Record<string, Functio
                     return false;
                 }
 
-                let colIndex = -1;
+                // 解析列名
+                let colName: string;
                 if (typeof colIdentifier === 'number') {
-                    colIndex = colIdentifier;
-                } else {
                     const headers = targetSheet.content[0] || [];
-                    colIndex = headers.indexOf(colIdentifier);
-                }
-
-                if (colIndex < 0 || colIndex >= (targetSheet.content[0] || []).length) {
-                    logError_ACU(`updateCell: Column "${colIdentifier}" not found in table "${tableName}".`);
-                    return false;
+                    if (colIdentifier < 0 || colIdentifier >= headers.length) {
+                        logError_ACU(`updateCell: Column index ${colIdentifier} out of bounds in table "${tableName}".`);
+                        return false;
+                    }
+                    colName = headers[colIdentifier];
+                } else {
+                    colName = colIdentifier;
+                    const headers = targetSheet.content[0] || [];
+                    if (!headers.includes(colName)) {
+                        logError_ACU(`updateCell: Column "${colIdentifier}" not found in table "${tableName}".`);
+                        return false;
+                    }
                 }
 
                 if (rowIndex < 1 || rowIndex >= targetSheet.content.length) {
@@ -151,8 +158,29 @@ export function createTableCrudApi(ctx: ApiGroupContext): Record<string, Functio
                     return false;
                 }
 
-                targetSheet.content[rowIndex][colIndex] = value;
-                logDebug_ACU(`updateCell: Updated [${tableName}] row ${rowIndex}, col ${colIdentifier} = ${value}`);
+                if (isSqliteMode()) {
+                    // SQLite 模式：生成 UPDATE SQL
+                    const rowId = targetSheet.content[rowIndex][0]; // row_id 是第一列
+                    const escapedVal = value === null || value === undefined ? 'NULL' : `'${String(value).replace(/'/g, "''")}'`;
+                    const sql = `UPDATE ${quoteIdentifier(tableName)} SET ${quoteIdentifier(colName)} = ${escapedVal} WHERE row_id = ${rowId};`;
+                    const result = getStorageProvider().executeMutation(sql);
+                    if (result.errors.length > 0) {
+                        logError_ACU(`updateCell SQL failed: ${result.errors.join(', ')}`);
+                        return false;
+                    }
+                    logDebug_ACU(`updateCell: [SQLite] Updated [${tableName}] row_id=${rowId}, col=${colName}`);
+                } else {
+                    // 原生模式：直接操作 JSON 数组
+                    let colIndex = -1;
+                    if (typeof colIdentifier === 'number') {
+                        colIndex = colIdentifier;
+                    } else {
+                        const headers = targetSheet.content[0] || [];
+                        colIndex = headers.indexOf(colIdentifier);
+                    }
+                    targetSheet.content[rowIndex][colIndex] = value;
+                    logDebug_ACU(`updateCell: Updated [${tableName}] row ${rowIndex}, col ${colIdentifier} = ${value}`);
+                }
 
                 await saveCurrentDataForTable_ACU(targetSheetKey);
                 (topLevelWindow_ACU as any).AutoCardUpdaterAPI._notifyTableUpdate();
@@ -184,26 +212,59 @@ export function createTableCrudApi(ctx: ApiGroupContext): Record<string, Functio
 
                 const { sheet: targetSheet, sheetKey: targetSheetKey } = target;
 
-                while (targetSheet.content.length <= rowIndex) {
-                    const newRow = new Array((targetSheet.content[0] || []).length).fill('');
-                    targetSheet.content.push(newRow);
-                }
-
-                const headers = targetSheet.content[0] || [];
-                const row = targetSheet.content[rowIndex];
-
-                let updated = 0;
-                for (const colName in data) {
-                    const colIndex = headers.indexOf(colName);
-                    if (colIndex !== -1) {
-                        row[colIndex] = data[colName];
-                        updated++;
-                    } else {
-                        logWarn_ACU(`updateRow: Column "${colName}" not found in table "${tableName}".`);
+                if (isSqliteMode()) {
+                    // SQLite 模式：生成 UPDATE SQL
+                    const rowId = targetSheet.content[rowIndex]?.[0];
+                    if (rowId === undefined || rowId === null) {
+                        logError_ACU(`updateRow: row_id not found at index ${rowIndex}`);
+                        return false;
                     }
-                }
+                    const setClauses: string[] = [];
+                    const headers = targetSheet.content[0] || [];
+                    for (const colName in data) {
+                        if (colName === 'isImportMode') continue; // 跳过内部标记
+                        if (!headers.includes(colName)) {
+                            logWarn_ACU(`updateRow: Column "${colName}" not found in table "${tableName}".`);
+                            continue;
+                        }
+                        const val = data[colName];
+                        const escapedVal = val === null || val === undefined ? 'NULL' : `'${String(val).replace(/'/g, "''")}'`;
+                        setClauses.push(`${quoteIdentifier(colName)} = ${escapedVal}`);
+                    }
+                    if (setClauses.length === 0) {
+                        logWarn_ACU('updateRow: No valid columns to update.');
+                        return true;
+                    }
+                    const sql = `UPDATE ${quoteIdentifier(tableName)} SET ${setClauses.join(', ')} WHERE row_id = ${rowId};`;
+                    const result = getStorageProvider().executeMutation(sql);
+                    if (result.errors.length > 0) {
+                        logError_ACU(`updateRow SQL failed: ${result.errors.join(', ')}`);
+                        return false;
+                    }
+                    logDebug_ACU(`updateRow: [SQLite] Updated ${setClauses.length} cols in [${tableName}] row_id=${rowId}`);
+                } else {
+                    // 原生模式：直接操作 JSON 数组
+                    while (targetSheet.content.length <= rowIndex) {
+                        const newRow = new Array((targetSheet.content[0] || []).length).fill('');
+                        targetSheet.content.push(newRow);
+                    }
 
-                logDebug_ACU(`updateRow: Updated ${updated} cells in [${tableName}] row ${rowIndex}`);
+                    const headers = targetSheet.content[0] || [];
+                    const row = targetSheet.content[rowIndex];
+
+                    let updated = 0;
+                    for (const colName in data) {
+                        const colIndex = headers.indexOf(colName);
+                        if (colIndex !== -1) {
+                            row[colIndex] = data[colName];
+                            updated++;
+                        } else {
+                            logWarn_ACU(`updateRow: Column "${colName}" not found in table "${tableName}".`);
+                        }
+                    }
+
+                    logDebug_ACU(`updateRow: Updated ${updated} cells in [${tableName}] row ${rowIndex}`);
+                }
 
                 await saveToLatestFloorAndRefresh(targetSheetKey, targetSheet.name, ctx, 'updateRow', !!data?.isImportMode);
 
@@ -228,25 +289,53 @@ export function createTableCrudApi(ctx: ApiGroupContext): Record<string, Functio
                 }
 
                 const { sheet: targetSheet, sheetKey: targetSheetKey } = target;
-
                 const headers = targetSheet.content[0] || [];
-                const newRow = new Array(headers.length).fill('');
 
-                for (const colName in data) {
-                    const colIndex = headers.indexOf(colName);
-                    if (colIndex !== -1) {
-                        newRow[colIndex] = data[colName];
+                if (isSqliteMode()) {
+                    // SQLite 模式：生成 INSERT SQL
+                    const colNames: string[] = [];
+                    const values: string[] = [];
+                    for (const colName in data) {
+                        if (!headers.includes(colName)) continue;
+                        if (colName === 'row_id') continue; // row_id 自增，不手动指定
+                        colNames.push(quoteIdentifier(colName));
+                        const val = data[colName];
+                        values.push(val === null || val === undefined ? 'NULL' : `'${String(val).replace(/'/g, "''")}'`);
                     }
+                    const sql = colNames.length > 0
+                        ? `INSERT INTO ${quoteIdentifier(tableName)} (${colNames.join(', ')}) VALUES (${values.join(', ')});`
+                        : `INSERT INTO ${quoteIdentifier(tableName)} DEFAULT VALUES;`;
+                    const result = getStorageProvider().executeMutation(sql);
+                    if (result.errors.length > 0) {
+                        logError_ACU(`insertRow SQL failed: ${result.errors.join(', ')}`);
+                        return -1;
+                    }
+                    // 获取新插入行在 JSON 视图中的索引
+                    const newIndex = targetSheet.content.length; // executeMutation 已同步 JSON 视图
+                    logDebug_ACU(`insertRow: [SQLite] Inserted row in [${tableName}]`);
+
+                    await saveToLatestFloorAndRefresh(targetSheetKey, targetSheet.name, ctx, 'insertRow');
+                    return newIndex;
+                } else {
+                    // 原生模式：直接操作 JSON 数组
+                    const newRow = new Array(headers.length).fill('');
+
+                    for (const colName in data) {
+                        const colIndex = headers.indexOf(colName);
+                        if (colIndex !== -1) {
+                            newRow[colIndex] = data[colName];
+                        }
+                    }
+
+                    targetSheet.content.push(newRow);
+                    const newIndex = targetSheet.content.length - 1;
+
+                    logDebug_ACU(`insertRow: Inserted row at index ${newIndex} in [${tableName}]`);
+
+                    await saveToLatestFloorAndRefresh(targetSheetKey, targetSheet.name, ctx, 'insertRow');
+
+                    return newIndex;
                 }
-
-                targetSheet.content.push(newRow);
-                const newIndex = targetSheet.content.length - 1;
-
-                logDebug_ACU(`insertRow: Inserted row at index ${newIndex} in [${tableName}]`);
-
-                await saveToLatestFloorAndRefresh(targetSheetKey, targetSheet.name, ctx, 'insertRow');
-
-                return newIndex;
             } catch (e) {
                 logError_ACU('insertRow failed:', e);
                 return -1;
@@ -278,9 +367,25 @@ export function createTableCrudApi(ctx: ApiGroupContext): Record<string, Functio
                     return false;
                 }
 
-                targetSheet.content.splice(rowIndex, 1);
-
-                logDebug_ACU(`deleteRow: Deleted row ${rowIndex} from [${tableName}]`);
+                if (isSqliteMode()) {
+                    // SQLite 模式：生成 DELETE SQL
+                    const rowId = targetSheet.content[rowIndex]?.[0];
+                    if (rowId === undefined || rowId === null) {
+                        logError_ACU(`deleteRow: row_id not found at index ${rowIndex}`);
+                        return false;
+                    }
+                    const sql = `DELETE FROM ${quoteIdentifier(tableName)} WHERE row_id = ${rowId};`;
+                    const result = getStorageProvider().executeMutation(sql);
+                    if (result.errors.length > 0) {
+                        logError_ACU(`deleteRow SQL failed: ${result.errors.join(', ')}`);
+                        return false;
+                    }
+                    logDebug_ACU(`deleteRow: [SQLite] Deleted row_id=${rowId} from [${tableName}]`);
+                } else {
+                    // 原生模式：直接操作 JSON 数组
+                    targetSheet.content.splice(rowIndex, 1);
+                    logDebug_ACU(`deleteRow: Deleted row ${rowIndex} from [${tableName}]`);
+                }
 
                 await saveToLatestFloorAndRefresh(targetSheetKey, targetSheet.name, ctx, 'deleteRow');
 
@@ -291,4 +396,11 @@ export function createTableCrudApi(ctx: ApiGroupContext): Record<string, Functio
             }
         },
     };
+}
+
+/**
+ * 用反引号包裹标识符（表名/列名），防止中文或特殊字符导致 SQL 语法错误
+ */
+export function quoteIdentifier(name: string): string {
+    return `\`${name.replace(/`/g, '``')}\``;
 }

@@ -12,7 +12,7 @@
  */
 
 import { safeJsonParse_ACU } from '../../shared/json-helpers';
-import type { Sheet_ACU } from '../models/table-data';
+import type { Sheet_ACU } from '../../shared/models/table-data';
 import type {
     IsolationTagData_ACU,
     IsolatedDataContainer_ACU,

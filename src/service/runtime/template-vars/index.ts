@@ -24,3 +24,25 @@ export {
     parseIfBlocksInContent_ACU,
     getLatestAIMessageContent_ACU,
 } from './if-block-parser';
+
+// SQL/ORM 查询模板变量
+export {
+    replaceDbSqlVariables,
+    evaluateOrmExpression,
+    evaluateRawSqlExpression,
+    evaluateDbCondition,
+    evaluateSqlCondition,
+    TableQueryBuilder,
+    getDbSqlVariable,
+    clearDbSqlVariables,
+    getDbSqlVariableSnapshot,
+    replaceVarReferences,
+} from './sql-query-var';
+
+// 中英文名称映射
+export {
+    getNameMapper,
+    buildGlobalNameMapper,
+    disposeGlobalNameMapper,
+    NameMapper,
+} from './name-mapper';

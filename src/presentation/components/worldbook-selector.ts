@@ -2,7 +2,7 @@ import { DEFAULT_PLOT_SETTINGS_ACU } from '../../shared/defaults-json.js';
 import { buildDefaultPlotWorldbookConfig_ACU } from '../../shared/defaults';
 import { getCurrentWorldbookConfig_ACU } from '../../service/settings/settings-readers';
 import { jQuery_API_ACU } from '../dom-utils';
-import { getCharLorebooks_ACU } from '../../data/gateways/worldbook-gateway';
+import { getCharLorebooks_ACU } from '../../service/worldbook/worldbook-service';
 import { settings_ACU } from '../../service/runtime/state-manager';
 import { saveSettingsAndNotify_ACU } from './settings-ui-helpers';
 import { getLorebookEntriesByNames_ACU, getWorldbookNames_ACU } from '../../service/worldbook/pipeline';

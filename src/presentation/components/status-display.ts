@@ -1,4 +1,5 @@
-import { DEFAULT_MERGE_SUMMARY_PROMPT_ACU } from '../../shared/defaults-json.js';
+import { DEFAULT_MERGE_SUMMARY_PROMPT_ACU, DEFAULT_MERGE_SUMMARY_PROMPT_SQL_ACU } from '../../shared/defaults-json.js';
+import { isSqliteMode } from '../../service/table/storage-mode';
 import { getCurrentWorldbookConfig_ACU } from '../../service/settings/settings-readers';
 import { renderPromptSegments_ACU } from './plot-editors';
 import { renderImportTableSelector_ACU, renderManualTableSelector_ACU } from './table-selector';
@@ -79,7 +80,7 @@ import { $popupInstance_ACU, $statusMessageSpan_ACU, $manualUpdateCardButton_ACU
     const find = (id: string) => $popupInstance_ACU.find(`#${SCRIPT_ID_PREFIX_ACU}-${id}`);
     const setVal = (id: string, v: any) => { const $el = find(id); if ($el.length) $el.val(v); };
     const setChecked = (id: string, v: any) => { const $el = find(id); if ($el.length) $el.prop('checked', !!v); };
-    setVal('merge-prompt-template', s.mergeSummaryPrompt || DEFAULT_MERGE_SUMMARY_PROMPT_ACU);
+setVal('merge-prompt-template', s.mergeSummaryPrompt || (isSqliteMode() ? DEFAULT_MERGE_SUMMARY_PROMPT_SQL_ACU : DEFAULT_MERGE_SUMMARY_PROMPT_ACU));
     setVal('merge-target-count', s.mergeTargetCount || 1);
     setVal('merge-batch-size', s.mergeBatchSize || 5);
     setVal('merge-start-index', s.mergeStartIndex || 1);

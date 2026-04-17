@@ -2,6 +2,7 @@
  * service/worldbook/injection-engine-order.ts — 注入位置与Order分配工具
  * 从 injection-engine.ts 拆出
  */
+import { logDebug_ACU, logWarn_ACU } from '../../shared/utils';
 
 // =========================
 // [世界书] 注入位置：强制改为 @D 系统深度（避免默认"角色定义之前"）
@@ -80,8 +81,12 @@ function findFirstFreeOrder_ACU(usedSet: Set<number>, preferred = 1, min = 1, ma
 export function allocOrder_ACU(usedSet: Set<number>, preferred = 1, min = 1, max = 99999) {
     const used = usedSet instanceof Set ? usedSet : new Set<number>();
     const o = findFirstFreeOrder_ACU(used, preferred, min, max);
-    if (o === null) throw new Error('无法分配可用的世界书条目 order（插入深度）');
+    if (o === null) {
+        logWarn_ACU(`[世界书Order] allocOrder 失败: 无可用 order, preferred=${preferred}, range=[${min},${max}]`);
+        throw new Error('无法分配可用的世界书条目 order（插入深度）');
+    }
     used.add(o);
+    logDebug_ACU(`[世界书Order] allocOrder: preferred=${preferred} -> 分配=${o}`);
     return o;
 }
 

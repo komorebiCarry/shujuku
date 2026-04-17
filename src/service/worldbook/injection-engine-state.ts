@@ -4,7 +4,7 @@
  */
 import { getCurrentWorldbookConfig_ACU } from '../settings/settings-readers';
 import { CHAT_SHEET_GUIDE_FIELD_ACU } from '../../data/storage/chat-history';
-import { currentChatFileIdentifier_ACU, currentJsonTableData_ACU, settings_ACU, _set_currentChatFileIdentifier_ACU, _set_allChatMessages_ACU, _set_lastTotalAiMessages_ACU } from '../runtime/state-manager';
+import { currentChatFileIdentifier_ACU, currentJsonTableData_ACU, generationGate_ACU, settings_ACU, _set_currentChatFileIdentifier_ACU, _set_allChatMessages_ACU, _set_lastTotalAiMessages_ACU } from '../runtime/state-manager';
 import { getLorebookEntries_ACU, deleteLorebookEntries_ACU, getCurrentCharPrimaryLorebook_ACU as gwGetCurrentCharPrimaryLorebook_ACU } from '../../data/gateways/worldbook-gateway';
 import { getChatArray_ACU, saveChatToHost_ACU } from '../../data/gateways/chat-gateway';
 import { applyTemplateScopeForCurrentChat_ACU, loadSettings_ACU, saveSettings_ACU } from '../settings/settings-service';
@@ -61,6 +61,13 @@ import { purgeSheetKeysFromMessage_ACU } from '../../data/repositories/chat-mess
 
     _set_allChatMessages_ACU([]);
     _set_lastTotalAiMessages_ACU(0); // 重置 AI 消息计数
+
+    // [重构] 切换聊天时重置触发门控状态（从 init.ts CHAT_CHANGED 回调搬入 service 层）
+    generationGate_ACU.lastUserMessageId = null;
+    generationGate_ACU.lastUserMessageText = '';
+    generationGate_ACU.lastUserMessageAt = 0;
+    generationGate_ACU.lastUserSendIntentAt = 0;
+    generationGate_ACU.lastGeneration = null;
 
     logDebug_ACU(
       `ACU: currentChatFileIdentifier FINAL set to: "${currentChatFileIdentifier_ACU}" (Source: CHAT_CHANGED event)`,

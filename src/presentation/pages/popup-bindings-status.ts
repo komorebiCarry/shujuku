@@ -11,6 +11,8 @@ import { saveSettingsAndNotify_ACU } from '../components/settings-ui-helpers';
 import { saveAutoUpdateFrequency_ACU, saveAutoUpdateThreshold_ACU, saveAutoUpdateTokenThreshold_ACU, saveMaxConcurrentGroups_ACU, saveRetainRecentLayers_ACU, saveSkipUpdateFloors_ACU, saveTableMaxRetries_ACU, saveUpdateBatchSize_ACU } from '../triggers/settings-ui-sync';
 import { handleManualUpdate_ACU } from '../triggers/update-process';
 import { renderPromptSegments_ACU, getCharCardPromptFromUI_ACU } from '../components/plot-editors';
+import { switchStorageMode } from '../../service/table/table-storage-strategy';
+import { getCurrentStorageMode } from '../../service/table/storage-mode';
 
 /**
  * 绑定状态&操作标签页的所有事件（对话编辑器 + 设置参数 + checkbox + 手动更新）
@@ -154,5 +156,43 @@ export async function bindStatusEvents_ACU(): Promise<void> {
       if ($manualUpdateCardButton_ACU && $manualUpdateCardButton_ACU.length) {
           $manualUpdateCardButton_ACU.on('click', handleManualUpdate_ACU);
       }
+
+      // [新增] 存储模式切换（原生 / SQLite）
+      const $storageModeRadios = $popupInstance_ACU.find(`input[name="${SCRIPT_ID_PREFIX_ACU}-storage-mode"]`);
+      if ($storageModeRadios.length) {
+          // 初始化：根据当前设置选中对应的 radio
+          const currentMode = getCurrentStorageMode();
+          $storageModeRadios.filter(`[value="${currentMode}"]`).prop('checked', true);
+
+          $storageModeRadios.on('change', async function() {
+              const selectedMode = String(jQuery_API_ACU(this).val() || 'native') as 'native' | 'sqlite';
+              const previousMode = getCurrentStorageMode();
+              if (selectedMode === previousMode) return;
+
+              showToastr_ACU('info', `正在切换到 ${selectedMode === 'sqlite' ? 'SQLite' : '原生'} 模式...`);
+
+              try {
+                  // 更新设置
+                  settings_ACU.storageMode = selectedMode;
+                  saveSettingsAndNotify_ACU();
+
+                  // 执行模式切换（包含数据重载和 fallback）
+                  await switchStorageMode(selectedMode);
+
+                  showToastr_ACU('success', `已切换到 ${selectedMode === 'sqlite' ? 'SQLite' : '原生'} 模式！数据已重新加载。`);
+                  logDebug_ACU(`存储模式已切换: ${previousMode} → ${selectedMode}`);
+              } catch (e: any) {
+                  // 切换失败，回退 radio 状态和设置
+                  const fallbackMode = getCurrentStorageMode(); // switchStorageMode 内部可能已 fallback
+                  settings_ACU.storageMode = fallbackMode;
+                  saveSettingsAndNotify_ACU();
+                  $storageModeRadios.filter(`[value="${fallbackMode}"]`).prop('checked', true);
+
+                  logError_ACU(`存储模式切换失败: ${e?.message}`);
+                  showToastr_ACU('error', `模式切换失败: ${e?.message || '未知错误'}。已回退到${fallbackMode === 'sqlite' ? 'SQLite' : '原生'}模式。`);
+              }
+          });
+      }
+
       // Removed $advHideToggle event listener
 }

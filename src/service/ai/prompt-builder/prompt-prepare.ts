@@ -8,8 +8,9 @@ import { currentJsonTableData_ACU, settings_ACU } from '../../runtime/state-mana
 import { getUserName_ACU } from '../../../data/gateways/host-state-gateway';
 import { attachSeedRowsToCurrentDataFromGuide_ACU, ensureChatSheetGuideSeeded_ACU, getEffectiveSeedRowsForSheet_ACU, getSortedSheetKeys_ACU } from '../../template/chat-scope';
 import { getCombinedWorldbookContent_ACU } from '../../worldbook/pipeline';
-import { isSummaryOrOutlineTable_ACU, logDebug_ACU, logError_ACU, normalizeExcludeRules_ACU, normalizeExtractRules_ACU } from '../../../shared/utils';
+import { isSummaryOrOutlineTable_ACU, logDebug_ACU, logError_ACU, logWarn_ACU, normalizeExcludeRules_ACU, normalizeExtractRules_ACU } from '../../../shared/utils';
 import { applyContextTagFilters_ACU } from '../../runtime/helpers-remaining';
+import { isSqliteMode } from '../../table/storage-mode';
 
   export async function prepareAIInput_ACU(messages: any[], updateMode = 'standard', targetSheetKeys: string[] | null = null, options: any = {}) {
     if (!currentJsonTableData_ACU) {
@@ -23,7 +24,7 @@ import { applyContextTagFilters_ACU } from '../../runtime/helpers-remaining';
         if (_seedGuideDataForThisPrepare_ACU) {
             attachSeedRowsToCurrentDataFromGuide_ACU(_seedGuideDataForThisPrepare_ACU);
         }
-    } catch (e) {}
+    } catch (e) { logWarn_ACU('[AI输入准备] ensureChatSheetGuideSeeded 失败, seed rows 可能不完整:', e); }
 
     let tableDataText = '';
     let _seedRowsTablesUsed_ACU: string[] = [];
@@ -54,6 +55,12 @@ import { applyContextTagFilters_ACU } from '../../runtime/helpers-remaining';
         }
 
         if (!shouldShowData) {
+            return;
+        }
+
+        // SQLite 模式：输出 DDL + 注释数据格式
+        if (isSqliteMode() && table.sourceData?.ddl) {
+            tableDataText += formatTableForSqliteMode(table, tableIndex, sheetKey, _seedGuideDataForThisPrepare_ACU);
             return;
         }
 
@@ -157,5 +164,74 @@ import { applyContextTagFilters_ACU } from '../../runtime/helpers-remaining';
     });
     const manualExtraHintText = manualExtraHint_ACU || '';
 
+    // SQLite 模式下追加 SQL 编辑格式兜底说明（Q17 确认：$0 自带格式说明）
+    if (isSqliteMode() && tableDataText) {
+        tableDataText += `\n-- [SQL 编辑格式说明]\n-- 请在 <tableEdit> 标签内使用标准 SQL 语句（INSERT INTO / UPDATE / DELETE FROM）\n-- 所有 UPDATE 和 DELETE 必须带 WHERE 条件，优先参考各表 Note 中的 SQL 示例和 DDL 中的 UNIQUE 约束选择定位方式\n-- INSERT 时 row_id 值为当前表最大 row_id + 1\n-- 支持表达式更新（如 SET quantity = quantity + 1）、条件批量更新、CASE 条件更新等标准 SQL 写法\n-- 每条语句以分号结尾，多条语句用换行分隔\n`;
+    }
+
     return { tableDataText, messagesText, worldbookContent, manualExtraHint: manualExtraHintText };
+}
+
+/**
+ * SQLite 模式下的表格格式化
+ * 输出 DDL + Note/Trigger 注释 + 当前数据（注释格式）
+ */
+export function formatTableForSqliteMode(table: any, tableIndex: number, sheetKey: string, guideData: any): string {
+    let text = '';
+    const ddl = table.sourceData.ddl;
+
+    // 输出 DDL
+    text += ddl.trim() + '\n';
+
+    // 输出 Note 和 Trigger（作为 SQL 注释）
+    if (table.sourceData) {
+        if (table.sourceData.note) text += `-- Note: ${table.sourceData.note.replace(/\n/g, '\n-- ')}\n`;
+        if (table.sourceData.insertNode) text += `-- INSERT: ${table.sourceData.insertNode}\n`;
+        if (table.sourceData.updateNode) text += `-- UPDATE: ${table.sourceData.updateNode}\n`;
+        if (table.sourceData.deleteNode) text += `-- DELETE: ${table.sourceData.deleteNode}\n`;
+    }
+
+    // 获取有效数据行
+    const allRows = table.content.slice(1);
+    const seedRows = getEffectiveSeedRowsForSheet_ACU(sheetKey, { guideData, allowTemplateFallback: true });
+    const isUsingSeedRows = (allRows.length === 0 && seedRows.length > 0);
+    const effectiveAllRows = (allRows.length > 0) ? allRows : (seedRows.length > 0 ? seedRows : []);
+
+    if (effectiveAllRows.length === 0) {
+        text += `-- (该表格为空，请进行初始化。)\n\n`;
+        return text;
+    }
+
+    if (isUsingSeedRows) {
+        text += `-- SeedRows: 已提供模板基础数据（尚未写入聊天楼层数据；本次填表可直接基于这些行更新）\n`;
+    }
+
+    // 行数限制逻辑（与原生模式一致）
+    let rowsToProcess = effectiveAllRows;
+    let startIndex = 0;
+    const isSummaryTable = (table.name.trim() === '纪要表' || table.name.trim() === '总结表');
+    if (isSummaryTable && effectiveAllRows.length > 10) {
+        startIndex = effectiveAllRows.length - 10;
+        rowsToProcess = effectiveAllRows.slice(-10);
+        text += `-- Note: Showing last ${rowsToProcess.length} of ${effectiveAllRows.length} entries (summary table fixed limit).\n`;
+    } else if (!isSummaryTable) {
+        const sendLatestRows = (table.updateConfig && typeof table.updateConfig.sendLatestRows === 'number')
+            ? table.updateConfig.sendLatestRows : -1;
+        if (sendLatestRows > 0 && effectiveAllRows.length > sendLatestRows) {
+            startIndex = effectiveAllRows.length - sendLatestRows;
+            rowsToProcess = effectiveAllRows.slice(-sendLatestRows);
+            text += `-- Note: Showing last ${rowsToProcess.length} of ${effectiveAllRows.length} entries (sendLatestRows=${sendLatestRows}).\n`;
+        }
+    }
+
+    // 输出当前数据（注释格式的表格）
+    const headers = table.content[0] || [];
+    text += `\n-- 当前数据 (${rowsToProcess.length} rows)\n`;
+    text += `-- | ${headers.join(' | ')} |\n`;
+    rowsToProcess.forEach((row: any) => {
+        text += `-- | ${row.join(' | ')} |\n`;
+    });
+    text += '\n';
+
+    return text;
 }

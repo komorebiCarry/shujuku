@@ -5,7 +5,7 @@
  * 这些类型描述了每条消息上存储的表格数据结构。
  */
 
-import type { Sheet_ACU } from './table-data';
+import type { Sheet_ACU } from '../../shared/models/table-data';
 
 // ── 新版按标签分组存储 ──
 

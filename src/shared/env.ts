@@ -5,10 +5,11 @@
  * 提供顶层窗口引用、存储策略常量和 NO-OP 存储后端。
  */
 
-/** 顶层窗口引用（iframe 环境下为 window.parent） */
+import { getHostWindow } from './runtime-env';
 
+/** 顶层窗口引用（油猴模式下为 window.parent，插件模式下为 window） */
 
-export const topLevelWindow_ACU = (typeof window.parent !== 'undefined' ? window.parent : window);
+export const topLevelWindow_ACU = getHostWindow();
 
 /** 是否禁止使用浏览器 localStorage/sessionStorage 存储配置 */
 export const FORBID_BROWSER_LOCAL_STORAGE_FOR_CONFIG_ACU = true;

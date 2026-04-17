@@ -10,7 +10,7 @@ import { TABLE_TEMPLATE_ACU } from '../../shared/defaults-json.js';
 import { isDefaultTemplatePresetSelection_ACU, normalizeTemplatePresetSelectionValue_ACU } from '../../shared/template-preset-utils';
 import { getOrderedSheetKeys_ACU } from './visualizer-sidebar';
 import { showToastr_ACU } from '../theme/toast';
-import { getChatArray_ACU } from '../../data/gateways/chat-gateway';
+import { getChatArray_ACU } from '../../service/chat/chat-service';
 import { currentJsonTableData_ACU, getCurrentIsolationKey_ACU, settings_ACU, _set_currentJsonTableData_ACU} from '../../service/runtime/state-manager';
 import { buildChatSheetGuideDataFromData_ACU, getChatSheetGuideDataForIsolationKey_ACU, sanitizeTemplateSnapshotForChat_ACU, setChatSheetGuideDataForIsolationKey_ACU } from '../../service/template/chat-scope';
 import { updateReadableLorebookEntry_ACU } from '../../service/worldbook/pipeline';
@@ -31,9 +31,52 @@ import { jQuery_API_ACU } from '../dom-utils';
 import { _acuVisState } from './visualizer';
 import { $popupInstance_ACU } from '../state/ui-refs';
 import { closeACUWindow } from '../window/window-system';
+import { isSqliteMode } from '../../service/table/storage-mode';
 
 // 循环 import — 运行时安全
 import { renderVisualizerMain_ACU } from './visualizer-main-render';
+
+/**
+ * DDL 校验纯函数 — 从 jQuery 事件处理器中提取，方便单元测试
+ * @returns { valid: boolean; message: string } 校验结果
+ */
+export function validateDDLText(ddlText: string, tableHeaders: string[]): { valid: boolean; message: string } {
+    const trimmed = (ddlText || '').trim();
+    if (!trimmed) {
+        return { valid: false, message: '⚠ DDL 为空' };
+    }
+
+    // 校验 1：是否包含 CREATE TABLE
+    if (!/CREATE\s+TABLE/i.test(trimmed)) {
+        return { valid: false, message: '✗ 不是有效的 CREATE TABLE 语句' };
+    }
+
+    // 校验 2：是否包含 row_id 主键列
+    if (!/row_id\s+INTEGER\s+PRIMARY\s+KEY/i.test(trimmed)) {
+        return { valid: false, message: '✗ 缺少 row_id INTEGER PRIMARY KEY 列（必须作为第一列）' };
+    }
+
+    // 校验 3：提取 DDL 列名，与当前表头对比
+    const colMatches = trimmed.match(/\(([^)]+)\)/s);
+    if (colMatches) {
+        const ddlCols = colMatches[1]
+            .split(',')
+            .map(c => c.trim().split(/\s+/)[0])
+            .filter(c => c && !c.startsWith('--'));
+        const ddlColsNoRowId = ddlCols.filter(c => c.toLowerCase() !== 'row_id');
+        const mismatch = ddlColsNoRowId.filter(c => !tableHeaders.includes(c));
+        const missing = tableHeaders.filter((h: string) => !ddlColsNoRowId.includes(h));
+
+        if (mismatch.length > 0 || missing.length > 0) {
+            let msg = '⚠ DDL 列名与表头不完全匹配：';
+            if (mismatch.length > 0) msg += `DDL 多出: ${mismatch.join(', ')}；`;
+            if (missing.length > 0) msg += `表头多出: ${missing.join(', ')}`;
+            return { valid: false, message: msg };
+        }
+    }
+
+    return { valid: true, message: '✓ DDL 格式正确，列名与表头匹配' };
+}
 
   export function renderVisualizerConfigMode_ACU($container: any, sheet: any) {
       const config = ensureSheetExportConfigDefaults_ACU(sheet);
@@ -203,6 +246,21 @@ import { renderVisualizerMain_ACU } from './visualizer-main-render';
                       <textarea class="acu-form-textarea" id="cfg-delete">${escapeHtml_ACU(sourceData.deleteNode || '')}</textarea>
                   </div>
               </div>
+
+              ${isSqliteMode() ? `
+              <div class="acu-config-section" id="cfg-ddl-section">
+                  <h4>DDL 定义 (SQLite 模式)</h4>
+                  <div class="acu-form-group">
+                      <label>CREATE TABLE 语句:</label>
+                      <textarea class="acu-form-textarea" id="cfg-ddl" style="font-family: monospace; font-size: 0.85em; min-height: 120px; white-space: pre;">${escapeHtml_ACU(sourceData.ddl || '')}</textarea>
+                      <div class="acu-hint">定义该表的 SQL Schema。SQLite 模式下，AI 将使用标准 SQL 语句更新此表。每张表 DDL 必须以 <code>row_id INTEGER PRIMARY KEY -- 行号</code> 作为第一列。</div>
+                  </div>
+                  <div class="acu-form-group" style="display: flex; gap: 8px; align-items: center;">
+                      <button id="cfg-ddl-validate" class="acu-btn-secondary" style="white-space: nowrap;"><i class="fa-solid fa-check-circle"></i> 校验 DDL</button>
+                      <span id="cfg-ddl-validate-result" class="acu-hint" style="flex: 1;"></span>
+                  </div>
+              </div>
+              ` : ''}
               
               <div class="acu-config-section">
                   <h4>世界书注入配置</h4>
@@ -412,6 +470,29 @@ import { renderVisualizerMain_ACU } from './visualizer-main-render';
       jQuery_API_ACU('#cfg-insert').on('input', function() { if (!sheet.sourceData) sheet.sourceData = {}; sheet.sourceData.insertNode = jQuery_API_ACU(this).val(); });
       jQuery_API_ACU('#cfg-update').on('input', function() { if (!sheet.sourceData) sheet.sourceData = {}; sheet.sourceData.updateNode = jQuery_API_ACU(this).val(); });
       jQuery_API_ACU('#cfg-delete').on('input', function() { if (!sheet.sourceData) sheet.sourceData = {}; sheet.sourceData.deleteNode = jQuery_API_ACU(this).val(); });
+      
+      // [新增] DDL 编辑器事件绑定（仅 SQLite 模式）
+      if (isSqliteMode()) {
+          jQuery_API_ACU('#cfg-ddl').on('input', function() {
+              if (!sheet.sourceData) sheet.sourceData = {};
+              sheet.sourceData.ddl = jQuery_API_ACU(this).val();
+          });
+
+          jQuery_API_ACU('#cfg-ddl-validate').on('click', function() {
+              const $result = jQuery_API_ACU('#cfg-ddl-validate-result');
+              const ddlText = String(jQuery_API_ACU('#cfg-ddl').val() || '').trim();
+              const headers = (sheet.content && sheet.content[0]) ? sheet.content[0].slice(1) : [];
+              const validation = validateDDLText(ddlText, headers);
+
+              if (validation.valid) {
+                  $result.html(`<span style="color: #a6e3a1;">${escapeHtml_ACU(validation.message)}</span>`);
+              } else if (validation.message.startsWith('⚠')) {
+                  $result.html(`<span style="color: #f6c177;">${escapeHtml_ACU(validation.message)}</span>`);
+              } else {
+                  $result.html(`<span style="color: #e95e5e;">${escapeHtml_ACU(validation.message)}</span>`);
+              }
+          });
+      }
       
       // Worldbook Config Bindings
       const ensureExportConfig = () => { if (!sheet.exportConfig) sheet.exportConfig = {}; };

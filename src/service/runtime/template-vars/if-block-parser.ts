@@ -8,6 +8,7 @@ import { settings_ACU, currentJsonTableData_ACU } from '../state-manager';
 import { getChatArray_ACU } from '../../../data/gateways/chat-gateway';
 import { evaluateCellExpression_ACU } from './cell-utils';
 import { evaluateSeedExpression_ACU, evaluateCondExpression_ACU } from './seed-condition';
+import { evaluateDbCondition, evaluateSqlCondition, replaceVarReferences } from './sql-query-var';
 
   /**
    * 解析条件模板（支持 else 和嵌套）
@@ -37,7 +38,7 @@ import { evaluateSeedExpression_ACU, evaluateCondExpression_ACU } from './seed-c
     let currentIndex = 0;
     
     while (currentIndex < content.length) {
-      const ifStartMatch = content.slice(currentIndex).match(/<if\s+(seed|cell|cond)\s*=\s*"([^"]*)"\s*>/i);
+      const ifStartMatch = content.slice(currentIndex).match(/<if\s+(seed|cell|cond|db|sql)\s*=\s*"([^"]*)"\s*>/i);
       
       if (!ifStartMatch) {
         result += content.slice(currentIndex);
@@ -72,7 +73,7 @@ import { evaluateSeedExpression_ACU, evaluateCondExpression_ACU } from './seed-c
    * 解析单个 if 块（包括 else 分支和嵌套）
    */
   function parseSingleIfBlock_ACU(content: string, startIndex: number, type: string, expression: string, context: any, depth: number) {
-    const ifStartMatch = content.slice(startIndex).match(/<if\s+(?:seed|cell|cond)\s*=\s*"[^"]*"\s*>/i);
+    const ifStartMatch = content.slice(startIndex).match(/<if\s+(?:seed|cell|cond|db|sql)\s*=\s*"[^"]*"\s*>/i);
     if (!ifStartMatch) return null;
     
     const ifStartTagEnd = startIndex + ifStartMatch[0].length;
@@ -83,7 +84,7 @@ import { evaluateSeedExpression_ACU, evaluateCondExpression_ACU } from './seed-c
     while (currentIndex < content.length && nestingLevel > 0) {
       const remainingContent = content.slice(currentIndex);
       
-      const nestedIfMatch = remainingContent.match(/<if\s+(?:seed|cell|cond)\s*=\s*"[^"]*"\s*>/i);
+      const nestedIfMatch = remainingContent.match(/<if\s+(?:seed|cell|cond|db|sql)\s*=\s*"[^"]*"\s*>/i);
       const endIfMatch = remainingContent.match(/<\/if>/i);
       const elseMatch = remainingContent.match(/<else>/i);
       
@@ -127,10 +128,16 @@ import { evaluateSeedExpression_ACU, evaluateCondExpression_ACU } from './seed-c
             conditionMet = evaluateCellExpression_ACU(expression, context.allTablesJson);
           } else if (typeLower === 'cond') {
             conditionMet = evaluateCondExpression_ACU(expression, context);
+          } else if (typeLower === 'db') {
+            conditionMet = evaluateDbCondition(expression);
+          } else if (typeLower === 'sql') {
+            conditionMet = evaluateSqlCondition(expression);
           }
           
           const selectedContent = conditionMet ? ifContent : elseContent;
-          const processedContent = parseIfBlocksInContent_ACU(selectedContent, context, depth + 1);
+          // 选中分支内容先替换 $v: 变量引用，再递归解析嵌套 <if>
+          const withVarsReplaced = replaceVarReferences(selectedContent);
+          const processedContent = parseIfBlocksInContent_ACU(withVarsReplaced, context, depth + 1);
           
           return { content: processedContent, endIndex };
         } else {

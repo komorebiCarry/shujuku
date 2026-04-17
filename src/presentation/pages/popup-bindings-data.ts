@@ -1,7 +1,7 @@
 // popup-bindings-data.ts
 // 数据管理标签页事件绑定（数据隔离 + 外部导入 + 模板预设 + 数据管理按钮）
 
-import { DEFAULT_MERGE_SUMMARY_PROMPT_ACU, TABLE_TEMPLATE_ACU } from '../../shared/defaults-json.js';
+import { DEFAULT_MERGE_SUMMARY_PROMPT_ACU, DEFAULT_MERGE_SUMMARY_PROMPT_SQL_ACU, TABLE_TEMPLATE_ACU } from '../../shared/defaults-json.js';
 import { deriveTemplatePresetNameForImport_ACU, getCurrentTemplatePresetName_ACU, isDefaultTemplatePresetSelection_ACU, normalizeTemplatePresetSelectionValue_ACU } from '../../shared/template-preset-utils';
 import { showToastr_ACU } from '../theme/toast';
 import { ACU_TOAST_CATEGORY_ACU, SCRIPT_ID_PREFIX_ACU } from '../../shared/constants';
@@ -9,6 +9,7 @@ import { topLevelWindow_ACU } from '../../shared/env';
 import { escapeHtml_ACU } from '../../shared/html-helpers';
 import { logDebug_ACU, logError_ACU, logWarn_ACU } from '../../shared/utils';
 import { jQuery_API_ACU } from '../dom-utils';
+import { isSqliteMode } from '../../service/table/storage-mode';
 import { settings_ACU, currentChatFileIdentifier_ACU, currentJsonTableData_ACU, getCurrentIsolationKey_ACU } from '../../service/runtime/state-manager';
 import { $popupInstance_ACU, $charCardPromptToggle_ACU, $charCardPromptAreaDiv_ACU, $saveCharCardPromptButton_ACU, $resetCharCardPromptButton_ACU, $loadModelsButton_ACU, $saveApiConfigButton_ACU, $clearApiConfigButton_ACU, $useMainApiCheckbox_ACU, $streamingEnabledCheckbox_ACU, $customApiModelInput_ACU, $customApiModelSelect_ACU } from '../state/ui-refs';
 import { saveSettingsAndNotify_ACU, loadSettingsAndRefreshUI_ACU } from '../components/settings-ui-helpers';
@@ -255,8 +256,9 @@ export async function bindDataEvents_ACU(): Promise<void> {
                   const $autoThreshold = $popupInstance_ACU.find(`#${SCRIPT_ID_PREFIX_ACU}-auto-merge-threshold`);
                   const $autoReserve = $popupInstance_ACU.find(`#${SCRIPT_ID_PREFIX_ACU}-auto-merge-reserve`);
 
-                  // 恢复所有设置的默认值
-                  $promptInput.val(DEFAULT_MERGE_SUMMARY_PROMPT_ACU);
+                  // 恢复所有设置的默认值（根据当前存储模式选择对应版本）
+                  const defaultMergePrompt = isSqliteMode() ? DEFAULT_MERGE_SUMMARY_PROMPT_SQL_ACU : DEFAULT_MERGE_SUMMARY_PROMPT_ACU;
+                  $promptInput.val(defaultMergePrompt);
                   $targetCount.val(1);
                   $batchSize.val(5);
                   $startIndex.val(1);
@@ -266,7 +268,7 @@ export async function bindDataEvents_ACU(): Promise<void> {
                   $autoReserve.val(0);
 
                   // 更新设置对象
-                  settings_ACU.mergeSummaryPrompt = DEFAULT_MERGE_SUMMARY_PROMPT_ACU;
+                  settings_ACU.mergeSummaryPrompt = defaultMergePrompt;
                   settings_ACU.mergeTargetCount = 1;
                   settings_ACU.mergeBatchSize = 5;
                   settings_ACU.mergeStartIndex = 1;

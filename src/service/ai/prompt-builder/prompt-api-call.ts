@@ -7,9 +7,10 @@ import { currentAbortController_ACU, trackAbortController_ACU, untrackAbortContr
 import { getApiConfigByPreset_ACU } from '../api-call';
 import { currentJsonTableData_ACU, settings_ACU } from '../../runtime/state-manager';
 import { getPersonaDescription_ACU, getCharDescription_ACU } from '../../../data/gateways/host-state-gateway';
-import { isGenerateRawAvailable_ACU, generateRaw_ACU, sendConnectionManagerRequest_ACU, triggerSlash_ACU, getConnectionManagerProfiles_ACU } from '../../../data/gateways/ai-gateway';
+import { isGenerateRawAvailable_ACU, generateRaw_ACU, sendConnectionManagerRequest_ACU, triggerSlash_ACU, getConnectionManagerProfiles_ACU, getHostRequestHeaders_ACU } from '../../../data/gateways/ai-gateway';
 import { logDebug_ACU, logError_ACU, logWarn_ACU, normalizeExcludeRules_ACU } from '../../../shared/utils';
 import { applyExcludeRulesToText_ACU, getLatestAIMessageContent_ACU, getPlotFromHistory_ACU, parseIfBlocksInContent_ACU, parseRandomTags_ACU, replaceRandomVariables_ACU } from '../../runtime/helpers-remaining';
+import { replaceDbSqlVariables } from '../../runtime/template-vars/sql-query-var';
 
   function normalizeRoleForApi_ACU(role: any) {
     const ru = String(role || '').toUpperCase();
@@ -93,7 +94,10 @@ import { applyExcludeRulesToText_ACU, getLatestAIMessageContent_ACU, getPlotFrom
 
         finalContent = parseRandomTags_ACU(finalContent);
         finalContent = replaceRandomVariables_ACU(finalContent);
-        
+
+        // [P4] {[db...]}/{[sql...]} 值替换（SQLite 模式下，在 <if> 之前执行）
+        finalContent = replaceDbSqlVariables(finalContent);
+
         if (settings_ACU.promptTemplateSettings?.enabled !== false) {
           const templateContext = {
             seedContent: getLatestAIMessageContent_ACU(),
@@ -239,7 +243,7 @@ import { applyExcludeRulesToText_ACU, getLatestAIMessageContent_ACU, getPlotFrom
             }
             const generateUrl = `/api/backends/chat-completions/generate`;
             
-            const headers = { ...SillyTavern.getRequestHeaders(), 'Content-Type': 'application/json' };
+            const headers = { ...getHostRequestHeaders_ACU(), 'Content-Type': 'application/json' };
             
             const body = JSON.stringify({
               "messages": messages,

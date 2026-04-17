@@ -21,6 +21,9 @@ import { generateDataTabHTML } from './main-popup-data';
 import { generateImportTabHTML } from './main-popup-import';
 import { generatePlotTabHTML } from './main-popup-plot';
 import { generateOptimizationTabHTML } from './main-popup-optimization';
+import { generateSqlConsoleTabHTML } from './sql-console';
+import { generateLogViewerTabHTML, cleanupLogViewer_ACU } from './log-viewer';
+import { isSqliteMode } from '../../service/table/storage-mode';
 
 import { MAIN_POPUP_CSS_ACU } from './main-popup-styles';
 
@@ -61,6 +64,10 @@ import { MAIN_POPUP_CSS_ACU } from './main-popup-styles';
                         <div class="acu-nav-section-title">增强</div>
                     <button class="acu-tab-button" data-tab="plot">剧情推进（记忆召回）（必开！）</button>
                     <button class="acu-tab-button" data-tab="optimization" id="${SCRIPT_ID_PREFIX_ACU}-tab-optimization" style="display: none;">正文替换</button>
+                        ${isSqliteMode() ? `<div class="acu-nav-section-title">SQL</div>
+                    <button class="acu-tab-button" data-tab="sql-console">SQL 控制台</button>` : ''}
+                        <div class="acu-nav-section-title">调试</div>
+                    <button class="acu-tab-button" data-tab="log-viewer">运行日志</button>
                 </div>
 
                     <div class="acu-main">
@@ -73,6 +80,8 @@ import { MAIN_POPUP_CSS_ACU } from './main-popup-styles';
                 ${generateImportTabHTML()}
                 ${generatePlotTabHTML()}
                 ${generateOptimizationTabHTML()}
+                ${isSqliteMode() ? generateSqlConsoleTabHTML() : ''}
+                ${generateLogViewerTabHTML()}
 
                 <p id="${SCRIPT_ID_PREFIX_ACU}-status-message" class="notes">准备就绪</p>
                     </div>
@@ -94,6 +103,8 @@ import { MAIN_POPUP_CSS_ACU } from './main-popup-styles';
       startMaximized: false, // 由 rememberState 自动管理，首次打开时不全屏
       onClose: () => {
         logDebug_ACU('ACU Window closed');
+        // 清理日志查看器订阅，防止幽灵 DOM 操作和内存泄漏
+        cleanupLogViewer_ACU();
         _set_$popupInstance_ACU(null);
       },
       onReady: async ($window: any) => {

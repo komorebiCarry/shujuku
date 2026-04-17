@@ -6,6 +6,11 @@
  */
 
 // ═══════════════════════════════════════════════════════════════
+// 运行时环境检测（必须最先导入）
+// ═══════════════════════════════════════════════════════════════
+import { checkAndMarkInstance } from './shared/runtime-env';
+
+// ═══════════════════════════════════════════════════════════════
 // shared 层
 // ═══════════════════════════════════════════════════════════════
 import './shared/constants';
@@ -75,13 +80,18 @@ import './presentation/triggers/data-admin-ui';
 import './presentation/triggers/settings-ui-sync';
 
 // ═══════════════════════════════════════════════════════════════
-// 启动入口
+// 启动入口（油猴脚本模式）
 // ═══════════════════════════════════════════════════════════════
 import { mainInitialize_ACU } from './presentation/bootstrap/init';
 
 // jQuery ready 回调
 declare const $: any;
 $(function() {
-    console.log('ACU_INIT_DEBUG: Document is ready, attempting to initialize ACU script.');
+    // 互斥检测：如果已有实例（插件或另一个油猴脚本）在运行，跳过初始化
+    if (checkAndMarkInstance()) {
+        console.warn('[星·数据库 III] 油猴脚本检测到已有实例运行，跳过初始化。');
+        return;
+    }
+    console.log('ACU_INIT_DEBUG: Document is ready, attempting to initialize ACU script (Userscript mode).');
     mainInitialize_ACU();
 });

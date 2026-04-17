@@ -5,7 +5,7 @@
 import { DEFAULT_PLOT_SETTINGS_ACU } from '../../../shared/defaults-json.js';
 import { activePlotEditorSettings_ACU, buildDefaultPlotPromptGroup_ACU, currentEditablePlotPresetState_ACU, currentPlotTaskEditorId_ACU, ensurePlotPromptGroup_ACU , _set_currentEditablePlotPresetState_ACU, _set_activePlotEditorSettings_ACU, _set_currentPlotTaskEditorId_ACU} from '../../../service/plot/plot-state';
 import { showToastr_ACU } from '../../theme/toast';
-import { getChatArray_ACU, saveChatToHost_ACU, setChatMessages_ACU, emitMessageUpdated_ACU } from '../../../data/gateways/chat-gateway';
+import { getChatArray_ACU, saveChatToHost_ACU, setChatMessages_ACU, emitMessageUpdated_ACU } from '../../../service/chat/chat-service';
 import { jQuery_API_ACU } from '../../dom-utils';
 import { toastr_API_ACU } from '../../../shared/host-api';
 import { currentChatFileIdentifier_ACU, settings_ACU } from '../../../service/runtime/state-manager';

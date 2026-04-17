@@ -54,6 +54,10 @@ export async function runOptimizationLogicWithUI_ACU(userMessage: any, options: 
         try {
           if ($toast) toastr_API_ACU.clear($toast);
         } catch (e) {}
+        // DOM 级兜底：确保 toast 元素被彻底移除，防止 toastr.clear 不生效
+        try {
+          if ($toast && $toast.closest) $toast.closest('.toast').remove();
+        } catch (e) {}
         _set_isProcessing_Plot_ACU(false);
 
         setTimeout(() => {

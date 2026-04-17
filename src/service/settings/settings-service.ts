@@ -390,6 +390,8 @@ export   function buildDefaultSettings_ACU() {
             maxNestingDepth: 10,     // 最大嵌套深度
             debugMode: false         // 调试模式
           },
+          // [新增] 存储模式（默认原生模式，用户可切换到 SQLite）
+          storageMode: 'native' as const,
           // [新增] 正文优化功能
           contentOptimizationSettings: {
             enabled: false,                    // 是否启用正文优化
@@ -503,6 +505,59 @@ export function setZeroTkOccupyMode_ACU(modeEnabled: boolean) {
     globalMeta_ACU.zeroTkOccupyModeGlobal = !!modeEnabled;
     saveGlobalMeta_ACU();
     saveSettings_ACU();
+}
+
+// ============================================================
+// 合并配置导入
+// ============================================================
+
+/**
+ * 导入合并配置中的 settings 字段
+ * 纯业务逻辑：将 combinedData 中的各字段赋值到 settings 对象
+ * 不涉及 UI（toast、DOM 更新由 presentation 层负责）
+ * 
+ * @returns 被修改的字段名列表（供 presentation 层更新对应的 UI 元素）
+ */
+export function applyCombinedSettingsImport_ACU(combinedData: any): string[] {
+    const modifiedFields: string[] = [];
+
+    // 导入提示词
+    if (Array.isArray(combinedData.prompt)) {
+        settings_ACU.charCardPrompt = combinedData.prompt;
+        modifiedFields.push('charCardPrompt');
+    }
+
+    // 导入合并提示词
+    if (combinedData.mergeSummaryPrompt) {
+        settings_ACU.mergeSummaryPrompt = combinedData.mergeSummaryPrompt;
+        modifiedFields.push('mergeSummaryPrompt');
+    }
+
+    // 导入合并设置
+    if (typeof combinedData.mergeSummaryPrompt !== 'undefined' ||
+        typeof combinedData.autoMergeEnabled !== 'undefined') {
+
+        // 手动合并设置
+        settings_ACU.mergeTargetCount = combinedData.mergeTargetCount || 1;
+        settings_ACU.mergeBatchSize = combinedData.mergeBatchSize || 5;
+        settings_ACU.mergeStartIndex = combinedData.mergeStartIndex || 1;
+        settings_ACU.mergeEndIndex = combinedData.mergeEndIndex || null;
+        modifiedFields.push('mergeTargetCount', 'mergeBatchSize', 'mergeStartIndex', 'mergeEndIndex');
+
+        // 自动合并设置
+        settings_ACU.autoMergeEnabled = combinedData.autoMergeEnabled || false;
+        settings_ACU.autoMergeThreshold = combinedData.autoMergeThreshold || 20;
+        settings_ACU.autoMergeReserve = combinedData.autoMergeReserve || 0;
+        modifiedFields.push('autoMergeEnabled', 'autoMergeThreshold', 'autoMergeReserve');
+
+        // 删除楼层范围设置
+        settings_ACU.deleteStartFloor = combinedData.deleteStartFloor || null;
+        settings_ACU.deleteEndFloor = combinedData.deleteEndFloor || null;
+        modifiedFields.push('deleteStartFloor', 'deleteEndFloor');
+    }
+
+    saveSettings_ACU();
+    return modifiedFields;
 }
 
 // re-export data 层基础设施（供 presentation 层通过 service 层访问，避免 presentation→data 直接依赖）

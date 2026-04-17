@@ -1,48 +1,40 @@
 /**
- * presentation/triggers/auto-loop.ts — 自动化循环（Auto Loop）编排逻辑
- * 从 service/runtime/helpers-remaining.ts 搬出。
- * 这些函数涉及 UI 操作（写文本框、点发送按钮、更新循环状态 UI），属于 presentation 层。
+ * presentation/triggers/auto-loop.ts — 自动化循环 UI 壳（presentation 层）
+ * 业务逻辑委托给 service/loop/loop-controller.ts。
+ * 本文件只负责 UI 操作：写输入框、点发送按钮、更新定时器显示、toast 通知。
  */
 
 import { showToastr_ACU } from '../theme/toast';
 import { DEFAULT_PLOT_SETTINGS_ACU } from '../../shared/defaults-json.js';
-import { getChatArray_ACU, deleteLastMessage_ACU } from '../../data/gateways/chat-gateway';
-import { getCurrentCharacterFallback_ACU } from '../../data/gateways/host-state-gateway';
-import { loopState_ACU, planningGuard_ACU, settings_ACU } from '../../service/runtime/state-manager';
-import { ensureLoopPromptsArray_ACU } from '../../service/plot/plot-logic';
+import { loopState_ACU, settings_ACU } from '../../service/runtime/state-manager';
 import { logDebug_ACU, logError_ACU, logWarn_ACU } from '../../shared/utils';
 import { clickSendButton_ACU, setSendTextareaValue_ACU } from '../components/status-display';
 import { updateLoopTimerDisplay_ACU, updateLoopUIStatus_ACU } from './settings-ui-sync';
+import {
+    validateLoopStartParams_ACU,
+    initLoopState_ACU,
+    stopLoopState_ACU,
+    getNextLoopPrompt_ACU,
+    handleRetryLogic_ACU,
+    evaluateLoopEnd_ACU,
+} from '../../service/loop/loop-controller';
 
 export async function startAutoLoop_ACU() {
-    const plotSettings = settings_ACU.plotSettings;
-    ensureLoopPromptsArray_ACU(plotSettings);
-    const loopSettings = plotSettings.loopSettings;
-    const loopDuration = (loopSettings.loopTotalDuration || 0) * 60 * 1000;
-
-    if (!loopSettings.quickReplyContent || !Array.isArray(loopSettings.quickReplyContent) || loopSettings.quickReplyContent.length === 0) {
-        showToastr_ACU('error', '请先添加至少一个循环提示词', '无法启动循环');
-        stopAutoLoop_ACU();
-        return;
-    }
-    loopSettings.currentPromptIndex = 0;
-
-    if (loopDuration <= 0) {
-        showToastr_ACU('error', '请设置有效的总倒计时 (大于0分钟)', '无法启动循环');
+    // [重构] 调用 service 层校验
+    const validationError = validateLoopStartParams_ACU();
+    if (validationError) {
+        showToastr_ACU('error', validationError, '无法启动循环');
         stopAutoLoop_ACU();
         return;
     }
 
-    loopState_ACU.isLooping = true;
-    loopState_ACU.isRetrying = false;
-    loopState_ACU.startTime = Date.now();
-    loopState_ACU.totalDuration = loopDuration;
-    loopState_ACU.retryCount = 0;
+    // [重构] 调用 service 层初始化状态
+    initLoopState_ACU();
 
-    logDebug_ACU('[剧情推进] Auto Loop Started. Duration: ' + loopDuration + 'ms');
-
+    // UI 更新
     updateLoopUIStatus_ACU(true);
 
+    // 定时器 tick（UI 层负责显示）
     loopState_ACU.tickInterval = setInterval(() => {
         const elapsed = Date.now() - loopState_ACU.startTime;
         const remaining = Math.max(0, loopState_ACU.totalDuration - elapsed);
@@ -61,65 +53,27 @@ export async function startAutoLoop_ACU() {
 }
 
 export function stopAutoLoop_ACU() {
-    loopState_ACU.isLooping = false;
-    loopState_ACU.isRetrying = false;
-    loopState_ACU.awaitingReply = false;
-    if (loopState_ACU.timerId) {
-        clearTimeout(loopState_ACU.timerId);
-        loopState_ACU.timerId = null;
-    }
-    if (loopState_ACU.tickInterval) {
-        clearInterval(loopState_ACU.tickInterval);
-        loopState_ACU.tickInterval = null;
-    }
+    // [重构] 调用 service 层停止状态
+    stopLoopState_ACU();
+    // UI 更新
     updateLoopUIStatus_ACU(false);
-    logDebug_ACU('[剧情推进] Auto Loop Stopped.');
 }
 
 async function triggerLoopGeneration_ACU() {
-    if (!loopState_ACU.isLooping) return;
-    const plotSettings = settings_ACU.plotSettings;
-    ensureLoopPromptsArray_ACU(plotSettings);
-    const loopSettings = plotSettings.loopSettings;
-    const prompts = loopSettings.quickReplyContent || [];
-
-    if (!prompts || prompts.length === 0) {
-        logWarn_ACU('[剧情推进] Loop prompts array is empty, stopping loop.');
+    // [重构] 调用 service 层获取下一个提示词
+    const prompt = getNextLoopPrompt_ACU();
+    if (prompt === null) {
         stopAutoLoop_ACU();
         return;
     }
 
-    const currentIndex = loopSettings.currentPromptIndex || 0;
-    const quickReplyContent = prompts[currentIndex] || prompts[0];
-    if (!quickReplyContent || !quickReplyContent.trim()) {
-        logWarn_ACU('[剧情推进] Current prompt is empty, stopping loop.');
-        stopAutoLoop_ACU();
-        return;
-    }
-    loopSettings.currentPromptIndex = (currentIndex + 1) % prompts.length;
-    logDebug_ACU(`[剧情推进] 使用提示词 ${currentIndex + 1}/${prompts.length}: ${quickReplyContent.substring(0, 50)}...`);
-
-    loopState_ACU.awaitingReply = true;
-    setSendTextareaValue_ACU(quickReplyContent);
-
+    // UI 操作：写入输入框并点击发送
+    setSendTextareaValue_ACU(prompt);
     setTimeout(() => {
         if (loopState_ACU.isLooping) {
             if (typeof clickSendButton_ACU === 'function') clickSendButton_ACU();
         }
     }, 100);
-}
-
-function validateLoopTags_ACU(content: any, tags: any) {
-    if (!tags || !tags.trim()) return true;
-    const tagList = tags.split(/[,，]/).map((t: string) => t.trim()).filter((t: string) => t);
-    if (tagList.length === 0) return true;
-    for (const tag of tagList) {
-        if (!content.includes(tag)) {
-            logDebug_ACU(`[剧情推进] Loop validation failed: missing tag "${tag}"`);
-            return false;
-        }
-    }
-    return true;
 }
 
 async function triggerDirectRegenerateForLoop_ACU(loopSettings: any) {
@@ -136,33 +90,16 @@ async function triggerDirectRegenerateForLoop_ACU(loopSettings: any) {
 }
 
 export async function enterLoopRetryFlow_ACU({ loopSettings, shouldDeleteAiReply }: any) {
-    loopState_ACU.isRetrying = true;
-    loopState_ACU.retryCount++;
-    const maxRetries = loopSettings.maxRetries ?? 3;
-
-    logDebug_ACU(`[剧情推进] 进入重试流程: ${loopState_ACU.retryCount}/${maxRetries}.`);
-
-    if (loopState_ACU.retryCount > maxRetries) {
+    // [重构] 调用 service 层重试逻辑
+    const canRetry = await handleRetryLogic_ACU(shouldDeleteAiReply);
+    if (!canRetry) {
+        const maxRetries = loopSettings.maxRetries ?? 3;
         showToastr_ACU('error', `连续失败超过 ${maxRetries} 次，自动化循环已停止。`, '循环中止');
         stopAutoLoop_ACU();
         return;
     }
 
-    if (shouldDeleteAiReply) {
-        const chat = getChatArray_ACU();
-        const last = chat?.length ? chat[chat.length - 1] : null;
-        if (last && !last.is_user) {
-            logDebug_ACU('[剧情推进] [重试] 删除缺失标签的AI楼层...');
-            try {
-                await deleteLastMessage_ACU();
-            } catch (e) {
-                logError_ACU('[剧情推进] 删除楼层失败:', e);
-            }
-        } else {
-            logDebug_ACU('[剧情推进] [重试] 不需要删除：最新楼层不是AI。');
-        }
-    }
-
+    // UI 操作：延迟后触发重新生成
     loopState_ACU.timerId = setTimeout(async () => {
         let busyWait = 0;
         while ((window as any).SillyTavern?.generating && busyWait < 20) {
@@ -181,68 +118,30 @@ export async function enterLoopRetryFlow_ACU({ loopSettings, shouldDeleteAiReply
 }
 
 export async function onLoopGenerationEnded_ACU() {
-    if (!loopState_ACU.isLooping) return;
-    if (!loopState_ACU.awaitingReply) return;
-
-    if (planningGuard_ACU.inProgress) {
-        logDebug_ACU('[剧情推进] [Loop] Planning in progress, ignoring GENERATION_ENDED.');
-        return;
-    }
-    if (planningGuard_ACU.ignoreNextGenerationEndedCount > 0) {
-        planningGuard_ACU.ignoreNextGenerationEndedCount--;
-        logDebug_ACU(`[剧情推进] [Loop] Ignoring planning-triggered GENERATION_ENDED (${planningGuard_ACU.ignoreNextGenerationEndedCount} left).`);
-        return;
-    }
-
-    await new Promise(resolve => setTimeout(resolve, 1500));
-    if (!loopState_ACU.isLooping || !loopState_ACU.awaitingReply) return;
-
+    // [重构] 调用 service 层评估
+    const result = await evaluateLoopEnd_ACU();
     const loopSettings = settings_ACU.plotSettings.loopSettings || DEFAULT_PLOT_SETTINGS_ACU.loopSettings;
-    const chat = getChatArray_ACU();
-    if (!chat || chat.length === 0) return;
 
-    let lastMessage = chat[chat.length - 1];
-    if (lastMessage.is_user && lastMessage._qrf_from_planning) {
-        logDebug_ACU('[剧情推进] [Loop] 检测到规划层(user with _qrf_from_planning)，忽略，继续等待AI回复。');
-        return;
+    switch (result.action) {
+        case 'ignore':
+            return;
+
+        case 'continue':
+            loopState_ACU.timerId = setTimeout(() => {
+                triggerLoopGeneration_ACU();
+            }, result.loopDelay || 5000);
+            return;
+
+        case 'retry_delete':
+            await enterLoopRetryFlow_ACU({ loopSettings, shouldDeleteAiReply: true });
+            return;
+
+        case 'retry_no_delete':
+            await enterLoopRetryFlow_ACU({ loopSettings, shouldDeleteAiReply: false });
+            return;
+
+        case 'wait_retry':
+            await enterLoopRetryFlow_ACU({ loopSettings, shouldDeleteAiReply: false });
+            return;
     }
-
-    if (lastMessage.is_user) {
-        logWarn_ACU('[剧情推进] [Loop] 生成结束但最后一条是用户消息（无规划标记），等待2s后重试检测...');
-        await new Promise(resolve => setTimeout(resolve, 2000));
-        const updatedChat = getChatArray_ACU();
-        lastMessage = updatedChat?.length ? updatedChat[updatedChat.length - 1] : null;
-    }
-
-    if (!lastMessage || lastMessage.is_user) {
-        logWarn_ACU('[剧情推进] [Loop] 未找到AI回复楼层，进入重试。');
-        loopState_ACU.awaitingReply = false;
-        await enterLoopRetryFlow_ACU({ loopSettings, shouldDeleteAiReply: false });
-        return;
-    }
-
-    const activeChar = getCurrentCharacterFallback_ACU();
-    const activeCharName = activeChar?.name;
-    if (activeCharName && lastMessage.name && lastMessage.name !== activeCharName) {
-        logDebug_ACU(
-            `[剧情推进] [Loop] 检测到来自其他角色/扩展的AI回复(name=${lastMessage.name})，与当前角色(${activeCharName})不符，忽略本次 GENERATION_ENDED。`
-        );
-        return;
-    }
-
-    const ok = validateLoopTags_ACU(lastMessage.mes, loopSettings.loopTags);
-    if (ok) {
-        logDebug_ACU('[剧情推进] 标签检测通过。继续循环。');
-        loopState_ACU.isRetrying = false;
-        loopState_ACU.retryCount = 0;
-        loopState_ACU.awaitingReply = false;
-        loopState_ACU.timerId = setTimeout(() => {
-            triggerLoopGeneration_ACU();
-        }, (loopSettings.loopDelay || 5) * 1000);
-        return;
-    }
-
-    logDebug_ACU('[剧情推进] 标签检测未通过。进入重试。');
-    loopState_ACU.awaitingReply = false;
-    await enterLoopRetryFlow_ACU({ loopSettings, shouldDeleteAiReply: true });
 }

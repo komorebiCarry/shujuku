@@ -14,10 +14,11 @@ import { persistCurrentTemplatePresetName_ACU, saveSettings_ACU } from '../setti
 import { applyTemplateScopeForCurrentChat_ACU } from '../settings/settings-service';
 import { getCurrentIsolationKey_ACU, settings_ACU } from '../runtime/state-manager';
 import { saveChatToHost_ACU } from '../../data/gateways/chat-gateway';
-import { activateChatTemplatePresetSelection_ACU, buildChatSheetGuideDataFromTemplateObj_ACU, buildChatTemplatePresetLinkState_ACU, buildChatTemplateScopeStateFromCurrent_ACU, clearChatSheetGuideDataForIsolationKey_ACU, getCurrentChatTemplateScopeState_ACU, listChatTemplatePresetEntries_ACU, migrateLegacyTemplateScopeForCurrentChat_ACU, normalizeTemplateScopeIsolationKey_ACU, normalizeTemplateScopeMode_ACU, sanitizeChatSheetsObject_ACU, sanitizeTemplateSnapshotForChat_ACU, setCurrentChatTemplateScopeState_ACU, upsertChatTemplatePresetEntry_ACU } from '../template/chat-scope';
+import { activateChatTemplatePresetSelection_ACU, buildChatSheetGuideDataFromTemplateObj_ACU, buildChatTemplatePresetLinkState_ACU, buildChatTemplateScopeStateFromCurrent_ACU, clearChatSheetGuideDataForIsolationKey_ACU, getCurrentChatTemplateScopeState_ACU, getGlobalTemplateSnapshotForCurrentProfile_ACU, listChatTemplatePresetEntries_ACU, migrateLegacyTemplateScopeForCurrentChat_ACU, normalizeTemplateScopeIsolationKey_ACU, normalizeTemplateScopeMode_ACU, sanitizeChatSheetsObject_ACU, sanitizeTemplateSnapshotForChat_ACU, setCurrentChatTemplateScopeState_ACU, upsertChatTemplatePresetEntry_ACU } from '../template/chat-scope';
 import { refreshMergedDataAndNotify_ACU } from '../worldbook/pipeline';
 import { safeJsonParse_ACU, safeJsonStringify_ACU } from '../../shared/json-helpers';
 import { ensureSheetOrderNumbers_ACU, logWarn_ACU, parseTableTemplateJson_ACU } from '../../shared/utils';
+import { buildDefaultExportConfig_ACU, ensureExportConfigDefaults_ACU } from '../worldbook/injection-engine';
 
 // ═══ 预设存储 CRUD（内部辅助） ═══
 
@@ -134,7 +135,7 @@ export function normalizeTemplateForPresetSave_ACU() {
     try {
         const sheetKeys = Object.keys(obj).filter(k => k.startsWith('sheet_'));
         ensureSheetOrderNumbers_ACU(obj, { baseOrderKeys: sheetKeys, forceRebuild: false });
-    } catch (e) {}
+    } catch (e) { logWarn_ACU('[模板预设] normalizeTemplateForPresetSave: 排序号处理失败:', e); }
     const sanitized = sanitizeChatSheetsObject_ACU(obj, { ensureMate: true });
     const str = safeJsonStringify_ACU(sanitized, '');
     if (!str) return null;
@@ -207,7 +208,7 @@ export function parseImportedTemplateData_ACU(templateData: any) {
             }
             jsonData.mate.updateConfigUiSentinel = -1;
         }
-    } catch (e) {}
+    } catch (e) { logWarn_ACU('[模板预设] applyTemplatePreset: updateConfig 迁移失败:', e); }
 
     ensureSheetOrderNumbers_ACU(jsonData, { baseOrderKeys: sheetKeys, forceRebuild: false });
     const sanitized = sanitizeChatSheetsObject_ACU(jsonData, { ensureMate: true });
@@ -371,4 +372,90 @@ export async function applyTemplatePresetToCurrent_ACU(presetName: string, { sou
     if (!applied) return false;
 
     return { ...applied, isDefault: isDefaultPreset };
+}
+
+/**
+ * 解析指定 scope 的模板数据用于导出
+ * 纯业务逻辑：不涉及 UI（文件下载由 presentation 层负责）
+ * 
+ * @param scope - 'global' | 'chat'
+ * @param selectedPresetName - 当前选中的预设名（由 UI 层传入）
+ * @returns { jsonData, fromPresetName } 或 null（解析失败）
+ */
+export function resolveTemplateForExport_ACU(
+    scope: string,
+    selectedPresetName?: string
+): { jsonData: Record<string, any>; fromPresetName: string } | null {
+    const normalizedScope = normalizeTemplateOperationScope_ACU(scope);
+    let fromPresetName = '';
+    let jsonData: Record<string, any> | null = null;
+
+    if (normalizedScope === 'global') {
+        // 优先从选中的预设加载
+        if (selectedPresetName) {
+            try {
+                const selected = normalizeTemplatePresetSelectionValue_ACU(selectedPresetName);
+                if (selected) {
+                    const preset = getTemplatePreset_ACU(selected);
+                    const obj = preset?.templateStr ? safeJsonParse_ACU(preset.templateStr, null) : null;
+                    if (obj && typeof obj === 'object') {
+                        jsonData = JSON.parse(JSON.stringify(obj));
+                        fromPresetName = selected;
+                    }
+                }
+            } catch (e) { logWarn_ACU('[模板预设] resolveTemplateData: 从预设加载模板失败:', e); }
+        }
+
+        // fallback: 全局快照
+        if (!jsonData || typeof jsonData !== 'object') {
+            const globalSnapshot = getGlobalTemplateSnapshotForCurrentProfile_ACU();
+            if (globalSnapshot?.templateObj && typeof globalSnapshot.templateObj === 'object') {
+                jsonData = JSON.parse(JSON.stringify(globalSnapshot.templateObj));
+                fromPresetName = normalizeTemplatePresetSelectionValue_ACU(getCurrentTemplatePresetName_ACU(settings_ACU, { requireExisting: false }));
+            }
+        }
+    } else {
+        // chat scope
+        const chatScopeState = getCurrentChatTemplateScopeState_ACU() || migrateLegacyTemplateScopeForCurrentChat_ACU();
+        const effectivePresetName = normalizeTemplatePresetSelectionValue_ACU(resolveActiveTemplatePresetName_ACU({ fallbackToGlobal: true }));
+        const chatSnapshot = chatScopeState?.mode === 'chat_override' && chatScopeState?.templateStr
+            ? sanitizeTemplateSnapshotForChat_ACU(chatScopeState.templateStr)
+            : (sanitizeTemplateSnapshotForChat_ACU(TABLE_TEMPLATE_ACU) || getGlobalTemplateSnapshotForCurrentProfile_ACU());
+        if (chatSnapshot?.templateObj && typeof chatSnapshot.templateObj === 'object') {
+            jsonData = JSON.parse(JSON.stringify(chatSnapshot.templateObj));
+            fromPresetName = normalizeTemplatePresetSelectionValue_ACU(chatScopeState?.presetName || effectivePresetName);
+        }
+    }
+
+    // 最终 fallback
+    if (!jsonData || typeof jsonData !== 'object') {
+        const fallbackSnapshot = normalizedScope === 'chat'
+            ? sanitizeTemplateSnapshotForChat_ACU(TABLE_TEMPLATE_ACU)
+            : getGlobalTemplateSnapshotForCurrentProfile_ACU();
+        if (fallbackSnapshot?.templateObj && typeof fallbackSnapshot.templateObj === 'object') {
+            jsonData = JSON.parse(JSON.stringify(fallbackSnapshot.templateObj));
+        }
+    }
+
+    if (!jsonData || typeof jsonData !== 'object') {
+        return null;
+    }
+
+    // 确保顺序编号
+    const sheetKeys0 = Object.keys(jsonData).filter(k => k.startsWith('sheet_'));
+    ensureSheetOrderNumbers_ACU(jsonData, { baseOrderKeys: sheetKeys0, forceRebuild: false });
+
+    // 确保每个 sheet 都有 exportConfig
+    const sheetKeysForExport = Object.keys(jsonData).filter(k => k.startsWith('sheet_'));
+    sheetKeysForExport.forEach(key => {
+        const sheet = jsonData[key];
+        if (!sheet) return;
+        if (!sheet.exportConfig) {
+            sheet.exportConfig = buildDefaultExportConfig_ACU(sheet.name);
+        } else {
+            sheet.exportConfig = ensureExportConfigDefaults_ACU(sheet.exportConfig, sheet.name);
+        }
+    });
+
+    return { jsonData, fromPresetName };
 }

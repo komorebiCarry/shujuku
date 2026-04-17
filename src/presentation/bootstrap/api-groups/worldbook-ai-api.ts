@@ -5,8 +5,8 @@
 
 import { topLevelWindow_ACU } from '../../../shared/env';
 import { logDebug_ACU, logError_ACU } from '../../../shared/utils';
-import { sendConnectionManagerRequest_ACU, generateRaw_ACU, isGenerateRawAvailable_ACU } from '../../../data/gateways/ai-gateway';
-import { getChatArray_ACU } from '../../../data/gateways/chat-gateway';
+import { sendConnectionManagerRequest_ACU, generateRaw_ACU, isGenerateRawAvailable_ACU, getHostRequestHeaders_ACU } from '../../../service/ai/ai-service';
+import { getChatArray_ACU } from '../../../service/chat/chat-service';
 import {
     settings_ACU,
     currentJsonTableData_ACU,
@@ -187,7 +187,7 @@ export function createWorldbookAiApi(_ctx: ApiGroupContext): Record<string, Func
                         });
 
                         const headers = {
-                            ...SillyTavern.getRequestHeaders(),
+                            ...getHostRequestHeaders_ACU(),
                             'Content-Type': 'application/json'
                         };
                         const res = await fetch(url, { method: 'POST', headers, body });

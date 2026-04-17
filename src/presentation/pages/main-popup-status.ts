@@ -82,6 +82,20 @@ export function generateStatusTabHTML(): string {
                                     <input type="checkbox" id="${SCRIPT_ID_PREFIX_ACU}-prompt-template-enabled-checkbox">
                                     <label for="${SCRIPT_ID_PREFIX_ACU}-prompt-template-enabled-checkbox">启用条件模板功能（<if>条件判断）</label>
                                 </div>
+                                <div style="margin-top: 12px; padding-top: 12px; border-top: 1px dashed var(--border-normal);">
+                                    <label style="font-weight: 500; font-size: 0.9em; margin-bottom: 8px; display: block;">表格存储模式:</label>
+                                    <div style="display: flex; gap: 16px; align-items: center;">
+                                        <label style="display: flex; align-items: center; gap: 6px; cursor: pointer;">
+                                            <input type="radio" name="${SCRIPT_ID_PREFIX_ACU}-storage-mode" value="native" checked>
+                                            <span>原生模式 (JSON/DSL)</span>
+                                        </label>
+                                        <label style="display: flex; align-items: center; gap: 6px; cursor: pointer;">
+                                            <input type="radio" name="${SCRIPT_ID_PREFIX_ACU}-storage-mode" value="sqlite">
+                                            <span>SQLite 模式 (SQL)</span>
+                                        </label>
+                                    </div>
+                                    <small class="notes" style="margin-top: 4px; display: block;">原生模式使用 JSON 二维数组 + DSL 指令；SQLite 模式使用内存数据库 + 标准 SQL 语句。切换后会自动重新加载数据。</small>
+                                </div>
                             </div>
                             <p class="notes" style="margin-top: 10px;">手动更新会使用当前UI参数，对勾选的表进行更新；未勾选则默认更新全部表。</p>
                             <p class="notes" style="margin-top: 6px;">勾选"额外提示词"后，点击手动更新会弹出输入框，内容将写入AI指令预设中的 $8 占位符，仅本次操作生效。</p>

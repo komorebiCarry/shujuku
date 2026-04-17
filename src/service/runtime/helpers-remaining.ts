@@ -12,7 +12,7 @@
  */
 import { currentJsonTableData_ACU, settings_ACU } from './state-manager';
 import { logDebug_ACU } from '../../shared/utils';
-import { parseRandomTags_ACU, replaceRandomVariables_ACU, parseCalcTags_ACU, parseMaxTags_ACU, parseMinTags_ACU, replaceCalcVariables_ACU, replaceMaxVariables_ACU, replaceMinVariables_ACU, parseIfBlockRecursive_ACU, getLatestAIMessageContent_ACU } from './template-vars';
+import { parseRandomTags_ACU, replaceRandomVariables_ACU, parseCalcTags_ACU, parseMaxTags_ACU, parseMinTags_ACU, replaceCalcVariables_ACU, replaceMaxVariables_ACU, replaceMinVariables_ACU, parseIfBlockRecursive_ACU, getLatestAIMessageContent_ACU, replaceDbSqlVariables } from './template-vars';
 import { getPlotFromHistory_ACU } from './plot-runtime';
 
 // ═══ 上下文标签提取/过滤 ═══
@@ -46,6 +46,12 @@ export {
     maybeLiftWorldbookSuppression_ACU,
     fillFirstLayerWithTemplateData_ACU,
     getEffectiveAutoUpdateThreshold_ACU,
+    isNewChatGreetingStage_ACU,
+    isSingleAiNoUserChat_ACU,
+    buildTemplateBaseStateDataForLocalStorage_ACU,
+    seedGreetingLocalDataFromTemplate_ACU,
+    parseReadableToJson_ACU,
+    GREETING_LOCAL_BASE_STATE_MARKER_ACU,
 } from './helpers-data-merge';
 
 // ═══ 模板变量系统 ═══
@@ -112,6 +118,8 @@ export {
       processedContent = replaceCalcVariables_ACU(processedContent);
       processedContent = replaceMaxVariables_ACU(processedContent);
       processedContent = replaceMinVariables_ACU(processedContent);
+      // [P4] {[db...]}/{[sql...]} 值替换（SQLite 模式下，在 <if> 之前执行）
+      processedContent = replaceDbSqlVariables(processedContent);
       processedContent = parseIfBlockRecursive_ACU(processedContent, context, 0);
       return processedContent;
     };

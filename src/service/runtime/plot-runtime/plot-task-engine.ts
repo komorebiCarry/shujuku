@@ -12,7 +12,7 @@ import { getPersonaDescription_ACU, getCharDescription_ACU } from '../../../data
 import { buildCombinedWorldbookContentByStrategy_ACU } from '../../worldbook/pipeline';
 import { escapeRegExp_ACU, hashUserInput_ACU, isEntryBlocked_ACU, logDebug_ACU, logError_ACU, logWarn_ACU, normalizeNonNegativeInteger_ACU, normalizePositiveInteger_ACU, normalizeExcludeRules_ACU, normalizeExtractRules_ACU } from '../../../shared/utils';
 import { ensurePlotTasksCompat_ACU, getPlotPromptContentByIdFromSettings_ACU, normalizePlotTask_ACU, normalizePlotTasks_ACU } from '../../plot/plot-logic';
-import { parseRandomTags_ACU, replaceRandomVariables_ACU, getLatestAIMessageContent_ACU } from '../template-vars';
+import { parseRandomTags_ACU, replaceRandomVariables_ACU, getLatestAIMessageContent_ACU, replaceDbSqlVariables } from '../template-vars';
 import { applyContextTagFilters_ACU, applyExcludeRulesToText_ACU } from '../helpers-context-tags';
 import { mergeAllIndependentTables_ACU } from '../helpers-data-merge';
 import { formatTableDataForLLM_ACU, formatOutlineTableForPlot_ACU, formatSummaryIndexForPlot_ACU, getSummaryIndexContentForPlot_ACU } from './plot-data-format';
@@ -122,7 +122,7 @@ import { getPlotFromHistory_ACU, savePlotToLatestMessage_ACU } from './plot-hist
           if (merged && typeof merged === 'object') {
             _set_currentJsonTableData_ACU(merged);
           }
-        } catch (e) {}
+        } catch (e) { logWarn_ACU('[剧情任务] 合并表格数据失败, 剧情推进可能使用过时数据:', e); }
       }
       if (currentJsonTableData_ACU && typeof currentJsonTableData_ACU === 'object') {
         const summaryIndexResult = formatSummaryIndexForPlot_ACU(currentJsonTableData_ACU);
@@ -226,6 +226,8 @@ import { getPlotFromHistory_ACU, savePlotToLatestMessage_ACU } from './plot-hist
     logDebug_ACU('[剧情推进] $1 世界书内容(渲染后):', worldbookContent ? `长度=${worldbookContent.length}` : '(空)');
     worldbookContent = parseRandomTags_ACU(worldbookContent);
     worldbookContent = replaceRandomVariables_ACU(worldbookContent);
+    // [P4] {[db...]}/{[sql...]} 值替换（SQLite 模式下）
+    worldbookContent = replaceDbSqlVariables(worldbookContent);
 
     const defaultDirective = '[SYSTEM_DIRECTIVE: You are a storyteller. The following <plot> block is your absolute script for this turn. You MUST follow the <directive> within it to generate the story.]';
     let finalSystemDirectiveContent = defaultDirective;
@@ -236,6 +238,8 @@ import { getPlotFromHistory_ACU, savePlotToLatestMessage_ACU } from './plot-hist
     const plotFinalDirective = performReplacements(rawFinal);
     let finalWithRandom = parseRandomTags_ACU(plotFinalDirective);
     finalWithRandom = replaceRandomVariables_ACU(finalWithRandom);
+    // [P4] {[db...]}/{[sql...]} 值替换（SQLite 模式下）
+    finalWithRandom = replaceDbSqlVariables(finalWithRandom);
     if (finalWithRandom && finalWithRandom.trim()) {
       finalSystemDirectiveContent = finalWithRandom.trim();
     }
@@ -346,7 +350,15 @@ import { getPlotFromHistory_ACU, savePlotToLatestMessage_ACU } from './plot-hist
         }
 
         if (attemptIndex < maxRetries - 1) {
-          await new Promise(resolve => setTimeout(resolve, 5000));
+          // 可被 abort 信号中断的等待，避免用户点中止后还要等 5 秒
+          await new Promise<void>(resolve => {
+            const signal = abortController_ACU?.signal;
+            if (signal?.aborted) { resolve(); return; }
+            const timer = setTimeout(() => { cleanup(); resolve(); }, 5000);
+            const onAbort = () => { clearTimeout(timer); cleanup(); resolve(); };
+            const cleanup = () => { try { signal?.removeEventListener('abort', onAbort); } catch (_) {} };
+            signal?.addEventListener('abort', onAbort, { once: true });
+          });
         }
       }
 

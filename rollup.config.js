@@ -1,20 +1,31 @@
 /**
- * rollup.config.js — 真正的模块化构建
+ * rollup.config.js — 双入口模块化构建
  *
  * 使用 @rollup/plugin-typescript 编译 TS，Rollup 做真正的模块图解析。
- * 输出格式：IIFE（油猴环境要求）。
- * 产物结构：UserScript 头 → IIFE 闭包 → 模块代码
+ *
+ * 构建目标：
+ * 1. 油猴脚本（默认）：IIFE 格式 + UserScript 头 → dist/index.bundle.js
+ * 2. 酒馆插件：ESM 格式（无 UserScript 头）→ dist/extension/index.js
+ *
+ * 使用方式：
+ * - npm run build          → 构建油猴脚本
+ * - npm run build:extension → 构建酒馆插件
+ * - npm run build:all      → 同时构建两者
  */
 import typescript from '@rollup/plugin-typescript';
-import { readFileSync } from 'fs';
+import commonjs from '@rollup/plugin-commonjs';
+import nodeResolve from '@rollup/plugin-node-resolve';
+import { readFileSync, copyFileSync, mkdirSync } from 'fs';
 import { dirname, join } from 'path';
 import { fileURLToPath } from 'url';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
 
+const BUILD_MODE = process.env.BUILD_MODE || 'userscript';
+
 // ═══════════════════════════════════════════════════════════════
-// UserScript 头
+// UserScript 头（仅油猴脚本使用）
 // ═══════════════════════════════════════════════════════════════
 const USER_SCRIPT_BANNER = `// ==UserScript==
 // @name         数据库-可定制副本
@@ -28,7 +39,41 @@ const USER_SCRIPT_BANNER = `// ==UserScript==
 // @注释掉的require  https://cdnjs.cloudflare.com/ajax/libs/toastr.js/latest/toastr.min.js
 // ==/UserScript==`;
 
-export default {
+// ═══════════════════════════════════════════════════════════════
+// 共享插件配置
+// ═══════════════════════════════════════════════════════════════
+const sharedPlugins = [
+  nodeResolve({
+    browser: true,
+    preferBuiltins: false,
+  }),
+  commonjs(),
+];
+
+function createTsPlugin() {
+  return typescript({
+    tsconfig: './tsconfig.json',
+    compilerOptions: {
+      noEmit: false,
+      declaration: false,
+      declarationMap: false,
+      sourceMap: false,
+      outDir: 'dist',
+    },
+    include: ['src/**/*.ts', 'src/**/*.js'],
+  });
+}
+
+const sharedOnWarn = (warning, warn) => {
+  if (warning.code === 'THIS_IS_UNDEFINED') return;
+  if (warning.code === 'CIRCULAR_DEPENDENCY') return;
+  warn(warning);
+};
+
+// ═══════════════════════════════════════════════════════════════
+// 油猴脚本构建配置
+// ═══════════════════════════════════════════════════════════════
+const userscriptConfig = {
   input: 'src/index.ts',
   output: {
     file: 'dist/index.bundle.js',
@@ -36,36 +81,93 @@ export default {
     banner: USER_SCRIPT_BANNER,
     sourcemap: false,
   },
-  // 禁用 tree-shaking：所有模块都通过闭包作用域互相调用，
-  // 没有显式 import 链但运行时确实需要
   treeshake: false,
-  plugins: [
-    typescript({
-      tsconfig: './tsconfig.json',
-      // 覆盖 noEmit 以允许 Rollup 拿到编译产物
-      compilerOptions: {
-        noEmit: false,
-        declaration: false,
-        declarationMap: false,
-        sourceMap: false,
-        outDir: 'dist',
-      },
-      // .js 文件也参与编译（defaults-json.js 需要）
-      include: ['src/**/*.ts', 'src/**/*.js'],
-    }),
-  ],
-  // 外部依赖（油猴环境下由宿主页面提供的全局变量）
-  // jQuery ($) 和 SillyTavern 全局对象不需要打包
+  plugins: [...sharedPlugins, createTsPlugin()],
   external: [
-    // tavern-storage.ts 中的运行时动态 import（在酒馆环境中按需加载）
     './script.js',
     './scripts/extensions.js',
   ],
-  onwarn(warning, warn) {
-    // 忽略 "this" 相关警告（IIFE 模式下常见）
-    if (warning.code === 'THIS_IS_UNDEFINED') return;
-    // 忽略循环依赖警告（由于旧代码结构，暂时不可避免）
-    if (warning.code === 'CIRCULAR_DEPENDENCY') return;
-    warn(warning);
-  },
+  onwarn: sharedOnWarn,
 };
+
+// ═══════════════════════════════════════════════════════════════
+// 酒馆插件构建配置
+// ═══════════════════════════════════════════════════════════════
+const extensionConfig = {
+  input: 'src/entry-extension.ts',
+  output: {
+    file: 'dist/extension/index.js',
+    format: 'es',
+    sourcemap: false,
+  },
+  treeshake: false,
+  plugins: [
+    // 将 Node.js 内置模块替换为空的浏览器 shim
+    // sql.js 在浏览器模式下不会真正调用这些模块，但 import 语句仍会被保留
+    {
+      name: 'node-builtins-shim',
+      resolveId(source) {
+        if (source === 'node:fs' || source === 'node:crypto') {
+          return { id: `\0shim:${source}`, moduleSideEffects: false };
+        }
+        return null;
+      },
+      load(id) {
+        if (id === '\0shim:node:fs') {
+          return 'export default {}; export const readFileSync = () => null;';
+        }
+        if (id === '\0shim:node:crypto') {
+          return 'export default {}; export const randomFillSync = (buf) => { for(let i=0;i<buf.length;i++) buf[i]=Math.random()*256|0; return buf; };';
+        }
+        return null;
+      },
+    },
+    ...sharedPlugins,
+    createTsPlugin(),
+    // 构建完成后复制 manifest.json 到 dist/extension/
+    {
+      name: 'copy-manifest',
+      writeBundle() {
+        try {
+          mkdirSync(join(__dirname, 'dist', 'extension'), { recursive: true });
+          copyFileSync(
+            join(__dirname, 'manifest.json'),
+            join(__dirname, 'dist', 'extension', 'manifest.json')
+          );
+        } catch (e) {
+          console.warn('复制 manifest.json 失败:', e.message);
+        }
+      },
+    },
+  ],
+  // 油猴分支的 import('./script.js') 等代码在插件构建中不会运行时执行，
+  // 但 Rollup 仍会尝试解析。标记为 external 让 Rollup 跳过解析。
+  external: [
+    './script.js',
+    './scripts/extensions.js',
+  ],
+  onwarn: sharedOnWarn,
+};
+
+// ═══════════════════════════════════════════════════════════════
+// 根据 BUILD_MODE 选择构建目标
+// ═══════════════════════════════════════════════════════════════
+let configs;
+switch (BUILD_MODE) {
+  case 'extension':
+    configs = extensionConfig;
+    break;
+  case 'all':
+    configs = [userscriptConfig, extensionConfig];
+    break;
+  case 'concat':
+    // 保留原有的 concat 模式兼容
+    configs = userscriptConfig;
+    break;
+  case 'userscript':
+  default:
+    configs = userscriptConfig;
+    break;
+}
+
+export default configs;

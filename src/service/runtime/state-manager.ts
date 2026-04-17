@@ -21,6 +21,7 @@
 import { DEFAULT_CHAR_CARD_PROMPT_ACU, DEFAULT_PLOT_SETTINGS_ACU } from '../../shared/defaults-json.js';
 import { DEFAULT_AUTO_UPDATE_FREQUENCY_ACU, DEFAULT_AUTO_UPDATE_THRESHOLD_ACU, DEFAULT_AUTO_UPDATE_TOKEN_THRESHOLD_ACU } from '../../shared/defaults';
 import { getChatArray_ACU } from '../../data/gateways/chat-gateway';
+import { logDebug_ACU, logWarn_ACU } from '../../shared/utils';
 
 export const NEW_MESSAGE_DEBOUNCE_DELAY_ACU = 500;
 
@@ -103,7 +104,9 @@ export function shouldProcessPlotForGeneration_ACU(type: any, params: any, dryRu
   const msg = (chat && typeof id === 'number') ? chat[id] : null;
   const hasFreshUserMessage = !!(msg && msg.is_user && id === (chat.length - 1) && isRecentUserSend_ACU());
   const hasFreshIntent = isRecentUserSendIntent_ACU();
-  return hasFreshUserMessage || hasFreshIntent;
+  const result = hasFreshUserMessage || hasFreshIntent;
+  logDebug_ACU(`[状态管理] shouldProcessPlot: type=${type}, dryRun=${dryRun}, freshMsg=${hasFreshUserMessage}, freshIntent=${hasFreshIntent}, result=${result}`);
+  return result;
 }
 
 export function shouldProcessAutoTableUpdateForGenerationEnded_ACU() {
@@ -191,8 +194,14 @@ export function getCurrentIsolationKey_ACU() {
 // ═══ Setter 函数 ═══
 export function _set_settings_ACU(v: any) { settings_ACU = v; }
 export function _set_currentJsonTableData_ACU(v: any) { currentJsonTableData_ACU = v; }
-export function _set_currentChatFileIdentifier_ACU(v: any) { currentChatFileIdentifier_ACU = v; }
-export function _set_coreApisAreReady_ACU(v: any) { coreApisAreReady_ACU = v; }
+export function _set_currentChatFileIdentifier_ACU(v: any) {
+  logDebug_ACU(`[状态管理] 切换聊天标识: ${currentChatFileIdentifier_ACU} -> ${v}`);
+  currentChatFileIdentifier_ACU = v;
+}
+export function _set_coreApisAreReady_ACU(v: any) {
+  logDebug_ACU(`[状态管理] coreApisAreReady: ${v}`);
+  coreApisAreReady_ACU = v;
+}
 export function _set_allChatMessages_ACU(v: any) { allChatMessages_ACU = v; }
 export function _set_lastTotalAiMessages_ACU(v: any) { lastTotalAiMessages_ACU = v; }
 export function _set_isProcessing_Plot_ACU(v: any) { isProcessing_Plot_ACU = v; }
@@ -218,6 +227,7 @@ export function untrackAbortController_ACU(controller: any) {
     if (controller) activeAbortControllers_ACU.delete(controller);
 }
 export function abortAllActiveRequests_ACU() {
+    logWarn_ACU(`[状态管理] abortAllActiveRequests: 中止 ${activeAbortControllers_ACU.size} 个活跃请求`);
     activeAbortControllers_ACU.forEach(controller => {
         try { controller.abort(); } catch (e) {}
     });

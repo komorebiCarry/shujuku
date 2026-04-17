@@ -5,7 +5,7 @@
  */
 import { logWarn_ACU } from '../../../shared/utils';
 import { normalizePositiveInteger_ACU } from '../../../shared/utils';
-import { getTemplateVariableStores_ACU, setTemplateVariableStores_ACU, parseRandomTags_ACU, replaceRandomVariables_ACU, parseCalcTags_ACU, parseMaxTags_ACU, parseMinTags_ACU, replaceCalcVariables_ACU, replaceMaxVariables_ACU, replaceMinVariables_ACU, parseIfBlockRecursive_ACU } from '../template-vars';
+import { getTemplateVariableStores_ACU, setTemplateVariableStores_ACU, parseRandomTags_ACU, replaceRandomVariables_ACU, parseCalcTags_ACU, parseMaxTags_ACU, parseMinTags_ACU, replaceCalcVariables_ACU, replaceMaxVariables_ACU, replaceMinVariables_ACU, parseIfBlockRecursive_ACU, replaceDbSqlVariables } from '../template-vars';
 
   export function getNormalizedPlotMessageRole_ACU(role: string | null) {
     const ru = String(role || '').toUpperCase();
@@ -90,6 +90,8 @@ import { getTemplateVariableStores_ACU, setTemplateVariableStores_ACU, parseRand
       renderedContent = replaceCalcVariables_ACU(renderedContent);
       renderedContent = replaceMaxVariables_ACU(renderedContent);
       renderedContent = replaceMinVariables_ACU(renderedContent);
+      // [P4] {[db...]}/{[sql...]} 值替换（SQLite 模式下，在 <if> 之前执行）
+      renderedContent = replaceDbSqlVariables(renderedContent);
       return parseIfBlockRecursive_ACU(renderedContent, contextForIf, 0);
     });
   }

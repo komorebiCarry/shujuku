@@ -6,6 +6,8 @@
 
 import { topLevelWindow_ACU, FORBID_BROWSER_LOCAL_STORAGE_FOR_CONFIG_ACU, ALLOW_LEGACY_LOCALSTORAGE_MIGRATION_ACU, legacyLocalStorage_ACU, storage_ACU } from '../../shared/env';
 import { SCRIPT_ID_PREFIX_ACU } from '../../shared/constants';
+import { logDebug_ACU, logError_ACU, logWarn_ACU } from '../../shared/utils';
+import { isExtensionMode } from '../../shared/runtime-env';
 
 // ── 常量 ──
 import { idbRequestToPromise_ACU, isIndexedDbAvailable_ACU } from '../../shared/idb-import-temp';
@@ -70,6 +72,47 @@ export async function injectTavernBridgeIntoTopWindow_ACU(): Promise<boolean> {
 
 export async function initTavernSettingsBridge_ACU(): Promise<boolean> {
     if (!USE_TAVERN_SETTINGS_STORAGE_ACU) return false;
+    logDebug_ACU('[TavernStorage] 开始初始化酒馆设置桥接...');
+
+    // ── 插件模式快速路径 ──
+    // 插件运行在酒馆主窗口中。主窗口的 window.SillyTavern 只有 {libs, getContext}，
+    // 所有真正的 API 都必须通过 SillyTavern.getContext() 这个函数调用来获取。
+    // 酒馆源码证实：extensionSettings 和 saveSettingsDebounced 都在 getContext() 返回值中。
+    if (isExtensionMode()) {
+        logDebug_ACU('[TavernStorage] 插件模式：通过 SillyTavern.getContext() 获取设置对象...');
+
+        try {
+            const st = (window as any).SillyTavern;
+            if (st && typeof st.getContext === 'function') {
+                const ctx = st.getContext();
+                if (ctx) {
+                    if (ctx.extensionSettings) {
+                        tavernExtensionSettingsRoot_ACU = ctx.extensionSettings;
+                        logDebug_ACU('[TavernStorage] 插件模式：extensionSettings 获取成功');
+                    } else {
+                        logWarn_ACU('[TavernStorage] 插件模式：getContext().extensionSettings 为空');
+                    }
+                    if (typeof ctx.saveSettingsDebounced === 'function') {
+                        tavernSaveSettingsFn_ACU = ctx.saveSettingsDebounced;
+                        logDebug_ACU('[TavernStorage] 插件模式：saveSettingsDebounced 获取成功');
+                    } else {
+                        logWarn_ACU('[TavernStorage] 插件模式：getContext().saveSettingsDebounced 不是函数');
+                    }
+                } else {
+                    logWarn_ACU('[TavernStorage] 插件模式：getContext() 返回空值');
+                }
+            } else {
+                logWarn_ACU('[TavernStorage] 插件模式：SillyTavern.getContext 不可用');
+            }
+        } catch (e) {
+            logError_ACU('[TavernStorage] 插件模式：调用 getContext() 失败:', e);
+        }
+
+        logDebug_ACU(`[TavernStorage] 插件模式初始化完成: settings=${!!tavernExtensionSettingsRoot_ACU}, save=${!!tavernSaveSettingsFn_ACU}`);
+        return !!tavernExtensionSettingsRoot_ACU;
+    }
+
+    // ── 油猴脚本模式（原有逻辑）──
     tryReadBridgeFromTop_ACU();
     try {
         if (typeof (topLevelWindow_ACU as any).saveSettingsDebounced === 'function') tavernSaveSettingsFn_ACU = (topLevelWindow_ACU as any).saveSettingsDebounced;
@@ -107,7 +150,10 @@ export async function initTavernSettingsBridge_ACU(): Promise<boolean> {
 export function getTavernSettingsNamespace_ACU(): any {
     tryReadBridgeFromTop_ACU();
     const root = tavernExtensionSettingsRoot_ACU;
-    if (!root) return null;
+    if (!root) {
+        logWarn_ACU('[TavernStorage] 酒馆设置根对象不可用, 返回 null');
+        return null;
+    }
     if (!root.__userscripts) root.__userscripts = {};
     if (!root.__userscripts[TAVERN_SETTINGS_NAMESPACE_ACU]) root.__userscripts[TAVERN_SETTINGS_NAMESPACE_ACU] = {};
     return root.__userscripts[TAVERN_SETTINGS_NAMESPACE_ACU];
@@ -124,8 +170,9 @@ export function persistTavernSettings_ACU(): void {
         if (typeof (window as any).saveSettingsDebounced === 'function') { (window as any).saveSettingsDebounced(); return; }
         if (typeof (topLevelWindow_ACU as any).saveSettings === 'function') (topLevelWindow_ACU as any).saveSettings();
         else if (typeof (window as any).saveSettings === 'function') (window as any).saveSettings();
+        else logWarn_ACU('[TavernStorage] 找不到任何可用的 saveSettings 函数');
     } catch (e) {
-        console.warn('[ACU] Failed to persist to Tavern settings. Falling back to in-memory only.', e);
+        logWarn_ACU('[TavernStorage] 持久化到酒馆设置失败, 回退到内存模式:', e);
     }
 }
 
@@ -193,13 +240,13 @@ export function loadConfigIdbCache_ACU(): Promise<void> {
                 }
             };
             req.onerror = () => {
-                console.warn('[ACU] IndexedDB config cache load failed:', req.error);
+                logWarn_ACU('[TavernStorage] IndexedDB 配置缓存加载失败:', req.error);
                 configIdbCacheLoadFailed_ACU = true;
                 configIdbCacheLoaded_ACU = true;
                 resolve();
             };
         } catch (e) {
-            console.warn('[ACU] IndexedDB config cache load failed:', e);
+            logWarn_ACU('[TavernStorage] IndexedDB 配置缓存加载失败:', e);
             configIdbCacheLoadFailed_ACU = true;
             configIdbCacheLoaded_ACU = true;
             resolve();
@@ -227,7 +274,7 @@ export async function configIdbSetCached_ACU(key: string, value: any): Promise<v
         const store = tx.objectStore(CONFIG_IDB_STORE_NAME_ACU);
         await idbRequestToPromise_ACU(store.put(value, key));
     } catch (e) {
-        console.warn('[ACU] IndexedDB config set failed:', e);
+        logWarn_ACU('[TavernStorage] IndexedDB 配置 set 失败:', e);
     }
 }
 
@@ -242,7 +289,7 @@ export async function configIdbRemoveCached_ACU(key: string): Promise<void> {
         const store = tx.objectStore(CONFIG_IDB_STORE_NAME_ACU);
         await idbRequestToPromise_ACU(store.delete(key));
     } catch (e) {
-        console.warn('[ACU] IndexedDB config delete failed:', e);
+        logWarn_ACU('[TavernStorage] IndexedDB 配置 delete 失败:', e);
     }
 }
 
@@ -296,3 +343,10 @@ export function migrateKeyToTavernStorageIfNeeded_ACU(key: string): boolean {
 }
 
 export function _set_pendingSettingsReloadFromIdb_ACU(v: any) { pendingSettingsReloadFromIdb_ACU = v; }
+
+/** 测试用：重置模块级状态变量 */
+export function _resetTavernStorageState_ACU(): void {
+    tavernExtensionSettingsRoot_ACU = null;
+    tavernSaveSettingsFn_ACU = null;
+    tavernBridgeErrorReported_ACU = false;
+}

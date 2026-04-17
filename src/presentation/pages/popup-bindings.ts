@@ -2,7 +2,7 @@ import { showToastr_ACU } from '../theme/toast';
 import { SCRIPT_ID_PREFIX_ACU } from '../../shared/constants';
 import { logDebug_ACU, logError_ACU, logWarn_ACU } from '../../shared/utils';
 import { jQuery_API_ACU } from '../dom-utils';
-import { getCurrentCharPrimaryLorebook_ACU } from '../../data/gateways/worldbook-gateway';
+import { getCurrentCharPrimaryLorebook_ACU } from '../../service/worldbook/worldbook-service';
 import { currentChatFileIdentifier_ACU, currentJsonTableData_ACU, settings_ACU } from '../../service/runtime/state-manager';
 import { $popupInstance_ACU, _assignUIPlaceholders_ACU } from '../state/ui-refs';
 import { getCurrentWorldbookConfig_ACU } from '../../service/settings/settings-readers';
@@ -18,6 +18,9 @@ import { bindWorldbookEvents_ACU } from './popup-bindings-worldbook';
 import { bindDataEvents_ACU } from './popup-bindings-data';
 import { bindPlotEvents_ACU } from './popup-bindings-plot';
 import { bindOptimizationEvents_ACU } from './popup-bindings-optimization';
+import { bindSqlConsoleEvents_ACU } from './sql-console';
+import { bindLogViewerEvents_ACU } from './log-viewer';
+import { isSqliteMode } from '../../service/table/storage-mode';
 
 /**
  * presentation/pages/popup-bindings.ts — 主弹窗事件绑定
@@ -193,6 +196,10 @@ import { bindOptimizationEvents_ACU } from './popup-bindings-optimization';
       await bindDataEvents_ACU();
       await bindPlotEvents_ACU();
       await bindOptimizationEvents_ACU();
+      if (isSqliteMode()) {
+          await bindSqlConsoleEvents_ACU();
+      }
+      await bindLogViewerEvents_ACU();
 
       // Removed call to applyActualMessageVisibility_ACU();
       // Removed call to updateAdvancedHideUIDisplay_ACU();

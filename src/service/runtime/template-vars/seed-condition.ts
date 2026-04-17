@@ -6,6 +6,7 @@
 import { logDebug_ACU, logError_ACU, logWarn_ACU } from '../../../shared/utils';
 import { evaluateCellExpression_ACU, normalizeOperators_ACU, compareValue_ACU } from './cell-utils';
 import { getRandomVariable_ACU, getCalcVariable_ACU, getMaxVariable_ACU, getMinVariable_ACU } from './var-store-and-tags';
+import { evaluateDbCondition, evaluateSqlCondition, getDbSqlVariable } from './sql-query-var';
 
   /**
    * 解析关键词表达式并判断是否匹配
@@ -144,6 +145,22 @@ import { getRandomVariable_ACU, getCalcVariable_ACU, getMaxVariable_ACU, getMinV
     } else if (actualCondition.startsWith('min:')) {
       const minExpr = actualCondition.slice(4).trim();
       let result = evaluateMinCondition_ACU(minExpr);
+      return isNegated ? !result : result;
+      
+    } else if (actualCondition.startsWith('db:')) {
+      const dbExpr = actualCondition.slice(3).trim();
+      let result = evaluateDbCondition(dbExpr);
+      return isNegated ? !result : result;
+      
+    } else if (actualCondition.startsWith('sql:')) {
+      const sqlExpr = actualCondition.slice(4).trim();
+      let result = evaluateSqlCondition(sqlExpr);
+      return isNegated ? !result : result;
+      
+    } else if (actualCondition.startsWith('v:')) {
+      // 变量条件：v:变量名 运算符 值
+      const varExpr = actualCondition.slice(2).trim();
+      let result = evaluateVarCondition_ACU(varExpr);
       return isNegated ? !result : result;
       
     } else {
@@ -417,9 +434,29 @@ import { getRandomVariable_ACU, getCalcVariable_ACU, getMaxVariable_ACU, getMinV
       }
       
       let subCond = '';
-      while (pos < expr.length && expr[pos] !== '(' && expr[pos] !== ')' && expr[pos] !== '&' && expr[pos] !== ',') {
-        subCond += expr[pos];
-        pos++;
+      let parenDepth = 0;
+      while (pos < expr.length) {
+        const ch = expr[pos];
+        if (ch === '(') {
+          parenDepth++;
+          subCond += ch;
+          pos++;
+        } else if (ch === ')') {
+          if (parenDepth > 0) {
+            parenDepth--;
+            subCond += ch;
+            pos++;
+          } else {
+            // 深度为 0 的 ) 是外层分组括号的闭合，终止提取
+            break;
+          }
+        } else if ((ch === '&' || ch === ',') && parenDepth === 0) {
+          // 只有在括号深度为 0 时，& 和 , 才是逻辑运算符
+          break;
+        } else {
+          subCond += ch;
+          pos++;
+        }
       }
       
       const result = evaluateSubCondition_ACU(subCond, context);
@@ -437,62 +474,59 @@ import { getRandomVariable_ACU, getCalcVariable_ACU, getMaxVariable_ACU, getMinV
   }
 
   /**
-   * 解析条件模板，根据关键词匹配或表格数值比较决定是否包含条件提示词内容
-   * 支持三种语法：
-   * 1. <if seed="关键词表达式">内容</if>
-   * 2. <if cell="表格名/行名/列名 > 50">内容</if>
-   * 3. <if cond="条件表达式">内容</if>
+   * 解析变量条件表达式
+   * 语法：v:变量名 运算符 值
+   * 示例：v:sword_count > 3、v:total == 100
+   * 无运算符时做 truthy 判断
    */
-  export function parseConditionalTemplate_ACU(templateContent: string, seedContent: string, allTablesJson: Record<string, any>, plotContent: string = '') {
-    if (!templateContent || typeof templateContent !== 'string') {
-      return templateContent || '';
-    }
+  function evaluateVarCondition_ACU(expression: string) {
+    if (!expression || typeof expression !== 'string') return false;
     
-    if (!seedContent || typeof seedContent !== 'string') {
-      seedContent = '';
-    }
+    const expr = normalizeOperators_ACU(expression).trim();
+    if (!expr) return false;
     
-    if (!plotContent || typeof plotContent !== 'string') {
-      plotContent = '';
-    }
+    const operators = ['>=', '<=', '!=', '==', '>', '<'];
     
-    const context = { seedContent, allTablesJson, plotContent };
+    let matchedOperator: string | null = null;
+    let varRef = '';
+    let compareVal = '';
     
-    const ifRegex = /<if\s+(seed|cell|cond)\s*=\s*"([^"]*)"\s*>([\s\S]*?)<\/if>/gi;
-    
-    let result = templateContent;
-    let match;
-    
-    const matches = [];
-    while ((match = ifRegex.exec(templateContent)) !== null) {
-      matches.push({
-        fullMatch: match[0],
-        type: match[1].toLowerCase(),
-        expression: match[2],
-        content: match[3],
-        startIndex: match.index,
-        endIndex: match.index + match[0].length
-      });
-    }
-    
-    for (let i = matches.length - 1; i >= 0; i--) {
-      const m = matches[i];
-      let shouldInclude = false;
-      
-      if (m.type === 'seed') {
-        shouldInclude = evaluateSeedExpression_ACU(m.expression, seedContent, plotContent);
-      } else if (m.type === 'cell') {
-        shouldInclude = evaluateCellExpression_ACU(m.expression, allTablesJson);
-      } else if (m.type === 'cond') {
-        shouldInclude = evaluateCondExpression_ACU(m.expression, context);
-      }
-      
-      if (shouldInclude) {
-        result = result.slice(0, m.startIndex) + m.content + result.slice(m.endIndex);
-      } else {
-        result = result.slice(0, m.startIndex) + result.slice(m.endIndex);
+    for (const op of operators) {
+      const opIndex = expr.indexOf(op);
+      if (opIndex !== -1) {
+        varRef = expr.substring(0, opIndex).trim();
+        compareVal = expr.substring(opIndex + op.length).trim();
+        matchedOperator = op;
+        break;
       }
     }
     
-    return result;
+    if (!matchedOperator) {
+      // 无运算符：做 truthy 判断
+      const value = getDbSqlVariable(expr.trim());
+      if (value === null) {
+        logWarn_ACU('[条件模板] evaluateVarCondition_ACU: 未找到变量:', expr);
+        return false;
+      }
+      // 非零/非空/非false = true
+      if (typeof value === 'number') return value !== 0;
+      if (typeof value === 'string') return value !== '' && value !== '0' && value !== 'false';
+      return !!value;
+    }
+    
+    const varValue = getDbSqlVariable(varRef);
+    if (varValue === null) {
+      logWarn_ACU('[条件模板] evaluateVarCondition_ACU: 未找到变量:', varRef);
+      return false;
+    }
+    
+    const numCompareValue = parseFloat(compareVal);
+    if (!isNaN(numCompareValue) && typeof varValue === 'number') {
+      return compareValue_ACU(varValue, matchedOperator, numCompareValue);
+    }
+    
+    // 字符串比较
+    return compareValue_ACU(varValue, matchedOperator, compareVal);
   }
+
+

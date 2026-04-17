@@ -1,4 +1,4 @@
-import { getChatArray_ACU } from '../../data/gateways/chat-gateway';
+import { getChatArray_ACU } from '../../service/chat/chat-service';
 import { currentJsonTableData_ACU, getCurrentIsolationKey_ACU, settings_ACU } from '../../service/runtime/state-manager';
 import { getSortedSheetKeys_ACU } from '../../service/template/chat-scope';
 import { SCRIPT_ID_PREFIX_ACU } from '../../shared/constants';

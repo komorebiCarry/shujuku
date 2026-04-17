@@ -9,6 +9,8 @@ import { getEffectiveSeedRowsForSheet_ACU, getSortedSheetKeys_ACU } from '../../
 import { isSummaryOrOutlineTable_ACU, logDebug_ACU, logError_ACU, logWarn_ACU } from '../../../shared/utils';
 import { applySummaryIndexSequenceToTable_ACU, formatSummaryIndexCode_ACU, getSummaryIndexColumnIndex_ACU, getTableLocksForSheet_ACU, isSpecialIndexLockEnabled_ACU } from '../../runtime/helpers-remaining';
 import { sanitizeJsonPipeline_ACU, coerceLooseRowObject_ACU } from './json-sanitizer';
+import { isSqliteMode } from '../../table/storage-mode';
+import { getStorageProvider } from '../../table/table-storage-strategy';
 
   function normalizeAiResponseForTableEditParsing_ACU(text: string) {
     if (typeof text !== 'string') return '';
@@ -111,6 +113,20 @@ import { sanitizeJsonPipeline_ACU, coerceLooseRowObject_ACU } from './json-sanit
     if (!editsString) {
         logDebug_ACU('Empty <tableEdit> block. No edits to apply.');
         return true;
+    }
+
+    // [新增] SQLite 模式：检测是否为 SQL 语句，是则走 SQL 执行路径
+    if (isSqliteMode() && isSqlContent(editsString)) {
+        try {
+            const provider = getStorageProvider();
+            const result = provider.applyEdits(editsString, updateMode);
+            logDebug_ACU(`[SQL Mode] applyEdits 完成: success=${result.success}, appliedEdits=${result.appliedEdits}, modifiedKeys=${result.modifiedKeys.join(',')}`);
+            return result;
+        } catch (e: any) {
+            // SQL 执行失败，抛出错误供上层重试循环捕获
+            logError_ACU(`[SQL Mode] SQL 执行失败: ${e?.message}`);
+            throw e;
+        }
     }
     
     // 指令重组：处理 AI 生成的多行指令
@@ -284,10 +300,10 @@ import { sanitizeJsonPipeline_ACU, coerceLooseRowObject_ACU } from './json-sanit
                 }
             }
             if (!Array.isArray(sr) || sr.length === 0) return;
-            const headerRow = Array.isArray(table.content[0]) ? JSON.parse(JSON.stringify(table.content[0])) : [null];
+    const headerRow = Array.isArray(table.content[0]) ? JSON.parse(JSON.stringify(table.content[0])) : ["row_id"];
             const seed = JSON.parse(JSON.stringify(sr));
             table.content = [headerRow, ...seed];
-        } catch (e) {}
+        } catch (e) { logWarn_ACU('[表格编辑] restoreSeedRows 失败:', e); }
     };
 
     // 逐条应用编辑指令
@@ -334,7 +350,7 @@ import { sanitizeJsonPipeline_ACU, coerceLooseRowObject_ACU } from './json-sanit
                         break;
                     }
                     if (table && table.content && typeof data === 'object') {
-                        const newRow: any[] = [null];
+                        const newRow: any[] = [String(table.content.length)]; // 行号 = 当前 content 长度（表头占 [0]）
                         const headers = table.content[0].slice(1);
                         const specialIndexCol = (isSummaryTable && sheetKey && isSpecialIndexLockEnabled_ACU(sheetKey))
                             ? getSummaryIndexColumnIndex_ACU(table)
@@ -483,4 +499,24 @@ import { sanitizeJsonPipeline_ACU, coerceLooseRowObject_ACU } from './json-sanit
     });
     
     return { success: true, modifiedKeys: modifiedSheetKeys, appliedEdits };
+  }
+
+  /**
+   * 检测 <tableEdit> 内容是否为 SQL 语句
+   * 跳过空行和注释行后，检查第一条非空行是否以 SQL 关键字开头
+   */
+  export function isSqlContent(content: string): boolean {
+    const lines = content.split('\n');
+    for (const line of lines) {
+      const trimmed = line.trim();
+      if (!trimmed) continue;
+      // 跳过 SQL 注释
+      if (trimmed.startsWith('--')) continue;
+      // 跳过 HTML 注释残留
+      if (trimmed.startsWith('<!--') || trimmed.startsWith('-->')) continue;
+      // 检查是否以 SQL 关键字开头
+      const sqlKeywords = /^(INSERT|UPDATE|DELETE|ALTER|BEGIN|CREATE|DROP|REPLACE)\b/i;
+      return sqlKeywords.test(trimmed);
+    }
+    return false;
   }

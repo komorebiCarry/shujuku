@@ -32,6 +32,8 @@ export interface Settings_ACU {
   plotSettings: PlotSettings_ACU;
   mergeSummaryPrompt: string;
   hasImportTableSelection: boolean;
+  /** 存储模式：'native' 原生 JSON 模式 | 'sqlite' SQLite 运行时数据库模式 */
+  storageMode: 'native' | 'sqlite';
   /** 角色专属设置键映射 */
   [key: string]: unknown;
 }

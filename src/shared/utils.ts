@@ -11,6 +11,7 @@
 import { TABLE_TEMPLATE_ACU } from './defaults-json.js';
 import { DEBUG_MODE_ACU, SCRIPT_ID_PREFIX_ACU, TABLE_ORDER_FIELD_ACU } from './constants';
 import { safeJsonParse_ACU } from './json-helpers';
+import { pushLog, isDebugLogEnabled } from './log-buffer';
 
 export function cleanChatName_ACU(fileName: string): string {
   if (!fileName || typeof fileName !== 'string') return 'unknown_chat_source';
@@ -199,16 +200,22 @@ export   function normalizeExcludeRules_ACU(excludeRulesInput: any, legacyExclud
 
 export   function logDebug_ACU(...args: any[]) {
     if (DEBUG_MODE_ACU) console.log(`[${SCRIPT_ID_PREFIX_ACU}]`, ...args);
+    // 仅当 debug 日志启用时才写入缓冲区，避免性能开销
+    if (isDebugLogEnabled()) {
+      pushLog('debug', [`[${SCRIPT_ID_PREFIX_ACU}]`, ...args]);
+    }
   }
 
 
 export   function logError_ACU(...args: any[]) {
     console.error(`[${SCRIPT_ID_PREFIX_ACU}]`, ...args);
+    pushLog('error', [`[${SCRIPT_ID_PREFIX_ACU}]`, ...args]);
   }
 
 
 export   function logWarn_ACU(...args: any[]) {
     console.warn(`[${SCRIPT_ID_PREFIX_ACU}]`, ...args);
+    pushLog('warn', [`[${SCRIPT_ID_PREFIX_ACU}]`, ...args]);
   }
 
 
@@ -231,123 +238,83 @@ export   function parseTableTemplateJson_ACU({ stripSeedRows = false } = {}) {
           let cleanTemplate = TABLE_TEMPLATE_ACU.trim();
           cleanTemplate = cleanTemplate.replace(/\/\/.*$/gm, '').replace(/\/\*[\s\S]*?\*\//g, '');
           
-          // [调试] 输出模板字符串的前100个字符，帮助诊断问题
-          logDebug_ACU('[模板解析] cleanTemplate前100字符:', cleanTemplate.substring(0, 100));
-          logDebug_ACU('[模板解析] cleanTemplate长度:', cleanTemplate.length);
-          logDebug_ACU('[模板解析] 首字符:', JSON.stringify(cleanTemplate[0]));
-          logDebug_ACU('[模板解析] 尾字符:', JSON.stringify(cleanTemplate[cleanTemplate.length - 1]));
-          
           // [修复2026-03-06] 处理DEFAULT_TABLE_TEMPLATE_ACU的双重JSON编码问题
-          // DEFAULT_TABLE_TEMPLATE_ACU 使用模板字符串定义，格式是：`"{...}"`
-          // 问题：模板字符串中的 \n 会被解释为实际换行符，\t 被解释为制表符等
-          // 而JSON规范不允许字符串中包含未转义的控制字符
-          // 解决方案：先将实际的控制字符转义回JSON兼容格式
-          
           function escapeStringForJson_ACU(str: string) {
-              // 将字符串中的控制字符转义为JSON兼容格式
-              // 注意顺序很重要：先转义反斜杠，再转义双引号，最后转义控制字符
               return str
-                  .replace(/\\/g, '\\\\')  // 先转义反斜杠
-                  .replace(/"/g, '\\"')    // 转义双引号
-                  .replace(/\n/g, '\\n')   // 换行符
-                  .replace(/\r/g, '\\r')   // 回车符
-                  .replace(/\t/g, '\\t');  // 制表符
+                  .replace(/\\/g, '\\\\')
+                  .replace(/"/g, '\\"')
+                  .replace(/\n/g, '\\n')
+                  .replace(/\r/g, '\\r')
+                  .replace(/\t/g, '\\t');
           }
           
           let obj = null;
           
           // 如果模板字符串以双引号开头和结尾，说明是被引号包围的JSON字符串
           if (cleanTemplate.startsWith('"') && cleanTemplate.endsWith('"')) {
-              logDebug_ACU('[模板解析] 检测到双引号包围格式');
               try {
-                  // 方案1：尝试直接解析（如果模板字符串中的转义序列正确）
+                  // 方案1：尝试直接解析
                   try {
-                      logDebug_ACU('[模板解析] 尝试方案1：直接解析...');
                       const unquoted = JSON.parse(cleanTemplate);
-                      logDebug_ACU('[模板解析] 方案1第一次解析成功，类型:', typeof unquoted);
                       if (typeof unquoted === 'string') {
                           obj = safeJsonParse_ACU(unquoted, null);
-                          logDebug_ACU('[模板解析] 方案1第二次解析结果:', obj ? '成功' : '失败');
-                          if (obj) {
-                              logDebug_ACU('[模板解析] 方案1成功！');
-                              return stripSeedRows ? stripSeedRowsFromTemplate_ACU(obj) : obj;
-                          }
+                          if (obj) return stripSeedRows ? stripSeedRowsFromTemplate_ACU(obj) : obj;
                       } else if (typeof unquoted === 'object' && unquoted !== null) {
-                          logDebug_ACU('[模板解析] 方案1直接得到对象！');
                           return stripSeedRows ? stripSeedRowsFromTemplate_ACU(unquoted) : unquoted;
                       }
                   } catch (e1) {
-                      logDebug_ACU('[模板解析] 方案1失败:', e1.message);
+                      // 方案1失败，继续方案2
                   }
                   
                   // 方案2：转义控制字符后再解析
-                  logDebug_ACU('[模板解析] 尝试方案2：转义后解析...');
-                  // 去掉首尾引号，转义内部的控制字符，然后解析
                   const innerContent = cleanTemplate.slice(1, -1);
                   const escapedContent = escapeStringForJson_ACU(innerContent);
                   const rewrapped = '"' + escapedContent + '"';
                   
                   try {
                       const unquoted = JSON.parse(rewrapped);
-                      logDebug_ACU('[模板解析] 方案2第一次解析成功，类型:', typeof unquoted);
                       if (typeof unquoted === 'string') {
                           obj = safeJsonParse_ACU(unquoted, null);
-                          logDebug_ACU('[模板解析] 方案2第二次解析结果:', obj ? '成功' : '失败');
-                          if (obj) {
-                              logDebug_ACU('[模板解析] 方案2成功！');
-                              return stripSeedRows ? stripSeedRowsFromTemplate_ACU(obj) : obj;
-                          }
-                          // 如果safeJsonParse失败，尝试直接JSON.parse
+                          if (obj) return stripSeedRows ? stripSeedRowsFromTemplate_ACU(obj) : obj;
                           try {
                               obj = JSON.parse(unquoted);
-                              if (obj) {
-                                  logDebug_ACU('[模板解析] 方案2（fallback）成功！');
-                                  return stripSeedRows ? stripSeedRowsFromTemplate_ACU(obj) : obj;
-                              }
+                              if (obj) return stripSeedRows ? stripSeedRowsFromTemplate_ACU(obj) : obj;
                           } catch (e3) {
-                              logDebug_ACU('[模板解析] 方案2 fallback失败:', e3.message);
+                              // fallback 也失败
                           }
                       } else if (typeof unquoted === 'object' && unquoted !== null) {
-                          logDebug_ACU('[模板解析] 方案2直接得到对象！');
                           return stripSeedRows ? stripSeedRowsFromTemplate_ACU(unquoted) : unquoted;
                       }
                   } catch (e2) {
-                      logDebug_ACU('[模板解析] 方案2失败:', e2.message);
+                      // 方案2失败
                   }
               } catch (e) {
-                  logDebug_ACU('[模板解析] 双引号格式处理失败:', e.message);
+                  // 双引号格式处理失败
               }
-          } else {
-              logDebug_ACU('[模板解析] 不是双引号包围格式，尝试常规解析...');
           }
           
-          // 如果上述处理失败，尝试常规解析
+          // 常规解析
           if (!obj) {
-              logDebug_ACU('[模板解析] 尝试safeJsonParse_ACU...');
               obj = safeJsonParse_ACU(cleanTemplate, null);
-              logDebug_ACU('[模板解析] safeJsonParse_ACU结果:', obj ? '成功' : '失败');
           }
           
-          // 如果还是失败，尝试转义后解析
+          // 转义后解析
           if (!obj && typeof cleanTemplate === 'string') {
-              logDebug_ACU('[模板解析] 尝试转义后解析...');
               try {
                   const escaped = escapeStringForJson_ACU(cleanTemplate);
                   obj = safeJsonParse_ACU(escaped, null);
-                  logDebug_ACU('[模板解析] 转义后解析结果:', obj ? '成功' : '失败');
               } catch (e) {
-                  logDebug_ACU('[模板解析] 转义后解析异常:', e.message);
+                  // 转义后解析异常
               }
           }
           
           if (!obj) {
-              logError_ACU('Failed to parse TABLE_TEMPLATE_ACU: safeJsonParse returned null');
+              logError_ACU('[模板解析] 所有解析方案均失败，模板长度:', cleanTemplate.length, '首字符:', JSON.stringify(cleanTemplate[0]));
               return null;
           }
-          logDebug_ACU('[模板解析] 最终成功！');
           return stripSeedRows ? stripSeedRowsFromTemplate_ACU(obj) : obj;
       } catch (e) {
-          logError_ACU('Failed to parse TABLE_TEMPLATE_ACU.', e);
+          logError_ACU('[模板解析] 解析异常:', e);
           return null;
       }
   }

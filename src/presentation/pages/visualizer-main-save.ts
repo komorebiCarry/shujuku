@@ -10,7 +10,7 @@ import { TABLE_TEMPLATE_ACU } from '../../shared/defaults-json.js';
 import { isDefaultTemplatePresetSelection_ACU, normalizeTemplatePresetSelectionValue_ACU } from '../../shared/template-preset-utils';
 import { getOrderedSheetKeys_ACU } from './visualizer-sidebar';
 import { showToastr_ACU } from '../theme/toast';
-import { getChatArray_ACU } from '../../data/gateways/chat-gateway';
+import { getChatArray_ACU } from '../../service/chat/chat-service';
 import { currentJsonTableData_ACU, getCurrentIsolationKey_ACU, settings_ACU, _set_currentJsonTableData_ACU} from '../../service/runtime/state-manager';
 import { buildChatSheetGuideDataFromData_ACU, getChatSheetGuideDataForIsolationKey_ACU, sanitizeTemplateSnapshotForChat_ACU, setChatSheetGuideDataForIsolationKey_ACU } from '../../service/template/chat-scope';
 import { updateReadableLorebookEntry_ACU } from '../../service/worldbook/pipeline';

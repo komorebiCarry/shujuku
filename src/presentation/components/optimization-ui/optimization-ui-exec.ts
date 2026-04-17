@@ -5,7 +5,9 @@
 import { DEFAULT_PLOT_SETTINGS_ACU } from '../../../shared/defaults-json.js';
 import { activePlotEditorSettings_ACU, buildDefaultPlotPromptGroup_ACU, currentEditablePlotPresetState_ACU, currentPlotTaskEditorId_ACU, ensurePlotPromptGroup_ACU , _set_currentEditablePlotPresetState_ACU, _set_activePlotEditorSettings_ACU, _set_currentPlotTaskEditorId_ACU} from '../../../service/plot/plot-state';
 import { showToastr_ACU } from '../../theme/toast';
-import { getChatArray_ACU, saveChatToHost_ACU, setChatMessages_ACU, emitMessageUpdated_ACU } from '../../../data/gateways/chat-gateway';
+import { getChatArray_ACU, saveChatToHost_ACU, setChatMessages_ACU, emitMessageUpdated_ACU, replaceChatMessage_ACU, getOriginalContent_ACU } from '../../../service/chat/chat-service';
+// re-export 从 service 层搬迁的业务逻辑函数，保持外部调用方兼容
+export { replaceChatMessage_ACU, getOriginalContent_ACU } from '../../../service/chat/chat-service';
 import { jQuery_API_ACU } from '../../dom-utils';
 import { toastr_API_ACU } from '../../../shared/host-api';
 import { currentChatFileIdentifier_ACU, settings_ACU } from '../../../service/runtime/state-manager';
@@ -24,99 +26,8 @@ import { showOptimizationOverlay_ACU, hideOptimizationOverlay_ACU, showOptimizat
 // 循环 import — 运行时安全
 import { showOptimizationDiffDialogForLoop_ACU, showOptimizationDiff_ACU } from './optimization-ui-diff';
 
-  export async function replaceChatMessage_ACU(messageIndex: number, newContent: string, options: any = {}) {
-    try {
-      logDebug_ACU(`[正文优化] replaceChatMessage_ACU 开始执行, messageIndex=${messageIndex}, newContent长度=${newContent?.length || 0}`);
-      
-      const chat = getChatArray_ACU();
-      if (!chat || !chat[messageIndex]) {
-        logError_ACU('[正文优化] 消息不存在, chat存在=', !!chat, 'messageIndex=', messageIndex);
-        throw new Error('消息不存在');
-      }
-      
-      const oldContent = chat[messageIndex].mes;
-      logDebug_ACU(`[正文优化] 原内容长度: ${oldContent?.length || 0}, 新内容长度: ${newContent?.length || 0}`);
-      
-      // [新增] 保存原始内容到 extra 字段，用于"重新优化"功能
-      // 只有当 extra._acu_original_content 不存在时才保存（避免覆盖最初的原始内容）
-      const extra = chat[messageIndex].extra || {};
-      if (!extra._acu_original_content) {
-        extra._acu_original_content = options.originalContent ?? oldContent;
-        logDebug_ACU(`[正文优化] 保存原始内容到 extra._acu_original_content，长度: ${extra._acu_original_content?.length || 0}`);
-      }
-      extra._acu_last_optimized_at = Date.now();
-      extra._acu_last_optimized_message_id = chat[messageIndex].message_id;
-      setLastOptimizationBase_ACU({
-        messageIndex,
-        messageId: chat[messageIndex].message_id,
-        baseContent: extra._acu_original_content || options.originalContent || oldContent || ''
-      });
-      
-      // [修复] 使用酒馆的 setChatMessages API 来更新消息内容，确保渲染及时生效
-      // 该 API 会自动处理渲染，无需手动触发 MESSAGE_UPDATED 事件
-      // refresh: 'affected' 会触发被影响楼层的重新渲染
-      const success = await setChatMessages_ACU(
-          [{ message_id: chat[messageIndex].message_id, mes: newContent, extra: extra }],
-          { refresh: 'affected' }
-        );
-        if (success) {
-        logDebug_ACU('[正文优化] 消息已通过 setChatMessages API 更新');
-      } else {
-        // 降级方案：如果 setChatMessages 不可用，使用原有逻辑
-        logDebug_ACU('[正文优化] setChatMessages API 不可用，使用降级方案...');
-        
-        // 修改消息内容
-        chat[messageIndex].mes = newContent;
-        chat[messageIndex].extra = extra;
-        
-        // 验证修改是否成功
-        const verifyContent = chat[messageIndex].mes;
-        logDebug_ACU(`[正文优化] 修改后验证 - 内容长度: ${verifyContent?.length || 0}, 是否匹配: ${verifyContent === newContent}`);
-        
-        // 保存聊天
-        await saveChatToHost_ACU();
-        logDebug_ACU('[正文优化] 聊天已保存');
-        
-        // 触发消息更新事件
-        emitMessageUpdated_ACU(messageIndex);
-      }
-      
-      logDebug_ACU(`[正文优化] 消息 ${messageIndex} 已更新完成`);
-      return true;
-      
-    } catch (error) {
-      logError_ACU('[正文优化] 替换消息失败:', error);
-      return false;
-    }
-  }
-  
-  /**
-   * 获取消息的原始内容（用于重新优化）
-   * @param {number} messageIndex - 消息索引
-   * @returns {string|null} 原始内容，如果不存在则返回 null
-   */
-  export function getOriginalContent_ACU(messageIndex: number) {
-    const cachedBase = getLastOptimizationBase_ACU();
-    if (cachedBase?.baseContent) {
-      const chat = getChatArray_ACU();
-      if (cachedBase.messageId != null) {
-        const matchedIndex = chat.findIndex(msg => msg && !msg.is_user && msg.message_id === cachedBase.messageId);
-        if (matchedIndex === messageIndex) {
-          return cachedBase.baseContent;
-        }
-      }
-      if (cachedBase.messageIndex === messageIndex) {
-        return cachedBase.baseContent;
-      }
-    }
-
-    const chat = getChatArray_ACU();
-    if (!chat || !chat[messageIndex]) {
-      return null;
-    }
-    const extra = chat[messageIndex].extra || {};
-    return extra._acu_original_content || null;
-  }
+  // replaceChatMessage_ACU 和 getOriginalContent_ACU 已搬迁到 service/chat/chat-service.ts
+  // 通过文件顶部的 re-export 保持外部调用方兼容
 
   /**
    * 重新优化消息

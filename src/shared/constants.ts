@@ -5,8 +5,8 @@
  * 从 src/core/01_header_and_env.js 迁移而来。
  */
 
-/** 调试模式开关 */
-export const DEBUG_MODE_ACU = true;
+/** 调试模式开关（控制 console.log 输出，不影响日志缓冲区） */
+export const DEBUG_MODE_ACU = false;
 
 /**
  * 唯一脚本标识符

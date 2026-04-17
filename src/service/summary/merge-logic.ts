@@ -1,10 +1,12 @@
 // merge-logic.ts
 
-import { DEFAULT_CHAR_CARD_PROMPT_ACU, DEFAULT_MERGE_SUMMARY_PROMPT_ACU } from '../../shared/defaults-json.js';
+import { DEFAULT_CHAR_CARD_PROMPT_ACU, DEFAULT_CHAR_CARD_PROMPT_SQL_ACU, DEFAULT_MERGE_SUMMARY_PROMPT_ACU } from '../../shared/defaults-json.js';
+import { isSqliteMode } from '../table/storage-mode';
 import { handleApiResponse_ACU } from '../ai/prompt-builder';
 import { currentJsonTableData_ACU, settings_ACU } from '../runtime/state-manager';
 import { sendConnectionManagerRequest_ACU, isGenerateRawAvailable_ACU, generateRaw_ACU } from '../../data/gateways/ai-gateway';
 import { getLastMessageIndex_ACU } from '../../data/gateways/chat-gateway';
+import { getHostRequestHeaders_ACU } from '../../data/gateways/ai-gateway';
 import { updateReadableLorebookEntry_ACU } from '../worldbook/pipeline';
 import { logDebug_ACU, logError_ACU, logWarn_ACU } from '../../shared/utils';
 import { saveIndependentTableToChatHistory_ACU } from '../table/table-service';
@@ -180,7 +182,7 @@ export async function executeAutoMergeBatch_ACU(
 
     for (let attempt = 1; attempt <= maxRetries; attempt++) {
         try {
-            const messagesToUse = JSON.parse(JSON.stringify(settings_ACU.charCardPrompt || [DEFAULT_CHAR_CARD_PROMPT_ACU]));
+            const messagesToUse = JSON.parse(JSON.stringify(settings_ACU.charCardPrompt || [isSqliteMode() ? DEFAULT_CHAR_CARD_PROMPT_SQL_ACU : DEFAULT_CHAR_CARD_PROMPT_ACU]));
             const mainPromptSegment =
                 messagesToUse.find((m: any) => (String(m?.mainSlot || '').toUpperCase() === 'A') || m?.isMain) ||
                 messagesToUse.find((m: any) => m && m.content && m.content.includes("你接下来需要扮演一个填表用的美杜莎"));
@@ -203,7 +205,7 @@ export async function executeAutoMergeBatch_ACU(
                 } else {
                     const res = await fetch(`/api/backends/chat-completions/generate`, {
                         method: 'POST',
-                        headers: { ...(globalThis as any).SillyTavern?.getRequestHeaders?.() || {}, 'Content-Type': 'application/json' },
+                    headers: { ...getHostRequestHeaders_ACU(), 'Content-Type': 'application/json' },
                         body: JSON.stringify({
                             "messages": finalMessages, "model": settings_ACU.apiConfig.model, "temperature": settings_ACU.apiConfig.temperature,
                             "max_tokens": settings_ACU.apiConfig.max_tokens || 4096, "stream": settings_ACU.streamingEnabled || false, "chat_completion_source": "custom",
@@ -234,7 +236,7 @@ export async function executeAutoMergeBatch_ACU(
                         if (typeof rowData === 'object' && !Array.isArray(rowData)) {
                             const sortedKeys = Object.keys(rowData).sort((a: string, b: string) => parseInt(a) - parseInt(b));
                             const dataColumns = sortedKeys.map((k: string) => rowData[k]);
-                            rowData = [null, ...dataColumns];
+                            rowData = [null, ...dataColumns]; // 行号占位，由 migrateContentNullToRowId 统一处理
                         }
                         if (isAutoMode) {
                             rowData.push('auto_merged');

@@ -1,25 +1,27 @@
-import { DEFAULT_CHAR_CARD_PROMPT_ACU, TABLE_TEMPLATE_ACU } from '../../shared/defaults-json.js';
+import { DEFAULT_CHAR_CARD_PROMPT_ACU, DEFAULT_CHAR_CARD_PROMPT_SQL_ACU, DEFAULT_MERGE_SUMMARY_PROMPT_ACU, DEFAULT_MERGE_SUMMARY_PROMPT_SQL_ACU, TABLE_TEMPLATE_ACU } from '../../shared/defaults-json.js';
 import { deriveTemplatePresetNameForImport_ACU, getCurrentTemplatePresetName_ACU, normalizeTemplatePresetSelectionValue_ACU, sanitizeFilenameComponent_ACU } from '../../shared/template-preset-utils';
 import { renderPromptSegments_ACU } from '../components/plot-editors';
-import { getDefaultTemplateSnapshot_ACU, getTemplatePreset_ACU } from '../../service/template/template-preset-service';
+import { getDefaultTemplateSnapshot_ACU, getTemplatePreset_ACU, resolveTemplateForExport_ACU } from '../../service/template/template-preset-service';
 import { showToastr_ACU } from '../theme/toast';
 import { ACU_TOAST_CATEGORY_ACU } from '../../shared/constants';
-import { getChatArray_ACU, saveChatToHost_ACU } from '../../data/gateways/chat-gateway';
-import { getLorebookEntries_ACU, deleteLorebookEntries_ACU, isWorldbookApiAvailable_ACU } from '../../data/gateways/worldbook-gateway';
+import { isSqliteMode } from '../../service/table/storage-mode';
+import { getChatArray_ACU, saveChatToHost_ACU, deleteLocalDataInChatCore_ACU, overrideLatestLayerWithTemplateCore_ACU } from '../../service/chat/chat-service';
+import { isWorldbookApiAvailable_ACU } from '../../service/worldbook/worldbook-service';
+import { cleanupWorldbookEntriesAfterDataDeletion_ACU } from '../../service/worldbook/worldbook-cleanup';
 import { currentChatFileIdentifier_ACU, currentJsonTableData_ACU, getCurrentIsolationKey_ACU, settings_ACU } from '../../service/runtime/state-manager';
 import { $popupInstance_ACU } from '../state/ui-refs';
 import { saveSettingsAndNotify_ACU } from '../components/settings-ui-helpers';
 import { loadSettingsAndRefreshUI_ACU } from '../components/settings-ui-helpers';
-import { getCurrentChatTemplateScopeState_ACU, getGlobalTemplateSnapshotForCurrentProfile_ACU, migrateLegacyTemplateScopeForCurrentChat_ACU, sanitizeChatSheetsObject_ACU, sanitizeTemplateSnapshotForChat_ACU } from '../../service/template/chat-scope';
+import { sanitizeChatSheetsObject_ACU } from '../../service/template/chat-scope';
 import { refreshMergedDataAndNotifyWithUI_ACU } from '../components/pipeline-ui-helpers';
 import { SCRIPT_ID_PREFIX_ACU } from '../../shared/constants';
-import { safeJsonParse_ACU } from '../../shared/json-helpers';
+
 import { ensureSheetOrderNumbers_ACU, logDebug_ACU, logError_ACU, logWarn_ACU, parseTableTemplateJson_ACU } from '../../shared/utils';
 import { loadOrCreateJsonTableFromChatHistory_ACU } from '../../service/table/table-service';
-import { applyTemplateSnapshotToScope_ACU, normalizeTemplateOperationScope_ACU, parseImportedTemplateData_ACU, resolveActiveTemplatePresetName_ACU, upsertTemplatePreset_ACU } from '../../service/template/template-preset-service';
+import { applyTemplateSnapshotToScope_ACU, normalizeTemplateOperationScope_ACU, parseImportedTemplateData_ACU, upsertTemplatePreset_ACU } from '../../service/template/template-preset-service';
+import { applyCombinedSettingsImport_ACU } from '../../service/settings/settings-service';
 import { getTemplatePresetSelectJQ_ACU, refreshTemplatePresetSelectInUI_ACU } from '../components/template-preset-ui';
 import { updateCardUpdateStatusDisplay_ACU } from '../components/update-status-display';
-import { buildDefaultExportConfig_ACU, ensureExportConfigDefaults_ACU, getInjectionTargetLorebook_ACU, getIsolationPrefix_ACU } from '../../service/worldbook/injection-engine';
 /**
  * presentation/triggers/data-admin-ui.ts — 导入/导出/重置 UI
  * 从 features/data/01_data_admin.js 迁移而来
@@ -58,54 +60,24 @@ import { buildDefaultExportConfig_ACU, ensureExportConfigDefaults_ACU, getInject
                     throw new Error('"template" 的值必须是一个对象。');
                 }
 
-                // 1. Apply and save prompt
-                settings_ACU.charCardPrompt = combinedData.prompt;
-                saveSettingsAndNotify_ACU();
+                // [重构] 调用 service 层导入配置
+                const modifiedFields = applyCombinedSettingsImport_ACU(combinedData);
+                logDebug_ACU(`Combined settings imported. Modified fields: ${modifiedFields.join(', ')}`);
+
+                // UI 操作：渲染提示词段落
                 renderPromptSegments_ACU(combinedData.prompt);
                 showToastr_ACU('success', '提示词预设已成功导入并保存！');
 
-                // [新增] 导入合并提示词 (如果存在)
-                if (combinedData.mergeSummaryPrompt) {
-                    settings_ACU.mergeSummaryPrompt = combinedData.mergeSummaryPrompt;
-                    saveSettingsAndNotify_ACU();
+                // UI 操作：更新合并提示词输入框
+                if (modifiedFields.includes('mergeSummaryPrompt')) {
                     const $mergePromptInput = $popupInstance_ACU.find(`#${SCRIPT_ID_PREFIX_ACU}-merge-prompt-template`);
                     if ($mergePromptInput.length) {
                         $mergePromptInput.val(combinedData.mergeSummaryPrompt);
                     }
-                    logDebug_ACU('Merge summary prompt imported.');
                 }
 
-                // [新增] 导入所有合并设置 (如果存在)
-                if (typeof combinedData.mergeSummaryPrompt !== 'undefined' ||
-                    typeof combinedData.autoMergeEnabled !== 'undefined') {
-
-                    // 导入合并提示词
-                    if (combinedData.mergeSummaryPrompt) {
-                        settings_ACU.mergeSummaryPrompt = combinedData.mergeSummaryPrompt;
-                        const $mergePromptInput = $popupInstance_ACU.find(`#${SCRIPT_ID_PREFIX_ACU}-merge-prompt-template`);
-                        if ($mergePromptInput.length) {
-                            $mergePromptInput.val(combinedData.mergeSummaryPrompt);
-                        }
-                    }
-
-                    // 导入手动合并设置
-                    settings_ACU.mergeTargetCount = combinedData.mergeTargetCount || 1;
-                    settings_ACU.mergeBatchSize = combinedData.mergeBatchSize || 5;
-                    settings_ACU.mergeStartIndex = combinedData.mergeStartIndex || 1;
-                    settings_ACU.mergeEndIndex = combinedData.mergeEndIndex || null;
-
-                    // 导入自动合并设置
-                    settings_ACU.autoMergeEnabled = combinedData.autoMergeEnabled || false;
-                    settings_ACU.autoMergeThreshold = combinedData.autoMergeThreshold || 20;
-                    settings_ACU.autoMergeReserve = combinedData.autoMergeReserve || 0;
-
-                    // 导入删除楼层范围设置
-                    settings_ACU.deleteStartFloor = combinedData.deleteStartFloor || null;
-                    settings_ACU.deleteEndFloor = combinedData.deleteEndFloor || null;
-
-                    saveSettingsAndNotify_ACU();
-
-                    // 更新所有UI
+                // UI 操作：更新合并设置相关的 UI 元素
+                if (modifiedFields.includes('mergeTargetCount')) {
                     const $mergeTargetCount = $popupInstance_ACU.find(`#${SCRIPT_ID_PREFIX_ACU}-merge-target-count`);
                     const $mergeBatchSize = $popupInstance_ACU.find(`#${SCRIPT_ID_PREFIX_ACU}-merge-batch-size`);
                     const $mergeStartIndex = $popupInstance_ACU.find(`#${SCRIPT_ID_PREFIX_ACU}-merge-start-index`);
@@ -113,6 +85,8 @@ import { buildDefaultExportConfig_ACU, ensureExportConfigDefaults_ACU, getInject
                     const $autoMergeEnabled = $popupInstance_ACU.find(`#${SCRIPT_ID_PREFIX_ACU}-auto-merge-enabled`);
                     const $autoMergeThreshold = $popupInstance_ACU.find(`#${SCRIPT_ID_PREFIX_ACU}-auto-merge-threshold`);
                     const $autoMergeReserve = $popupInstance_ACU.find(`#${SCRIPT_ID_PREFIX_ACU}-auto-merge-reserve`);
+                    const $deleteStartFloor = $popupInstance_ACU.find(`#${SCRIPT_ID_PREFIX_ACU}-delete-start-floor`);
+                    const $deleteEndFloor = $popupInstance_ACU.find(`#${SCRIPT_ID_PREFIX_ACU}-delete-end-floor`);
 
                     if ($mergeTargetCount.length) $mergeTargetCount.val(settings_ACU.mergeTargetCount);
                     if ($mergeBatchSize.length) $mergeBatchSize.val(settings_ACU.mergeBatchSize);
@@ -121,15 +95,8 @@ import { buildDefaultExportConfig_ACU, ensureExportConfigDefaults_ACU, getInject
                     if ($autoMergeEnabled.length) $autoMergeEnabled.prop('checked', settings_ACU.autoMergeEnabled);
                     if ($autoMergeThreshold.length) $autoMergeThreshold.val(settings_ACU.autoMergeThreshold);
                     if ($autoMergeReserve.length) $autoMergeReserve.val(settings_ACU.autoMergeReserve);
-
-                    // 更新删除楼层范围UI
-                    const $deleteStartFloor = $popupInstance_ACU.find(`#${SCRIPT_ID_PREFIX_ACU}-delete-start-floor`);
-                    const $deleteEndFloor = $popupInstance_ACU.find(`#${SCRIPT_ID_PREFIX_ACU}-delete-end-floor`);
-
                     if ($deleteStartFloor.length) $deleteStartFloor.val(settings_ACU.deleteStartFloor || 1);
                     if ($deleteEndFloor.length) $deleteEndFloor.val(settings_ACU.deleteEndFloor || '');
-
-                    logDebug_ACU('All merge settings imported.');
                 }
                 
                 // 2. Apply and save template
@@ -168,177 +135,30 @@ import { buildDefaultExportConfig_ACU, ensureExportConfigDefaults_ACU, getInject
   // [重要] 此函数只删除各楼层的表格数据（TavernDB_ACU_Data/IsolatedData等），
   //        不会删除聊天第一层的"空白指导表"（TavernDB_ACU_InternalSheetGuide），
   //        指导表用于保存表头结构和填表参数，作为该聊天的总指导。
-  export async function deleteLocalDataInChat_ACU(mode = 'current', startFloor: any = null, endFloor: any = null) {
-      // mode: 'current' (删除当前标识的数据) | 'all' (删除所有数据)
-      // startFloor/endFloor: 楼层范围 (1-based, null表示不限制)
+  export async function deleteLocalDataInChat_ACU(mode: 'current' | 'all' = 'current', startFloor: any = null, endFloor: any = null) {
       const chat = getChatArray_ACU();
       if (!chat || chat.length === 0) {
           showToastr_ACU('warning', '聊天记录为空，无法执行删除操作。');
           return;
       }
 
-      let deletedCount = 0;
-      const targetIdentity = settings_ACU.dataIsolationEnabled ? settings_ACU.dataIsolationCode : null;
-
-      // 计算AI消息索引列表（只计算AI楼层）
-      // [修复] 处理所有AI消息，包括 chat[0]，但在删除时会排除空白指导表字段
-      const aiMessageIndices = chat
-          .map((msg, index) => (!msg.is_user) ? index : -1)
-          .filter(index => index !== -1);
-
-      if (aiMessageIndices.length === 0) {
+      // 计算AI消息数量，用于前置校验
+      const aiMessageCount = chat.filter((msg: any) => !msg.is_user).length;
+      if (aiMessageCount === 0) {
           showToastr_ACU('warning', '聊天记录中没有AI消息，无法执行删除操作。');
           return;
       }
 
-      // 转换AI楼层范围为AI消息索引范围
-      const startAiIndex = startFloor ? Math.max(0, startFloor - 1) : 0;
-      const endAiIndex = endFloor ? Math.min(aiMessageIndices.length - 1, endFloor - 1) : aiMessageIndices.length - 1;
-
-      // 获取要处理的AI消息的物理索引
-      const targetIndices = aiMessageIndices.slice(startAiIndex, endAiIndex + 1);
-
-      for (const physicalIndex of targetIndices) {
-          const msg = chat[physicalIndex];
-          let shouldDelete = false;
-
-          if (mode === 'all') {
-              shouldDelete = true;
-          } else { // mode === 'current'
-              if (settings_ACU.dataIsolationEnabled) {
-                  // 开启隔离：只删除匹配当前代码的数据
-                  if (msg.TavernDB_ACU_Identity === targetIdentity) {
-                      shouldDelete = true;
-                  }
-              } else {
-                  // 关闭隔离：删除所有有数据库数据的内容（无论是否有标识）
-                  if (msg.TavernDB_ACU_Data || msg.TavernDB_ACU_SummaryData || msg.TavernDB_ACU_IndependentData || msg.TavernDB_ACU_IsolatedData) {
-                      shouldDelete = true;
-                  }
-              }
-          }
-
-          if (shouldDelete) {
-              let modified = false;
-              
-              // [保护] 注意：TavernDB_ACU_InternalSheetGuide（空白指导表）字段不会被删除，不在删除列表中
-              
-              if (msg.TavernDB_ACU_Data) {
-                  delete msg.TavernDB_ACU_Data;
-                  modified = true;
-              }
-              if (msg.TavernDB_ACU_SummaryData) {
-                  delete msg.TavernDB_ACU_SummaryData;
-                  modified = true;
-              }
-              // [修复] 支持删除独立保存的数据
-              if (msg.TavernDB_ACU_IndependentData) {
-                  delete msg.TavernDB_ACU_IndependentData;
-                  modified = true;
-              }
-              if (msg.TavernDB_ACU_Identity !== undefined) {
-                  delete msg.TavernDB_ACU_Identity;
-                  modified = true;
-              }
-              // [新增] 支持删除按标签分组存储的数据
-              if (msg.TavernDB_ACU_IsolatedData) {
-                  if (mode === 'all') {
-                      // 删除所有标签的数据
-                      delete msg.TavernDB_ACU_IsolatedData;
-                      modified = true;
-                  } else {
-                      // 只删除当前标签的数据
-                      const currentIsolationKey = getCurrentIsolationKey_ACU();
-                      if (msg.TavernDB_ACU_IsolatedData[currentIsolationKey]) {
-                          delete msg.TavernDB_ACU_IsolatedData[currentIsolationKey];
-                          // 如果删除后没有其他标签的数据了，删除整个对象
-                          if (Object.keys(msg.TavernDB_ACU_IsolatedData).length === 0) {
-                              delete msg.TavernDB_ACU_IsolatedData;
-                          }
-                          modified = true;
-                      }
-                  }
-              }
-              if (msg.TavernDB_ACU_ModifiedKeys) {
-                  delete msg.TavernDB_ACU_ModifiedKeys;
-              }
-              if (msg.TavernDB_ACU_UpdateGroupKeys) {
-                  delete msg.TavernDB_ACU_UpdateGroupKeys;
-              }
-              
-              if (modified) {
-                  deletedCount++;
-              }
-          }
-      }
+      // 调用 service 层核心逻辑执行数据删除
+      const deletedCount = await deleteLocalDataInChatCore_ACU(mode, startFloor, endFloor);
 
       if (deletedCount > 0) {
-          await saveChatToHost_ACU();
           // 刷新内存和UI
           await loadOrCreateJsonTableFromChatHistory_ACU();
           await refreshMergedDataAndNotifyWithUI_ACU();
 
-          // [新增] 删除 WrapperStart 和 WrapperEnd 世界书条目
-          try {
-              const primaryLorebookName = await getInjectionTargetLorebook_ACU();
-              if (primaryLorebookName && isWorldbookApiAvailable_ACU()) {
-                  const isoPrefix = getIsolationPrefix_ACU();
-                  const WRAPPER_START_COMMENT = isoPrefix + 'TavernDB-ACU-WrapperStart';
-                  const WRAPPER_END_COMMENT = isoPrefix + 'TavernDB-ACU-WrapperEnd';
-                  const WRAPPER_START_IMPORT_COMMENT = isoPrefix + '外部导入-TavernDB-ACU-WrapperStart';
-                  const WRAPPER_END_IMPORT_COMMENT = isoPrefix + '外部导入-TavernDB-ACU-WrapperEnd';
-
-                  const allEntries = await getLorebookEntries_ACU(primaryLorebookName);
-                  const wrapperUidsToDelete = allEntries
-                      .filter(e =>
-                          e.comment === WRAPPER_START_COMMENT ||
-                          e.comment === WRAPPER_END_COMMENT ||
-                          e.comment === WRAPPER_START_IMPORT_COMMENT ||
-                          e.comment === WRAPPER_END_IMPORT_COMMENT,
-                      )
-                      .map(e => e.uid);
-
-                  if (wrapperUidsToDelete.length > 0) {
-                      await deleteLorebookEntries_ACU(primaryLorebookName, wrapperUidsToDelete);
-                      logDebug_ACU('Deleted Wrapper entries: ' + wrapperUidsToDelete.length);
-                  }
-              }
-          } catch (wrapperError) {
-              logError_ACU('Failed to delete Wrapper entries:', wrapperError);
-          }
-
-    // [新增] 删除 PersonsHeader 世界书条目
-    try {
-        const primaryLorebookName2 = await getInjectionTargetLorebook_ACU();
-        if (primaryLorebookName2 && isWorldbookApiAvailable_ACU()) {
-            const isoPrefix2 = getIsolationPrefix_ACU();
-            const PERSONS_HEADER_COMMENT = isoPrefix2 + 'TavernDB-ACU-PersonsHeader';
-            const MEMORY_START_COMMENT = isoPrefix2 + 'TavernDB-ACU-MemoryStart';
-            const MEMORY_END_COMMENT = isoPrefix2 + 'TavernDB-ACU-MemoryEnd';
-            const PERSONS_HEADER_IMPORT_COMMENT = isoPrefix2 + '外部导入-TavernDB-ACU-PersonsHeader';
-            const MEMORY_START_IMPORT_COMMENT = isoPrefix2 + '外部导入-TavernDB-ACU-MemoryStart';
-            const MEMORY_END_IMPORT_COMMENT = isoPrefix2 + '外部导入-TavernDB-ACU-MemoryEnd';
-
-            const allEntries2 = await getLorebookEntries_ACU(primaryLorebookName2);
-            const headerUidsToDelete = allEntries2
-                .filter(e =>
-                    e.comment === PERSONS_HEADER_COMMENT ||
-                    e.comment === MEMORY_START_COMMENT ||
-                    e.comment === MEMORY_END_COMMENT ||
-                    e.comment === PERSONS_HEADER_IMPORT_COMMENT ||
-                    e.comment === MEMORY_START_IMPORT_COMMENT ||
-                    e.comment === MEMORY_END_IMPORT_COMMENT,
-                )
-                .map(e => e.uid);
-
-            if (headerUidsToDelete.length > 0) {
-                await deleteLorebookEntries_ACU(primaryLorebookName2, headerUidsToDelete);
-                logDebug_ACU('Deleted PersonsHeader and Memory wrapper entries: ' + headerUidsToDelete.length);
-            }
-        }
-    } catch (headerError) {
-        logError_ACU('Failed to delete PersonsHeader and Memory wrapper entries:', headerError);
-    }
+          // [重构] 调用 service 层清理世界书条目
+          await cleanupWorldbookEntriesAfterDataDeletion_ACU();
 
           if (typeof updateCardUpdateStatusDisplay_ACU === 'function') {
               updateCardUpdateStatusDisplay_ACU();
@@ -380,67 +200,14 @@ import { buildDefaultExportConfig_ACU, ensureExportConfigDefaults_ACU, getInject
   export function exportTableTemplate_ACU({ scope = 'global' } = {}) {
     const normalizedScope = normalizeTemplateOperationScope_ACU(scope);
     try {
-        let fromPresetName = '';
-        let jsonData = null;
-
-        if (normalizedScope === 'global') {
-            try {
-                const selected = normalizeTemplatePresetSelectionValue_ACU(getTemplatePresetSelectJQ_ACU()?.val?.());
-                if (selected) {
-                    const preset = getTemplatePreset_ACU(selected);
-                    const obj = preset?.templateStr ? safeJsonParse_ACU(preset.templateStr, null) : null;
-                    if (obj && typeof obj === 'object') {
-                        jsonData = JSON.parse(JSON.stringify(obj));
-                        fromPresetName = selected;
-                    }
-                }
-            } catch (e) {}
-
-            if (!jsonData || typeof jsonData !== 'object') {
-                const globalSnapshot = getGlobalTemplateSnapshotForCurrentProfile_ACU();
-                if (globalSnapshot?.templateObj && typeof globalSnapshot.templateObj === 'object') {
-                    jsonData = JSON.parse(JSON.stringify(globalSnapshot.templateObj));
-                    fromPresetName = normalizeTemplatePresetSelectionValue_ACU(getCurrentTemplatePresetName_ACU(settings_ACU, { requireExisting: false }));
-                }
-            }
-        } else {
-            const chatScopeState = getCurrentChatTemplateScopeState_ACU() || migrateLegacyTemplateScopeForCurrentChat_ACU();
-            const effectivePresetName = normalizeTemplatePresetSelectionValue_ACU(resolveActiveTemplatePresetName_ACU({ fallbackToGlobal: true }));
-            const chatSnapshot = chatScopeState?.mode === 'chat_override' && chatScopeState?.templateStr
-                ? sanitizeTemplateSnapshotForChat_ACU(chatScopeState.templateStr)
-                : (sanitizeTemplateSnapshotForChat_ACU(TABLE_TEMPLATE_ACU) || getGlobalTemplateSnapshotForCurrentProfile_ACU());
-            if (chatSnapshot?.templateObj && typeof chatSnapshot.templateObj === 'object') {
-                jsonData = JSON.parse(JSON.stringify(chatSnapshot.templateObj));
-                fromPresetName = normalizeTemplatePresetSelectionValue_ACU(chatScopeState?.presetName || effectivePresetName);
-            }
-        }
-
-        if (!jsonData || typeof jsonData !== 'object') {
-            const fallbackSnapshot = normalizedScope === 'chat'
-                ? sanitizeTemplateSnapshotForChat_ACU(TABLE_TEMPLATE_ACU)
-                : getGlobalTemplateSnapshotForCurrentProfile_ACU();
-            if (fallbackSnapshot?.templateObj && typeof fallbackSnapshot.templateObj === 'object') {
-                jsonData = JSON.parse(JSON.stringify(fallbackSnapshot.templateObj));
-            }
-        }
-
-        if (!jsonData || typeof jsonData !== 'object') {
+        // [重构] 调用 service 层解析模板数据
+        const selectedPresetName = String(getTemplatePresetSelectJQ_ACU()?.val?.() || '');
+        const resolved = resolveTemplateForExport_ACU(normalizedScope, selectedPresetName);
+        if (!resolved) {
             throw new Error('无法解析当前模板。');
         }
 
-        const sheetKeys0 = Object.keys(jsonData).filter(k => k.startsWith('sheet_'));
-        ensureSheetOrderNumbers_ACU(jsonData, { baseOrderKeys: sheetKeys0, forceRebuild: false });
-
-        const sheetKeys = Object.keys(jsonData).filter(k => k.startsWith('sheet_'));
-        sheetKeys.forEach(key => {
-            const sheet = jsonData[key];
-            if (!sheet) return;
-            if (!sheet.exportConfig) {
-                sheet.exportConfig = buildDefaultExportConfig_ACU(sheet.name);
-            } else {
-                sheet.exportConfig = ensureExportConfigDefaults_ACU(sheet.exportConfig, sheet.name);
-            }
-        });
+        const { jsonData, fromPresetName } = resolved;
 
         const sanitized = sanitizeChatSheetsObject_ACU(jsonData, { ensureMate: true });
         const jsonString = JSON.stringify(sanitized, null, 2);
@@ -482,7 +249,8 @@ import { buildDefaultExportConfig_ACU, ensureExportConfigDefaults_ACU, getInject
       }
 
       try {
-          settings_ACU.charCardPrompt = DEFAULT_CHAR_CARD_PROMPT_ACU;
+          settings_ACU.charCardPrompt = isSqliteMode() ? DEFAULT_CHAR_CARD_PROMPT_SQL_ACU : DEFAULT_CHAR_CARD_PROMPT_ACU;
+          settings_ACU.mergeSummaryPrompt = isSqliteMode() ? DEFAULT_MERGE_SUMMARY_PROMPT_SQL_ACU : DEFAULT_MERGE_SUMMARY_PROMPT_ACU;
           saveSettingsAndNotify_ACU();
 
           const templateResetOk = await resetTableTemplate_ACU({
@@ -522,11 +290,9 @@ import { buildDefaultExportConfig_ACU, ensureExportConfigDefaults_ACU, getInject
 
       const chat = getChatArray_ACU();
       if (!chat || chat.length === 0) {
-          showToastr_ACU('error', '聊天记录为空，无法执行覆盖操作。');          return;
+          showToastr_ACU('error', '聊天记录为空，无法执行覆盖操作。');
+          return;
       }
-
-      // 获取当前隔离标签
-      const currentIsolationKey = getCurrentIsolationKey_ACU();
 
       // 解析通用模板
       const templateData = parseTableTemplateJson_ACU({ stripSeedRows: true });
@@ -535,64 +301,17 @@ import { buildDefaultExportConfig_ACU, ensureExportConfigDefaults_ACU, getInject
           return;
       }
 
-      // 找到最新的一条AI消息
-      let latestAiIndex = -1;
-      for (let i = chat.length - 1; i >= 0; i--) {
-          if (!chat[i].is_user) {
-              latestAiIndex = i;
-              break;
-          }
-      }
-
-      if (latestAiIndex === -1) {
+      // 检查是否有AI消息
+      const hasAiMessage = chat.some((msg: any) => !msg.is_user);
+      if (!hasAiMessage) {
           showToastr_ACU('error', '聊天记录中没有AI消息，无法执行覆盖操作。');
           return;
       }
 
-      const latestMessage = chat[latestAiIndex];
-      let modified = false;
+      // 调用 service 层核心逻辑执行覆盖
+      const modifiedCount = await overrideLatestLayerWithTemplateCore_ACU(templateData);
 
-      // 初始化或获取按标签分组的数据结构
-      if (!latestMessage.TavernDB_ACU_IsolatedData) {
-          latestMessage.TavernDB_ACU_IsolatedData = {};
-      }
-      if (!latestMessage.TavernDB_ACU_IsolatedData[currentIsolationKey]) {
-          latestMessage.TavernDB_ACU_IsolatedData[currentIsolationKey] = {};
-      }
-
-      const tagData = latestMessage.TavernDB_ACU_IsolatedData[currentIsolationKey];
-      if (!tagData.independentData) {
-          tagData.independentData = {};
-      }
-
-      // 遍历模板中的所有表格，使用模板数据覆盖本地数据
-      Object.keys(templateData).forEach(sheetKey => {
-          if (!sheetKey.startsWith('sheet_')) return;
-
-          const templateTable = templateData[sheetKey];
-          if (!templateTable || !templateTable.name) return;
-
-          // 创建覆盖数据：保留表头，清空数据行
-          const overrideTable = JSON.parse(JSON.stringify(templateTable));
-          if (overrideTable.content && overrideTable.content.length > 1) {
-              overrideTable.content = [overrideTable.content[0]]; // 只保留表头
-          }
-
-          // 覆盖本地数据
-          tagData.independentData[sheetKey] = overrideTable;
-          modified = true;
-
-          logDebug_ACU(`Overrode table "${templateTable.name}" (${sheetKey}) in latest layer with template data.`);
-      });
-
-      if (modified) {
-          // 更新修改标记
-          tagData.modifiedKeys = Object.keys(tagData.independentData);
-          tagData.updateGroupKeys = tagData.modifiedKeys;
-
-          // 保存聊天记录
-          await saveChatToHost_ACU();
-
+      if (modifiedCount > 0) {
           // 刷新内存和UI
           await loadOrCreateJsonTableFromChatHistory_ACU();
           await refreshMergedDataAndNotifyWithUI_ACU();

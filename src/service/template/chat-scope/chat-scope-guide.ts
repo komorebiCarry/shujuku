@@ -31,7 +31,7 @@ import { getSortedSheetKeys_ACU } from './chat-scope-sheet';
       Object.keys(normalized).forEach((k: string) => {
           if (!k.startsWith('sheet_')) return;
           const s = normalized[k];
-          const headerRow = Array.isArray(s?.content?.[0]) ? JSON.parse(JSON.stringify(s.content[0])) : [null];
+          const headerRow = Array.isArray(s?.content?.[0]) ? JSON.parse(JSON.stringify(s.content[0])) : ["row_id"];
           const next = JSON.parse(JSON.stringify(s));
           // content: header + (可选) seedRows
           const seedRows = includeSeedRows && Array.isArray(s?.[CHAT_SHEET_GUIDE_SEED_ROWS_FIELD_ACU])
@@ -65,12 +65,12 @@ import { getSortedSheetKeys_ACU } from './chat-scope-sheet';
           orderedUids.forEach((uid: string, idx: number) => {
               const base = (templateObj && templateObj[uid])
                   ? JSON.parse(JSON.stringify(templateObj[uid]))
-                  : { uid, name: uid, content: [[null]], sourceData: {}, updateConfig: {}, exportConfig: {} };
+                  : { uid, name: uid, content: [["row_id"]], sourceData: {}, updateConfig: {}, exportConfig: {} };
               if (Array.isArray(base.content) && base.content.length > 1) {
                   base[CHAT_SHEET_GUIDE_SEED_ROWS_FIELD_ACU] = JSON.parse(JSON.stringify(base.content.slice(1)));
                   base.content = [base.content[0]];
               }
-              if (!Array.isArray(base.content) || base.content.length === 0) base.content = [[null]];
+              if (!Array.isArray(base.content) || base.content.length === 0) base.content = [["row_id"]];
               base.uid = uid;
               if (!Number.isFinite(base[TABLE_ORDER_FIELD_ACU])) base[TABLE_ORDER_FIELD_ACU] = idx;
               out[uid] = base;
@@ -349,7 +349,7 @@ import { getSortedSheetKeys_ACU } from './chat-scope-sheet';
               });
               try {
                   upsertChatTemplatePresetEntry_ACU(templateState, { isolationKey: normalizedKey });
-              } catch (e) {}
+              } catch (e) { logWarn_ACU('[Guide] upsertChatPresetEntry 失败:', e); }
           }
       }
       return true;
@@ -396,7 +396,7 @@ import { getSortedSheetKeys_ACU } from './chat-scope-sheet';
 
           const ok = setChatSheetGuideDataForIsolationKey_ACU(isolationKey, guideData, { reason });
           if (ok) {
-              try { await saveChatToHost_ACU(); } catch (e) {}
+              try { await saveChatToHost_ACU(); } catch (e) { logWarn_ACU('[Guide] saveChatToHost 失败:', e); }
               logDebug_ACU(`[SheetGuide] Auto-seeded chat sheet guide for tag [${isolationKey || '无标签'}], reason=${reason}`);
           }
           return guideData;
@@ -508,7 +508,7 @@ import { getSortedSheetKeys_ACU } from './chat-scope-sheet';
       keys.forEach((k: string) => {
           const s = dataObj[k];
           if (!s) return;
-          const headerRow = Array.isArray(s.content) && Array.isArray(s.content[0]) ? JSON.parse(JSON.stringify(s.content[0])) : [null];
+          const headerRow = Array.isArray(s.content) && Array.isArray(s.content[0]) ? JSON.parse(JSON.stringify(s.content[0])) : ["row_id"];
           const blank: Record<string, any> = {
               uid: s.uid || k,
               name: s.name || k,
@@ -543,7 +543,7 @@ import { getSortedSheetKeys_ACU } from './chat-scope-sheet';
       const keys = Object.keys(templateObj).filter(k => k.startsWith('sheet_'));
       if (keys.length === 0) return null;
       // 确保模板编号稳定（缺失则补齐）
-      try { ensureSheetOrderNumbers_ACU(templateObj, { baseOrderKeys: keys, forceRebuild: false }); } catch (e) {}
+      try { ensureSheetOrderNumbers_ACU(templateObj, { baseOrderKeys: keys, forceRebuild: false }); } catch (e) { logWarn_ACU('[Guide] ensureSheetOrderNumbers 失败:', e); }
       const sorted = keys.sort((a, b) => {
           const ao = Number.isFinite(templateObj?.[a]?.[TABLE_ORDER_FIELD_ACU]) ? Math.trunc(templateObj[a][TABLE_ORDER_FIELD_ACU]) : Infinity;
           const bo = Number.isFinite(templateObj?.[b]?.[TABLE_ORDER_FIELD_ACU]) ? Math.trunc(templateObj[b][TABLE_ORDER_FIELD_ACU]) : Infinity;
@@ -559,7 +559,7 @@ import { getSortedSheetKeys_ACU } from './chat-scope-sheet';
           const base = JSON.parse(JSON.stringify(templateObj[k] || {}));
           base.uid = base.uid || k;
           base.name = base.name || k;
-          if (!Array.isArray(base.content) || base.content.length === 0) base.content = [[null]];
+          if (!Array.isArray(base.content) || base.content.length === 0) base.content = [["row_id"]];
           // v2: 保存模板预置数据为 seedRows，但指导表本体 content 仍只保留表头
           if (Array.isArray(base.content) && base.content.length > 1) {
               base[CHAT_SHEET_GUIDE_SEED_ROWS_FIELD_ACU] = JSON.parse(JSON.stringify(base.content.slice(1)));
@@ -597,9 +597,9 @@ import { getSortedSheetKeys_ACU } from './chat-scope-sheet';
       });
       if (!ok) return false;
       if (syncTemplateScope) {
-          try { applyTemplateScopeForCurrentChat_ACU(); } catch (e) {}
+          try { applyTemplateScopeForCurrentChat_ACU(); } catch (e) { logWarn_ACU('[Guide] applyTemplateScope 失败:', e); }
       }
-      try { await saveChatToHost_ACU(); } catch (e) {}
+      try { await saveChatToHost_ACU(); } catch (e) { logWarn_ACU('[Guide] saveChatToHost 失败:', e); }
       try { await refreshMergedDataAndNotify_ACU(); } catch (e) {}
       return true;
   }

@@ -3,7 +3,7 @@
 
 import { handleApiResponse_ACU } from './prompt-builder';
 import { settings_ACU } from '../runtime/state-manager';
-import { isGenerateRawAvailable_ACU, generateRaw_ACU, sendConnectionManagerRequest_ACU } from '../../data/gateways/ai-gateway';
+import { isGenerateRawAvailable_ACU, generateRaw_ACU, sendConnectionManagerRequest_ACU, getHostRequestHeaders_ACU } from '../../data/gateways/ai-gateway';
 import { logDebug_ACU, logWarn_ACU } from '../../shared/utils';
 
 export   async function callApi_ACU(messages: any[], apiSettings: any, abortSignal: AbortSignal | null = null) {
@@ -56,7 +56,7 @@ export   async function callApi_ACU(messages: any[], apiSettings: any, abortSign
 
       const response = await fetch('/api/backends/chat-completions/generate', {
         method: 'POST',
-        headers: { ...SillyTavern.getRequestHeaders(), 'Content-Type': 'application/json' },
+        headers: { ...getHostRequestHeaders_ACU(), 'Content-Type': 'application/json' },
         body: JSON.stringify(requestBody),
         signal: abortSignal,
       });
@@ -135,10 +135,95 @@ export   async function callCustomOpenAI_ACU_Direct(messages: any[]) {
                  custom_url: settings_ACU.apiConfig.url,
                  custom_include_headers: settings_ACU.apiConfig.apiKey ? `Authorization: Bearer ${settings_ACU.apiConfig.apiKey}` : ""
              });
-             const res = await fetch(url, { method: 'POST', headers: {...SillyTavern.getRequestHeaders(), 'Content-Type': 'application/json'}, body });
+             const res = await fetch(url, { method: 'POST', headers: {...getHostRequestHeaders_ACU(), 'Content-Type': 'application/json'}, body });
              // 根据streamingEnabled设置选择响应处理方式
              const content = await handleApiResponse_ACU(res);
              return content;
           }
       }
   }
+
+
+/**
+ * 通用 AI 调用（支持指定 API 预设名称）
+ * 供 service 层内部使用，替代通过 topLevelWindow_ACU.AutoCardUpdaterAPI.callAI 的循环调用。
+ * @param messages 消息数组 [{ role, content }]
+ * @param presetName API 预设名称（空字符串表示使用当前配置）
+ * @returns AI 响应文本，失败返回 null
+ */
+export async function callAIWithPreset_ACU(messages: any[], presetName: string = ''): Promise<string | null> {
+    if (!Array.isArray(messages) || messages.length === 0) {
+        logWarn_ACU('[callAIWithPreset] messages 必须是非空数组');
+        return null;
+    }
+
+    const apiPresetConfig = getApiConfigByPreset_ACU(presetName);
+    const effectiveApiMode = apiPresetConfig.apiMode;
+    const effectiveApiConfig = apiPresetConfig.apiConfig || {} as any;
+    const effectiveTavernProfile = apiPresetConfig.tavernProfile;
+    const maxTokens = effectiveApiConfig.max_tokens || effectiveApiConfig.maxTokens || 4096;
+
+    logDebug_ACU(`[callAIWithPreset] 调用 AI，消息数=${messages.length}，预设=${presetName || '当前配置'}，模式=${effectiveApiMode}`);
+
+    if (effectiveApiMode === 'tavern') {
+        const profileId = effectiveTavernProfile || settings_ACU.tavernProfile;
+        const response = await sendConnectionManagerRequest_ACU(profileId, messages, maxTokens);
+        if (response?.result?.choices?.[0]?.message?.content) {
+            return response.result.choices[0].message.content;
+        }
+        if (response && typeof response.content === 'string') {
+            return response.content;
+        }
+        logWarn_ACU('[callAIWithPreset] 酒馆 API 返回无效响应');
+        return null;
+    }
+
+    if (effectiveApiConfig.useMainApi) {
+        if (!isGenerateRawAvailable_ACU()) {
+            throw new Error('TavernHelper.generateRaw 函数不存在。请检查酒馆版本。');
+        }
+        const response = await generateRaw_ACU({
+            ordered_prompts: messages,
+            should_stream: settings_ACU.streamingEnabled || false,
+        });
+        return typeof response === 'string' ? response.trim() : null;
+    }
+
+    if (!effectiveApiConfig.url || !effectiveApiConfig.model) {
+        throw new Error('自定义API的URL或模型未配置。');
+    }
+
+    const body = JSON.stringify({
+        messages,
+        model: effectiveApiConfig.model,
+        temperature: effectiveApiConfig.temperature || 1.0,
+        top_p: effectiveApiConfig.top_p || 0.9,
+        max_tokens: maxTokens,
+        stream: settings_ACU.streamingEnabled || false,
+        chat_completion_source: 'custom',
+        group_names: [],
+        include_reasoning: false,
+        reasoning_effort: 'medium',
+        enable_web_search: false,
+        request_images: false,
+        custom_prompt_post_processing: 'strict',
+        reverse_proxy: effectiveApiConfig.url,
+        proxy_password: '',
+        custom_url: effectiveApiConfig.url,
+        custom_include_headers: effectiveApiConfig.apiKey ? `Authorization: Bearer ${effectiveApiConfig.apiKey}` : '',
+    });
+
+    const res = await fetch('/api/backends/chat-completions/generate', {
+        method: 'POST',
+        headers: { ...getHostRequestHeaders_ACU(), 'Content-Type': 'application/json' },
+        body,
+    });
+
+    if (!res.ok) {
+        const errTxt = await res.text();
+        throw new Error(`API请求失败: ${res.status} ${errTxt}`);
+    }
+
+    const content = await handleApiResponse_ACU(res);
+    return content ? content.trim() : null;
+}

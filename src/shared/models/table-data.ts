@@ -50,6 +50,8 @@ export interface SheetSourceData_ACU {
   deleteNode: string;
   updateNode: string;
   insertNode: string;
+  /** SQLite 模式下的建表 DDL（可选，仅 sqlite 模式使用） */
+  ddl?: string;
 }
 
 /** 单张表格（sheet）的完整结构 */

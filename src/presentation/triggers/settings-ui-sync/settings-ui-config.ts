@@ -1,7 +1,7 @@
 /**
  * presentation/triggers/settings-ui-sync/settings-ui-config.ts
  */
-import { DEFAULT_CHAR_CARD_PROMPT_ACU } from '../../../shared/defaults-json.js';
+import { DEFAULT_CHAR_CARD_PROMPT_ACU, DEFAULT_CHAR_CARD_PROMPT_SQL_ACU } from '../../../shared/defaults-json.js';
 import { AUTO_UPDATE_FLOOR_INCREASE_DELAY_ACU } from '../../../shared/defaults';
 import { updateCardUpdateStatusDisplay_ACU } from '../../components/update-status-display';
 import { getCharCardPromptFromUI_ACU, isAutoUpdatingCard_ACU, manualExtraHint_ACU, newMessageDebounceTimer_ACU, renderPromptSegments_ACU, wasStoppedByUser_ACU , _set_isAutoUpdatingCard_ACU, _set_manualExtraHint_ACU, _set_newMessageDebounceTimer_ACU} from '../../components/plot-editors';
@@ -9,9 +9,10 @@ import { showToastr_ACU } from '../../theme/toast';
 import { ACU_TOAST_CATEGORY_ACU } from '../../../shared/constants';
 import { SillyTavern_API_ACU, TavernHelper_API_ACU, toastr_API_ACU, _set_SillyTavern_API_ACU, _set_TavernHelper_API_ACU, _set_jQuery_API_ACU, _set_toastr_API_ACU } from '../../../shared/host-api';
 import { jQuery_API_ACU } from '../../dom-utils';
-import { getChatArray_ACU, saveChatToHost_ACU } from '../../../data/gateways/chat-gateway';
-import { getConnectionManagerProfiles_ACU } from '../../../data/gateways/ai-gateway';
-import { getCurrentCharacterFallback_ACU } from '../../../data/gateways/host-state-gateway';
+import { getChatArray_ACU, saveChatToHost_ACU } from '../../../service/chat/chat-service';
+import { isSqliteMode } from '../../../service/table/storage-mode';
+import { getConnectionManagerProfiles_ACU } from '../../../service/ai/ai-service';
+import { getCurrentCharacterFallback_ACU } from '../../../service/host/host-state-service';
 import { NEW_MESSAGE_DEBOUNCE_DELAY_ACU, allChatMessages_ACU, coreApisAreReady_ACU, currentJsonTableData_ACU, getCurrentIsolationKey_ACU, lastTotalAiMessages_ACU, settings_ACU , _set_coreApisAreReady_ACU, _set_lastTotalAiMessages_ACU} from '../../../service/runtime/state-manager';
 import { $popupInstance_ACU, $customApiUrlInput_ACU, $customApiKeyInput_ACU, $customApiModelInput_ACU, $customApiModelSelect_ACU, $maxTokensInput_ACU, $temperatureInput_ACU, $apiStatusDisplay_ACU, $charCardPromptSegmentsContainer_ACU, $autoUpdateThresholdInput_ACU, $autoUpdateTokenThresholdInput_ACU, $autoUpdateFrequencyInput_ACU, $updateBatchSizeInput_ACU, $maxConcurrentGroupsInput_ACU, $skipUpdateFloorsInput_ACU, $retainRecentLayersInput_ACU, $tableMaxRetriesInput_ACU, $manualExtraHintCheckbox_ACU } from '../../state/ui-refs';
 import { saveSettingsAndNotify_ACU, loadSettingsAndRefreshUI_ACU } from '../../components/settings-ui-helpers';
@@ -66,7 +67,7 @@ import { maybeLiftWorldbookSuppression_ACU } from '../../../service/runtime/help
   }
 
   export function resetDefaultCharCardPrompt_ACU() {
-    settings_ACU.charCardPrompt = DEFAULT_CHAR_CARD_PROMPT_ACU;
+    settings_ACU.charCardPrompt = isSqliteMode() ? DEFAULT_CHAR_CARD_PROMPT_SQL_ACU : DEFAULT_CHAR_CARD_PROMPT_ACU;
     saveSettingsAndNotify_ACU();
     showToastr_ACU('info', '更新预设已恢复为默认值！');
     // loadSettings will trigger renderPromptSegments_ACU which correctly handles the string default
@@ -336,97 +337,9 @@ import { maybeLiftWorldbookSuppression_ACU } from '../../../service/runtime/help
    // 按AI楼层计数，仅保留最近N层的数据，更早楼层的 TavernDB_ACU_* 和 qrf_plot 字段将被删除
    // [重要] 此函数不会删除聊天第一层的"空白指导表"（TavernDB_ACU_InternalSheetGuide），
    //        指导表用于保存表头结构和填表参数，作为该聊天的总指导。
-   export async function purgeOldLayerData_ACU() {
-       const retainCount = settings_ACU.retainRecentLayers || 0;
-       // 0 或空 = 全部保留，不执行清理
-       if (retainCount <= 0) {
-           logDebug_ACU('[数据清理] retainRecentLayers 为 0 或未设置，跳过清理。');
-           return;
-       }
-
-       const chat = getChatArray_ACU();
-       if (!chat || !Array.isArray(chat) || chat.length === 0) {
-           logDebug_ACU('[数据清理] 聊天记录为空，跳过清理。');
-           return;
-       }
-
-       // 1) 收集所有 包含本地数据(TavernDB_ACU_Data/qrf_plot) 的消息索引（按时间顺序，从旧到新）
-       // [保护] 排除 chat[0]，确保第一层的指导表数据不被触及
-       // [修改] 适配用户层保存逻辑：不再仅检查 AI 消息，而是检查所有可能包含数据的消息（包括用户消息）
-       const dataMessageIndices = [];
-       for (let i = 1; i < chat.length; i++) {
-           const msg = chat[i];
-           // 检查是否包含本插件生成的任何本地数据
-           if (msg && (
-               msg.TavernDB_ACU_Data ||
-               msg.TavernDB_ACU_SummaryData ||
-               msg.qrf_plot
-           )) {
-               dataMessageIndices.push(i);
-           }
-       }
-
-       if (dataMessageIndices.length <= retainCount) {
-           logDebug_ACU(`[数据清理] 含数据消息总数(${dataMessageIndices.length}) <= 保留层数(${retainCount})，无需清理。`);
-           return;
-       }
-
-       // 2) 确定需要清理的楼层：保留最近 retainCount 层，清理更早的
-      const cutoffIndex = dataMessageIndices.length - retainCount; // 从这个位置开始是要保留的
-      // [优化] 移除"永远保留第一层"的逻辑，严格按照填写的楼层数来保留数据
-      const indicesToPurge = dataMessageIndices.slice(0, cutoffIndex); // 这些是要清理的
-
-      if (indicesToPurge.length === 0) {
-          logDebug_ACU('[数据清理] 无需清理的楼层。');
-           return;
-       }
-
-       logDebug_ACU(`[数据清理] 将清理 ${indicesToPurge.length} 层消息的本地数据（保留最近 ${retainCount} 层）...`);
-
-       // 3) 遍历需要清理的楼层，删除本地数据字段
-       let purgedCount = 0;
-       const keysToDelete = [
-           'TavernDB_ACU_Data',
-           'TavernDB_ACU_SummaryData',
-           'TavernDB_ACU_IndependentData',
-           'TavernDB_ACU_ModifiedKeys',
-           'TavernDB_ACU_UpdateGroupKeys',
-           'TavernDB_ACU_IsolatedData',
-           'TavernDB_ACU_Identity',
-           'qrf_plot',
-           'qrf_plot_preset'  // [新增] 清理剧情规划预设名称标签
-       ];
-
-       for (const idx of indicesToPurge) {
-           const msg = chat[idx];
-           if (!msg) continue;
-
-           let modified = false;
-           for (const key of keysToDelete) {
-               if (msg.hasOwnProperty(key)) {
-                   delete msg[key];
-                   modified = true;
-               }
-           }
-
-           if (modified) {
-               purgedCount++;
-           }
-       }
-
-       if (purgedCount > 0) {
-           // 4) 保存聊天记录
-           try {
-               await saveChatToHost_ACU();
-               logDebug_ACU(`[数据清理] 已清理 ${purgedCount} 层AI消息的本地数据，聊天记录已保存。`);
-               // [优化] 移除自动清理后的提示框，避免打扰用户
-           } catch (e) {
-               logError_ACU('[数据清理] 保存聊天记录失败:', e);
-           }
-       } else {
-           logDebug_ACU('[数据清理] 目标楼层中未发现需要清理的数据字段。');
-       }
-   }
+   // purgeOldLayerData_ACU 已搬迁到 service/chat/chat-service.ts
+   // 通过 re-export 保持外部调用方兼容
+   export { purgeOldLayerData_ACU } from '../../../service/chat/chat-service';
  
    export function saveImportSplitSize_ACU() {
        if (!$popupInstance_ACU) return;

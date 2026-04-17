@@ -1,12 +1,13 @@
 import { DEFAULT_CONTENT_OPTIMIZATION_PROMPT_GROUP_ACU } from '../../shared/defaults-json.js';
 import { currentJsonTableData_ACU, settings_ACU } from '../runtime/state-manager';
 import { getChatArray_ACU } from '../../data/gateways/chat-gateway';
-import { topLevelWindow_ACU } from '../../shared/env';
 import { getPersonaDescription_ACU, getCharDescription_ACU } from '../../data/gateways/host-state-gateway';
+import { callAIWithPreset_ACU } from '../ai/api-call';
 import { applyOptimizations_ACU } from '../../shared/text-optimization';
 import { logDebug_ACU, logError_ACU, logWarn_ACU } from '../../shared/utils';
 import { saveOptimizationBaseToCache_ACU, loadOptimizationBaseFromCache_ACU } from '../../data/storage/optimization-cache-storage';
 import { formatOutlineTableForPlot_ACU, formatSummaryIndexForPlot_ACU, getLatestAIMessageContent_ACU, getPlotFromHistory_ACU, getWorldbookContentForPlot_ACU, parseCalcTags_ACU, parseIfBlockRecursive_ACU, parseMaxTags_ACU, parseMinTags_ACU, parseRandomTags_ACU, replaceCalcVariables_ACU, replaceMaxVariables_ACU, replaceMinVariables_ACU, replaceRandomVariables_ACU } from '../runtime/helpers-remaining';
+import { replaceDbSqlVariables } from '../runtime/template-vars/sql-query-var';
 /**
  * service/optimization/content-optimization.ts — 正文优化服务逻辑
  * 从 src/core/02_storage_and_profile.js:630~1325 迁移而来。
@@ -40,6 +41,8 @@ import { formatOutlineTableForPlot_ACU, formatSummaryIndexForPlot_ACU, getLatest
       // [新增] 对世界书内容进行随机数处理
       placeholders.$1 = parseRandomTags_ACU(placeholders.$1);
       placeholders.$1 = replaceRandomVariables_ACU(placeholders.$1);
+      // [P4] {[db...]}/{[sql...]} 值替换（SQLite 模式下）
+      placeholders.$1 = replaceDbSqlVariables(placeholders.$1);
       logDebug_ACU('[正文优化] $1 世界书内容:', placeholders.$1 ? `长度=${placeholders.$1.length}` : '(空)');
     } catch (e) {
       logWarn_ACU('[正文优化] 获取世界书内容失败:', e);
@@ -84,7 +87,7 @@ import { formatOutlineTableForPlot_ACU, formatSummaryIndexForPlot_ACU, getLatest
 
     try {
       // $U: 用户设定描述 (persona_description)
-      placeholders.$U = getPersonaDescription_ACU(topLevelWindow_ACU);
+      placeholders.$U = getPersonaDescription_ACU();
       logDebug_ACU('[正文优化] $U 用户设定:', placeholders.$U ? '成功' : '(空)');
     } catch (e) {
       logWarn_ACU('[正文优化] 获取用户设定失败:', e);
@@ -92,7 +95,7 @@ import { formatOutlineTableForPlot_ACU, formatSummaryIndexForPlot_ACU, getLatest
 
     try {
       // $C: 角色描述 (char_description)
-      placeholders.$C = getCharDescription_ACU(topLevelWindow_ACU);
+      placeholders.$C = getCharDescription_ACU();
       logDebug_ACU('[正文优化] $C 角色描述:', placeholders.$C ? '成功' : '(空)');
     } catch (e) {
       logWarn_ACU('[正文优化] 获取角色描述失败:', e);
@@ -158,6 +161,8 @@ import { formatOutlineTableForPlot_ACU, formatSummaryIndexForPlot_ACU, getLatest
          item.content = replaceMaxVariables_ACU(item.content);
          // 8. 替换最小值变量引用
          item.content = replaceMinVariables_ACU(item.content);
+         // [P4] {[db...]}/{[sql...]} 值替换（SQLite 模式下，在 <if> 之前执行）
+         item.content = replaceDbSqlVariables(item.content);
          // 9. 解析条件模板
          const latestAiContentForConditional = getLatestAIMessageContent_ACU();
          const latestPlotContentForConditional = getPlotFromHistory_ACU();
@@ -184,9 +189,7 @@ import { formatOutlineTableForPlot_ACU, formatSummaryIndexForPlot_ACU, getLatest
      for (let attempt = 1; attempt <= maxRetries; attempt++) {
        try {
         logDebug_ACU(`[正文优化] 调用AI API... (尝试 ${attempt}/${maxRetries})`);
-        responseContent = await (topLevelWindow_ACU as any).AutoCardUpdaterAPI.callAI(messages, {
-           presetName: apiPreset
-         });
+        responseContent = await callAIWithPreset_ACU(messages, apiPreset);
          
          if (responseContent) {
            // API调用成功，跳出重试循环
@@ -257,9 +260,7 @@ import { formatOutlineTableForPlot_ACU, formatSummaryIndexForPlot_ACU, getLatest
          
          try {
            logDebug_ACU(`[正文优化] 重新调用AI API以获取更干净的优化结果... (尝试 ${parseAttempt + 1}/${maxRetries})`);
-           parseRetryResponseContent = await (topLevelWindow_ACU as any).AutoCardUpdaterAPI.callAI(messages, {
-             presetName: apiPreset
-           });
+           parseRetryResponseContent = await callAIWithPreset_ACU(messages, apiPreset);
            if (!parseRetryResponseContent) {
              throw new Error('重试请求未返回有效内容');
            }

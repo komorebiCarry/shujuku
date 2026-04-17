@@ -48,7 +48,7 @@ import { normalizeIsolationCode_ACU } from '../../../shared/data-constants';
       try {
           const sheetKeys = Object.keys(templateObj).filter(k => k.startsWith('sheet_'));
           ensureSheetOrderNumbers_ACU(templateObj, { baseOrderKeys: sheetKeys, forceRebuild: false });
-      } catch (e) {}
+      } catch (e) { logWarn_ACU('[模板作用域] sanitizeTemplateSnapshot: 排序号处理失败:', e); }
 
       const sanitized = sanitizeChatSheetsObject_ACU(templateObj, { ensureMate: true });
       const templateStr = safeJsonStringify_ACU(sanitized, '');
@@ -161,7 +161,7 @@ import { normalizeIsolationCode_ACU } from '../../../shared/data-constants';
 
       try {
           ensureCurrentChatTemplatePresetEntry_ACU({ isolationKey: normalizedKey });
-      } catch (e) {}
+      } catch (e) { logWarn_ACU('[模板作用域] ensureCurrentChatPresetEntry 失败:', e); }
 
       if (localEntry?.templateStr) {
           persistTemplateScopeSelectionState_ACU(normalizedPresetName, {
@@ -190,7 +190,7 @@ import { normalizeIsolationCode_ACU } from '../../../shared/data-constants';
           });
           try {
               clearChatSheetGuideDataForIsolationKey_ACU({ isolationKey: normalizedKey });
-          } catch (e) {}
+          } catch (e) { logWarn_ACU('[模板作用域] clearChatSheetGuide 失败:', e); }
           if (save) {
               try {
                   await saveChatToHost_ACU();
@@ -462,7 +462,7 @@ import { normalizeIsolationCode_ACU } from '../../../shared/data-constants';
       if (archiveCurrent) {
           try {
               archiveCurrentChatTemplateScopeState_ACU({ isolationKey: normalizedKey, reason: 'clear_template_override' });
-          } catch (e) {}
+          } catch (e) { logWarn_ACU('[模板作用域] archiveTemplateScopeState 失败:', e); }
       }
       const result = setCurrentChatTemplateScopeState_ACU({ mode: 'inherit_global' }, {
           isolationKey: normalizedKey,
@@ -471,7 +471,7 @@ import { normalizeIsolationCode_ACU } from '../../../shared/data-constants';
       if (clearGuide) {
           try {
               clearChatSheetGuideDataForIsolationKey_ACU({ isolationKey: normalizedKey });
-          } catch (e) {}
+          } catch (e) { logWarn_ACU('[模板作用域] clearChatSheetGuide 失败:', e); }
       }
       return result;
   }
