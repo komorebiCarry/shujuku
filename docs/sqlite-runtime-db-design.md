@@ -170,7 +170,7 @@ CREATE TABLE inventory (
 CREATE TABLE global_state (
   row_id INTEGER PRIMARY KEY,       -- 行号
   current_location TEXT NOT NULL,   -- 主角当前所在地点
-  current_time TEXT NOT NULL,       -- 当前时间
+  cur_time TEXT NOT NULL,            -- 当前时间
   prev_scene_time TEXT,             -- 上轮场景时间
   elapsed_time TEXT                 -- 经过的时间
 );
