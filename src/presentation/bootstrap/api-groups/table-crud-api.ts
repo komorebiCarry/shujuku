@@ -5,7 +5,7 @@
 
 import { topLevelWindow_ACU } from '../../../shared/env';
 import { isSummaryOrOutlineTable_ACU, logDebug_ACU, logError_ACU, logWarn_ACU } from '../../../shared/utils';
-import { SillyTavern_API_ACU } from '../../../shared/host-api';
+import { SillyTavern_API_ACU, type ACUMessage } from '../../../shared/host-api';
 import {
     currentJsonTableData_ACU,
     settings_ACU,
@@ -120,7 +120,7 @@ function findTableLatestFloor(targetSheetKey: string, tableName: string): number
 
     // 从最新消息向前遍历，找到第一个包含该表数据的楼层
     for (let i = chat.length - 1; i >= 0; i--) {
-        const msg = chat[i];
+        const msg = chat[i] as ACUMessage;
         if (msg.is_user) continue;
 
         let hasTableData = false;

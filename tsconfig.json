@@ -15,7 +15,7 @@
     "skipLibCheck": true,
     "forceConsistentCasingInFileNames": true,
     "resolveJsonModule": true,
-    "isolatedModules": true,
+    "resolveJsonModule": true,
     "baseUrl": ".",
     "paths": {
       "@shared/*": ["src/shared/*"],
@@ -23,9 +23,8 @@
       "@service/*": ["src/service/*"],
       "@presentation/*": ["src/presentation/*"]
     },
-    "types": ["function", "jquery", "sql-js"],
-    "typeRoots": ["./@types", "./node_modules/@types"]
-  },
+    "types": ["function", "iframe", "jquery", "sql-js"],
+    "typeRoots": ["./@types", "./node_modules/@types"]  },
   "include": [
     "src/**/*.ts",
     "src/**/*.js",

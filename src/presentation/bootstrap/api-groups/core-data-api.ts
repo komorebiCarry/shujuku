@@ -6,7 +6,7 @@
 import { ACU_TOAST_CATEGORY_ACU } from '../../../shared/constants';
 import { topLevelWindow_ACU } from '../../../shared/env';
 import { isSummaryOrOutlineTable_ACU, logDebug_ACU, logError_ACU, logWarn_ACU } from '../../../shared/utils';
-import { SillyTavern_API_ACU } from '../../../shared/host-api';
+import { SillyTavern_API_ACU, type ACUMessage } from '../../../shared/host-api';
 import {
     currentJsonTableData_ACU,
     _set_currentJsonTableData_ACU,
@@ -45,7 +45,7 @@ export function createCoreDataApi(ctx: ApiGroupContext): Record<string, Function
 
                     const chat = SillyTavern_API_ACU.chat;
                     if (chat && chat.length > 0) {
-                        let targetMessage = null;
+                        let targetMessage: ACUMessage | null = null;
                         let finalIndex = -1;
                         for (let i = chat.length - 1; i >= 0; i--) {
                             if (!chat[i].is_user) {

@@ -27,9 +27,7 @@ import { runOptimizationLogicWithUI_ACU } from '../components/plot-planning-ui';
 // [从 state-manager.ts 搬入 presentation 层] 安装发送意图捕捉钩子（DOM 事件绑定）
 function installSendIntentCaptureHooks_ACU() {
   try {
-    const parentDoc = SillyTavern_API_ACU?.Chat?.document
-      ? SillyTavern_API_ACU.Chat.document
-      : (window.parent || window).document;
+    const parentDoc = (window.parent || window).document;
     const doc = parentDoc || document;
 
     if (!(window as any).__ACU_sendIntentHooksInstalled) {
@@ -347,10 +345,10 @@ export   function mainInitialize_ACU() {
             // 消费掉本次发送意图
             generationGate_ACU.lastUserSendIntentAt = 0;
           });
-        }        const chatModificationEvents = ['MESSAGE_DELETED', 'MESSAGE_SWIPED'];
+        }        const chatModificationEvents = ['MESSAGE_DELETED', 'MESSAGE_SWIPED'] as const;
         chatModificationEvents.forEach(evName => {
-            if (SillyTavern_API_ACU.eventTypes[evName]) {
-                SillyTavern_API_ACU.eventSource.on(SillyTavern_API_ACU.eventTypes[evName], async (data: any) => {
+            if (SillyTavern_API_ACU.eventTypes[evName as keyof typeof SillyTavern_API_ACU.eventTypes]) {
+                SillyTavern_API_ACU.eventSource.on(SillyTavern_API_ACU.eventTypes[evName as keyof typeof SillyTavern_API_ACU.eventTypes], async (data: any) => {
                     logDebug_ACU(`ACU ${evName} event detected. Triggering data reload and merge from chat history.`);
                     clearTimeout(newMessageDebounceTimer_ACU);
                     _set_newMessageDebounceTimer_ACU(setTimeout(async () => {

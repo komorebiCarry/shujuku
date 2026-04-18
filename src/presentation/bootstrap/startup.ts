@@ -11,9 +11,7 @@ import { MENU_ITEM_ID_ACU, SCRIPT_ID_PREFIX_ACU } from '../../shared/constants';
 import { logDebug_ACU, logError_ACU } from '../../shared/utils';
 
   export function addAutoCardMenuItem_ACU() {
-    const parentDoc = SillyTavern_API_ACU?.Chat?.document
-      ? SillyTavern_API_ACU.Chat.document
-      : (window.parent || window).document;
+    const parentDoc = (window.parent || window).document;
     if (!parentDoc || !jQuery_API_ACU) {
       logError_ACU('Cannot find parent document or jQuery for ACU menu.');
       return false;
