@@ -20,6 +20,16 @@ vi.mock('../../../src/shared/utils', () => ({
   logError_ACU: vi.fn(),
   isSummaryOrOutlineTable_ACU: vi.fn(() => false),
   parseTableTemplateJson_ACU: vi.fn(() => null),
+  stripSeedRowsFromTemplate_ACU: vi.fn((obj: any) => {
+    if (!obj || typeof obj !== 'object') return obj;
+    Object.keys(obj).forEach(k => {
+      if (!k.startsWith('sheet_')) return;
+      const table = obj[k];
+      if (!table || !Array.isArray(table.content) || table.content.length === 0) return;
+      table.content = [table.content[0]];
+    });
+    return obj;
+  }),
 }));
 
 // mock state-manager
@@ -45,6 +55,31 @@ vi.mock('../../../src/service/runtime/helpers-data-merge', () => ({
 vi.mock('../../../src/service/runtime/template-vars/name-mapper', () => ({
   buildGlobalNameMapper: vi.fn(),
   disposeGlobalNameMapper: vi.fn(),
+}));
+
+// mock chat-scope（getEffectiveSeedRowsForSheet_ACU + getCurrentChatTemplateScopeState_ACU）
+const mockGetEffectiveSeedRows = vi.fn().mockReturnValue([]);
+const mockGetCurrentChatTemplateScopeState = vi.fn().mockReturnValue(null);
+vi.mock('../../../src/service/template/chat-scope', () => ({
+  getEffectiveSeedRowsForSheet_ACU: (...args: any[]) => mockGetEffectiveSeedRows(...args),
+  getCurrentChatTemplateScopeState_ACU: (...args: any[]) => mockGetCurrentChatTemplateScopeState(...args),
+  sanitizeTemplateSnapshotForChat_ACU: vi.fn((source: any) => {
+    if (!source) return null;
+    return { templateStr: typeof source === 'string' ? source : JSON.stringify(source), templateObj: typeof source === 'string' ? JSON.parse(source) : source };
+  }),
+}));
+
+// mock template-preset-service
+const mockGetTemplatePreset = vi.fn().mockReturnValue(null);
+vi.mock('../../../src/service/template/template-preset-service', () => ({
+  getTemplatePreset_ACU: (...args: any[]) => mockGetTemplatePreset(...args),
+}));
+
+// mock json-helpers
+vi.mock('../../../src/shared/json-helpers', () => ({
+  safeJsonParse_ACU: vi.fn((str: string, fallback: any) => {
+    try { return JSON.parse(str); } catch { return fallback; }
+  }),
 }));
 
 // 现在 import 被测模块
@@ -239,6 +274,10 @@ describe('SqlTableService', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mockCurrentJsonTableData = null;
+    // 重置 mock 返回值，防止测试之间的状态泄漏
+    mockGetEffectiveSeedRows.mockReturnValue([]);
+    mockGetCurrentChatTemplateScopeState.mockReturnValue(null);
+    mockGetTemplatePreset.mockReturnValue(null);
     service = new SqlTableService();
   });
 
@@ -423,6 +462,254 @@ describe('SqlTableService', () => {
       // 建表后 executeQuery 应正常工作
       const queryResult = service.executeQuery('SELECT * FROM inventory');
       expect(queryResult.rowCount).toBe(1);
+    });
+  });
+
+  // ═══════════════════════════════════════════════════════════════
+  // _ensureTablesFromTemplate + seedRows 写入
+  // ═══════════════════════════════════════════════════════════════
+  describe('建表时 seedRows 写入 SQLite', () => {
+    const TEST_DDL_WITH_SEED = `CREATE TABLE inventory (
+      row_id INTEGER PRIMARY KEY,
+      item_name TEXT NOT NULL,
+      quantity INTEGER DEFAULT 1
+    );`;
+
+    it('有 seedRows 的表建表后数据被写入 SQLite', async () => {
+      // 模拟新开卡
+      mockMergeAll.mockResolvedValue(null);
+      await service.loadFromChat();
+
+      // 设置模板（stripSeedRows=true 后只有表头）
+      const { parseTableTemplateJson_ACU } = await import('../../../src/shared/utils');
+      vi.mocked(parseTableTemplateJson_ACU).mockReturnValue({
+        mate: { type: 'acu', version: 1 },
+        sheet_0: {
+          uid: 'inventory',
+          name: '背包物品表',
+          sourceData: { note: '', initNode: '', deleteNode: '', updateNode: '', insertNode: '', ddl: TEST_DDL_WITH_SEED },
+          content: [['row_id', 'item_name', 'quantity']], // 只有表头
+          updateConfig: {},
+          exportConfig: {},
+          orderNo: 0,
+        },
+      } as any);
+
+      // mock seedRows 返回初始数据
+      mockGetEffectiveSeedRows.mockReturnValue([
+        ['1', '铁剑', '3'],
+        ['2', '治疗药水', '5'],
+      ]);
+
+      // applyEdits 触发建表 + seedRows 写入
+      const result = service.applyEdits("UPDATE inventory SET quantity = 10 WHERE item_name = '铁剑';");
+      expect(result.success).toBe(true);
+
+      // 验证 seedRows 已写入 SQLite
+      const queryResult = service.executeQuery('SELECT * FROM inventory ORDER BY row_id');
+      expect(queryResult.rowCount).toBe(2);
+      expect(queryResult.values[0]).toContain('铁剑');
+      // 验证 UPDATE 确实生效了（quantity 从 3 变为 10）
+      expect(queryResult.values[0]).toContain(10);
+      expect(queryResult.values[1]).toContain('治疗药水');
+    });
+
+    it('没有 seedRows 的表建表后仍为空表', async () => {
+      mockMergeAll.mockResolvedValue(null);
+      await service.loadFromChat();
+
+      const { parseTableTemplateJson_ACU } = await import('../../../src/shared/utils');
+      vi.mocked(parseTableTemplateJson_ACU).mockReturnValue({
+        mate: { type: 'acu', version: 1 },
+        sheet_0: {
+          uid: 'inventory',
+          name: '背包物品表',
+          sourceData: { note: '', initNode: '', deleteNode: '', updateNode: '', insertNode: '', ddl: TEST_DDL_WITH_SEED },
+          content: [['row_id', 'item_name', 'quantity']],
+          updateConfig: {},
+          exportConfig: {},
+          orderNo: 0,
+        },
+      } as any);
+
+      // mock seedRows 返回空
+      mockGetEffectiveSeedRows.mockReturnValue([]);
+
+      // applyEdits 触发建表（无 seedRows）
+      const result = service.applyEdits("INSERT INTO inventory VALUES (1, '魔法书', 1);");
+      expect(result.success).toBe(true);
+
+      // 验证只有刚 INSERT 的那一行
+      const queryResult = service.executeQuery('SELECT * FROM inventory');
+      expect(queryResult.rowCount).toBe(1);
+      expect(queryResult.values[0]).toContain('魔法书');
+    });
+
+    it('已存在的表不会被重复写入 seedRows', async () => {
+      // 先加载有数据的表
+      mockMergeAll.mockResolvedValue(JSON.parse(JSON.stringify(testTableData)));
+      await service.loadFromChat();
+
+      // 设置 seedRows（即使有也不应写入，因为表已存在）
+      mockGetEffectiveSeedRows.mockReturnValue([
+        ['99', '不应出现的物品', '999'],
+      ]);
+
+      const { parseTableTemplateJson_ACU } = await import('../../../src/shared/utils');
+      vi.mocked(parseTableTemplateJson_ACU).mockReturnValue({
+        mate: { type: 'acu', version: 1 },
+        sheet_0: {
+          uid: 'inventory',
+          name: '背包物品表',
+          sourceData: { note: '', initNode: '', deleteNode: '', updateNode: '', insertNode: '', ddl: TEST_DDL },
+          content: [['row_id', 'item_name', 'quantity']],
+          updateConfig: {},
+          exportConfig: {},
+          orderNo: 0,
+        },
+      } as any);
+
+      // applyEdits 触发 _ensureTablesFromTemplate，但表已存在，不应重建
+      const result = service.applyEdits("UPDATE inventory SET quantity = 10 WHERE row_id = 1;");
+      expect(result.success).toBe(true);
+
+      // 验证原始数据未被 seedRows 覆盖
+      const queryResult = service.executeQuery('SELECT * FROM inventory ORDER BY row_id');
+      expect(queryResult.rowCount).toBe(2); // 原始 2 行
+      expect(queryResult.values[0]).toContain('铁剑');
+      // 不应出现 seedRows 中的数据
+      const allItems = queryResult.values.map(r => r[1]);
+      expect(allItems).not.toContain('不应出现的物品');
+    });
+  });
+
+  // ═══════════════════════════════════════════════════════════════
+  // _ensureTablesFromTemplate 模板来源优先级
+  // ═══════════════════════════════════════════════════════════════
+  describe('建表时只使用当前聊天模板预设', () => {
+    const CHAT_TEMPLATE_DDL = `CREATE TABLE chat_table (
+      row_id INTEGER PRIMARY KEY,
+      name TEXT NOT NULL
+    );`;
+
+    const GLOBAL_TEMPLATE_DDL = `CREATE TABLE global_table (
+      row_id INTEGER PRIMARY KEY,
+      value TEXT NOT NULL
+    );`;
+
+    it('chat_override 模式下只建聊天级模板中的表，不建全局模板的表', async () => {
+      // 模拟新开卡
+      mockMergeAll.mockResolvedValue(null);
+      await service.loadFromChat();
+
+      // 设置当前聊天模板为 chat_override（只有 chat_table）
+      mockGetCurrentChatTemplateScopeState.mockReturnValue({
+        mode: 'chat_override',
+        templateStr: JSON.stringify({
+          mate: { type: 'acu', version: 1 },
+          sheet_0: {
+            uid: 'chat_table',
+            name: '聊天专属表',
+            sourceData: { note: '', initNode: '', deleteNode: '', updateNode: '', insertNode: '', ddl: CHAT_TEMPLATE_DDL },
+            content: [['row_id', 'name']],
+            updateConfig: {},
+            exportConfig: {},
+            orderNo: 0,
+          },
+        }),
+        presetName: '聊天预设',
+      });
+
+      // 全局模板有 global_table（不应该被建出来）
+      const { parseTableTemplateJson_ACU } = await import('../../../src/shared/utils');
+      vi.mocked(parseTableTemplateJson_ACU).mockReturnValue({
+        mate: { type: 'acu', version: 1 },
+        sheet_0: {
+          uid: 'global_table',
+          name: '全局表',
+          sourceData: { note: '', initNode: '', deleteNode: '', updateNode: '', insertNode: '', ddl: GLOBAL_TEMPLATE_DDL },
+          content: [['row_id', 'value']],
+          updateConfig: {},
+          exportConfig: {},
+          orderNo: 0,
+        },
+      } as any);
+
+      // applyEdits 触发建表
+      const result = service.applyEdits("INSERT INTO chat_table VALUES (1, '测试');");
+      expect(result.success).toBe(true);
+
+      // 验证 chat_table 被建出来了
+      const chatQuery = service.executeQuery('SELECT * FROM chat_table');
+      expect(chatQuery.rowCount).toBe(1);
+
+      // 验证 global_table 没有被建出来
+      expect(() => service.executeQuery('SELECT * FROM global_table')).toThrow();
+    });
+
+    it('inherit_global 模式下 fallback 到全局模板', async () => {
+      mockMergeAll.mockResolvedValue(null);
+      await service.loadFromChat();
+
+      // 当前聊天没有聊天级模板（inherit_global）
+      mockGetCurrentChatTemplateScopeState.mockReturnValue(null);
+
+      // 全局模板有 inventory 表
+      const { parseTableTemplateJson_ACU } = await import('../../../src/shared/utils');
+      vi.mocked(parseTableTemplateJson_ACU).mockReturnValue({
+        mate: { type: 'acu', version: 1 },
+        sheet_0: {
+          uid: 'inventory',
+          name: '背包物品表',
+          sourceData: { note: '', initNode: '', deleteNode: '', updateNode: '', insertNode: '', ddl: TEST_DDL },
+          content: [['row_id', 'item_name', 'quantity']],
+          updateConfig: {},
+          exportConfig: {},
+          orderNo: 0,
+        },
+      } as any);
+
+      // applyEdits 触发建表（应使用全局模板）
+      const result = service.applyEdits("INSERT INTO inventory VALUES (1, '铁剑', 3);");
+      expect(result.success).toBe(true);
+
+      const queryResult = service.executeQuery('SELECT * FROM inventory');
+      expect(queryResult.rowCount).toBe(1);
+    });
+
+    it('preset_link 模式下使用链接的全局预设', async () => {
+      mockMergeAll.mockResolvedValue(null);
+      await service.loadFromChat();
+
+      // 当前聊天链接了全局预设
+      mockGetCurrentChatTemplateScopeState.mockReturnValue({
+        mode: 'preset_link',
+        presetName: '战斗模板',
+        templateStr: '',
+      });
+
+      // mock 全局预设返回
+      mockGetTemplatePreset.mockReturnValue({
+        templateStr: JSON.stringify({
+          mate: { type: 'acu', version: 1 },
+          sheet_0: {
+            uid: 'inventory',
+            name: '背包物品表',
+            sourceData: { note: '', initNode: '', deleteNode: '', updateNode: '', insertNode: '', ddl: TEST_DDL },
+            content: [['row_id', 'item_name', 'quantity']],
+            updateConfig: {},
+            exportConfig: {},
+            orderNo: 0,
+          },
+        }),
+      });
+
+      const result = service.applyEdits("INSERT INTO inventory VALUES (1, '铁剑', 3);");
+      expect(result.success).toBe(true);
+
+      const queryResult = service.executeQuery('SELECT * FROM inventory');
+      expect(queryResult.rowCount).toBe(1);
+      expect(mockGetTemplatePreset).toHaveBeenCalledWith('战斗模板');
     });
   });
 
