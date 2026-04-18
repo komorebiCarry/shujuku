@@ -65,11 +65,17 @@ export class SqlTableService implements ITableStorageProvider {
       // 判断 mergedData 是否包含真正的用户/AI 写入的数据行，
       // 还是仅仅是从模板/指导表 fallback 生成的空壳结构（只有表头没有数据行）。
       // 空壳结构不应触发建表——用户可能还要改表结构。
+      // [修复] 同时排除来自基底状态消息的数据（seedGreeting 写入的模板初始数据），
+      // 这些数据虽然 content.length > 1（包含 seedRows），但不是 AI 真正填写的数据，
+      // 不应触发建表——建表延迟到第一次写操作时由 _ensureTablesFromTemplate 完成。
       const hasRealDataRows = mergedData && Object.keys(mergedData)
         .filter(k => k.startsWith('sheet_'))
         .some(k => {
           const sheet = (mergedData as any)[k];
-          return sheet?.content && Array.isArray(sheet.content) && sheet.content.length > 1;
+          if (!sheet?.content || !Array.isArray(sheet.content) || sheet.content.length <= 1) return false;
+          // 来自基底状态的数据（seedGreeting 写入）不算真实数据行
+          if (sheet._acu_from_base_state) return false;
+          return true;
         });
 
       if (!mergedData || !hasRealDataRows) {

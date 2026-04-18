@@ -109,6 +109,13 @@ import { readIsolatedTagData_ACU, readLegacyIndependentData_ACU, readLegacyStand
                       mergedData[storedSheetKey] = JSON.parse(JSON.stringify(independentData[storedSheetKey]));
                       foundSheets[storedSheetKey] = true;
 
+                      // [修复] 如果数据来自基底状态消息（seedGreeting 写入的模板初始数据），
+                      // 在 sheet 上标记 _acu_from_base_state，供 SqlTableService.loadFromChat 区分
+                      // "基底数据"和"AI 真正填写的数据"，避免因基底数据提前建表
+                      if (tagData._acu_base_state === GREETING_LOCAL_BASE_STATE_MARKER_ACU) {
+                          mergedData[storedSheetKey]._acu_from_base_state = true;
+                      }
+
                       // 更新表格状态
                       let wasUpdated = false;
                       if (updateGroupKeys.length > 0 && modifiedKeys.length > 0) {
