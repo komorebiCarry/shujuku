@@ -356,8 +356,8 @@ import { getPlotFromHistory_ACU, savePlotToLatestMessage_ACU } from './plot-hist
             if (signal?.aborted) { resolve(); return; }
             const timer = setTimeout(() => { cleanup(); resolve(); }, 5000);
             const onAbort = () => { clearTimeout(timer); cleanup(); resolve(); };
-            const cleanup = () => { try { signal?.removeEventListener('abort', onAbort); } catch (_) {} };
-            signal?.addEventListener('abort', onAbort, { once: true });
+            const cleanup = () => { try { if (signal) signal.onabort = null; } catch (_) {} };
+            if (signal) signal.onabort = onAbort;
           });
         }
       }

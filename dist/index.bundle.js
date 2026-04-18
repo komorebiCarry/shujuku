@@ -23,16 +23,6 @@
      */
     /** 互斥检测全局标记键名 */
     const ACU_INSTANCE_FLAG = '__ACU_STAR_DB_III_LOADED__';
-    /**
-     * 运行模式枚举
-     */
-    var RuntimeMode;
-    (function (RuntimeMode) {
-        /** 油猴脚本模式：运行在 iframe 中 */
-        RuntimeMode["Userscript"] = "userscript";
-        /** 酒馆插件模式：运行在主窗口中 */
-        RuntimeMode["Extension"] = "extension";
-    })(RuntimeMode || (RuntimeMode = {}));
     /** 缓存检测结果，避免重复计算 */
     let _cachedMode = null;
     /**
@@ -40,7 +30,7 @@
      * 必须在任何其他模块访问 runtime-env 之前调用。
      */
     function _forceExtensionMode() {
-        _cachedMode = RuntimeMode.Extension;
+        _cachedMode = "extension" /* RuntimeMode.Extension */;
     }
     /**
      * 检测当前运行模式。
@@ -58,26 +48,26 @@
             if (typeof window.parent !== 'undefined' && window.parent !== window) {
                 // 尝试访问 parent 的属性，确认不是跨域 iframe
                 void window.parent.document;
-                _cachedMode = RuntimeMode.Userscript;
+                _cachedMode = "userscript" /* RuntimeMode.Userscript */;
             }
             else {
-                _cachedMode = RuntimeMode.Extension;
+                _cachedMode = "extension" /* RuntimeMode.Extension */;
             }
         }
         catch (e) {
             // 跨域 iframe 访问 parent.document 会抛错，这种情况不太可能出现在酒馆环境
             // 保守地认为是油猴脚本模式
-            _cachedMode = RuntimeMode.Userscript;
+            _cachedMode = "userscript" /* RuntimeMode.Userscript */;
         }
         return _cachedMode;
     }
     /** 是否为油猴脚本模式 */
     function isUserscriptMode() {
-        return detectRuntimeMode() === RuntimeMode.Userscript;
+        return detectRuntimeMode() === "userscript" /* RuntimeMode.Userscript */;
     }
     /** 是否为酒馆插件模式 */
     function isExtensionMode() {
-        return detectRuntimeMode() === RuntimeMode.Extension;
+        return detectRuntimeMode() === "extension" /* RuntimeMode.Extension */;
     }
     /**
      * 获取酒馆主窗口引用。
@@ -117,8 +107,8 @@
      * 纯常量定义，不依赖运行时环境。
      * 从 src/core/01_header_and_env.js 迁移而来。
      */
-    /** 调试模式开关 */
-    const DEBUG_MODE_ACU = true;
+    /** 调试模式开关（控制 console.log 输出，不影响日志缓冲区） */
+    const DEBUG_MODE_ACU = false;
     /**
      * 唯一脚本标识符
      * 重要：如需创建独立副本，请修改此值为全新的唯一英文名称
@@ -197,16 +187,16 @@
         uid: "sheet_dCudvUnH",
         name: "全局数据表",
         sourceData: {
-            note: "记录当前主角所在地点及时间相关参数。此表有且仅有一行。\n- 列0: 主角当前所在地点 - 主角当前所在的具体场景名称。\n- 列1: 当前时间 - 游戏世界的当前时间。格式：\u201CYYYY-MM-DD HH:MM\u201D，初始化时如果剧情没有明确具体的日期和时间，则必须根据世界观和设定自行设定一个明确的日期时间。\n- 列2: 上轮场景时间 - 上一轮交互结束时的时间。\n- 列3: 经过的时间 - 根据当前与上轮时间计算得出的文本描述（如：\u201C几分钟\u201D）。",
+            note: "记录当前主角所在地点及时间相关参数。此表有且仅有一行。\n- 列1: 主角当前所在地点 - 主角当前所在的具体场景名称。\n- 列2: 当前时间 - 游戏世界的当前时间。格式：\u201CYYYY-MM-DD HH:MM\u201D，初始化时如果剧情没有明确具体的日期和时间，则必须根据世界观和设定自行设定一个明确的日期时间。\n- 列3: 上轮场景时间 - 上一轮交互结束时的时间。\n- 列4: 经过的时间 - 根据当前与上轮时间计算得出的文本描述（如：\u201C几分钟\u201D）。",
             initNode: "插入一条关于当前世界状态的记录。",
             deleteNode: "禁止删除。",
-            updateNode: "当主角从当前所在区域离开时，更新所在地点。每轮必须更新时间。",
+            updateNode: "当主角从当前所在区域离开时，更新所在地点。每轮必须更新时间。\nSQL示例: UPDATE global_state SET current_location = '新地点', prev_scene_time = cur_time, cur_time = '2024-03-15 16:00', elapsed_time = '约1小时' WHERE row_id = 1;",
             insertNode: "禁止操作。",
             ddl: `CREATE TABLE global_state ( -- 全局数据表
   row_id INTEGER PRIMARY KEY, -- 行号
   current_location TEXT NOT NULL, -- 主角当前所在地点
-  current_time TEXT NOT NULL, -- 当前时间
-  prev_scene_time TEXT, -- 上轮场景时间
+  cur_time TEXT NOT NULL CHECK(cur_time GLOB '????-??-?? ??:??'), -- 当前时间
+  prev_scene_time TEXT CHECK(prev_scene_time IS NULL OR prev_scene_time GLOB '????-??-?? ??:??'), -- 上轮场景时间
   elapsed_time TEXT -- 经过的时间
 );`
         },
@@ -270,10 +260,10 @@
         uid: "sheet_DpKcVGqg",
         name: "主角信息表",
         sourceData: {
-            note: "记录主角的核心身份信息。此表有且仅有一行。\n- 列0: 人物名称 - 主角的名字。\n- 列1: 性别/年龄 - 主角的生理性别和年龄。\n- 列2: 外貌特征 - 对主角外貌的客观文字描写。\n- 列3: 职业/身份 - 主角在社会中的主要角色。\n- 列4: 过往经历 - 记录主角的背景故事和后续的关键经历，随剧情增量更新，不超过300字，超过时需压缩。\n- 列5: 性格特点 - 对主角核心性格的概括。",
+            note: "记录主角的核心身份信息。此表有且仅有一行。\n- 列1: 人物名称 - 主角的名字。\n- 列2: 性别/年龄 - 主角的生理性别和年龄。\n- 列3: 外貌特征 - 对主角外貌的客观文字描写。\n- 列4: 职业/身份 - 主角在社会中的主要角色。\n- 列5: 过往经历 - 记录主角的背景故事和后续的关键经历，随剧情增量更新，不超过300字，超过时需压缩。\n- 列6: 性格特点 - 对主角核心性格的概括。",
             initNode: "游戏初始化时，插入主角的唯一条目。",
             deleteNode: "禁止删除。",
-            updateNode: "'过往经历'列会根据剧情发展持续增量更新，当主角各项状态发生改变时更新。",
+            updateNode: "'过往经历'列会根据剧情发展持续增量更新，当主角各项状态发生改变时更新。\nSQL示例: UPDATE protagonist_info SET past_experience = '更新后的经历内容', occupation = '新职业' WHERE row_id = 1;",
             insertNode: "禁止操作。",
             ddl: `CREATE TABLE protagonist_info ( -- 主角信息表
   row_id INTEGER PRIMARY KEY, -- 行号
@@ -347,19 +337,19 @@
         uid: "sheet_NcBlYRH5",
         name: "重要角色表",
         sourceData: {
-            note: "记录所有关键NPC的详细信息和动态状态。\n- 列0: 姓名 - NPC的名字。\n- 列1: 性别/年龄 - NPC的生理性别和年龄。\n- 列2: 一句话介绍 \u2013 用不超过15字概括角色身份背景，不含主观评价。\n- 列3: 外貌特征 - 对NPC外貌和当前衣着的详细描述，对女性角色可包含身材描写；对男性角色无需描写。\n- 列4: 持有的重要物品 - NPC拥有的关键重要物品列表，用分号分隔。\n- 列5: 是否离场 - 判断该角色是否能直接与主角互动，填写\u201C是\u201D或\u201C否\u201D。\n- 列6: 过往经历 - 记录角色背景与关键事件，随剧情增量更新，不超过300字，超过时需压缩。",
+            note: "记录所有关键NPC的详细信息和动态状态。\n- 列1: 姓名 - NPC的名字。\n- 列2: 性别/年龄 - NPC的生理性别和年龄。\n- 列3: 一句话介绍 \u2013 用不超过15字概括角色身份背景，不含主观评价。\n- 列4: 外貌特征 - 对NPC外貌和当前衣着的详细描述，对女性角色可包含身材描写；对男性角色无需描写。\n- 列5: 持有的重要物品 - NPC拥有的关键重要物品列表，用分号分隔。\n- 列6: 是否离场 - 判断该角色是否能直接与主角互动，填写\u201C是\u201D或\u201C否\u201D。\n- 列7: 过往经历 - 记录角色背景与关键事件，随剧情增量更新，不超过300字，超过时需压缩。",
             initNode: "游戏初始化时为当前在场的重要人物分别插入一个条目。",
             deleteNode: "禁止删除。",
-            updateNode: "已有角色的状态、关系、想法或经历变化时更新；若角色死亡需在姓名旁标注（已死亡）。",
-            insertNode: "剧情中有未记录的重要人物登场时添加。",
+            updateNode: "已有角色的状态、关系、想法或经历变化时更新；若角色死亡需在姓名旁标注（已死亡）。\nSQL示例: UPDATE important_characters SET is_absent = '是', past_experience = '新增经历...' WHERE name = '角色名';",
+            insertNode: "剧情中有未记录的重要人物登场时添加。\nSQL示例: INSERT INTO important_characters (row_id, name, gender_age, brief_intro, appearance, key_items, is_absent, past_experience) VALUES ((SELECT MAX(row_id)+1 FROM important_characters), '角色名', '女/20', '简介', '外貌描述', '物品', '否', '经历');",
             ddl: `CREATE TABLE important_characters ( -- 重要角色表
   row_id INTEGER PRIMARY KEY, -- 行号
-  name TEXT NOT NULL, -- 姓名
+  name TEXT NOT NULL UNIQUE, -- 姓名
   gender_age TEXT NOT NULL, -- 性别/年龄
-  brief_intro TEXT, -- 一句话介绍
+  brief_intro TEXT CHECK(brief_intro IS NULL OR LENGTH(brief_intro) <= 20), -- 一句话介绍
   appearance TEXT, -- 外貌特征
   key_items TEXT, -- 持有的重要物品
-  is_absent TEXT NOT NULL DEFAULT '否', -- 是否离场
+  is_absent TEXT NOT NULL DEFAULT '否' CHECK(is_absent IN ('是', '否')), -- 是否离场
   past_experience TEXT -- 过往经历
 );`
         },
@@ -432,15 +422,15 @@
         uid: "sheet_lEARaBa8",
         name: "主角技能表",
         sourceData: {
-            note: "记录主角获得的所有技能项目。\n- 列0: 技能名称 - 技能的名称。\n- 列1: 技能类型 - 技能的类别（如：\u201C被动\u201D、\u201C主动\u201D）。\n- 列2: 等级/阶段 - 技能的当前等级或阶段。\n- 列3: 效果描述 - 技能在当前等级下的具体效果。",
+            note: "记录主角获得的所有技能项目。\n- 列1: 技能名称 - 技能的名称。\n- 列2: 技能类型 - 技能的类别（如：\u201C被动\u201D、\u201C主动\u201D）。\n- 列3: 等级/阶段 - 技能的当前等级或阶段。\n- 列4: 效果描述 - 技能在当前等级下的具体效果。",
             initNode: "游戏初始化时，根据设定为主角添加初始技能。",
-            deleteNode: "技能因剧情被剥夺或替换时删除。",
-            updateNode: "已有技能被升级时更新其等级/阶段和效果描述。",
-            insertNode: "主角获得新的技能时添加。",
+            deleteNode: "技能因剧情被剥夺或替换时删除。\nSQL示例: DELETE FROM protagonist_skills WHERE skill_name = '被剥夺的技能';",
+            updateNode: "已有技能被升级时更新其等级/阶段和效果描述。\nSQL示例: UPDATE protagonist_skills SET skill_level = 'Lv.3', effect_desc = '新效果描述' WHERE skill_name = '火球术';",
+            insertNode: "主角获得新的技能时添加。\nSQL示例: INSERT INTO protagonist_skills (row_id, skill_name, skill_type, skill_level, effect_desc) VALUES ((SELECT MAX(row_id)+1 FROM protagonist_skills), '新技能', '主动', 'Lv.1', '效果描述');",
             ddl: `CREATE TABLE protagonist_skills ( -- 主角技能表
   row_id INTEGER PRIMARY KEY, -- 行号
-  skill_name TEXT NOT NULL, -- 技能名称
-  skill_type TEXT NOT NULL, -- 技能类型
+  skill_name TEXT NOT NULL UNIQUE, -- 技能名称
+  skill_type TEXT NOT NULL CHECK(skill_type IN ('被动', '主动')), -- 技能类型
   skill_level TEXT, -- 等级/阶段
   effect_desc TEXT -- 效果描述
 );`
@@ -505,15 +495,15 @@
         uid: "sheet_in05z9vz",
         name: "背包物品表",
         sourceData: {
-            note: "记录主角拥有的所有物品、装备。\n- 列0: 物品名称 - 物品的名称。\n- 列1: 数量 - 拥有的数量。\n- 列2: 描述/效果 - 物品的功能或背景描述。\n- 列3: 类别 - 物品的类别（如：\u201C武器\u201D、\u201C消耗品\u201D、\u201C杂物\u201D）。",
+            note: "记录主角拥有的所有物品、装备。\n- 列1: 物品名称 - 物品的名称。\n- 列2: 数量 - 拥有的数量。\n- 列3: 描述/效果 - 物品的功能或背景描述。\n- 列4: 类别 - 物品的类别（如：\u201C武器\u201D、\u201C消耗品\u201D、\u201C杂物\u201D）。",
             initNode: "游戏初始化时，根据剧情与设定添加主角的初始携带物品。",
-            deleteNode: "物品被完全消耗、丢弃或摧毁时删除。",
-            updateNode: "获得已有的物品，使其数量增加时更新，已有物品状态变化时更新。",
-            insertNode: "主角获得背包中没有的全新物品时添加。",
+            deleteNode: "物品被完全消耗、丢弃或摧毁时删除。\nSQL示例: DELETE FROM inventory WHERE item_name = '已消耗物品';\nSQL示例(批量): DELETE FROM inventory WHERE quantity <= 0;",
+            updateNode: "获得已有的物品，使其数量增加时更新，已有物品状态变化时更新。\nSQL示例: UPDATE inventory SET quantity = quantity + 3 WHERE item_name = '治疗药水';\nSQL示例(多列): UPDATE inventory SET quantity = quantity - 1, description = '已损坏' WHERE item_name = '铁剑';",
+            insertNode: "主角获得背包中没有的全新物品时添加。\nSQL示例: INSERT INTO inventory (row_id, item_name, quantity, description, category) VALUES ((SELECT MAX(row_id)+1 FROM inventory), '新物品', 1, '物品描述', '杂物');",
             ddl: `CREATE TABLE inventory ( -- 背包物品表
   row_id INTEGER PRIMARY KEY, -- 行号
-  item_name TEXT NOT NULL, -- 物品名称
-  quantity INTEGER NOT NULL DEFAULT 1, -- 数量
+  item_name TEXT NOT NULL UNIQUE, -- 物品名称
+  quantity INTEGER NOT NULL DEFAULT 1 CHECK(quantity > 0), -- 数量
   description TEXT, -- 描述/效果
   category TEXT NOT NULL -- 类别
 );`
@@ -578,15 +568,15 @@
         uid: "sheet_etak47Ve",
         name: "任务与事件表",
         sourceData: {
-            note: "记录所有当前正在进行的任务。\n- 列0: 任务名称 - 任务的标题。\n- 列1: 任务类型 - \u201C主线任务\u201D或\u201C支线任务\u201D。\n- 列2: 发布者 - 发布该任务的角色或势力。\n- 列3: 详细描述 - 任务的目标和要求。\n- 列4: 当前进度 - 对任务完成度的简要描述。\n- 列5: 任务时限 - 完成任务的剩余时间。\n- 列6: 奖励 - 完成任务可获得的奖励。\n- 列7: 惩罚 - 任务失败的后果。",
+            note: "记录所有当前正在进行的任务。\n- 列1: 任务名称 - 任务的标题。\n- 列2: 任务类型 - \u201C主线任务\u201D或\u201C支线任务\u201D。\n- 列3: 发布者 - 发布该任务的角色或势力。\n- 列4: 详细描述 - 任务的目标和要求。\n- 列5: 当前进度 - 对任务完成度的简要描述。\n- 列6: 任务时限 - 完成任务的剩余时间。\n- 列7: 奖励 - 完成任务可获得的奖励。\n- 列8: 惩罚 - 任务失败的后果。",
             initNode: "游戏初始化时，根据剧情与设定添加一条主线剧情。",
-            deleteNode: "任务完成、失败或过期时删除。",
-            updateNode: "任务取得关键进展时进行更新。",
-            insertNode: "主角接取或触发新的主线或支线任务时添加。",
+            deleteNode: "任务完成、失败或过期时删除。\nSQL示例: DELETE FROM quests_events WHERE quest_name = '已完成的任务';",
+            updateNode: "任务取得关键进展时进行更新。\nSQL示例: UPDATE quests_events SET current_progress = '已完成第一阶段', time_limit = '剩余3天' WHERE quest_name = '拯救公主';",
+            insertNode: "主角接取或触发新的主线或支线任务时添加。\nSQL示例: INSERT INTO quests_events (row_id, quest_name, quest_type, issuer, detail_desc, current_progress, time_limit, reward, penalty) VALUES ((SELECT MAX(row_id)+1 FROM quests_events), '新任务', '支线任务', '村长', '任务描述', '刚接取', '7天', '金币100', '声望降低');",
             ddl: `CREATE TABLE quests_events ( -- 任务与事件表
   row_id INTEGER PRIMARY KEY, -- 行号
-  quest_name TEXT NOT NULL, -- 任务名称
-  quest_type TEXT NOT NULL, -- 任务类型
+  quest_name TEXT NOT NULL UNIQUE, -- 任务名称
+  quest_type TEXT NOT NULL CHECK(quest_type IN ('主线任务', '支线任务')), -- 任务类型
   issuer TEXT, -- 发布者
   detail_desc TEXT, -- 详细描述
   current_progress TEXT, -- 当前进度
@@ -659,18 +649,18 @@
         uid: "sheet_3NoMc1wI",
         name: "纪要表",
         sourceData: {
-            note: "轮次日志，每轮交互后必须立即插入一条新记录。\n- 列0: 时间跨度 - 本轮事件发生的精确时间范围。\n- 列1: 地点 - 本轮事件发生的地点，从大到小描述。\n- 列2: 纪要 - 以第三方视角客观记录本轮事件，不得加入推测、情绪化语言、负面解读或主观判断。内容必须基于正文明确发生的事实，不得补充未出现的情节，不少于300字，结尾部分禁止进行总结或者升华。\n- 列3: 概要 - 30字以内，一句话概括纪要内容。\n- 列4: 编码索引 - 格式为 AMXX，XX从01递增。\n",
+            note: "轮次日志，每轮交互后必须立即插入一条新记录。\n- 列1: 时间跨度 - 本轮事件发生的精确时间范围。\n- 列2: 地点 - 本轮事件发生的地点，从大到小描述。\n- 列3: 纪要 - 以第三方视角客观记录本轮事件，不得加入推测、情绪化语言、负面解读或主观判断。内容必须基于正文明确发生的事实，不得补充未出现的情节，不少于300字，结尾部分禁止进行总结或者升华。\n- 列4: 概要 - 30字以内，一句话概括纪要内容。\n- 列5: 编码索引 - 格式为 AMXXXX，XXXX从0001递增。\n",
             initNode: "故事初始化时，插入一条新记录用于记录初始化剧情。",
             deleteNode: "禁止删除。",
             updateNode: "禁止操作。",
-            insertNode: "每轮交互结束后插入一条新记录。",
+            insertNode: "每轮交互结束后插入一条新记录。\nSQL示例: INSERT INTO chronicle (row_id, time_span, location, chronicle_text, summary, code_index) VALUES ((SELECT MAX(row_id)+1 FROM chronicle), '2024-03-15 14:00~15:00', '王城·中央广场', '本轮纪要内容...', '一句话概括', 'AM0002');",
             ddl: `CREATE TABLE chronicle ( -- 纪要表
   row_id INTEGER PRIMARY KEY, -- 行号
   time_span TEXT NOT NULL, -- 时间跨度
   location TEXT NOT NULL, -- 地点
   chronicle_text TEXT NOT NULL, -- 纪要
-  summary TEXT, -- 概览
-  code_index TEXT NOT NULL -- 编码索引
+  summary TEXT CHECK(summary IS NULL OR LENGTH(summary) <= 40), -- 概览
+  code_index TEXT NOT NULL UNIQUE CHECK(code_index GLOB 'AM[0-9][0-9][0-9][0-9]') -- 编码索引
 );`
         },
         content: [
@@ -740,10 +730,10 @@
         uid: "sheet_OptionsNew",
         name: "选项表",
         sourceData: {
-            note: "记录每轮主角可以进行的动作选项。此表有且仅有一行。\n- 列0: 选项一 \u2013 以第三人称描述主角可采取的合理行动，偏向策略或推进剧情。\n- 列1: 选项二 \u2013 以第三人称描述主角可采取的中立行动，不偏向任何立场。\n- 列2: 选项三 \u2013 以第三人称描述主角可采取的善意行动，体现帮助、保护或安抚。\n- 列3: 选项四 \u2013 以第三人称描述主角可采取的 NSFW 相关行动，但必须符合剧情逻辑，不得代替主角说话。\n所有选项必须使用第三人称（如\u201C主角尝试\u2026\u201D，\u201C主角决定\u2026\u201D），不得代替主角发言；必须紧扣当前剧情；四个选项需风格明确、互不重复。",
+            note: "记录每轮主角可以进行的动作选项。此表有且仅有一行。\n- 列1: 选项一 \u2013 以第三人称描述主角可采取的合理行动，偏向策略或推进剧情。\n- 列2: 选项二 \u2013 以第三人称描述主角可采取的中立行动，不偏向任何立场。\n- 列3: 选项三 \u2013 以第三人称描述主角可采取的善意行动，体现帮助、保护或安抚。\n- 列4: 选项四 \u2013 以第三人称描述主角可采取的 NSFW 相关行动，但必须符合剧情逻辑，不得代替主角说话。\n所有选项必须使用第三人称（如\u201C主角尝试\u2026\u201D，\u201C主角决定\u2026\u201D），不得代替主角发言；必须紧扣当前剧情；四个选项需风格明确、互不重复。",
             initNode: "游戏初始化时，生成四个初始选项。",
             deleteNode: "禁止删除。",
-            updateNode: "每轮交互后必须更新此表，根据当前剧情生成新的四个选项覆盖原有内容。",
+            updateNode: "每轮交互后必须更新此表，根据当前剧情生成新的四个选项覆盖原有内容。\nSQL示例: UPDATE options SET option_1 = '新选项一', option_2 = '新选项二', option_3 = '新选项三', option_4 = '新选项四' WHERE row_id = 1;",
             insertNode: "禁止操作。",
             ddl: `CREATE TABLE options ( -- 选项表
   row_id INTEGER PRIMARY KEY, -- 行号
@@ -963,20 +953,44 @@ DELETE FROM table_name WHERE row_id = 2;
 
 ## 关键规则
 1. 必须逐表阅读每个表格的 DDL 注释和 Note 部分，严格遵守其中的约束
-2. Note 的约束优先级最高，高于通用填表经验
+2. Note 的约束优先级最高，高于通用填表经验；Note 中若提供了 SQL 示例，必须参照示例的写法
 3. 若 Note 要求禁止修改/格式固定/编码规则，必须严格执行
 4. 除了 Note 外，可能还存在某些存放特殊填表规则的表格，填表前需先进行阅读，并严格遵守其中的约束
-5. 使用标准 SQL 语句：INSERT INTO 添加新行，UPDATE 更新已有行，DELETE FROM 删除行
-6. 所有 UPDATE 和 DELETE 必须使用 WHERE row_id = N 精确定位行，禁止不带 WHERE 条件的更新或删除
-7. INSERT 时必须显式指定 row_id 列，值为当前表最大 row_id + 1
+
+## SQL 编写原则
+
+### INSERT（添加新行）
+- 单行插入：INSERT INTO t (row_id, col1, col2) VALUES (N, '值1', '值2');
+- 多行插入：INSERT INTO t (row_id, col1, col2) VALUES (N, '值1', '值2'), (N+1, '值3', '值4');
+- INSERT 时必须显式指定 row_id 列，值为当前表最大 row_id + 1
+- 当无法确定最大 row_id 时，可用子查询：VALUES ((SELECT MAX(row_id)+1 FROM t), '值')
+
+### UPDATE（更新已有行）
+- 所有 UPDATE 必须带 WHERE 条件，禁止无条件更新
+- WHERE 条件选择原则（优先级递减）：
+  (1) 优先参考该表 Note 中的 SQL 示例写法
+  (2) 使用 DDL 中具有 UNIQUE 约束的列定位（如 WHERE name = '角色A'）
+  (3) 使用 DDL 中具有业务含义的 CHECK 约束列（如 WHERE code_index = 'AM0001'）
+  (4) 以上均无时，使用 WHERE row_id = N 定位
+- 表达式更新：UPDATE t SET quantity = quantity + 3 WHERE item_name = '治疗药水';
+- 多列同时更新：UPDATE t SET col1 = '值1', col2 = '值2' WHERE condition;
+- 条件批量更新：UPDATE t SET status = '失效' WHERE category = '消耗品' AND quantity <= 0;
+- CASE 条件更新：UPDATE t SET status = CASE WHEN hp <= 0 THEN '死亡' WHEN hp < 30 THEN '重伤' ELSE status END WHERE condition;
+
+### DELETE（删除行）
+- 所有 DELETE 必须带 WHERE 条件，禁止无条件删除
+- WHERE 条件选择原则同 UPDATE
+- 条件批量删除：DELETE FROM t WHERE quantity <= 0;
 
 ## SQL 格式要点
 - 字符串值使用单引号包裹，如 '角色A'
 - 如果字符串值内部包含单引号，使用两个单引号转义，如 '秉持''谁欺负我就打谁''的信念'
+- 数值列直接写数字，不加引号
 - 每条 SQL 语句以分号结尾
 - 多条语句之间用换行分隔
 - 表名和列名使用英文（参照 CREATE TABLE 中的定义）
-- 不要使用 BEGIN/COMMIT/ROLLBACK 等事务语句，系统会自动处理事务
+- 禁止使用 BEGIN/COMMIT/ROLLBACK 等事务语句，系统会自动处理事务
+- 禁止使用 DROP TABLE / ALTER TABLE / CREATE TABLE 等结构变更语句
 
 现在开始按此格式执行填表任务。`
             };
@@ -1000,7 +1014,7 @@ DELETE FROM table_name WHERE row_id = 2;
                 "id": "systemPrompt",
                 "name": "拦截任务详细指令",
                 "role": "user",
-                "content": "---BEGIN PROMPT---\n[System]\n你是执行型 AI，专注于记忆索引召回与补充信息提取。\n必须按\"召回(recall) + 补充(supplement)\"双系统架构工作。\n\n[Input]\n- TASK: 记忆索引召回与补充信息提取\n- BACKGROUND: <背景设定>（世界观、角色人设、基本规则）\n- PREVIOUS_PLOT: <前文剧情>（上轮剧情摘要或关键事件）\n- USER_INPUT: <用户输入>（本轮玩家/用户的行动或对话）\n- SUMMARY_DATA: <总结大纲>（记忆库，作为recall唯一真值来源）\n\n============================================================\n【核心规则 - HARD GATE】\n============================================================\n\n**一、记忆召回（recall）- 唯一来源：总结大纲**\n\n1. **唯一真值来源**：只能从<总结大纲>索引AM编码\n2. **数量规则**：\n   - 大纲条目≥zhaohui条：选择与当前剧情最相关的zhaohui条，用以补充剧情细节，禁止偷懒取连续记忆，选取的记忆一定要说明为什么要相关，在每个编码索引后用括号表示，理由简短，但前后逻辑要通顺。\n   - 大纲条目<zhaohui条：全部召回（不需要补足zhaohui条，recall只来自大纲）\n   - **大纲为空时**：recall输出0条，这是正常的\n3. **绝对禁止**：从背景设定/历史记录/其他来源补充到recall中\n4. **输出格式**：AM001, AM002, ...（逗号分隔的AM编码，字典序递增）\n\n**二、补充信息（supplement）- 每轮强制输出**\n\n1. **HARD GATE**：supplement是独立系统，与recall完全分离，每轮必须输出6-8条\n2. **唯一来源**：只能从<背景设定>中提取与当前剧情相关的设定\n3. **数量**：强制6-8条，即使recall为0也必须输出supplement\n4. **格式**：- [背景设定] 内容描述\n5. **与recall的关系**：supplement不是recall的补充，而是独立的背景设定提取系统\n\n**三、两个系统完全独立**\n- recall只从总结大纲索引\n- supplement只从背景设定提取\n- 两者来源严格分离，互不干扰\n\n============================================================\n【输出格式】\n============================================================\n<thought>\n一步一步地进行思考，针对每一步输出显示的思维链\n</thought>\n<content>\n\n**【故事发展推测】**\n[2-4句话，结合上下文和背景设定，简短推测用户输入可能会造成什么样的剧情发展、需要哪些记忆支撑]\n\n---\n\n<recall>\n# 记忆召回\n## 从总结大纲索引\nAMxx, AMxx, ...\n\n---\n合计：X条（全部来自总结大纲）\n</recall>\n\n<supplement>\n# 补充信息（6-8条）\n- [背景设定] 内容描述\n- [背景设定] 内容描述\n- [背景设定] 内容描述\n- [背景设定] 内容描述\n- [背景设定] 内容描述\n- [背景设定] 内容描述\n</supplement>\n\n</content>\n\n============================================================\n【常见错误（绝对禁止）】\n============================================================\n\nrecall为0时supplement也不输出（supplement是独立的，必须每轮输出6-8条）\n[背景设定] XXX 出现在recall中\n大纲0条 + 补充zhaohui条 这样的recall输出\nrecall条目数<zhaohui时从背景设定补足\nsupplement来源不是背景设定\nsupplement数量少于6条或多于8条\n\n---END PROMPT---",
+                "content": "---BEGIN PROMPT---\n[System]\n你是执行型 AI，专注于记忆索引召回与补充信息提取。\n必须按\"召回(recall) + 补充(supplement)\"双系统架构工作。\n\n[Input]\n- TASK: 记忆索引召回与补充信息提取\n- BACKGROUND: <背景设定>（世界观、角色人设、基本规则）\n- PREVIOUS_PLOT: <前文剧情>（上轮剧情摘要或关键事件）\n- USER_INPUT: <用户输入>（本轮玩家/用户的行动或对话）\n- SUMMARY_DATA: <总结大纲>（记忆库，作为recall唯一真值来源）\n\n============================================================\n【核心规则 - HARD GATE】\n============================================================\n\n**一、记忆召回（recall）- 唯一来源：总结大纲**\n\n1. **唯一真值来源**：只能从<总结大纲>索引AM编码\n2. **数量规则**：\n   - 大纲条目≥zhaohui条：选择与当前剧情最相关的zhaohui条，用以补充剧情细节，禁止偷懒取连续记忆，选取的记忆一定要说明为什么要相关，在每个编码索引后用括号表示，理由简短，但前后逻辑要通顺。\n   - 大纲条目<zhaohui条：全部召回（不需要补足zhaohui条，recall只来自大纲）\n   - **大纲为空时**：recall输出0条，这是正常的\n3. **绝对禁止**：从背景设定/历史记录/其他来源补充到recall中\n4. **输出格式**：AM0001, AM0002, ...（逗号分隔的AM编码，字典序递增）\n\n**二、补充信息（supplement）- 每轮强制输出**\n\n1. **HARD GATE**：supplement是独立系统，与recall完全分离，每轮必须输出6-8条\n2. **唯一来源**：只能从<背景设定>中提取与当前剧情相关的设定\n3. **数量**：强制6-8条，即使recall为0也必须输出supplement\n4. **格式**：- [背景设定] 内容描述\n5. **与recall的关系**：supplement不是recall的补充，而是独立的背景设定提取系统\n\n**三、两个系统完全独立**\n- recall只从总结大纲索引\n- supplement只从背景设定提取\n- 两者来源严格分离，互不干扰\n\n============================================================\n【输出格式】\n============================================================\n<thought>\n一步一步地进行思考，针对每一步输出显示的思维链\n</thought>\n<content>\n\n**【故事发展推测】**\n[2-4句话，结合上下文和背景设定，简短推测用户输入可能会造成什么样的剧情发展、需要哪些记忆支撑]\n\n---\n\n<recall>\n# 记忆召回\n## 从总结大纲索引\nAMxxxx, AMxxxx, ...\n\n---\n合计：X条（全部来自总结大纲）\n</recall>\n\n<supplement>\n# 补充信息（6-8条）\n- [背景设定] 内容描述\n- [背景设定] 内容描述\n- [背景设定] 内容描述\n- [背景设定] 内容描述\n- [背景设定] 内容描述\n- [背景设定] 内容描述\n</supplement>\n\n</content>\n\n============================================================\n【常见错误（绝对禁止）】\n============================================================\n\nrecall为0时supplement也不输出（supplement是独立的，必须每轮输出6-8条）\n[背景设定] XXX 出现在recall中\n大纲0条 + 补充zhaohui条 这样的recall输出\nrecall条目数<zhaohui时从背景设定补足\nsupplement来源不是背景设定\nsupplement数量少于6条或多于8条\n\n---END PROMPT---",
                 "deletable": false
             },
             {
@@ -1079,7 +1093,7 @@ DELETE FROM table_name WHERE row_id = 2;
         },
         {
             "role": "USER",
-            "content": "---BEGIN PROMPT---\n[System]\n你是执行型 AI，专注于记忆索引召回与补充信息提取。\n必须按\"召回(recall) + 补充(supplement)\"双系统架构工作。\n\n[Input]\n- TASK: 记忆索引召回与补充信息提取\n- BACKGROUND: <背景设定>（世界观、角色人设、基本规则）\n- PREVIOUS_PLOT: <前文剧情>（上轮剧情摘要或关键事件）\n- USER_INPUT: <用户输入>（本轮玩家/用户的行动或对话）\n- SUMMARY_DATA: <总结大纲>（记忆库，作为recall唯一真值来源）\n\n============================================================\n【核心规则 - HARD GATE】\n============================================================\n\n**一、记忆召回（recall）- 唯一来源：总结大纲**\n\n1. **唯一真值来源**：只能从<总结大纲>索引AM编码\n2. **数量规则**：\n   - 大纲条目≥zhaohui条：选择与当前剧情最相关的zhaohui条，用以补充剧情细节，禁止偷懒取连续记忆，选取的记忆一定要说明为什么要相关，在每个编码索引后用括号表示，理由简短，但前后逻辑要通顺。\n   - 大纲条目<zhaohui条：全部召回（不需要补足zhaohui条，recall只来自大纲）\n   - **大纲为空时**：recall输出0条，这是正常的\n3. **绝对禁止**：从背景设定/历史记录/其他来源补充到recall中\n4. **输出格式**：AM001, AM002, ...（逗号分隔的AM编码，字典序递增）\n\n**二、补充信息（supplement）- 每轮强制输出**\n\n1. **HARD GATE**：supplement是独立系统，与recall完全分离，每轮必须输出6-8条\n2. **唯一来源**：只能从<背景设定>中提取与当前剧情相关的设定\n3. **数量**：强制6-8条，即使recall为0也必须输出supplement\n4. **格式**：- [背景设定] 内容描述\n5. **与recall的关系**：supplement不是recall的补充，而是独立的背景设定提取系统\n\n**三、两个系统完全独立**\n- recall只从总结大纲索引\n- supplement只从背景设定提取\n- 两者来源严格分离，互不干扰\n\n============================================================\n【输出格式】\n============================================================\n<thought>\n一步一步地进行思考，针对每一步输出显示的思维链\n</thought>\n<content>\n\n**【故事发展推测】**\n[2-4句话，结合上下文和背景设定，简短推测用户输入可能会造成什么样的剧情发展、需要哪些记忆支撑]\n\n---\n\n<recall>\n# 记忆召回\n## 从总结大纲索引\nAMxx, AMxx, ...\n\n---\n合计：X条（全部来自总结大纲）\n</recall>\n\n<supplement>\n# 补充信息（6-8条）\n- [背景设定] 内容描述\n- [背景设定] 内容描述\n- [背景设定] 内容描述\n- [背景设定] 内容描述\n- [背景设定] 内容描述\n- [背景设定] 内容描述\n</supplement>\n\n</content>\n\n============================================================\n【常见错误（绝对禁止）】\n============================================================\n\nrecall为0时supplement也不输出（supplement是独立的，必须每轮输出6-8条）\n[背景设定] XXX 出现在recall中\n大纲0条 + 补充zhaohui条 这样的recall输出\nrecall条目数<zhaohui时从背景设定补足\nsupplement来源不是背景设定\nsupplement数量少于6条或多于8条\n\n---END PROMPT---",
+            "content": "---BEGIN PROMPT---\n[System]\n你是执行型 AI，专注于记忆索引召回与补充信息提取。\n必须按\"召回(recall) + 补充(supplement)\"双系统架构工作。\n\n[Input]\n- TASK: 记忆索引召回与补充信息提取\n- BACKGROUND: <背景设定>（世界观、角色人设、基本规则）\n- PREVIOUS_PLOT: <前文剧情>（上轮剧情摘要或关键事件）\n- USER_INPUT: <用户输入>（本轮玩家/用户的行动或对话）\n- SUMMARY_DATA: <总结大纲>（记忆库，作为recall唯一真值来源）\n\n============================================================\n【核心规则 - HARD GATE】\n============================================================\n\n**一、记忆召回（recall）- 唯一来源：总结大纲**\n\n1. **唯一真值来源**：只能从<总结大纲>索引AM编码\n2. **数量规则**：\n   - 大纲条目≥zhaohui条：选择与当前剧情最相关的zhaohui条，用以补充剧情细节，禁止偷懒取连续记忆，选取的记忆一定要说明为什么要相关，在每个编码索引后用括号表示，理由简短，但前后逻辑要通顺。\n   - 大纲条目<zhaohui条：全部召回（不需要补足zhaohui条，recall只来自大纲）\n   - **大纲为空时**：recall输出0条，这是正常的\n3. **绝对禁止**：从背景设定/历史记录/其他来源补充到recall中\n4. **输出格式**：AM0001, AM0002, ...（逗号分隔的AM编码，字典序递增）\n\n**二、补充信息（supplement）- 每轮强制输出**\n\n1. **HARD GATE**：supplement是独立系统，与recall完全分离，每轮必须输出6-8条\n2. **唯一来源**：只能从<背景设定>中提取与当前剧情相关的设定\n3. **数量**：强制6-8条，即使recall为0也必须输出supplement\n4. **格式**：- [背景设定] 内容描述\n5. **与recall的关系**：supplement不是recall的补充，而是独立的背景设定提取系统\n\n**三、两个系统完全独立**\n- recall只从总结大纲索引\n- supplement只从背景设定提取\n- 两者来源严格分离，互不干扰\n\n============================================================\n【输出格式】\n============================================================\n<thought>\n一步一步地进行思考，针对每一步输出显示的思维链\n</thought>\n<content>\n\n**【故事发展推测】**\n[2-4句话，结合上下文和背景设定，简短推测用户输入可能会造成什么样的剧情发展、需要哪些记忆支撑]\n\n---\n\n<recall>\n# 记忆召回\n## 从总结大纲索引\nAMxxxx, AMxxxx, ...\n\n---\n合计：X条（全部来自总结大纲）\n</recall>\n\n<supplement>\n# 补充信息（6-8条）\n- [背景设定] 内容描述\n- [背景设定] 内容描述\n- [背景设定] 内容描述\n- [背景设定] 内容描述\n- [背景设定] 内容描述\n- [背景设定] 内容描述\n</supplement>\n\n</content>\n\n============================================================\n【常见错误（绝对禁止）】\n============================================================\n\nrecall为0时supplement也不输出（supplement是独立的，必须每轮输出6-8条）\n[背景设定] XXX 出现在recall中\n大纲0条 + 补充zhaohui条 这样的recall输出\nrecall条目数<zhaohui时从背景设定补足\nsupplement来源不是背景设定\nsupplement数量少于6条或多于8条\n\n---END PROMPT---",
             "deletable": false,
             "mainSlot": "B",
             "isMain2": true
@@ -1211,8 +1225,11 @@ $CONTENT
         }
     ];
     // [从 02_storage_and_profile.js:2773 迁移] 合并纪要默认 prompt
-    const DEFAULT_MERGE_SUMMARY_PROMPT_ACU = `---BEGIN PROMPT---\n\n[System]\n你是\"填表美杜莎\"——一个执行型表格编辑AI。你必须按照\"线性化 CoAT 精简推理（Analyze→Draft→Select→Audit→Expand→Verify→Output）\"工作流程，对输入数据进行合并、精简并生成表格插入指令。\n\n严禁输出冗长逐字推理链。对外输出采用 <thought> + <tableEdit> 双壳结构。\n严禁输出\"我将重复以上步骤直到…\"等代码式循环描述；你只能在一次输出里给出线性化的推理日志与最终指令。\n\n============================================================\n\n[Input]\n- TASK: 在 <已精简的数据> 基础上，将本批次的 <需要精简的纪要数据> 融合进去，对整体内容进行重新梳理和精简，最终通过 insertRow 指令写入表格。\n- TARGET_COUNT: $TARGET_COUNT（目标条目数）\n\n- 需要精简的纪要数据:\n$A\n\n- 已精简的数据（基础底稿，新增编码索引从 AM01 开始，每次 +1）:\n$BASE_DATA\n\n============================================================\n\n[Core Tables]
-你需要维护一个表格：\n1. **纪要表 (tableIndex=0)**：记录关键剧情纪要，包含以下列：\n   - 列0: 时间跨度 - 本轮事件发生的精确时间范围\n   - 列1: 地点 - 本轮事件发生的地点，从大到小描述\n   - 列2: 纪要 - 以第三方视角客观记录本轮事件（≥300字）\n   - 列3: 概要 - 一句话概括纪要内容（≤30字）\n   - 列4: 编码索引 - 格式为 AMXX，XX从01递增\n\n============================================================\n\n[Constraints — 硬约束，违反任意一条即判定输出无效]\n\nC1-编码索引：每条纪要的编码索引（AM01, AM02, AM03...）必须严格递增。\nC2-纪要字数：每条纪要内容 ≥ 300 个中文字符 且 ≤ 400 个中文字符。\nC3-概要字数：每条概要内容 ≤ 30 个中文字符。\nC4-条目数量：精简后的条目总数 = $TARGET_COUNT 条。\nC5-编码连续：索引从 AM01 起始，严格递增（AM01→AM02→AM03→...），不跳号、不重复。\nC6-内容完整：原始数据中的关键剧情节点、重要人物行为、因果关系不得丢失。\nC7-时序正确：条目按时间线顺序排列，不得错乱。\nC8-指令格式：仅使用 insertRow 操作，参数中 colIndex 必须是带双引号的字符串。\n\n============================================================\n\n[Scoring — 精简质量评估量表]\n\n每完成一轮草稿后，按以下维度自检打分（Yes/No → 计数 → 0~1 分）：\n\n(1) Fg — 生成质量分（0~1）：\n- g1 约束满足（0~1）：C1~C8 是否全部满足；违反关键约束直接 = 0\n- g2 信息保真（0~1）：关键剧情、人物、因果是否保留完整\n- g3 精简有效（0~1）：是否去除了冗余/重复内容而非截断重要信息\n- g4 时序连贯（0~1）：时间线是否合理无跳跃\n- g5 语言质量（0~1）：表述通顺、无歧义、无矛盾\n\nFg = 0.30*g1 + 0.25*g2 + 0.20*g3 + 0.15*g4 + 0.10*g5\n\n(2) 通过阈值：Fg ≥ 0.80 方可输出最终指令；否则必须触发修正。\n\n============================================================\n\n[Search Controller — 线性化精简推理流程]\n\n你必须在 <thought> 中按以下 **严格顺序** 执行单轮或多轮推理，每轮包含：\n\n── Round N ──\n\nStep 1 — Analyze（分析）<|analyze|>\n- 盘点 <已精简的数据> 中已有多少条目、当前索引编号\n- 盘点 <需要精简的纪要数据> 中有多少条原始信息\n- 计算需要新增的条目数 = $TARGET_COUNT - 已有条目数\n- 识别数据中的重叠内容、可合并段落、时间线断点\n\nStep 2 — Draft（草稿生成）<|draft|>\n- 生成 2~3 种不同的合并/精简策略草稿（每条策略 ≤ 20 字概括）\n- 策略之间角度明显不同（如：按时间段合并 / 按人物线合并 / 按事件因果链合并）\n\nStep 3 — Select（选择最优策略）<|select|>\n- 对每个草稿策略逐条检查：\n· 约束满足率：能否满足 C1~C8？\n· 信息保留度：哪种策略丢失最少关键信息？\n· 字数可控性：哪种策略最容易控制在字数范围内？\n- 选出 BestStrategy 并简述理由（1~2 句）\n\nStep 4 — Expand（执行精简）<|expand|>\n- 按 BestStrategy 将原始数据合并、压缩为目标条目\n- 为每条生成：编码索引 + 时间跨度 + 地点 + 纪要 + 概要\n- 严格遵循字数约束（纪要 ≥300 字，概要 ≤30 字）\n\nStep 5 — Audit（硬约束审计）<|audit|>\n- 逐条核查 C1~C8：\n· C1：编码索引是否严格递增？\n· C2：每条纪要是否在 300~400 字之间？（逐条估算）\n· C3：每条概要是否 ≤30 字？（逐条估算）\n· C4：总条目数是否 = $TARGET_COUNT？\n· C5：索引是否从 AM01 连续递增？\n· C6：是否有关键剧情被遗漏？\n· C7：时序是否正确？\n· C8：insertRow 语法是否正确？\n- 若任一约束不满足 → 标记问题 → 回到 Step 4 修正（最多修正 2 轮）\n\nStep 6 — Score（打分判定）<|reflect|>\n- 按评分量表对 g1~g5 逐项打分\n- 计算 Fg\n- Fg ≥ 0.80 → 进入输出阶段\n- Fg < 0.80 → 记录教训 → 修正后重新评估（最多 1 次修正）\n\n── 终止条件 ──\n- 全部约束通过 + Fg ≥ 0.80 → 输出 <tableEdit>\n- 修正轮次超限 → 输出当前最优结果并在 thought 中标注\"预算终止\"\n\n============================================================\n\n[Action-Thought Protocol]\n- meta-action 标记（<|analyze|> <|draft|> <|select|> <|expand|> <|audit|> <|reflect|>）仅在 <thought> 内的步骤标题中使用，用于标识当前认知阶段。\n- <tableEdit> 内严禁出现任何 meta-action 标记。\n- <thought> 中的推理必须精炼简洁，但每个步骤不可跳过。\n\n============================================================\n\n[Output Format — 严格遵守]\n\n输出必须且只能包含以下两个块，除此之外不得输出任何额外文字：\n\n<thought>\n（精炼的推理过程，按 Round/Step 展开：\n- Step 1 Analyze: 数据盘点结论\n- Step 2 Draft: 2~3 个策略草稿\n- Step 3 Select: 选择理由\n- Step 4 Expand: 精简执行要点（无需列出完整内容）\n- Step 5 Audit: 逐条约束核查结果（通过/不通过）\n- Step 6 Score: g1~g5 打分 → Fg 值 → 判定\n不得写成冗长内心独白。）\n</thought>\n\n<tableEdit>\n<!--\n\ninsertRow(0, {\"0\":\"AM01\", \"1\":\"时间跨度\", \"2\":\"地点\", \"3\":\"纪要内容（≥300字）\", \"4\":\"概要（≤30字）\", \"5\":\"编码索引\"})\n\n...（生成$TARGET_COUNT条的指令）\n\n-->\n</tableEdit>\n\n============================================================\n\n[Critical Reminders]\n\n1. insertRow 的第一个参数是 tableIndex（0=纪要表），不是行号。\n2. colIndex 必须用双引号包裹的字符串：\"0\"、\"1\"、\"2\"等。\n3. 纪要内容（列3）需 ≥300 字，概要（列4）需 ≤30 字。\n4. 纯文本输出，严禁使用 markdown 代码块包裹整个输出。\n5. 严禁在 <tableEdit> 块外添加任何解释性文字。\n\n---END PROMPT---`;
+    const DEFAULT_MERGE_SUMMARY_PROMPT_ACU = `---BEGIN PROMPT---\n\n[System]\n你是\"填表美杜莎\"——一个执行型表格编辑AI。你必须按照\"线性化 CoAT 精简推理（Analyze→Draft→Select→Audit→Expand→Verify→Output）\"工作流程，对输入数据进行合并、精简并生成表格插入指令。\n\n严禁输出冗长逐字推理链。对外输出采用 <thought> + <tableEdit> 双壳结构。\n严禁输出\"我将重复以上步骤直到…\"等代码式循环描述；你只能在一次输出里给出线性化的推理日志与最终指令。\n\n============================================================\n\n[Input]\n- TASK: 在 <已精简的数据> 基础上，将本批次的 <需要精简的纪要数据> 融合进去，对整体内容进行重新梳理和精简，最终通过 insertRow 指令写入表格。\n- TARGET_COUNT: $TARGET_COUNT（目标条目数）\n\n- 需要精简的纪要数据:\n$A\n\n- 已精简的数据（基础底稿，新增编码索引从 AM0001 开始，每次 +1）:\n$BASE_DATA\n\n============================================================\n\n[Core Tables]
+你需要维护一个表格：\n1. **纪要表 (tableIndex=0)**：记录关键剧情纪要，包含以下列：\n   - 列1: 时间跨度 - 本轮事件发生的精确时间范围\n   - 列2: 地点 - 本轮事件发生的地点，从大到小描述\n   - 列3: 纪要 - 以第三方视角客观记录本轮事件（≥300字）\n   - 列4: 概要 - 一句话概括纪要内容（≤30字）\n   - 列5: 编码索引 - 格式为 AMXXXX，XXXX从0001递增\n\n============================================================\n\n[Constraints — 硬约束，违反任意一条即判定输出无效]\n\nC1-编码索引：每条纪要的编码索引（AM0001, AM0002, AM0003...）必须严格递增。\nC2-纪要字数：每条纪要内容 ≥ 300 个中文字符 且 ≤ 400 个中文字符。\nC3-概要字数：每条概要内容 ≤ 30 个中文字符。\nC4-条目数量：精简后的条目总数 = $TARGET_COUNT 条。\nC5-编码连续：索引从 AM0001 起始，严格递增（AM0001→AM0002→AM0003→...），不跳号、不重复。\nC6-内容完整：原始数据中的关键剧情节点、重要人物行为、因果关系不得丢失。\nC7-时序正确：条目按时间线顺序排列，不得错乱。\nC8-指令格式：仅使用 insertRow 操作，参数中 colIndex 必须是带双引号的字符串。\n\n============================================================\n\n[Scoring — 精简质量评估量表]\n\n每完成一轮草稿后，按以下维度自检打分（Yes/No → 计数 → 0~1 分）：\n\n(1) Fg — 生成质量分（0~1）：\n- g1 约束满足（0~1）：C1~C8 是否全部满足；违反关键约束直接 = 0\n- g2 信息保真（0~1）：关键剧情、人物、因果是否保留完整\n- g3 精简有效（0~1）：是否去除了冗余/重复内容而非截断重要信息\n- g4 时序连贯（0~1）：时间线是否合理无跳跃\n- g5 语言质量（0~1）：表述通顺、无歧义、无矛盾\n\nFg = 0.30*g1 + 0.25*g2 + 0.20*g3 + 0.15*g4 + 0.10*g5\n\n(2) 通过阈值：Fg ≥ 0.80 方可输出最终指令；否则必须触发修正。\n\n============================================================\n\n[Search Controller — 线性化精简推理流程]\n\n你必须在 <thought> 中按以下 **严格顺序** 执行单轮或多轮推理，每轮包含：\n\n── Round N ──\n\nStep 1 — Analyze（分析）<|analyze|>\n- 盘点 <已精简的数据> 中已有多少条目、当前索引编号\n- 盘点 <需要精简的纪要数据> 中有多少条原始信息\n- 计算需要新增的条目数 = $TARGET_COUNT - 已有条目数\n- 识别数据中的重叠内容、可合并段落、时间线断点\n\nStep 2 — Draft（草稿生成）<|draft|>\n- 生成 2~3 种不同的合并/精简策略草稿（每条策略 ≤ 20 字概括）\n- 策略之间角度明显不同（如：按时间段合并 / 按人物线合并 / 按事件因果链合并）\n\nStep 3 — Select（选择最优策略）<|select|>\n- 对每个草稿策略逐条检查：\n· 约束满足率：能否满足 C1~C8？\n· 信息保留度：哪种策略丢失最少关键信息？\n· 字数可控性：哪种策略最容易控制在字数范围内？\n- 选出 BestStrategy 并简述理由（1~2 句）\n\nStep 4 — Expand（执行精简）<|expand|>\n- 按 BestStrategy 将原始数据合并、压缩为目标条目\n- 为每条生成：编码索引 + 时间跨度 + 地点 + 纪要 + 概要\n- 严格遵循字数约束（纪要 ≥300 字，概要 ≤30 字）\n\nStep 5 — Audit（硬约束审计）<|audit|>\n- 逐条核查 C1~C8：\n· C1：编码索引是否严格递增？\n· C2：每条纪要是否在 300~400 字之间？（逐条估算）\n· C3：每条概要是否 ≤30 字？（逐条估算）\n· C4：总条目数是否 = $TARGET_COUNT？\n· C5：索引是否从 AM0001 连续递增？\n· C6：是否有关键剧情被遗漏？\n· C7：时序是否正确？\n· C8：insertRow 语法是否正确？\n- 若任一约束不满足 → 标记问题 → 回到 Step 4 修正（最多修正 2 轮）\n\nStep 6 — Score（打分判定）<|reflect|>\n- 按评分量表对 g1~g5 逐项打分\n- 计算 Fg\n- Fg ≥ 0.80 → 进入输出阶段\n- Fg < 0.80 → 记录教训 → 修正后重新评估（最多 1 次修正）\n\n── 终止条件 ──\n- 全部约束通过 + Fg ≥ 0.80 → 输出 <tableEdit>\n- 修正轮次超限 → 输出当前最优结果并在 thought 中标注\"预算终止\"\n\n============================================================\n\n[Action-Thought Protocol]\n- meta-action 标记（<|analyze|> <|draft|> <|select|> <|expand|> <|audit|> <|reflect|>）仅在 <thought> 内的步骤标题中使用，用于标识当前认知阶段。\n- <tableEdit> 内严禁出现任何 meta-action 标记。\n- <thought> 中的推理必须精炼简洁，但每个步骤不可跳过。\n\n============================================================\n\n[Output Format — 严格遵守]\n\n输出必须且只能包含以下两个块，除此之外不得输出任何额外文字：\n\n<thought>\n（精炼的推理过程，按 Round/Step 展开：\n- Step 1 Analyze: 数据盘点结论\n- Step 2 Draft: 2~3 个策略草稿\n- Step 3 Select: 选择理由\n- Step 4 Expand: 精简执行要点（无需列出完整内容）\n- Step 5 Audit: 逐条约束核查结果（通过/不通过）\n- Step 6 Score: g1~g5 打分 → Fg 值 → 判定\n不得写成冗长内心独白。）\n</thought>\n\n<tableEdit>\n<!--\n\ninsertRow(0, {\"0\":\"AM0001\", \"1\":\"时间跨度\", \"2\":\"地点\", \"3\":\"纪要内容（≥300字）\", \"4\":\"概要（≤30字）\", \"5\":\"编码索引\"})\n\n...（生成$TARGET_COUNT条的指令）\n\n-->\n</tableEdit>\n\n============================================================\n\n[Critical Reminders]\n\n1. insertRow 的第一个参数是 tableIndex（0=纪要表），不是行号。\n2. colIndex 必须用双引号包裹的字符串：\"0\"、\"1\"、\"2\"等。\n3. 纪要内容（列3）需 ≥300 字，概要（列4）需 ≤30 字。\n4. 纯文本输出，严禁使用 markdown 代码块包裹整个输出。\n5. 严禁在 <tableEdit> 块外添加任何解释性文字。\n\n---END PROMPT---`;
+    // --- [SQL 版合并纪要默认 prompt] ---
+    // SQLite 模式下使用，将 insertRow DSL 格式改为 SQL INSERT 格式
+    const DEFAULT_MERGE_SUMMARY_PROMPT_SQL_ACU = `---BEGIN PROMPT---\n\n[System]\n你是\"填表美杜莎\"——一个执行型表格编辑AI。你必须按照\"线性化 CoAT 精简推理（Analyze→Draft→Select→Audit→Expand→Verify→Output）\"工作流程，对输入数据进行合并、精简并生成 SQL 插入语句。\n\n严禁输出冗长逐字推理链。对外输出采用 <thought> + <tableEdit> 双壳结构。\n严禁输出\"我将重复以上步骤直到…\"等代码式循环描述；你只能在一次输出里给出线性化的推理日志与最终指令。\n\n============================================================\n\n[Input]\n- TASK: 在 <已精简的数据> 基础上，将本批次的 <需要精简的纪要数据> 融合进去，对整体内容进行重新梳理和精简，最终通过 SQL INSERT 语句写入表格。\n- TARGET_COUNT: $TARGET_COUNT（目标条目数）\n\n- 需要精简的纪要数据:\n$A\n\n- 已精简的数据（基础底稿，新增编码索引从 AM0001 开始，每次 +1）:\n$BASE_DATA\n\n============================================================\n\n[Core Tables]\n你需要维护一个表格：\n1. **纪要表 (chronicle)**：记录关键剧情纪要，包含以下列：\n   - row_id: 行号（INTEGER PRIMARY KEY）\n   - time_span: 时间跨度 - 本轮事件发生的精确时间范围\n   - location: 地点 - 本轮事件发生的地点，从大到小描述\n   - chronicle_entry: 纪要 - 以第三方视角客观记录本轮事件（≥300字）\n   - summary: 概要 - 一句话概括纪要内容（≤30字）\n   - code_index: 编码索引 - 格式为 AMXXXX，XXXX从0001递增\n\n============================================================\n\n[Constraints — 硬约束，违反任意一条即判定输出无效]\n\nC1-编码索引：每条纪要的编码索引（AM0001, AM0002, AM0003...）必须严格递增。\nC2-纪要字数：每条纪要内容 ≥ 300 个中文字符 且 ≤ 400 个中文字符。\nC3-概要字数：每条概要内容 ≤ 30 个中文字符。\nC4-条目数量：精简后的条目总数 = $TARGET_COUNT 条。\nC5-编码连续：索引从 AM0001 起始，严格递增（AM0001→AM0002→AM0003→...），不跳号、不重复。\nC6-内容完整：原始数据中的关键剧情节点、重要人物行为、因果关系不得丢失。\nC7-时序正确：条目按时间线顺序排列，不得错乱。\nC8-指令格式：仅使用 INSERT INTO 语句，字符串值使用单引号包裹，每条语句以分号结尾。\n\n============================================================\n\n[Scoring — 精简质量评估量表]\n\n每完成一轮草稿后，按以下维度自检打分（Yes/No → 计数 → 0~1 分）：\n\n(1) Fg — 生成质量分（0~1）：\n- g1 约束满足（0~1）：C1~C8 是否全部满足；违反关键约束直接 = 0\n- g2 信息保真（0~1）：关键剧情、人物、因果是否保留完整\n- g3 精简有效（0~1）：是否去除了冗余/重复内容而非截断重要信息\n- g4 时序连贯（0~1）：时间线是否合理无跳跃\n- g5 语言质量（0~1）：表述通顺、无歧义、无矛盾\n\nFg = 0.30*g1 + 0.25*g2 + 0.20*g3 + 0.15*g4 + 0.10*g5\n\n(2) 通过阈值：Fg ≥ 0.80 方可输出最终指令；否则必须触发修正。\n\n============================================================\n\n[Search Controller — 线性化精简推理流程]\n\n你必须在 <thought> 中按以下 **严格顺序** 执行单轮或多轮推理，每轮包含：\n\n── Round N ──\n\nStep 1 — Analyze（分析）<|analyze|>\n- 盘点 <已精简的数据> 中已有多少条目、当前索引编号\n- 盘点 <需要精简的纪要数据> 中有多少条原始信息\n- 计算需要新增的条目数 = $TARGET_COUNT - 已有条目数\n- 识别数据中的重叠内容、可合并段落、时间线断点\n\nStep 2 — Draft（草稿生成）<|draft|>\n- 生成 2~3 种不同的合并/精简策略草稿（每条策略 ≤ 20 字概括）\n- 策略之间角度明显不同（如：按时间段合并 / 按人物线合并 / 按事件因果链合并）\n\nStep 3 — Select（选择最优策略）<|select|>\n- 对每个草稿策略逐条检查：\n· 约束满足率：能否满足 C1~C8？\n· 信息保留度：哪种策略丢失最少关键信息？\n· 字数可控性：哪种策略最容易控制在字数范围内？\n- 选出 BestStrategy 并简述理由（1~2 句）\n\nStep 4 — Expand（执行精简）<|expand|>\n- 按 BestStrategy 将原始数据合并、压缩为目标条目\n- 为每条生成：编码索引 + 时间跨度 + 地点 + 纪要 + 概要\n- 严格遵循字数约束（纪要 ≥300 字，概要 ≤30 字）\n\nStep 5 — Audit（硬约束审计）<|audit|>\n- 逐条核查 C1~C8：\n· C1：编码索引是否严格递增？\n· C2：每条纪要是否在 300~400 字之间？（逐条估算）\n· C3：每条概要是否 ≤30 字？（逐条估算）\n· C4：总条目数是否 = $TARGET_COUNT？\n· C5：索引是否从 AM0001 连续递增？\n· C6：是否有关键剧情被遗漏？\n· C7：时序是否正确？\n· C8：INSERT INTO 语法是否正确？字符串值是否用单引号包裹？\n- 若任一约束不满足 → 标记问题 → 回到 Step 4 修正（最多修正 2 轮）\n\nStep 6 — Score（打分判定）<|reflect|>\n- 按评分量表对 g1~g5 逐项打分\n- 计算 Fg\n- Fg ≥ 0.80 → 进入输出阶段\n- Fg < 0.80 → 记录教训 → 修正后重新评估（最多 1 次修正）\n\n── 终止条件 ──\n- 全部约束通过 + Fg ≥ 0.80 → 输出 <tableEdit>\n- 修正轮次超限 → 输出当前最优结果并在 thought 中标注\"预算终止\"\n\n============================================================\n\n[Action-Thought Protocol]\n- meta-action 标记（<|analyze|> <|draft|> <|select|> <|expand|> <|audit|> <|reflect|>）仅在 <thought> 内的步骤标题中使用，用于标识当前认知阶段。\n- <tableEdit> 内严禁出现任何 meta-action 标记。\n- <thought> 中的推理必须精炼简洁，但每个步骤不可跳过。\n\n============================================================\n\n[Output Format — 严格遵守]\n\n输出必须且只能包含以下两个块，除此之外不得输出任何额外文字：\n\n<thought>\n（精炼的推理过程，按 Round/Step 展开：\n- Step 1 Analyze: 数据盘点结论\n- Step 2 Draft: 2~3 个策略草稿\n- Step 3 Select: 选择理由\n- Step 4 Expand: 精简执行要点（无需列出完整内容）\n- Step 5 Audit: 逐条约束核查结果（通过/不通过）\n- Step 6 Score: g1~g5 打分 → Fg 值 → 判定\n不得写成冗长内心独白。）\n</thought>\n\n<tableEdit>\nINSERT INTO chronicle (row_id, time_span, location, chronicle_entry, summary, code_index) VALUES (1, '时间跨度', '地点', '纪要内容（≥300字）', '概要（≤30字）', 'AM0001');\n\n...（生成$TARGET_COUNT条的 INSERT 语句）\n</tableEdit>\n\n============================================================\n\n[Critical Reminders]\n\n1. 使用标准 SQL INSERT INTO 语句，表名为 chronicle。\n2. 字符串值使用单引号包裹，如果字符串内部包含单引号，使用两个单引号转义。\n3. 纪要内容（chronicle_entry）需 ≥300 字，概要（summary）需 ≤30 字。\n4. 纯文本输出，严禁使用 markdown 代码块包裹整个输出。\n5. 严禁在 <tableEdit> 块外添加任何解释性文字。\n6. 每条 INSERT 语句以分号结尾，多条语句之间用换行分隔。\n7. row_id 从 1 开始递增。\n\n---END PROMPT---`;
     function _set_TABLE_TEMPLATE_ACU(v) { TABLE_TEMPLATE_ACU = v; }
 
     /**
@@ -1272,6 +1289,8 @@ $CONTENT
     const _subscribers = new Set();
     /** 已出现过的所有标签（供 UI 过滤器使用） */
     const _knownTags = new Set();
+    /** debug 级别日志是否写入缓冲区（默认关闭，减少性能开销） */
+    let _debugLogEnabled = false;
     // ═══════════════════════════════════════════════════════════════
     // 公共 API
     // ═══════════════════════════════════════════════════════════════
@@ -1326,10 +1345,27 @@ $CONTENT
         }).join(' ');
     }
     /**
+     * 设置 debug 级别日志是否写入缓冲区
+     * 关闭时 debug 日志不会进入内存缓冲区，也不会通知订阅者，大幅减少性能开销
+     */
+    function setDebugLogEnabled(enabled) {
+        _debugLogEnabled = enabled;
+    }
+    /**
+     * 获取 debug 级别日志是否启用
+     */
+    function isDebugLogEnabled() {
+        return _debugLogEnabled;
+    }
+    /**
      * 推送一条日志到缓冲区
      * 由 logDebug_ACU / logWarn_ACU / logError_ACU 调用
+     * 当 debug 日志禁用时，debug 级别的日志会被跳过
      */
     function pushLog(level, args) {
+        // debug 级别日志禁用时直接跳过，避免性能开销
+        if (level === 'debug' && !_debugLogEnabled)
+            return;
         const tag = extractTag(args);
         _knownTags.add(tag);
         const entry = {
@@ -1408,6 +1444,7 @@ $CONTENT
         _nextId = 1;
         _subscribers.clear();
         _knownTags.clear();
+        _debugLogEnabled = false;
     }
 
     /**
@@ -1603,7 +1640,10 @@ $CONTENT
     function logDebug_ACU(...args) {
         if (DEBUG_MODE_ACU)
             console.log(`[${SCRIPT_ID_PREFIX_ACU}]`, ...args);
-        pushLog('debug', [`[${SCRIPT_ID_PREFIX_ACU}]`, ...args]);
+        // 仅当 debug 日志启用时才写入缓冲区，避免性能开销
+        if (isDebugLogEnabled()) {
+            pushLog('debug', [`[${SCRIPT_ID_PREFIX_ACU}]`, ...args]);
+        }
     }
     function logError_ACU(...args) {
         console.error(`[${SCRIPT_ID_PREFIX_ACU}]`, ...args);
@@ -1632,123 +1672,87 @@ $CONTENT
         try {
             let cleanTemplate = TABLE_TEMPLATE_ACU.trim();
             cleanTemplate = cleanTemplate.replace(/\/\/.*$/gm, '').replace(/\/\*[\s\S]*?\*\//g, '');
-            // [调试] 输出模板字符串的前100个字符，帮助诊断问题
-            logDebug_ACU('[模板解析] cleanTemplate前100字符:', cleanTemplate.substring(0, 100));
-            logDebug_ACU('[模板解析] cleanTemplate长度:', cleanTemplate.length);
-            logDebug_ACU('[模板解析] 首字符:', JSON.stringify(cleanTemplate[0]));
-            logDebug_ACU('[模板解析] 尾字符:', JSON.stringify(cleanTemplate[cleanTemplate.length - 1]));
             // [修复2026-03-06] 处理DEFAULT_TABLE_TEMPLATE_ACU的双重JSON编码问题
-            // DEFAULT_TABLE_TEMPLATE_ACU 使用模板字符串定义，格式是：`"{...}"`
-            // 问题：模板字符串中的 \n 会被解释为实际换行符，\t 被解释为制表符等
-            // 而JSON规范不允许字符串中包含未转义的控制字符
-            // 解决方案：先将实际的控制字符转义回JSON兼容格式
             function escapeStringForJson_ACU(str) {
-                // 将字符串中的控制字符转义为JSON兼容格式
-                // 注意顺序很重要：先转义反斜杠，再转义双引号，最后转义控制字符
                 return str
-                    .replace(/\\/g, '\\\\') // 先转义反斜杠
-                    .replace(/"/g, '\\"') // 转义双引号
-                    .replace(/\n/g, '\\n') // 换行符
-                    .replace(/\r/g, '\\r') // 回车符
-                    .replace(/\t/g, '\\t'); // 制表符
+                    .replace(/\\/g, '\\\\')
+                    .replace(/"/g, '\\"')
+                    .replace(/\n/g, '\\n')
+                    .replace(/\r/g, '\\r')
+                    .replace(/\t/g, '\\t');
             }
             let obj = null;
             // 如果模板字符串以双引号开头和结尾，说明是被引号包围的JSON字符串
             if (cleanTemplate.startsWith('"') && cleanTemplate.endsWith('"')) {
-                logDebug_ACU('[模板解析] 检测到双引号包围格式');
                 try {
-                    // 方案1：尝试直接解析（如果模板字符串中的转义序列正确）
+                    // 方案1：尝试直接解析
                     try {
-                        logDebug_ACU('[模板解析] 尝试方案1：直接解析...');
                         const unquoted = JSON.parse(cleanTemplate);
-                        logDebug_ACU('[模板解析] 方案1第一次解析成功，类型:', typeof unquoted);
                         if (typeof unquoted === 'string') {
                             obj = safeJsonParse_ACU(unquoted, null);
-                            logDebug_ACU('[模板解析] 方案1第二次解析结果:', obj ? '成功' : '失败');
-                            if (obj) {
-                                logDebug_ACU('[模板解析] 方案1成功！');
+                            if (obj)
                                 return stripSeedRows ? stripSeedRowsFromTemplate_ACU(obj) : obj;
-                            }
                         }
                         else if (typeof unquoted === 'object' && unquoted !== null) {
-                            logDebug_ACU('[模板解析] 方案1直接得到对象！');
                             return stripSeedRows ? stripSeedRowsFromTemplate_ACU(unquoted) : unquoted;
                         }
                     }
                     catch (e1) {
-                        logDebug_ACU('[模板解析] 方案1失败:', e1.message);
+                        // 方案1失败，继续方案2
                     }
                     // 方案2：转义控制字符后再解析
-                    logDebug_ACU('[模板解析] 尝试方案2：转义后解析...');
-                    // 去掉首尾引号，转义内部的控制字符，然后解析
                     const innerContent = cleanTemplate.slice(1, -1);
                     const escapedContent = escapeStringForJson_ACU(innerContent);
                     const rewrapped = '"' + escapedContent + '"';
                     try {
                         const unquoted = JSON.parse(rewrapped);
-                        logDebug_ACU('[模板解析] 方案2第一次解析成功，类型:', typeof unquoted);
                         if (typeof unquoted === 'string') {
                             obj = safeJsonParse_ACU(unquoted, null);
-                            logDebug_ACU('[模板解析] 方案2第二次解析结果:', obj ? '成功' : '失败');
-                            if (obj) {
-                                logDebug_ACU('[模板解析] 方案2成功！');
+                            if (obj)
                                 return stripSeedRows ? stripSeedRowsFromTemplate_ACU(obj) : obj;
-                            }
-                            // 如果safeJsonParse失败，尝试直接JSON.parse
                             try {
                                 obj = JSON.parse(unquoted);
-                                if (obj) {
-                                    logDebug_ACU('[模板解析] 方案2（fallback）成功！');
+                                if (obj)
                                     return stripSeedRows ? stripSeedRowsFromTemplate_ACU(obj) : obj;
-                                }
                             }
                             catch (e3) {
-                                logDebug_ACU('[模板解析] 方案2 fallback失败:', e3.message);
+                                // fallback 也失败
                             }
                         }
                         else if (typeof unquoted === 'object' && unquoted !== null) {
-                            logDebug_ACU('[模板解析] 方案2直接得到对象！');
                             return stripSeedRows ? stripSeedRowsFromTemplate_ACU(unquoted) : unquoted;
                         }
                     }
                     catch (e2) {
-                        logDebug_ACU('[模板解析] 方案2失败:', e2.message);
+                        // 方案2失败
                     }
                 }
                 catch (e) {
-                    logDebug_ACU('[模板解析] 双引号格式处理失败:', e.message);
+                    // 双引号格式处理失败
                 }
             }
-            else {
-                logDebug_ACU('[模板解析] 不是双引号包围格式，尝试常规解析...');
-            }
-            // 如果上述处理失败，尝试常规解析
+            // 常规解析
             if (!obj) {
-                logDebug_ACU('[模板解析] 尝试safeJsonParse_ACU...');
                 obj = safeJsonParse_ACU(cleanTemplate, null);
-                logDebug_ACU('[模板解析] safeJsonParse_ACU结果:', obj ? '成功' : '失败');
             }
-            // 如果还是失败，尝试转义后解析
+            // 转义后解析
             if (!obj && typeof cleanTemplate === 'string') {
-                logDebug_ACU('[模板解析] 尝试转义后解析...');
                 try {
                     const escaped = escapeStringForJson_ACU(cleanTemplate);
                     obj = safeJsonParse_ACU(escaped, null);
-                    logDebug_ACU('[模板解析] 转义后解析结果:', obj ? '成功' : '失败');
                 }
                 catch (e) {
-                    logDebug_ACU('[模板解析] 转义后解析异常:', e.message);
+                    // 转义后解析异常
                 }
             }
             if (!obj) {
-                logError_ACU('Failed to parse TABLE_TEMPLATE_ACU: safeJsonParse returned null');
+                logError_ACU('[模板解析] 所有解析方案均失败，模板长度:', cleanTemplate.length, '首字符:', JSON.stringify(cleanTemplate[0]));
                 return null;
             }
-            logDebug_ACU('[模板解析] 最终成功！');
             return stripSeedRows ? stripSeedRowsFromTemplate_ACU(obj) : obj;
         }
         catch (e) {
-            logError_ACU('Failed to parse TABLE_TEMPLATE_ACU.', e);
+            logError_ACU('[模板解析] 解析异常:', e);
             return null;
         }
     }
@@ -2306,24 +2310,42 @@ $CONTENT
             return false;
         logDebug_ACU('[TavernStorage] 开始初始化酒馆设置桥接...');
         // ── 插件模式快速路径 ──
-        // 插件运行在酒馆主窗口中，直接从 window 获取酒馆全局对象，无需 import() 或 script 注入
+        // 插件运行在酒馆主窗口中。主窗口的 window.SillyTavern 只有 {libs, getContext}，
+        // 所有真正的 API 都必须通过 SillyTavern.getContext() 这个函数调用来获取。
+        // 酒馆源码证实：extensionSettings 和 saveSettingsDebounced 都在 getContext() 返回值中。
         if (isExtensionMode()) {
-            logDebug_ACU('[TavernStorage] 插件模式：直接从 window 获取酒馆设置对象...');
-            // 获取 extension_settings：优先从 SillyTavern.extensionSettings，后备从 window 全局
+            logDebug_ACU('[TavernStorage] 插件模式：通过 SillyTavern.getContext() 获取设置对象...');
             try {
                 const st = window.SillyTavern;
-                if (st && st.extensionSettings) {
-                    tavernExtensionSettingsRoot_ACU = st.extensionSettings;
+                if (st && typeof st.getContext === 'function') {
+                    const ctx = st.getContext();
+                    if (ctx) {
+                        if (ctx.extensionSettings) {
+                            tavernExtensionSettingsRoot_ACU = ctx.extensionSettings;
+                            logDebug_ACU('[TavernStorage] 插件模式：extensionSettings 获取成功');
+                        }
+                        else {
+                            logWarn_ACU('[TavernStorage] 插件模式：getContext().extensionSettings 为空');
+                        }
+                        if (typeof ctx.saveSettingsDebounced === 'function') {
+                            tavernSaveSettingsFn_ACU = ctx.saveSettingsDebounced;
+                            logDebug_ACU('[TavernStorage] 插件模式：saveSettingsDebounced 获取成功');
+                        }
+                        else {
+                            logWarn_ACU('[TavernStorage] 插件模式：getContext().saveSettingsDebounced 不是函数');
+                        }
+                    }
+                    else {
+                        logWarn_ACU('[TavernStorage] 插件模式：getContext() 返回空值');
+                    }
+                }
+                else {
+                    logWarn_ACU('[TavernStorage] 插件模式：SillyTavern.getContext 不可用');
                 }
             }
             catch (e) {
-                logWarn_ACU('[TavernStorage] 插件模式：从 SillyTavern.extensionSettings 获取失败:', e);
+                logError_ACU('[TavernStorage] 插件模式：调用 getContext() 失败:', e);
             }
-            // 获取 saveSettingsDebounced / saveSettings
-            if (typeof window.saveSettingsDebounced === 'function')
-                tavernSaveSettingsFn_ACU = window.saveSettingsDebounced;
-            else if (typeof window.saveSettings === 'function')
-                tavernSaveSettingsFn_ACU = window.saveSettings;
             logDebug_ACU(`[TavernStorage] 插件模式初始化完成: settings=${!!tavernExtensionSettingsRoot_ACU}, save=${!!tavernSaveSettingsFn_ACU}`);
             return !!tavernExtensionSettingsRoot_ACU;
         }
@@ -2590,6 +2612,12 @@ $CONTENT
         return false;
     }
     function _set_pendingSettingsReloadFromIdb_ACU(v) { pendingSettingsReloadFromIdb_ACU = v; }
+    /** 测试用：重置模块级状态变量 */
+    function _resetTavernStorageState_ACU() {
+        tavernExtensionSettingsRoot_ACU = null;
+        tavernSaveSettingsFn_ACU = null;
+        tavernBridgeErrorReported_ACU = false;
+    }
 
     /**
      * data/storage/chat-history.ts — 聊天消息自定义字段读写
@@ -7090,6 +7118,71 @@ $CONTENT
         }
         return { sqlToChinese, chineseToSql };
     }
+    /**
+     * 根据列在 DDL 中的位置索引获取英文列名
+     * 索引从 0 开始，对应 content[0] 中的位置（包含 row_id）
+     *
+     * @param ddl CREATE TABLE 语句
+     * @param index 列索引（对应 content[0] 的位置，0 通常是 row_id）
+     * @returns 英文列名，找不到返回 null
+     */
+    function getDDLColumnNameByIndex(ddl, index) {
+        const columns = parseDDLColumnNames(ddl);
+        if (index < 0 || index >= columns.length)
+            return null;
+        return columns[index];
+    }
+    /**
+     * 更新 DDL 中指定列的注释（中文名）
+     * 按行扫描 DDL，找到指定列名的行，替换其 `-- 注释` 部分。
+     * 如果该行没有注释，则在行尾添加 `-- 新注释`。
+     *
+     * @param ddl 原始 CREATE TABLE 语句
+     * @param columnName 要更新注释的英文列名
+     * @param newComment 新的注释内容（中文名）
+     * @returns 更新后的 DDL 字符串；如果找不到列名则返回原 DDL
+     */
+    function updateDDLColumnComment(ddl, columnName, newComment) {
+        if (!ddl || !columnName || !newComment)
+            return ddl;
+        const lines = ddl.split('\n');
+        let found = false;
+        for (let i = 0; i < lines.length; i++) {
+            const trimmed = lines[i].trim();
+            if (!trimmed)
+                continue;
+            // 检查该行是否以目标列名开头（列定义行）
+            const colMatch = trimmed.match(/^(\w+)\s+/);
+            if (!colMatch || colMatch[1] !== columnName)
+                continue;
+            // 找到目标列，替换或添加注释
+            found = true;
+            const line = lines[i];
+            // 情况 1：行内已有 `-- 注释`，替换注释内容
+            const commentMatch = line.match(/^(.*?)(--\s*).+?(,?\s*)$/);
+            if (commentMatch) {
+                lines[i] = `${commentMatch[1]}-- ${newComment}${commentMatch[3]}`;
+                break;
+            }
+            // 情况 2：行内没有注释，需要添加
+            // 先检查行尾是否有逗号
+            const trailingCommaMatch = line.match(/^(.*?)(,\s*)$/);
+            if (trailingCommaMatch) {
+                // 有逗号：在逗号前插入注释 → `  col TEXT, -- 注释`
+                // 按照项目约定格式：逗号在注释前 → `  col TEXT, -- 注释`
+                lines[i] = `${trailingCommaMatch[1]}, -- ${newComment}`;
+            }
+            else {
+                // 无逗号（最后一列）：直接在行尾添加注释
+                lines[i] = `${line.trimEnd()} -- ${newComment}`;
+            }
+            break;
+        }
+        if (!found) {
+            logWarn_ACU(`[Schema] updateDDLColumnComment: 未找到列 "${columnName}"，DDL 未修改`);
+        }
+        return lines.join('\n');
+    }
     // ═══════════════════════════════════════════════════════════════
     // 内部工具函数
     // ═══════════════════════════════════════════════════════════════
@@ -8695,8 +8788,29 @@ $CONTENT
                 await this.engine.init();
                 // 从聊天消息合并出最新 JSON 快照
                 const mergedData = await mergeAllIndependentTables_ACU();
-                if (!mergedData) {
-                    logWarn_ACU('[SqlTableService] 没有找到表格数据，返回空状态');
+                // 判断 mergedData 是否包含真正的用户/AI 写入的数据行，
+                // 还是仅仅是从模板/指导表 fallback 生成的空壳结构（只有表头没有数据行）。
+                // 空壳结构不应触发建表——用户可能还要改表结构。
+                const hasRealDataRows = mergedData && Object.keys(mergedData)
+                    .filter(k => k.startsWith('sheet_'))
+                    .some(k => {
+                    const sheet = mergedData[k];
+                    return sheet?.content && Array.isArray(sheet.content) && sheet.content.length > 1;
+                });
+                if (!mergedData || !hasRealDataRows) {
+                    // 新开卡场景（mergedData=null）或空壳结构（只有表头）：
+                    // 只初始化引擎，不建表——建表延迟到第一次写操作（applyEdits/executeMutation）时
+                    // 这样用户在新开卡后还能修改表结构（DDL），直到真正填数据时才锁定表结构
+                    // 注意：executeQuery（只读）不触发建表，避免前端查询意外提前锁定表结构
+                    if (mergedData) {
+                        // 空壳结构：仍然更新 JSON 视图（前端需要显示表头），但不建 SQLite 表
+                        _set_currentJsonTableData_ACU(mergedData);
+                        this._buildNameMapper(mergedData);
+                        logDebug_ACU('[SqlTableService] 检测到空壳结构（仅表头无数据行），引擎已就绪，等待第一次填表时建表');
+                    }
+                    else {
+                        logDebug_ACU('[SqlTableService] 没有找到表格数据，引擎已就绪，等待第一次填表时从模板建表');
+                    }
                     this._initialized = true;
                     return { loaded: false, source: 'empty' };
                 }
@@ -8768,6 +8882,7 @@ $CONTENT
          */
         applyEdits(sqlStatements, _updateMode) {
             this._ensureInitialized();
+            this._ensureTablesFromTemplate();
             // 去掉 HTML 注释标记（AI 可能在 <tableEdit> 中用 <!-- --> 包裹）
             const cleaned = sqlStatements.replace(/<!--|-->/g, '').trim();
             if (!cleaned) {
@@ -8803,6 +8918,10 @@ $CONTENT
         }
         /**
          * 执行 SQL 查询（SELECT）
+         *
+         * 注意：不触发 _ensureTablesFromTemplate()。
+         * 新开卡场景下表尚未创建，查询会抛出 "no such table" 错误——这是预期行为。
+         * 建表只在写操作（applyEdits/executeMutation）时触发，确保用户有机会在首次填表前修改表结构。
          */
         executeQuery(sql, params) {
             this._ensureInitialized();
@@ -8819,6 +8938,7 @@ $CONTENT
          */
         executeMutation(sql, params) {
             this._ensureInitialized();
+            this._ensureTablesFromTemplate();
             try {
                 const result = this.engine.run(sql, params);
                 this._syncToJson();
@@ -8900,6 +9020,147 @@ $CONTENT
             if (!this._initialized || !this.engine.isReady) {
                 throw new Error('[SqlTableService] SQLite 引擎未初始化，请先调用 loadFromChat()');
             }
+        }
+        /**
+         * 按需建表：在写操作（applyEdits/executeMutation）前，检查当前聊天模板中的表是否都已存在于 SQLite。
+         *
+         * 仅在写操作时调用，不在只读查询（executeQuery）时调用。
+         * 这样新开卡场景下，用户可以在首次填表前自由修改表结构（DDL），
+         * 直到 AI 真正往表里写数据时才锁定表结构并建表。
+         *
+         * 三种场景：
+         * 1. 新卡第一次填表：SQLite 中无任何用户表 → 全量建表
+         * 2. 老卡正常运行：所有表都已存在 → 直接返回（幂等）
+         * 3. 中途加表：模板中新增了一张表，但 SQLite 中没有 → 只建缺失的表
+         *
+         * 模板来源优先级（只使用当前聊天模板预设）：
+         * 1. 当前聊天的 chat_override 模板快照
+         * 2. 当前聊天的 preset_link 链接的全局预设
+         * 3. 全局模板（inherit_global 或无聊天级模板时的 fallback）
+         *
+         * DDL 来源优先级：
+         * 1. currentJsonTableData_ACU 中的 sourceData.ddl（可能来自指导表，包含用户在可视化编辑器中的修改）
+         * 2. 当前聊天模板中的 sourceData.ddl（fallback）
+         */
+        _ensureTablesFromTemplate() {
+            const existingTables = new Set(this.engine.getTableNames());
+            // [修复] 优先从当前聊天模板预设获取模板，而不是依赖全局变量 TABLE_TEMPLATE_ACU
+            // 这样确保建表时只使用当前聊天模板预设的内容，不会混入全局模板的表
+            const templateData = this._resolveCurrentChatTemplate();
+            if (!templateData) {
+                if (existingTables.size > 0)
+                    return;
+                throw new Error('[SqlTableService] 模板解析失败，无法建表。请检查模板格式。');
+            }
+            // 收集当前聊天模板中所有表的 sheetKey 和表名，找出 SQLite 中缺失的
+            const sheetKeys = Object.keys(templateData).filter(k => k.startsWith('sheet_'));
+            const templateSheetKeySet = new Set(sheetKeys);
+            const missingSheets = {};
+            for (const key of sheetKeys) {
+                // 优先从 currentJsonTableData_ACU 获取 sheet 数据（可能包含指导表中用户修改过的 DDL），
+                // fallback 到当前聊天模板。这样用户在可视化编辑器中修改 DDL 后，建表时用的是新 DDL。
+                const liveSheet = currentJsonTableData_ACU?.[key];
+                const sheet = liveSheet || templateData[key];
+                if (!sheet)
+                    continue;
+                const ddl = generateDDL(sheet);
+                const tableName = parseDDLTableName(ddl);
+                if (tableName && !existingTables.has(tableName)) {
+                    missingSheets[key] = sheet;
+                }
+            }
+            // [修复] 检查 currentJsonTableData_ACU 中是否有当前聊天模板中存在但上面未处理的表
+            // 注意：只允许建当前聊天模板中存在的表，不建其他来源的表
+            if (currentJsonTableData_ACU) {
+                const liveSheetKeys = Object.keys(currentJsonTableData_ACU).filter(k => k.startsWith('sheet_'));
+                for (const key of liveSheetKeys) {
+                    if (missingSheets[key])
+                        continue; // 已在上面处理过
+                    if (!templateSheetKeySet.has(key))
+                        continue; // 不在当前聊天模板中，跳过
+                    const sheet = currentJsonTableData_ACU[key];
+                    if (!sheet?.sourceData?.ddl)
+                        continue;
+                    const tableName = parseDDLTableName(sheet.sourceData.ddl);
+                    if (tableName && !existingTables.has(tableName)) {
+                        missingSheets[key] = sheet;
+                    }
+                }
+            }
+            // 所有表都已存在，无需建表
+            if (Object.keys(missingSheets).length === 0)
+                return;
+            logDebug_ACU(`[SqlTableService] 发现 ${Object.keys(missingSheets).length} 张缺失表，按需建表: ${Object.keys(missingSheets).join(', ')}`);
+            // 构造只包含缺失表的数据子集，交给 syncBridge 建表
+            // [修复] 同时为缺失表注入 seedRows（初始数据），使建表后 SQLite 中包含初版快照
+            // 设计文档 Q9 确认：seedRows 是初版快照，应写入 SQLite 作为真实数据
+            const partialData = { mate: templateData.mate };
+            for (const [key, sheet] of Object.entries(missingSheets)) {
+                const sheetCopy = JSON.parse(JSON.stringify(sheet));
+                // 如果 sheet 的 content 只有表头（stripSeedRows 后的空壳），尝试注入 seedRows
+                if (Array.isArray(sheetCopy.content) && sheetCopy.content.length <= 1) {
+                    const seedRows = getEffectiveSeedRowsForSheet_ACU(key, { allowTemplateFallback: true });
+                    if (Array.isArray(seedRows) && seedRows.length > 0) {
+                        // seedRows 是不含表头的纯数据行，拼接到表头后面
+                        sheetCopy.content = [sheetCopy.content[0] || [], ...seedRows];
+                        logDebug_ACU(`[SqlTableService] 表 ${key} (${sheetCopy.name}) 注入 ${seedRows.length} 行 seedRows 作为初版快照`);
+                    }
+                }
+                partialData[key] = sheetCopy;
+            }
+            this.syncBridge.loadFromTableData(partialData);
+            // 合并新建的表到当前 JSON 视图
+            if (currentJsonTableData_ACU) {
+                for (const [key, sheet] of Object.entries(missingSheets)) {
+                    currentJsonTableData_ACU[key] = sheet;
+                }
+            }
+            else {
+                _set_currentJsonTableData_ACU(templateData);
+            }
+            this._buildNameMapper(currentJsonTableData_ACU || templateData);
+            logDebug_ACU(`[SqlTableService] 按需建表完成，当前共 ${this.engine.getTableNames().length} 张表`);
+        }
+        /**
+         * 解析当前聊天模板预设，返回 stripSeedRows 后的模板对象。
+         *
+         * 优先级：
+         * 1. chat_override —— 当前聊天的专属模板快照
+         * 2. preset_link  —— 当前聊天链接的全局预设
+         * 3. inherit_global / 无聊天级模板 —— fallback 到 parseTableTemplateJson_ACU（全局模板）
+         */
+        _resolveCurrentChatTemplate() {
+            try {
+                const scopeState = getCurrentChatTemplateScopeState_ACU();
+                if (scopeState) {
+                    let templateStr = null;
+                    if (scopeState.mode === 'chat_override' && scopeState.templateStr) {
+                        // 场景 1：当前聊天有专属模板快照
+                        templateStr = scopeState.templateStr;
+                    }
+                    else if (scopeState.mode === 'preset_link' && scopeState.presetName) {
+                        // 场景 2：当前聊天链接了全局预设
+                        const preset = getTemplatePreset_ACU(scopeState.presetName);
+                        if (preset?.templateStr) {
+                            templateStr = preset.templateStr;
+                        }
+                    }
+                    if (templateStr) {
+                        const parsed = safeJsonParse_ACU(templateStr, null);
+                        if (parsed && typeof parsed === 'object') {
+                            const stripped = stripSeedRowsFromTemplate_ACU(JSON.parse(JSON.stringify(parsed)));
+                            logDebug_ACU(`[SqlTableService] 使用当前聊天模板预设 (mode=${scopeState.mode})`);
+                            return stripped;
+                        }
+                    }
+                }
+            }
+            catch (e) {
+                logWarn_ACU(`[SqlTableService] 获取当前聊天模板快照失败，fallback 到全局模板: ${e?.message}`);
+            }
+            // 场景 3：inherit_global 或无聊天级模板，fallback 到全局模板
+            logDebug_ACU('[SqlTableService] 使用全局模板 (inherit_global)');
+            return parseTableTemplateJson_ACU({ stripSeedRows: true });
         }
     }
     // ═══════════════════════════════════════════════════════════════
@@ -9079,6 +9340,21 @@ $CONTENT
                 await currentProvider.loadFromChat();
             }
             throw e;
+        }
+    }
+    /**
+     * 立即销毁当前 Provider 实例，释放内存数据库资源
+     * 用于换卡/换聊天时在状态重置之前立即清理旧数据库，
+     * 避免 1200ms 延迟窗口内的数据不一致问题。
+     *
+     * 销毁后 getStorageProvider() 会触发懒初始化创建新实例。
+     * 调用方应在适当时机调用 reloadStorageProvider() 重建并加载数据。
+     */
+    function disposeStorageProvider() {
+        if (currentProvider) {
+            logDebug_ACU(`[StorageStrategy] 销毁当前 Provider: ${currentProvider.mode}`);
+            currentProvider.dispose();
+            currentProvider = null;
         }
     }
     /**
@@ -11396,7 +11672,7 @@ $CONTENT
             const effectiveAllRows = (allRows.length > 0) ? allRows : (seedRows.length > 0 ? seedRows : []);
             if (effectiveAllRows.length === 0) {
                 tableDataText += `[${tableIndex}:${table.name}]\n`;
-                const headers = table.content[0] ? table.content[0].slice(1).map((h, i) => `[${i}:${h}]`).join(', ') : 'No Headers';
+                const headers = table.content[0] ? table.content[0].slice(1).map((h, i) => `[${i + 1}:${h}]`).join(', ') : 'No Headers';
                 tableDataText += `  Columns: ${headers}\n`;
                 if (table.sourceData) {
                     tableDataText += `  - Note: ${table.sourceData.note || 'N/A'}\n`;
@@ -11407,7 +11683,7 @@ $CONTENT
             }
             else {
                 tableDataText += `[${tableIndex}:${table.name}]\n`;
-                const headers = table.content[0] ? table.content[0].slice(1).map((h, i) => `[${i}:${h}]`).join(', ') : 'No Headers';
+                const headers = table.content[0] ? table.content[0].slice(1).map((h, i) => `[${i + 1}:${h}]`).join(', ') : 'No Headers';
                 tableDataText += `  Columns: ${headers}\n`;
                 if (table.sourceData) {
                     tableDataText += `  - Note: ${table.sourceData.note || 'N/A'}\n`;
@@ -11477,7 +11753,7 @@ $CONTENT
         const manualExtraHintText = manualExtraHint_ACU$1 || '';
         // SQLite 模式下追加 SQL 编辑格式兜底说明（Q17 确认：$0 自带格式说明）
         if (isSqliteMode() && tableDataText) {
-            tableDataText += `\n-- [SQL 编辑格式说明]\n-- 请在 <tableEdit> 标签内使用标准 SQL 语句（INSERT INTO / UPDATE / DELETE FROM）\n-- 所有 UPDATE 和 DELETE 必须使用 WHERE row_id = N 精确定位行\n-- INSERT 时 row_id 值为当前表最大 row_id + 1\n-- 每条语句以分号结尾，多条语句用换行分隔\n`;
+            tableDataText += `\n-- [SQL 编辑格式说明]\n-- 请在 <tableEdit> 标签内使用标准 SQL 语句（INSERT INTO / UPDATE / DELETE FROM）\n-- 所有 UPDATE 和 DELETE 必须带 WHERE 条件，优先参考各表 Note 中的 SQL 示例和 DDL 中的 UNIQUE 约束选择定位方式\n-- INSERT 时 row_id 值为当前表最大 row_id + 1\n-- 支持表达式更新（如 SET quantity = quantity + 1）、条件批量更新、CASE 条件更新等标准 SQL 写法\n-- 每条语句以分号结尾，多条语句用换行分隔\n`;
         }
         return { tableDataText, messagesText, worldbookContent, manualExtraHint: manualExtraHintText };
     }
@@ -11623,13 +11899,27 @@ $CONTENT
     /**
      * 获取宿主平台的 HTTP 请求头（包含 CSRF token 等认证信息）
      * 封装 SillyTavern.getRequestHeaders()，不可用时返回空对象。
-     * service 层通过本函数获取请求头，不再直接访问 SillyTavern 全局对象。
-     * @returns 请求头对象
+     *
+     * 注意：主窗口的 window.SillyTavern 只有 {libs, getContext}，
+     * getRequestHeaders 在 getContext() 返回的对象里。
+     * 所以必须通过 SillyTavern_API_ACU（已被 Proxy 包装）或 getContext() 获取。
      */
     function getHostRequestHeaders_ACU() {
         try {
-            const headers = globalThis.SillyTavern?.getRequestHeaders?.();
-            return (headers && typeof headers === 'object') ? headers : {};
+            // 优先通过 SillyTavern_API_ACU（插件模式下已被 Proxy 包装，每次读取走 getContext()）
+            if (SillyTavern_API_ACU && typeof SillyTavern_API_ACU.getRequestHeaders === 'function') {
+                const headers = SillyTavern_API_ACU.getRequestHeaders();
+                if (headers && typeof headers === 'object')
+                    return headers;
+            }
+            // fallback：直接调用 getContext()（覆盖 SillyTavern_API_ACU 尚未初始化的场景）
+            const ctx = globalThis.SillyTavern?.getContext?.();
+            if (ctx && typeof ctx.getRequestHeaders === 'function') {
+                const headers = ctx.getRequestHeaders();
+                if (headers && typeof headers === 'object')
+                    return headers;
+            }
+            return {};
         }
         catch {
             logWarn_ACU('[AIGateway] getRequestHeaders 不可用，返回空对象');
@@ -12924,7 +13214,23 @@ $CONTENT
                     logWarn_ACU(`[剧情推进] [阶段:${taskStage}] [任务:${taskLabel}] 第 ${attemptIndex + 1} 次回复过短: ${tempMessage.length}/${minLength}`);
                 }
                 if (attemptIndex < maxRetries - 1) {
-                    await new Promise(resolve => setTimeout(resolve, 5000));
+                    // 可被 abort 信号中断的等待，避免用户点中止后还要等 5 秒
+                    await new Promise(resolve => {
+                        const signal = abortController_ACU?.signal;
+                        if (signal?.aborted) {
+                            resolve();
+                            return;
+                        }
+                        const timer = setTimeout(() => { cleanup(); resolve(); }, 5000);
+                        const onAbort = () => { clearTimeout(timer); cleanup(); resolve(); };
+                        const cleanup = () => { try {
+                            if (signal)
+                                signal.onabort = null;
+                        }
+                        catch (_) { } };
+                        if (signal)
+                            signal.onabort = onAbort;
+                    });
                 }
             }
             if (!rawResponse) {
@@ -19100,7 +19406,7 @@ $CONTENT
         const maxRetries = 3;
         for (let attempt = 1; attempt <= maxRetries; attempt++) {
             try {
-                const messagesToUse = JSON.parse(JSON.stringify(settings_ACU.charCardPrompt || [DEFAULT_CHAR_CARD_PROMPT_ACU]));
+                const messagesToUse = JSON.parse(JSON.stringify(settings_ACU.charCardPrompt || [isSqliteMode() ? DEFAULT_CHAR_CARD_PROMPT_SQL_ACU : DEFAULT_CHAR_CARD_PROMPT_ACU]));
                 const mainPromptSegment = messagesToUse.find((m) => (String(m?.mainSlot || '').toUpperCase() === 'A') || m?.isMain) ||
                     messagesToUse.find((m) => m && m.content && m.content.includes("你接下来需要扮演一个填表用的美杜莎"));
                 if (mainPromptSegment) {
@@ -20952,7 +21258,7 @@ $CONTENT
         loadSettingsAndRefreshUI_ACU(); // This will re-render from the saved data.
     }
     function resetDefaultCharCardPrompt_ACU() {
-        settings_ACU.charCardPrompt = DEFAULT_CHAR_CARD_PROMPT_ACU;
+        settings_ACU.charCardPrompt = isSqliteMode() ? DEFAULT_CHAR_CARD_PROMPT_SQL_ACU : DEFAULT_CHAR_CARD_PROMPT_ACU;
         saveSettingsAndNotify_ACU();
         showToastr_ACU('info', '更新预设已恢复为默认值！');
         // loadSettings will trigger renderPromptSegments_ACU which correctly handles the string default
@@ -21996,7 +22302,57 @@ $CONTENT
         const hostWin = getHostWindow();
         const mode = isExtensionMode() ? '插件' : '油猴脚本';
         logDebug_ACU(`[CoreAPI] 运行模式: ${mode}, hostWin === window: ${hostWin === window}`);
-        _set_SillyTavern_API_ACU(typeof hostWin.SillyTavern !== 'undefined' ? hostWin.SillyTavern : window.SillyTavern);
+        // ═══════════════════════════════════════════════════════════════
+        // 插件模式特殊处理：主窗口的 window.SillyTavern 只有 {libs, getContext}
+        // 所有真正的 API（chatId/eventSource/eventTypes/chat/saveChat 等）必须通过
+        // SillyTavern.getContext() 才能拿到，而且 getContext() 返回的是"当前快照"，
+        // 属性值会随酒馆状态变化。所以用 Proxy 包装：每次属性读取都重新调用 getContext()
+        // 取最新快照，这样既不用改所有消费者代码，又保证读到最新值。
+        //
+        // 油猴脚本模式下，iframe 的 window.SillyTavern 本身就是扁平化的 API 对象
+        // （由酒馆助手封装），保持原样直接赋值。
+        // ═══════════════════════════════════════════════════════════════
+        let stApi;
+        if (isExtensionMode()) {
+            const rawST = hostWin.SillyTavern || window.SillyTavern;
+            if (rawST && typeof rawST.getContext === 'function') {
+                // Proxy：每次属性读取都通过 getContext() 拿当前快照
+                stApi = new Proxy({}, {
+                    get(_target, prop) {
+                        try {
+                            const ctx = rawST.getContext();
+                            if (!ctx)
+                                return undefined;
+                            return ctx[prop];
+                        }
+                        catch (e) {
+                            // getContext 抛异常时静默返回 undefined，让调用方的空值检查生效
+                            return undefined;
+                        }
+                    },
+                    has(_target, prop) {
+                        try {
+                            const ctx = rawST.getContext();
+                            return !!ctx && prop in ctx;
+                        }
+                        catch (e) {
+                            return false;
+                        }
+                    },
+                });
+                logDebug_ACU('[CoreAPI] 插件模式：已用 Proxy 包装 SillyTavern API（每次读取都走 getContext()）');
+            }
+            else {
+                // getContext 不存在，降级为直接使用 rawST（避免整个系统崩溃）
+                stApi = rawST;
+                logWarn_ACU('[CoreAPI] 插件模式：SillyTavern.getContext 不可用，降级为直接访问 SillyTavern 对象');
+            }
+        }
+        else {
+            // 油猴脚本模式：iframe 下的 window.SillyTavern 已经是扁平 API
+            stApi = typeof hostWin.SillyTavern !== 'undefined' ? hostWin.SillyTavern : window.SillyTavern;
+        }
+        _set_SillyTavern_API_ACU(stApi);
         _set_TavernHelper_API_ACU(typeof hostWin.TavernHelper !== 'undefined' ? hostWin.TavernHelper : window.TavernHelper);
         _set_jQuery_API_ACU(typeof hostWin.$ !== 'undefined' ? hostWin.$ : window.jQuery);
         _set_toastr_API_ACU(hostWin.toastr || (typeof window.toastr !== 'undefined' ? window.toastr : null));
@@ -23887,7 +24243,7 @@ $CONTENT
             $el.val(v); };
         const setChecked = (id, v) => { const $el = find(id); if ($el.length)
             $el.prop('checked', !!v); };
-        setVal('merge-prompt-template', s.mergeSummaryPrompt || DEFAULT_MERGE_SUMMARY_PROMPT_ACU);
+        setVal('merge-prompt-template', s.mergeSummaryPrompt || (isSqliteMode() ? DEFAULT_MERGE_SUMMARY_PROMPT_SQL_ACU : DEFAULT_MERGE_SUMMARY_PROMPT_ACU));
         setVal('merge-target-count', s.mergeTargetCount || 1);
         setVal('merge-batch-size', s.mergeBatchSize || 5);
         setVal('merge-start-index', s.mergeStartIndex || 1);
@@ -24247,9 +24603,41 @@ $CONTENT
      * 加载批次基础数据：从聊天记录中为每个表格查找最新数据
      * 纯业务逻辑，不涉及任何 UI 操作
      */
+    /**
+     * [辅助] 从聊天记录加载旧数据覆盖 sheet 后，恢复指导表基底中的关键结构字段。
+     *
+     * 背景：loadBatchBaseData_ACU 从聊天记录中加载旧数据时，会整体覆盖 mergedBatchData[sheetKey]。
+     * 但指导表基底中可能包含用户在可视化编辑器中修改过的 sourceData.ddl 和表头（content[0]），
+     * 这些结构信息不应该被聊天记录中的旧数据覆盖。
+     *
+     * 只恢复 sourceData（含 DDL）和表头（content[0]），其他字段（name/uid/updateConfig/exportConfig）
+     * 保留聊天记录中的值，因为它们可能在聊天过程中被合法修改。
+     */
+    function restoreGuideStructure(mergedSheet, guideSheet) {
+        if (!guideSheet || typeof guideSheet !== 'object')
+            return;
+        if (!mergedSheet || typeof mergedSheet !== 'object')
+            return;
+        // 恢复 sourceData（包含 DDL、note 等用户在可视化编辑器中修改的关键配置）
+        if (guideSheet.sourceData)
+            mergedSheet.sourceData = JSON.parse(JSON.stringify(guideSheet.sourceData));
+        // 恢复表头（content[0]）——指导表中的表头是用户最新编辑的
+        if (Array.isArray(guideSheet.content) && guideSheet.content.length > 0 &&
+            Array.isArray(mergedSheet.content) && mergedSheet.content.length > 0) {
+            mergedSheet.content[0] = JSON.parse(JSON.stringify(guideSheet.content[0]));
+        }
+    }
     function loadBatchBaseData_ACU(chatHistory, firstMessageIndexOfBatch, batchIsolationKey, batchSheetKeys, mergedBatchData) {
         const batchFoundSheets = {};
         batchSheetKeys.forEach(k => batchFoundSheets[k] = false);
+        // [修复] 保存指导表基底中每个 sheet 的结构快照（sourceData/DDL/表头/表名等），
+        // 以便从聊天记录加载旧数据覆盖后恢复。防止旧数据中的旧 DDL/旧表头覆盖用户在可视化编辑器中的修改。
+        const guideSnapshots = {};
+        batchSheetKeys.forEach(k => {
+            if (mergedBatchData[k] && typeof mergedBatchData[k] === 'object') {
+                guideSnapshots[k] = mergedBatchData[k];
+            }
+        });
         for (let j = firstMessageIndexOfBatch - 1; j >= 0; j--) {
             const msg = chatHistory[j];
             if (msg.is_user)
@@ -24261,6 +24649,7 @@ $CONTENT
                 Object.keys(independentData).forEach(storedSheetKey => {
                     if (batchFoundSheets[storedSheetKey] === false && mergedBatchData[storedSheetKey]) {
                         mergedBatchData[storedSheetKey] = JSON.parse(JSON.stringify(independentData[storedSheetKey]));
+                        restoreGuideStructure(mergedBatchData[storedSheetKey], guideSnapshots[storedSheetKey]);
                         batchFoundSheets[storedSheetKey] = true;
                     }
                 });
@@ -24280,6 +24669,7 @@ $CONTENT
                     Object.keys(independentData).forEach(storedSheetKey => {
                         if (batchFoundSheets[storedSheetKey] === false && mergedBatchData[storedSheetKey]) {
                             mergedBatchData[storedSheetKey] = JSON.parse(JSON.stringify(independentData[storedSheetKey]));
+                            restoreGuideStructure(mergedBatchData[storedSheetKey], guideSnapshots[storedSheetKey]);
                             batchFoundSheets[storedSheetKey] = true;
                         }
                     });
@@ -24289,6 +24679,7 @@ $CONTENT
                     Object.keys(standardData).forEach(k => {
                         if (k.startsWith('sheet_') && batchFoundSheets[k] === false && mergedBatchData[k]) {
                             mergedBatchData[k] = JSON.parse(JSON.stringify(standardData[k]));
+                            restoreGuideStructure(mergedBatchData[k], guideSnapshots[k]);
                             batchFoundSheets[k] = true;
                         }
                     });
@@ -24298,6 +24689,7 @@ $CONTENT
                     Object.keys(summaryData).forEach(k => {
                         if (k.startsWith('sheet_') && batchFoundSheets[k] === false && mergedBatchData[k]) {
                             mergedBatchData[k] = JSON.parse(JSON.stringify(summaryData[k]));
+                            restoreGuideStructure(mergedBatchData[k], guideSnapshots[k]);
                             batchFoundSheets[k] = true;
                         }
                     });
@@ -24641,6 +25033,16 @@ $CONTENT
                 });
                 if (!batchResult.success) {
                     _set_isAutoUpdatingCard_ACU$1(false);
+                    // [修复] 填表失败时，processUpdatesBatch 内部的 loadBatchBaseData 已经用聊天记录中的旧数据
+                    // 覆盖了 currentJsonTableData_ACU（包括旧表头）。必须调用 refreshData 恢复到正确状态，
+                    // 否则用户重新打开可视化编辑器时会看到旧表头（指导表中的新表头不会被应用）。
+                    try {
+                        await loadAllChatMessages_ACU();
+                        await refreshData();
+                    }
+                    catch (e) {
+                        logWarn_ACU('[Manual Update] 填表失败后恢复数据时出错:', e);
+                    }
                     return { success: false, error: batchResult.error || '手动更新失败或被终止。' };
                 }
                 await loadAllChatMessages_ACU();
@@ -26747,6 +27149,12 @@ $CONTENT
     }
 
     /**
+     * service/table/schema-helpers.ts — DDL/Schema 工具函数的 service 层 re-export
+     *
+     * presentation 层不应直接引用 data 层，通过此文件中转。
+     */
+
+    /**
      * DDL 校验纯函数 — 从 jQuery 事件处理器中提取，方便单元测试
      * @returns { valid: boolean; message: string } 校验结果
      */
@@ -27118,7 +27526,21 @@ $CONTENT
         // Bind Config Events
         $colList.on('input', '.acu-col-input', function () {
             const idx = parseInt(jQuery_API_ACU(this).data('idx'));
-            headers[idx] = jQuery_API_ACU(this).val();
+            const newValue = jQuery_API_ACU(this).val();
+            headers[idx] = newValue;
+            // [方案B] SQLite 模式下，用户改表头时自动同步更新 DDL 注释
+            if (isSqliteMode() && sheet.sourceData?.ddl) {
+                const ddlColumns = parseDDLColumnNames(sheet.sourceData.ddl);
+                // idx 对应 content[0] 的位置（包含 row_id），DDL 列名顺序与 content[0] 一致
+                if (idx >= 0 && idx < ddlColumns.length && ddlColumns[idx] !== 'row_id') {
+                    sheet.sourceData.ddl = updateDDLColumnComment(sheet.sourceData.ddl, ddlColumns[idx], newValue);
+                    // 同步更新 DDL 编辑器的显示（如果可见）
+                    const $ddlTextarea = jQuery_API_ACU('#cfg-ddl');
+                    if ($ddlTextarea.length) {
+                        $ddlTextarea.val(sheet.sourceData.ddl);
+                    }
+                }
+            }
         });
         $colList.on('click', '.acu-col-btn', function () {
             const idx = parseInt(jQuery_API_ACU(this).data('idx'));
@@ -28609,37 +29031,36 @@ $CONTENT
         applySpecialIndexSequenceToSummaryTables_ACU(orderedData);
         // First, apply changes to local variable (使用排序后的数据)
         _set_currentJsonTableData_ACU(JSON.parse(JSON.stringify(orderedData)));
-        // [新增] 可视化编辑器属于“用户显式修改表结构/表名/顺序”的入口：
-        // 覆盖式更新聊天第一层的“空白指导表”（仅表头+参数，无数据行），让后续合并/显示/填表参数都以此为准。
-        // 仅“保存到当前聊天”会把这次修改沉淀为当前聊天模板预设；“保存到全局”只更新全局预设与当前全局选择，不会自动清除当前聊天本地预设。
-        if (!saveToTemplate) {
-            try {
-                const isolationKey = getCurrentIsolationKey_ACU();
-                // 需求4（澄清版）：可视化编辑器触发指导表更新时，只更新表名/表头/表格参数，不修改指导表基础数据（seedRows）。
-                // - 若当前聊天/标签已存在指导表：必须继承其 seedRows
-                // - 若不存在指导表：从当前模板提取预置数据作为 seedRows（需求1）
-                const existingGuide = getChatSheetGuideDataForIsolationKey_ACU(isolationKey);
-                const templateObjForSeed = parseTableTemplateJson_ACU({ stripSeedRows: false });
-                const guideData = buildChatSheetGuideDataFromData_ACU(currentJsonTableData_ACU, {
-                    preserveSeedRowsFromGuideData: existingGuide,
-                    seedRowsFromTemplateObj: templateObjForSeed,
+        // [修复] 可视化编辑器属于"用户显式修改表结构/表名/顺序"的入口：
+        // 覆盖式更新聊天第一层的"空白指导表"（仅表头+参数，无数据行），让后续合并/显示/填表参数都以此为准。
+        // [Bug Fix] 无论"保存到当前聊天"还是"保存到全局"，都必须更新指导表，
+        // 否则"保存到全局"后点击填表时，指导表中的旧表头会覆盖用户的修改。
+        try {
+            const guideIsolationKey = getCurrentIsolationKey_ACU();
+            // 需求4（澄清版）：可视化编辑器触发指导表更新时，只更新表名/表头/表格参数，不修改指导表基础数据（seedRows）。
+            // - 若当前聊天/标签已存在指导表：必须继承其 seedRows
+            // - 若不存在指导表：从当前模板提取预置数据作为 seedRows（需求1）
+            const existingGuide = getChatSheetGuideDataForIsolationKey_ACU(guideIsolationKey);
+            const templateObjForSeed = parseTableTemplateJson_ACU({ stripSeedRows: false });
+            const guideData = buildChatSheetGuideDataFromData_ACU(currentJsonTableData_ACU, {
+                preserveSeedRowsFromGuideData: existingGuide,
+                seedRowsFromTemplateObj: templateObjForSeed,
+            });
+            if (guideData && Object.keys(guideData).some(k => k.startsWith('sheet_'))) {
+                const syncTemplateScope = !saveToTemplate; // "保存到全局"时不同步模板作用域（由 applyTemplatePresetToCurrent 处理）
+                const templateScopeSource = materializeDataFromSheetGuide_ACU(guideData, { includeSeedRows: true });
+                setChatSheetGuideDataForIsolationKey_ACU(guideIsolationKey, guideData, {
+                    reason: 'visualizer_save',
+                    syncTemplateScope,
+                    templateSource: templateScopeSource,
+                    presetName: resolveActiveTemplatePresetName_ACU({ fallbackToGlobal: true, isolationKey: guideIsolationKey }),
+                    source: 'visualizer_save',
                 });
-                if (guideData && Object.keys(guideData).some(k => k.startsWith('sheet_'))) {
-                    const syncTemplateScope = true;
-                    const templateScopeSource = materializeDataFromSheetGuide_ACU(guideData, { includeSeedRows: true });
-                    setChatSheetGuideDataForIsolationKey_ACU(isolationKey, guideData, {
-                        reason: 'visualizer_save',
-                        syncTemplateScope,
-                        templateSource: templateScopeSource,
-                        presetName: resolveActiveTemplatePresetName_ACU({ fallbackToGlobal: true, isolationKey }),
-                        source: 'visualizer_save',
-                    });
-                    logDebug_ACU(`[SheetGuide] Overwrote chat sheet guide from visualizer for tag [${isolationKey || '无标签'}] (tables=${Object.keys(guideData).filter(k => k.startsWith('sheet_')).length}).`);
-                }
+                logDebug_ACU(`[SheetGuide] Overwrote chat sheet guide from visualizer for tag [${guideIsolationKey || '无标签'}] (tables=${Object.keys(guideData).filter(k => k.startsWith('sheet_')).length}, saveToTemplate=${saveToTemplate}).`);
             }
-            catch (e) {
-                logWarn_ACU('[SheetGuide] Failed to overwrite sheet guide from visualizer:', e);
-            }
+        }
+        catch (e) {
+            logWarn_ACU('[SheetGuide] Failed to overwrite sheet guide from visualizer:', e);
         }
         // [新机制] 不再使用 settings_ACU.tableKeyOrder 强制固定顺序（顺序由每张表的 orderNo 决定）
         // 记录本次需要彻底清理的 key（真正清理会在“写回所有楼层”之后执行，防止后续写回把旧表带回）
@@ -30649,7 +31070,8 @@ $CONTENT
             return false;
         }
         try {
-            settings_ACU.charCardPrompt = DEFAULT_CHAR_CARD_PROMPT_ACU;
+            settings_ACU.charCardPrompt = isSqliteMode() ? DEFAULT_CHAR_CARD_PROMPT_SQL_ACU : DEFAULT_CHAR_CARD_PROMPT_ACU;
+            settings_ACU.mergeSummaryPrompt = isSqliteMode() ? DEFAULT_MERGE_SUMMARY_PROMPT_SQL_ACU : DEFAULT_MERGE_SUMMARY_PROMPT_ACU;
             saveSettingsAndNotify_ACU();
             const templateResetOk = await resetTableTemplate_ACU({
                 showToast: false,
@@ -30904,7 +31326,7 @@ $CONTENT
                     return { success: false, accumulatedSummary, error: '用户终止操作', failedBatchIndex: i };
                 }
                 onBatchProgress?.(i, totalBatches, attempt, maxRetries);
-                let messagesToUse = JSON.parse(JSON.stringify(settings_ACU.charCardPrompt || [DEFAULT_CHAR_CARD_PROMPT_ACU]));
+                let messagesToUse = JSON.parse(JSON.stringify(settings_ACU.charCardPrompt || [isSqliteMode() ? DEFAULT_CHAR_CARD_PROMPT_SQL_ACU : DEFAULT_CHAR_CARD_PROMPT_ACU]));
                 let mainPromptSegment = messagesToUse.find((m) => (String(m?.mainSlot || '').toUpperCase() === 'A') || m?.isMain) ||
                     messagesToUse.find((m) => m && m.content && m.content.includes("你接下来需要扮演一个填表用的美杜莎"));
                 if (mainPromptSegment) {
@@ -31149,7 +31571,7 @@ $CONTENT
     // 业务逻辑（校验、执行批次、写入结果、保存、更新世界书）全部委托给 service 层
     async function handleManualMergeSummary_ACU() {
         // 调用 service 层前置准备（刷新数据 + 校验参数）
-        const preparation = await prepareMergeSummary_ACU(DEFAULT_MERGE_SUMMARY_PROMPT_ACU);
+        const preparation = await prepareMergeSummary_ACU(isSqliteMode() ? DEFAULT_MERGE_SUMMARY_PROMPT_SQL_ACU : DEFAULT_MERGE_SUMMARY_PROMPT_ACU);
         if (!preparation.valid) {
             const errorMsg = preparation.error;
             const isInfo = errorMsg.includes('未找到') || errorMsg.includes('没有') || errorMsg.includes('指定范围') || errorMsg.includes('请稍候');
@@ -31241,7 +31663,7 @@ $CONTENT
             const combinedData = {
                 prompt: promptSegments,
                 template: templateData,
-                mergeSummaryPrompt: settings_ACU.mergeSummaryPrompt || DEFAULT_MERGE_SUMMARY_PROMPT_ACU, // [新增] 导出合并提示词
+                mergeSummaryPrompt: settings_ACU.mergeSummaryPrompt || (isSqliteMode() ? DEFAULT_MERGE_SUMMARY_PROMPT_SQL_ACU : DEFAULT_MERGE_SUMMARY_PROMPT_ACU), // [新增] 导出合并提示词（根据存储模式选择默认版本）
                 mergeTargetCount: settings_ACU.mergeTargetCount || 1, // [新增] 导出合并目标条数
                 mergeBatchSize: settings_ACU.mergeBatchSize || 5, // [新增] 导出合并批次大小
                 mergeStartIndex: settings_ACU.mergeStartIndex || 1, // [新增] 导出合并起始条数
@@ -31473,8 +31895,9 @@ $CONTENT
                     const $autoEnabled = $popupInstance_ACU.find(`#${SCRIPT_ID_PREFIX_ACU}-auto-merge-enabled`);
                     const $autoThreshold = $popupInstance_ACU.find(`#${SCRIPT_ID_PREFIX_ACU}-auto-merge-threshold`);
                     const $autoReserve = $popupInstance_ACU.find(`#${SCRIPT_ID_PREFIX_ACU}-auto-merge-reserve`);
-                    // 恢复所有设置的默认值
-                    $promptInput.val(DEFAULT_MERGE_SUMMARY_PROMPT_ACU);
+                    // 恢复所有设置的默认值（根据当前存储模式选择对应版本）
+                    const defaultMergePrompt = isSqliteMode() ? DEFAULT_MERGE_SUMMARY_PROMPT_SQL_ACU : DEFAULT_MERGE_SUMMARY_PROMPT_ACU;
+                    $promptInput.val(defaultMergePrompt);
                     $targetCount.val(1);
                     $batchSize.val(5);
                     $startIndex.val(1);
@@ -31483,7 +31906,7 @@ $CONTENT
                     $autoThreshold.val(20);
                     $autoReserve.val(0);
                     // 更新设置对象
-                    settings_ACU.mergeSummaryPrompt = DEFAULT_MERGE_SUMMARY_PROMPT_ACU;
+                    settings_ACU.mergeSummaryPrompt = defaultMergePrompt;
                     settings_ACU.mergeTargetCount = 1;
                     settings_ACU.mergeBatchSize = 5;
                     settings_ACU.mergeStartIndex = 1;
@@ -33956,11 +34379,15 @@ insertRow(1, ["时间2", "大纲事件2...", "关键词"]);
     let _filterLevel = 'all';
     let _filterTag = 'all';
     let _filterKeyword = '';
-    /** 是否自动滚动到底部 */
+    /** 是否自动滚动到顶部（最新日志在顶部） */
     let _autoScroll = true;
     /** 批量渲染缓冲（防止高频 DOM 操作） */
     let _renderBuffer = [];
     let _renderRAFId = null;
+    /** 日志 tab 是否当前可见（不可见时跳过 DOM 操作） */
+    let _tabVisible = false;
+    /** 不可见期间是否有新日志到达（切回时需要全量重绘） */
+    let _dirtyWhileHidden = false;
     // ═══════════════════════════════════════════════════════════════
     // HTML 生成
     // ═══════════════════════════════════════════════════════════════
@@ -34009,6 +34436,10 @@ insertRow(1, ["时间2", "大纲事件2...", "关键词"]);
             <input id="${SCRIPT_ID_PREFIX_ACU}-log-autoscroll" type="checkbox" checked />
             自动滚动
           </label>
+          <label style="display: flex; align-items: center; gap: 4px; font-size: 0.85em; cursor: pointer;" title="开启后 Debug 级别日志会写入缓冲区（可能影响性能）">
+            <input id="${SCRIPT_ID_PREFIX_ACU}-log-debug-toggle" type="checkbox" />
+            采集Debug日志
+          </label>
           <span id="${SCRIPT_ID_PREFIX_ACU}-log-count" class="notes" style="font-size: 0.8em;"></span>
         </div>
 
@@ -34036,15 +34467,22 @@ insertRow(1, ["时间2", "大纲事件2...", "关键词"]);
         const $clearBtn = $popupInstance_ACU.find(`#${SCRIPT_ID_PREFIX_ACU}-log-clear`);
         const $exportBtn = $popupInstance_ACU.find(`#${SCRIPT_ID_PREFIX_ACU}-log-export`);
         const $autoScrollCheckbox = $popupInstance_ACU.find(`#${SCRIPT_ID_PREFIX_ACU}-log-autoscroll`);
+        const $debugToggle = $popupInstance_ACU.find(`#${SCRIPT_ID_PREFIX_ACU}-log-debug-toggle`);
         const $logCount = $popupInstance_ACU.find(`#${SCRIPT_ID_PREFIX_ACU}-log-count`);
-        // 初始化：渲染已有的历史日志
-        renderAllLogs($logList);
-        updateLogCount($logCount);
-        refreshTagFilter($tagFilter);
+        // 初始化 debug 开关状态
+        $debugToggle.prop('checked', isDebugLogEnabled());
+        // 初始化 tab 可见性
+        _tabVisible = false;
+        _dirtyWhileHidden = true; // 首次打开时标记为脏，切到日志 tab 时再渲染
         // 订阅新日志
         if (_unsubscribe)
             _unsubscribe(); // 防止重复订阅
         _unsubscribe = subscribe((entry) => {
+            // tab 不可见时跳过所有 DOM 操作，仅标记脏位
+            if (!_tabVisible) {
+                _dirtyWhileHidden = true;
+                return;
+            }
             if (_paused) {
                 _pendingEntries.push(entry);
                 updateLogCount($logCount);
@@ -34061,6 +34499,31 @@ insertRow(1, ["时间2", "大纲事件2...", "关键词"]);
                 });
             }
         });
+        // tab 切换时的可见性管理
+        // 监听 tab 按钮点击，判断当前是否切到了日志 tab
+        if ($popupInstance_ACU) {
+            $popupInstance_ACU.find('.acu-tab-button').on('click.acuLogViewer', function () {
+                const tabId = jQuery_API_ACU(this).data('tab');
+                const wasVisible = _tabVisible;
+                _tabVisible = (tabId === 'log-viewer');
+                // 切到日志 tab 且有脏数据时，全量重绘
+                if (_tabVisible && !wasVisible && _dirtyWhileHidden) {
+                    _dirtyWhileHidden = false;
+                    renderAllLogs($logList);
+                    updateLogCount($logCount);
+                    refreshTagFilter($tagFilter);
+                }
+            });
+            // 检查当前是否已经在日志 tab
+            const $activeTab = $popupInstance_ACU.find('.acu-tab-button.active');
+            if ($activeTab.length && $activeTab.data('tab') === 'log-viewer') {
+                _tabVisible = true;
+                _dirtyWhileHidden = false;
+                renderAllLogs($logList);
+                updateLogCount($logCount);
+                refreshTagFilter($tagFilter);
+            }
+        }
         // 级别过滤
         $levelFilter.on('change', function () {
             _filterLevel = jQuery_API_ACU(this).val();
@@ -34089,13 +34552,13 @@ insertRow(1, ["时间2", "大纲事件2...", "关键词"]);
             }
             else {
                 jQuery_API_ACU(this).html('<i class="fa-solid fa-pause"></i> 暂停');
-                // 恢复时渲染暂停期间积累的日志
+                // 恢复时渲染暂停期间积累的日志（最新的插入到顶部）
                 if (_pendingEntries.length > 0) {
-                    for (const entry of _pendingEntries) {
-                        appendLogEntry($logList, entry);
+                    for (let i = _pendingEntries.length - 1; i >= 0; i--) {
+                        prependLogEntry($logList, _pendingEntries[i]);
                     }
                     _pendingEntries = [];
-                    scrollToBottom($logList);
+                    scrollToTop($logList);
                 }
             }
         });
@@ -34113,6 +34576,11 @@ insertRow(1, ["时间2", "大纲事件2...", "关键词"]);
         // 自动滚动
         $autoScrollCheckbox.on('change', function () {
             _autoScroll = jQuery_API_ACU(this).prop('checked');
+        });
+        // Debug 日志采集开关
+        $debugToggle.on('change', function () {
+            const enabled = jQuery_API_ACU(this).prop('checked');
+            setDebugLogEnabled(enabled);
         });
     }
     // ═══════════════════════════════════════════════════════════════
@@ -34153,50 +34621,54 @@ insertRow(1, ["时间2", "大纲事件2...", "关键词"]);
     }
     /**
      * 渲染所有日志（全量重绘，用于过滤条件变化时）
+     * 最新日志显示在最上面（倒序）
      */
     function renderAllLogs($logList) {
         const allLogs = getAllLogs();
         const filtered = allLogs.filter(matchesFilter);
-        const html = filtered.map(renderLogEntryHTML).join('');
+        // 倒序：最新的在最上面
+        const reversed = filtered.slice().reverse();
+        const html = reversed.map(renderLogEntryHTML).join('');
         $logList.html(html);
-        scrollToBottom($logList);
+        scrollToTop($logList);
     }
     /**
-     * 追加单条日志到列表（增量渲染）
+     * 在列表顶部插入单条日志（增量渲染，最新在最上面）
      */
-    function appendLogEntry($logList, entry) {
+    function prependLogEntry($logList, entry) {
         if (!matchesFilter(entry))
             return;
         const html = renderLogEntryHTML(entry);
-        $logList.append(html);
+        $logList.prepend(html);
     }
     /**
-     * 刷新渲染缓冲区（批量追加）
+     * 刷新渲染缓冲区（批量插入到顶部）
      */
     function flushRenderBuffer($logList) {
         if (_renderBuffer.length === 0)
             return;
         const entries = _renderBuffer.splice(0);
+        // 新日志插入到顶部，最新的排最前
         let html = '';
-        for (const entry of entries) {
-            if (matchesFilter(entry)) {
-                html += renderLogEntryHTML(entry);
+        for (let i = entries.length - 1; i >= 0; i--) {
+            if (matchesFilter(entries[i])) {
+                html += renderLogEntryHTML(entries[i]);
             }
         }
         if (html) {
-            $logList.append(html);
-            scrollToBottom($logList);
+            $logList.prepend(html);
+            scrollToTop($logList);
         }
     }
     /**
-     * 滚动到底部
+     * 滚动到顶部（最新日志在顶部）
      */
-    function scrollToBottom($logList) {
+    function scrollToTop($logList) {
         if (!_autoScroll)
             return;
         const el = $logList[0];
         if (el) {
-            el.scrollTop = el.scrollHeight;
+            el.scrollTop = 0;
         }
     }
     /**
@@ -34246,6 +34718,28 @@ insertRow(1, ["时间2", "大纲事件2...", "关键词"]);
         a.download = `acu-logs-${new Date().toISOString().replace(/[:.]/g, '-')}.json`;
         a.click();
         URL.revokeObjectURL(url);
+    }
+    // ═══════════════════════════════════════════════════════════════
+    // 清理函数（弹窗关闭时调用）
+    // ═══════════════════════════════════════════════════════════════
+    /**
+     * 清理日志查看器资源（取消订阅、清空缓冲区）
+     * 必须在弹窗关闭时调用，否则订阅者回调会持续操作已销毁的 DOM
+     */
+    function cleanupLogViewer_ACU() {
+        if (_unsubscribe) {
+            _unsubscribe();
+            _unsubscribe = null;
+        }
+        if (_renderRAFId !== null) {
+            cancelAnimationFrame(_renderRAFId);
+            _renderRAFId = null;
+        }
+        _renderBuffer = [];
+        _pendingEntries = [];
+        _tabVisible = false;
+        _dirtyWhileHidden = false;
+        _paused = false;
     }
 
     /**
@@ -36982,6 +37476,8 @@ insertRow(1, ["时间2", "大纲事件2...", "关键词"]);
             startMaximized: false, // 由 rememberState 自动管理，首次打开时不全屏
             onClose: () => {
                 logDebug_ACU('ACU Window closed');
+                // 清理日志查看器订阅，防止幽灵 DOM 操作和内存泄漏
+                cleanupLogViewer_ACU();
                 _set_$popupInstance_ACU(null);
             },
             onReady: async ($window) => {
@@ -37014,9 +37510,7 @@ insertRow(1, ["时间2", "大纲事件2...", "关键词"]);
      * 从 features/startup/01_ready_and_menu.js 迁移而来
      */
     function addAutoCardMenuItem_ACU() {
-        const parentDoc = SillyTavern_API_ACU?.Chat?.document
-            ? SillyTavern_API_ACU.Chat.document
-            : (window.parent || window).document;
+        const parentDoc = (window.parent || window).document;
         if (!parentDoc || !jQuery_API_ACU) {
             logError_ACU('Cannot find parent document or jQuery for ACU menu.');
             return false;
@@ -37358,6 +37852,12 @@ insertRow(1, ["时间2", "大纲事件2...", "关键词"]);
                             toastr_API_ACU.clear($toast);
                     }
                     catch (e) { }
+                    // DOM 级兜底：确保 toast 元素被彻底移除，防止 toastr.clear 不生效
+                    try {
+                        if ($toast && $toast.closest)
+                            $toast.closest('.toast').remove();
+                    }
+                    catch (e) { }
                     _set_isProcessing_Plot_ACU(false);
                     setTimeout(() => {
                         showToastr_ACU('info', '规划任务已被用户中止。', { acuToastCategory: ACU_TOAST_CATEGORY_ACU.PLANNING });
@@ -37422,9 +37922,7 @@ insertRow(1, ["时间2", "大纲事件2...", "关键词"]);
     // [从 state-manager.ts 搬入 presentation 层] 安装发送意图捕捉钩子（DOM 事件绑定）
     function installSendIntentCaptureHooks_ACU() {
         try {
-            const parentDoc = SillyTavern_API_ACU?.Chat?.document
-                ? SillyTavern_API_ACU.Chat.document
-                : (window.parent || window).document;
+            const parentDoc = (window.parent || window).document;
             const doc = parentDoc || document;
             if (!window.__ACU_sendIntentHooksInstalled) {
                 window.__ACU_sendIntentHooksInstalled = { send: false, enter: false };
@@ -37489,6 +37987,15 @@ insertRow(1, ["时间2", "大纲事件2...", "关键词"]);
                 }
                 SillyTavern_API_ACU.eventSource.on(SillyTavern_API_ACU.eventTypes.CHAT_CHANGED, async (chatFileName) => {
                     logDebug_ACU(`ACU CHAT_CHANGED event: ${chatFileName}`);
+                    // [修复] 换卡/换聊天时，立即销毁旧的 SQLite 数据库实例
+                    // 必须在 resetScriptStateForNewChat 之前执行，避免 1200ms 延迟窗口内的数据不一致
+                    // 仅在 chatFileName 有效时才销毁（无效时 resetScriptState 会直接 return 保留现有状态）
+                    if (chatFileName && typeof chatFileName === 'string' && chatFileName.trim() !== '' && chatFileName.trim() !== 'null') {
+                        if (isSqliteMode()) {
+                            disposeStorageProvider();
+                            logDebug_ACU('[SQLite] CHAT_CHANGED: 立即销毁旧数据库实例');
+                        }
+                    }
                     await resetScriptStateForNewChat_ACU(chatFileName);
                     // [触发门控] generationGate 重置已搬到 service 层的 resetScriptStateForNewChat_ACU 中
                     // [触发门控] 每次切换聊天都尝试安装一次 capture 钩子（防止 DOM 重新渲染导致丢失）          installSendIntentCaptureHooks_ACU();
@@ -37550,6 +38057,17 @@ insertRow(1, ["时间2", "大纲事件2...", "关键词"]);
                             return;
                         }
                         applyTemplateScopeForCurrentChat_ACU();
+                        // [6.7.3] SQLite 模式下，切换聊天后需要重建内存数据库（初始化 SQLite 引擎）
+                        if (isSqliteMode()) {
+                            logDebug_ACU('[SQLite] CHAT_CHANGED: 重建内存数据库...');
+                            try {
+                                await reloadStorageProvider();
+                                logDebug_ACU('[SQLite] CHAT_CHANGED: 内存数据库重建完成');
+                            }
+                            catch (e) {
+                                logError_ACU(`[SQLite] CHAT_CHANGED: 数据库重建失败: ${e?.message}`);
+                            }
+                        }
                         // 3. 刷新数据（UI 刷新由 presentation 层负责）
                         await refreshMergedDataAndNotifyWithUI_ACU();
                         // [新增] 再次强制刷新状态显示，确保UI同步
@@ -37745,23 +38263,55 @@ insertRow(1, ["时间2", "大纲事件2...", "关键词"]);
             // [新增修复]：为了解决作为角色脚本加载时可能错过初始CHAT_CHANGED事件的问题，
             // 我们在初始化时主动获取一次当前聊天信息并进行设置。
             // 这确保了无论脚本何时加载，都能正确初始化。
-            if (SillyTavern_API_ACU && SillyTavern_API_ACU.chatId) {
-                logDebug_ACU(`ACU: Initializing with current chat on load: ${SillyTavern_API_ACU.chatId}`);
-                // 修复：将初始加载延迟到下一个事件循环，以避免在SillyTavern完全准备好之前运行初始化，从而解决新聊天的竞态条件。
-                // [新增] 使用延迟初始化确保UI就绪
-                setTimeout(async () => {
-                    await resetScriptStateForNewChat_ACU(SillyTavern_API_ACU.chatId);
-                    await loadPresetAndCleanCharacterData_ACU();
-                    // 再次强制刷新数据和UI，确保初始加载时表格显示正确
-                    await loadAllChatMessages_ACU();
-                    await refreshMergedDataAndNotifyWithUI_ACU();
-                    if (typeof updateCardUpdateStatusDisplay_ACU === 'function') {
-                        updateCardUpdateStatusDisplay_ACU();
+            // [修复] 添加轮询重试机制：如果 chatId 暂时不可用，持续轮询直到可用
+            const initWithChatId = async (chatId) => {
+                logDebug_ACU(`ACU: Initializing with current chat on load: ${chatId}`);
+                await resetScriptStateForNewChat_ACU(chatId);
+                await loadPresetAndCleanCharacterData_ACU();
+                // 再次强制刷新数据和UI，确保初始加载时表格显示正确
+                await loadAllChatMessages_ACU();
+                // [修复] SQLite 模式下，启动时初始化内存数据库
+                // 老卡（有聊天历史数据）会从聊天记录合并数据建表
+                // 新卡（无数据）只初始化引擎，建表延迟到第一次填表时
+                if (isSqliteMode()) {
+                    logDebug_ACU('[SQLite] initWithChatId: 初始化内存数据库...');
+                    try {
+                        await reloadStorageProvider();
+                        logDebug_ACU('[SQLite] initWithChatId: 内存数据库初始化完成');
                     }
+                    catch (e) {
+                        logError_ACU(`[SQLite] initWithChatId: 数据库初始化失败: ${e?.message}`);
+                    }
+                }
+                await refreshMergedDataAndNotifyWithUI_ACU();
+                if (typeof updateCardUpdateStatusDisplay_ACU === 'function') {
+                    updateCardUpdateStatusDisplay_ACU();
+                }
+            };
+            if (SillyTavern_API_ACU && SillyTavern_API_ACU.chatId) {
+                // chatId 已可用，延迟初始化
+                setTimeout(async () => {
+                    await initWithChatId(SillyTavern_API_ACU.chatId);
                 }, 1000);
             }
             else {
-                logWarn_ACU('ACU: Could not get current chat ID on initial load. Waiting for CHAT_CHANGED event.');
+                // chatId 暂时不可用，启动轮询重试（每200ms检查一次，最多等15秒）
+                logWarn_ACU('ACU: chatId not available on initial load. Starting polling...');
+                let pollCount = 0;
+                const maxPolls = 75; // 200ms × 75 = 15秒
+                const pollTimer = setInterval(async () => {
+                    pollCount++;
+                    const chatId = SillyTavern_API_ACU?.chatId;
+                    if (chatId) {
+                        clearInterval(pollTimer);
+                        logDebug_ACU(`ACU: chatId became available after ${pollCount * 200}ms polling: ${chatId}`);
+                        await initWithChatId(chatId);
+                    }
+                    else if (pollCount >= maxPolls) {
+                        clearInterval(pollTimer);
+                        logWarn_ACU(`ACU: chatId still not available after ${maxPolls * 200}ms polling. Waiting for CHAT_CHANGED event.`);
+                    }
+                }, 200);
             }
         }
         else {
@@ -37993,17 +38543,84 @@ insertRow(1, ["时间2", "大纲事件2...", "关键词"]);
      * 表格 CRUD API — updateCell / updateRow / insertRow / deleteRow
      */
     /**
+     * 从 sheet 解析英文物理表名
+     * 优先从 DDL 解析，fallback 为传入的 tableName 或 sheet.name
+     */
+    function getEnglishTableName(sheet, fallback) {
+        const ddl = sheet?.sourceData?.ddl;
+        if (ddl) {
+            const parsed = parseDDLTableName(ddl);
+            if (parsed)
+                return parsed;
+        }
+        return fallback;
+    }
+    /**
      * 查找指定表格的目标 sheet 和 sheetKey
+     * 支持中文显示名、英文物理表名、中英混用
+     * 返回值包含英文物理表名（用于 SQL 拼接）
      */
     function findTargetSheet(tableName) {
         if (!currentJsonTableData_ACU)
             return null;
+        // 路径 1：按 sheet.name（中文显示名）直接匹配
         for (const sheetKey in currentJsonTableData_ACU) {
-            if (sheetKey.startsWith('sheet_') && currentJsonTableData_ACU[sheetKey].name === tableName) {
-                return { sheet: currentJsonTableData_ACU[sheetKey], sheetKey };
+            if (!sheetKey.startsWith('sheet_'))
+                continue;
+            const sheet = currentJsonTableData_ACU[sheetKey];
+            if (sheet?.name === tableName) {
+                return {
+                    sheet,
+                    sheetKey,
+                    englishTableName: getEnglishTableName(sheet, tableName),
+                };
+            }
+        }
+        // 路径 2：用户传的可能是英文物理表名——通过 NameMapper 反查对应的中文名
+        const mapper = getNameMapper();
+        const maybeChineseName = mapper.getChineseTableName(tableName);
+        if (maybeChineseName && maybeChineseName !== tableName) {
+            for (const sheetKey in currentJsonTableData_ACU) {
+                if (!sheetKey.startsWith('sheet_'))
+                    continue;
+                const sheet = currentJsonTableData_ACU[sheetKey];
+                if (sheet?.name === maybeChineseName) {
+                    return {
+                        sheet,
+                        sheetKey,
+                        englishTableName: getEnglishTableName(sheet, tableName),
+                    };
+                }
+            }
+        }
+        // 路径 3：直接从 DDL 的英文表名匹配（兜底，覆盖 NameMapper 未构建的场景）
+        for (const sheetKey in currentJsonTableData_ACU) {
+            if (!sheetKey.startsWith('sheet_'))
+                continue;
+            const sheet = currentJsonTableData_ACU[sheetKey];
+            const english = getEnglishTableName(sheet, '');
+            if (english && english === tableName) {
+                return {
+                    sheet,
+                    sheetKey,
+                    englishTableName: english,
+                };
             }
         }
         return null;
+    }
+    /**
+     * 将用户传入的列名（可能是中文、英文、或数字索引得来的中文）
+     * 翻译成英文列名（供 SQL 拼接）和中文列名（供原生模式 headers 匹配）
+     *
+     * 原生模式下 NameMapper 未构建，resolve* 方法会原样返回——
+     * 此时 englishColName === chineseColName === 原始 colName，行为与旧版一致。
+     */
+    function resolveColumnForSheet(englishTableName, colName) {
+        const mapper = getNameMapper();
+        const englishColName = mapper.resolveColumnName(englishTableName, colName);
+        const chineseColName = mapper.getChineseColumnName(englishTableName, englishColName);
+        return { englishColName, chineseColName };
     }
     /**
      * 查找指定表格数据所在的最新聊天楼层索引
@@ -38085,25 +38702,31 @@ insertRow(1, ["时间2", "大纲事件2...", "关键词"]);
                         logError_ACU(`updateCell: Table "${tableName}" not found.`);
                         return false;
                     }
-                    const { sheet: targetSheet, sheetKey: targetSheetKey } = target;
+                    const { sheet: targetSheet, sheetKey: targetSheetKey, englishTableName } = target;
                     if (!targetSheet.content || targetSheet.content.length === 0) {
                         logError_ACU(`updateCell: Table "${tableName}" has no content.`);
                         return false;
                     }
-                    // 解析列名
-                    let colName;
+                    // 解析列名：先拿到一个「原始列名」（来自用户输入或表头索引）
+                    let rawColName;
                     if (typeof colIdentifier === 'number') {
                         const headers = targetSheet.content[0] || [];
                         if (colIdentifier < 0 || colIdentifier >= headers.length) {
                             logError_ACU(`updateCell: Column index ${colIdentifier} out of bounds in table "${tableName}".`);
                             return false;
                         }
-                        colName = headers[colIdentifier];
+                        rawColName = headers[colIdentifier]; // 中文
                     }
                     else {
-                        colName = colIdentifier;
+                        rawColName = colIdentifier; // 可能中文也可能英文
+                    }
+                    // 统一翻译为英文+中文双形态
+                    const { englishColName, chineseColName } = resolveColumnForSheet(englishTableName, rawColName);
+                    // 校验列名：用中文形态和 headers 比对（headers 是中文），
+                    // 这样用户传英文列名也能通过校验
+                    if (typeof colIdentifier !== 'number') {
                         const headers = targetSheet.content[0] || [];
-                        if (!headers.includes(colName)) {
+                        if (!headers.includes(chineseColName)) {
                             logError_ACU(`updateCell: Column "${colIdentifier}" not found in table "${tableName}".`);
                             return false;
                         }
@@ -38113,26 +38736,30 @@ insertRow(1, ["时间2", "大纲事件2...", "关键词"]);
                         return false;
                     }
                     if (isSqliteMode()) {
-                        // SQLite 模式：生成 UPDATE SQL
+                        // SQLite 模式：用英文物理表名和英文列名生成 UPDATE SQL
                         const rowId = targetSheet.content[rowIndex][0]; // row_id 是第一列
                         const escapedVal = value === null || value === undefined ? 'NULL' : `'${String(value).replace(/'/g, "''")}'`;
-                        const sql = `UPDATE ${quoteIdentifier(tableName)} SET ${quoteIdentifier(colName)} = ${escapedVal} WHERE row_id = ${rowId};`;
+                        const sql = `UPDATE ${quoteIdentifier(englishTableName)} SET ${quoteIdentifier(englishColName)} = ${escapedVal} WHERE row_id = ${rowId};`;
                         const result = getStorageProvider().executeMutation(sql);
                         if (result.errors.length > 0) {
                             logError_ACU(`updateCell SQL failed: ${result.errors.join(', ')}`);
                             return false;
                         }
-                        logDebug_ACU(`updateCell: [SQLite] Updated [${tableName}] row_id=${rowId}, col=${colName}`);
+                        logDebug_ACU(`updateCell: [SQLite] Updated [${englishTableName}] row_id=${rowId}, col=${englishColName}`);
                     }
                     else {
-                        // 原生模式：直接操作 JSON 数组
+                        // 原生模式：直接操作 JSON 数组，用中文列名在 headers 中定位
                         let colIndex = -1;
                         if (typeof colIdentifier === 'number') {
                             colIndex = colIdentifier;
                         }
                         else {
                             const headers = targetSheet.content[0] || [];
-                            colIndex = headers.indexOf(colIdentifier);
+                            colIndex = headers.indexOf(chineseColName);
+                        }
+                        if (colIndex < 0) {
+                            logError_ACU(`updateCell: Column "${colIdentifier}" not found in table "${tableName}".`);
+                            return false;
                         }
                         targetSheet.content[rowIndex][colIndex] = value;
                         logDebug_ACU(`updateCell: Updated [${tableName}] row ${rowIndex}, col ${colIdentifier} = ${value}`);
@@ -38161,9 +38788,9 @@ insertRow(1, ["时间2", "大纲事件2...", "关键词"]);
                         logError_ACU(`updateRow: Table "${tableName}" not found.`);
                         return false;
                     }
-                    const { sheet: targetSheet, sheetKey: targetSheetKey } = target;
+                    const { sheet: targetSheet, sheetKey: targetSheetKey, englishTableName } = target;
                     if (isSqliteMode()) {
-                        // SQLite 模式：生成 UPDATE SQL
+                        // SQLite 模式：用英文物理表名和英文列名生成 UPDATE SQL
                         const rowId = targetSheet.content[rowIndex]?.[0];
                         if (rowId === undefined || rowId === null) {
                             logError_ACU(`updateRow: row_id not found at index ${rowIndex}`);
@@ -38174,25 +38801,26 @@ insertRow(1, ["时间2", "大纲事件2...", "关键词"]);
                         for (const colName in data) {
                             if (colName === 'isImportMode')
                                 continue; // 跳过内部标记
-                            if (!headers.includes(colName)) {
+                            const { englishColName, chineseColName } = resolveColumnForSheet(englishTableName, colName);
+                            if (!headers.includes(chineseColName)) {
                                 logWarn_ACU(`updateRow: Column "${colName}" not found in table "${tableName}".`);
                                 continue;
                             }
                             const val = data[colName];
                             const escapedVal = val === null || val === undefined ? 'NULL' : `'${String(val).replace(/'/g, "''")}'`;
-                            setClauses.push(`${quoteIdentifier(colName)} = ${escapedVal}`);
+                            setClauses.push(`${quoteIdentifier(englishColName)} = ${escapedVal}`);
                         }
                         if (setClauses.length === 0) {
                             logWarn_ACU('updateRow: No valid columns to update.');
                             return true;
                         }
-                        const sql = `UPDATE ${quoteIdentifier(tableName)} SET ${setClauses.join(', ')} WHERE row_id = ${rowId};`;
+                        const sql = `UPDATE ${quoteIdentifier(englishTableName)} SET ${setClauses.join(', ')} WHERE row_id = ${rowId};`;
                         const result = getStorageProvider().executeMutation(sql);
                         if (result.errors.length > 0) {
                             logError_ACU(`updateRow SQL failed: ${result.errors.join(', ')}`);
                             return false;
                         }
-                        logDebug_ACU(`updateRow: [SQLite] Updated ${setClauses.length} cols in [${tableName}] row_id=${rowId}`);
+                        logDebug_ACU(`updateRow: [SQLite] Updated ${setClauses.length} cols in [${englishTableName}] row_id=${rowId}`);
                     }
                     else {
                         // 原生模式：直接操作 JSON 数组
@@ -38204,7 +38832,13 @@ insertRow(1, ["时间2", "大纲事件2...", "关键词"]);
                         const row = targetSheet.content[rowIndex];
                         let updated = 0;
                         for (const colName in data) {
-                            const colIndex = headers.indexOf(colName);
+                            if (colName === 'isImportMode')
+                                continue;
+                            // 将用户传入的列名翻译为中文（原生模式 headers 是中文）。
+                            // 原生模式下 NameMapper 未构建时 resolveColumnForSheet 原样返回，
+                            // 行为与旧版一致。
+                            const { chineseColName } = resolveColumnForSheet(englishTableName, colName);
+                            const colIndex = headers.indexOf(chineseColName);
                             if (colIndex !== -1) {
                                 row[colIndex] = data[colName];
                                 updated++;
@@ -38234,24 +38868,26 @@ insertRow(1, ["时间2", "大纲事件2...", "关键词"]);
                         logError_ACU(`insertRow: Table "${tableName}" not found.`);
                         return -1;
                     }
-                    const { sheet: targetSheet, sheetKey: targetSheetKey } = target;
+                    const { sheet: targetSheet, sheetKey: targetSheetKey, englishTableName } = target;
                     const headers = targetSheet.content[0] || [];
                     if (isSqliteMode()) {
-                        // SQLite 模式：生成 INSERT SQL
+                        // SQLite 模式：用英文物理表名和英文列名生成 INSERT SQL
                         const colNames = [];
                         const values = [];
                         for (const colName in data) {
-                            if (!headers.includes(colName))
+                            const { englishColName, chineseColName } = resolveColumnForSheet(englishTableName, colName);
+                            // 跳过 row_id（自增主键），同时检查英文形态和原始名，防止用户传中文"行号"等变体
+                            if (englishColName === 'row_id' || colName === 'row_id')
                                 continue;
-                            if (colName === 'row_id')
-                                continue; // row_id 自增，不手动指定
-                            colNames.push(quoteIdentifier(colName));
+                            if (!headers.includes(chineseColName))
+                                continue;
+                            colNames.push(quoteIdentifier(englishColName));
                             const val = data[colName];
                             values.push(val === null || val === undefined ? 'NULL' : `'${String(val).replace(/'/g, "''")}'`);
                         }
                         const sql = colNames.length > 0
-                            ? `INSERT INTO ${quoteIdentifier(tableName)} (${colNames.join(', ')}) VALUES (${values.join(', ')});`
-                            : `INSERT INTO ${quoteIdentifier(tableName)} DEFAULT VALUES;`;
+                            ? `INSERT INTO ${quoteIdentifier(englishTableName)} (${colNames.join(', ')}) VALUES (${values.join(', ')});`
+                            : `INSERT INTO ${quoteIdentifier(englishTableName)} DEFAULT VALUES;`;
                         const result = getStorageProvider().executeMutation(sql);
                         if (result.errors.length > 0) {
                             logError_ACU(`insertRow SQL failed: ${result.errors.join(', ')}`);
@@ -38259,15 +38895,16 @@ insertRow(1, ["时间2", "大纲事件2...", "关键词"]);
                         }
                         // 获取新插入行在 JSON 视图中的索引
                         const newIndex = targetSheet.content.length; // executeMutation 已同步 JSON 视图
-                        logDebug_ACU(`insertRow: [SQLite] Inserted row in [${tableName}]`);
+                        logDebug_ACU(`insertRow: [SQLite] Inserted row in [${englishTableName}]`);
                         await saveToLatestFloorAndRefresh(targetSheetKey, targetSheet.name, ctx, 'insertRow');
                         return newIndex;
                     }
                     else {
-                        // 原生模式：直接操作 JSON 数组
+                        // 原生模式：直接操作 JSON 数组，用中文列名在 headers 中定位
                         const newRow = new Array(headers.length).fill('');
                         for (const colName in data) {
-                            const colIndex = headers.indexOf(colName);
+                            const { chineseColName } = resolveColumnForSheet(englishTableName, colName);
+                            const colIndex = headers.indexOf(chineseColName);
                             if (colIndex !== -1) {
                                 newRow[colIndex] = data[colName];
                             }
@@ -38299,25 +38936,25 @@ insertRow(1, ["时间2", "大纲事件2...", "关键词"]);
                         logError_ACU(`deleteRow: Table "${tableName}" not found.`);
                         return false;
                     }
-                    const { sheet: targetSheet, sheetKey: targetSheetKey } = target;
+                    const { sheet: targetSheet, sheetKey: targetSheetKey, englishTableName } = target;
                     if (rowIndex >= targetSheet.content.length) {
                         logError_ACU(`deleteRow: Row index ${rowIndex} out of bounds.`);
                         return false;
                     }
                     if (isSqliteMode()) {
-                        // SQLite 模式：生成 DELETE SQL
+                        // SQLite 模式：用英文物理表名生成 DELETE SQL
                         const rowId = targetSheet.content[rowIndex]?.[0];
                         if (rowId === undefined || rowId === null) {
                             logError_ACU(`deleteRow: row_id not found at index ${rowIndex}`);
                             return false;
                         }
-                        const sql = `DELETE FROM ${quoteIdentifier(tableName)} WHERE row_id = ${rowId};`;
+                        const sql = `DELETE FROM ${quoteIdentifier(englishTableName)} WHERE row_id = ${rowId};`;
                         const result = getStorageProvider().executeMutation(sql);
                         if (result.errors.length > 0) {
                             logError_ACU(`deleteRow SQL failed: ${result.errors.join(', ')}`);
                             return false;
                         }
-                        logDebug_ACU(`deleteRow: [SQLite] Deleted row_id=${rowId} from [${tableName}]`);
+                        logDebug_ACU(`deleteRow: [SQLite] Deleted row_id=${rowId} from [${englishTableName}]`);
                     }
                     else {
                         // 原生模式：直接操作 JSON 数组
