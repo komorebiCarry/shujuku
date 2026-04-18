@@ -383,6 +383,50 @@ describe('SqlTableService', () => {
   });
 
   // ═══════════════════════════════════════════════════════════════
+  // 新开卡场景：executeQuery 不触发建表
+  // ═══════════════════════════════════════════════════════════════
+  describe('新开卡场景下 executeQuery 不触发建表', () => {
+    it('新开卡后 executeQuery 查询不存在的表应抛出错误，而非静默建表', async () => {
+      // 模拟新开卡：mergeAll 返回 null
+      mockMergeAll.mockResolvedValue(null);
+      await service.loadFromChat();
+
+      // executeQuery 不应触发建表，查询不存在的表应抛出错误
+      expect(() => service.executeQuery('SELECT * FROM inventory')).toThrow();
+    });
+
+    it('新开卡后 applyEdits 才触发建表', async () => {
+      // 模拟新开卡
+      mockMergeAll.mockResolvedValue(null);
+      await service.loadFromChat();
+
+      // 设置模板数据，让 _ensureTablesFromTemplate 能找到模板
+      const { parseTableTemplateJson_ACU } = await import('../../../src/shared/utils');
+      vi.mocked(parseTableTemplateJson_ACU).mockReturnValue({
+        mate: { type: 'acu', version: 1 },
+        sheet_0: {
+          uid: 'inventory',
+          name: '背包物品表',
+          sourceData: { note: '', initNode: '', deleteNode: '', updateNode: '', insertNode: '', ddl: TEST_DDL },
+          content: [['row_id', 'item_name', 'quantity']],
+          updateConfig: {},
+          exportConfig: {},
+          orderNo: 0,
+        },
+      } as any);
+
+      // applyEdits 应触发建表并成功执行
+      const result = service.applyEdits("INSERT INTO inventory VALUES (1, '铁剑', 3);");
+      expect(result.success).toBe(true);
+      expect(result.appliedEdits).toBe(1);
+
+      // 建表后 executeQuery 应正常工作
+      const queryResult = service.executeQuery('SELECT * FROM inventory');
+      expect(queryResult.rowCount).toBe(1);
+    });
+  });
+
+  // ═══════════════════════════════════════════════════════════════
   // executeMutation
   // ═══════════════════════════════════════════════════════════════
   describe('executeMutation', () => {
