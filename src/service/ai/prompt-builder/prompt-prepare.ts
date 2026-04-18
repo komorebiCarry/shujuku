@@ -11,6 +11,7 @@ import { getCombinedWorldbookContent_ACU } from '../../worldbook/pipeline';
 import { isSummaryOrOutlineTable_ACU, logDebug_ACU, logError_ACU, logWarn_ACU, normalizeExcludeRules_ACU, normalizeExtractRules_ACU } from '../../../shared/utils';
 import { applyContextTagFilters_ACU } from '../../runtime/helpers-remaining';
 import { isSqliteMode } from '../../table/storage-mode';
+import { parseDDLColumnNames } from '../../../shared/ddl-utils';
 
   export async function prepareAIInput_ACU(messages: any[], updateMode = 'standard', targetSheetKeys: string[] | null = null, options: any = {}) {
     if (!currentJsonTableData_ACU) {
@@ -225,7 +226,9 @@ export function formatTableForSqliteMode(table: any, tableIndex: number, sheetKe
     }
 
     // 输出当前数据（注释格式的表格）
-    const headers = table.content[0] || [];
+    // 优先使用 DDL 中的英文列名作为表头，避免 AI 看到中文列名后用中文属性名写 SQL
+    const ddlColumnNames = parseDDLColumnNames(ddl);
+    const headers = (ddlColumnNames.length > 0) ? ddlColumnNames : (table.content[0] || []);
     text += `\n-- 当前数据 (${rowsToProcess.length} rows)\n`;
     text += `-- | ${headers.join(' | ')} |\n`;
     rowsToProcess.forEach((row: any) => {
