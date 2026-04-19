@@ -447,6 +447,81 @@ export function clearAllTableFields_ACU(msg: any): void {
     delete msg._acu_local_template_base_state_seeded;
 }
 
+/**
+ * 按隔离标签清空单条消息上的表格数据（精确版 clearAllTableFields）。
+ *
+ * 与 clearAllTableFields_ACU 的区别：
+ * - clearAllTableFields_ACU：无差别删除所有标签的所有字段，会误删同一消息上其他标签的数据。
+ * - 本函数：只删除当前隔离标签下的数据；如果消息上还有其他标签的数据则保留。
+ *
+ * 清理范围：
+ * 1. 新版 IsolatedData[isolationKey] 槽 → 删除该标签槽；若容器变空则删除整个 IsolatedData 字段。
+ * 2. 旧版兼容字段（IndependentData / Data / SummaryData / ModifiedKeys / UpdateGroupKeys / Identity）
+ *    → 仅在 isolationConfig 不启用隔离或该消息的 Identity 匹配当前隔离代码时才删除。
+ *    这样可以避免把同一消息上属于其他隔离标签的旧版数据误删。
+ * 3. 不删除消息正文（mes）、不删除非表格业务字段。
+ *
+ * @param msg 聊天消息对象
+ * @param isolationKey 当前隔离标签键名
+ * @param isolationConfig 隔离配置（用于判断旧版字段是否属于当前标签）
+ * @returns 是否有任何字段被修改（用于调用方决定是否 saveChat）
+ */
+export function clearTableFieldsForIsolation_ACU(
+    msg: any,
+    isolationKey: string,
+    isolationConfig: IsolationConfig_ACU,
+): boolean {
+    if (!msg) return false;
+
+    let changed = false;
+
+    // ── 新版：删除指定隔离标签的槽 ──
+    const container = parseIsolatedDataField(msg);
+    if (container && container[isolationKey]) {
+        delete container[isolationKey];
+        changed = true;
+        // 如果容器里已经没有任何标签槽了，删除整个字段
+        if (Object.keys(container).length === 0) {
+            delete msg.TavernDB_ACU_IsolatedData;
+        } else {
+            msg.TavernDB_ACU_IsolatedData = container;
+        }
+    }
+
+    // ── 旧版：仅在消息属于当前隔离标签时才删除 ──
+    // 判断条件与 mergeAllIndependentTables_ACU 中的 legacy 兼容逻辑一致：
+    // - 隔离启用：msg.TavernDB_ACU_Identity === code 时匹配
+    // - 隔离关闭（无标签模式）：msg.TavernDB_ACU_Identity 不存在时匹配
+    if (isLegacyMatchForIsolation_ACU(msg, isolationConfig)) {
+        if (msg.TavernDB_ACU_IndependentData) {
+            delete msg.TavernDB_ACU_IndependentData;
+            changed = true;
+        }
+        if (msg.TavernDB_ACU_Data) {
+            delete msg.TavernDB_ACU_Data;
+            changed = true;
+        }
+        if (msg.TavernDB_ACU_SummaryData) {
+            delete msg.TavernDB_ACU_SummaryData;
+            changed = true;
+        }
+        if (msg.TavernDB_ACU_Identity !== undefined) {
+            delete msg.TavernDB_ACU_Identity;
+            changed = true;
+        }
+        if (msg.TavernDB_ACU_ModifiedKeys) {
+            delete msg.TavernDB_ACU_ModifiedKeys;
+            changed = true;
+        }
+        if (msg.TavernDB_ACU_UpdateGroupKeys) {
+            delete msg.TavernDB_ACU_UpdateGroupKeys;
+            changed = true;
+        }
+    }
+
+    return changed;
+}
+
 // ════════════════════════════════════════════════════════════════
 // 辅助类
 // ════════════════════════════════════════════════════════════════

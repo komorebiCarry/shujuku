@@ -77,7 +77,7 @@ import { getTemplateVariableStores_ACU, setTemplateVariableStores_ACU, parseRand
     const contextForIf = {
       seedContent: sharedContext.seedContentForConditional,
       allTablesJson: sharedContext.allTablesJson,
-      plotContent: sharedContext.lastPlotContent || '',
+      plotContent: sharedContext.taskPlotContent || sharedContext.lastPlotContent || '',
     };
 
     return runWithIsolatedPlotTemplateVariables_ACU(() => {
@@ -117,16 +117,47 @@ import { getTemplateVariableStores_ACU, setTemplateVariableStores_ACU, parseRand
     return String(text).slice(contentStart, closeIdx);
   }
 
-  export function extractPlotTagsFromResponse_ACU(text: string, extractTags: string) {
-    const tagNames = String(extractTags || '')
+  export function extractPlotTagsFromResponse_ACU(text: string, extractTags: string, extractInjectTags: string = '') {
+    const injectTagNames = String(extractInjectTags || '')
       .split(',')
       .map((tag: string) => tag.trim())
       .filter(Boolean);
 
+    const normalTagNames = String(extractTags || '')
+      .split(',')
+      .map((tag: string) => tag.trim())
+      .filter(Boolean);
+
+    // 构建注入标签集合（优先级高）
+    const injectTagNameSet = new Set(injectTagNames.map((t: string) => t.toLowerCase()));
+
     const extractedTags: Record<string, string> = {};
     const injectedFragments: string[] = [];
+    // 新增：注入标签专用集合（不参与尾追加）
+    const injectOnlyTags: Record<string, string> = {};
+    const injectOnlyFragments: string[] = [];
+    // 标记哪些 tagName 来自 extractInjectTags
+    const injectOnlyTagNames: string[] = [];
 
-    tagNames.forEach((tagName: string) => {
+    // 先提取 extractInjectTags 的标签
+    injectTagNames.forEach((tagName: string) => {
+      const content = extractLastTagContent_ACU(text, tagName);
+      if (content !== null) {
+        injectOnlyTags[tagName] = content;
+        injectOnlyFragments.push(`<${tagName}>${content}</${tagName}>`);
+        injectOnlyTagNames.push(tagName);
+        // 同时放入 extractedTags 以支持跨任务传递和占位替换
+        extractedTags[tagName] = content;
+        injectedFragments.push(`<${tagName}>${content}</${tagName}>`);
+      }
+    });
+
+    // 再提取 extractTags 的标签（同名标签被 extractInjectTags 覆盖，不重复提取）
+    normalTagNames.forEach((tagName: string) => {
+      if (injectTagNameSet.has(tagName.toLowerCase())) {
+        // 同名标签已被 extractInjectTags 处理，跳过
+        return;
+      }
       const content = extractLastTagContent_ACU(text, tagName);
       if (content !== null) {
         extractedTags[tagName] = content;
@@ -135,9 +166,12 @@ import { getTemplateVariableStores_ACU, setTemplateVariableStores_ACU, parseRand
     });
 
     return {
-      tagNames,
+      tagNames: [...injectTagNames, ...normalTagNames],
       extractedTags,
       injectedFragments,
+      injectOnlyTags,
+      injectOnlyFragments,
+      injectOnlyTagNames,
     };
   }
 
@@ -225,6 +259,71 @@ import { getTemplateVariableStores_ACU, setTemplateVariableStores_ACU, parseRand
     });
   }
 
+  // ═══ 任务级世界书触发文本构造 ═══
+
+  /**
+   * 基于当前任务 prompt 中实际使用的 {{tag}} 占位符，提取对应标签文本，
+   * 拼接为变量世界书的触发扫描文本。
+   *
+   * 标签内容来源优先级：
+   * 1. 若提供了 relayTagMap（本轮先前阶段的聚合结果），优先从中取标签内容
+   * 2. 否则从 plotContent（上轮剧情历史）中按 tagName 提取 XML 标签内容
+   *
+   * 这保证世界书触发依据与 renderPlotTaskMessages_ACU 中的 {{tag}} 注入来源一致：
+   * - 第一阶段（useHistoryRelay=true）：relayTagMap 为空，走 plotContent（上一轮历史）
+   * - 后续阶段（useHistoryRelay=false）：relayTagMap 含本轮先前阶段结果，从中取标签
+   *
+   * @param taskPromptGroup - 当前任务的 promptGroup（数组，每项有 content 字段）
+   * @param plotContent - 上轮剧情历史内容（lastPlotContent）
+   * @param relayTagMap - 本轮先前阶段的聚合标签结果（Map<string, string[]>），可选
+   * @returns 拼接后的世界书触发文本；无匹配标签时返回空字符串
+   */
+  export function buildTaskWorldbookTriggerText_ACU(taskPromptGroup: any[], plotContent: string, relayTagMap?: Map<string, any>): string {
+    const messages = Array.isArray(taskPromptGroup) ? taskPromptGroup : [];
+    const sourcePlotContent = String(plotContent || '');
+
+    if (!messages.length) return '';
+
+    // 1. 从所有 prompt segment 中汇总 {{tag}} 名称
+    const allTagNames: string[] = [];
+    const seenTagNames = new Set<string>();
+    for (const seg of messages) {
+      if (!seg || typeof seg.content !== 'string') continue;
+      const names = getPlotPlaceholderTagNames_ACU(seg.content);
+      for (const name of names) {
+        if (!seenTagNames.has(name)) {
+          seenTagNames.add(name);
+          allTagNames.push(name);
+        }
+      }
+    }
+
+    if (!allTagNames.length) return '';
+
+    // 2. 确定标签内容来源：优先使用 relayTagMap（本轮先前阶段结果），
+    //    否则从上轮剧情历史文本中提取
+    const blocks: string[] = [];
+
+    if (relayTagMap instanceof Map && relayTagMap.size > 0) {
+      // 本轮先前阶段的聚合结果
+      for (const tagName of allTagNames) {
+        if (relayTagMap.has(tagName)) {
+          const block = buildPlotTagBlock_ACU(tagName, relayTagMap.get(tagName));
+          if (block) blocks.push(block);
+        }
+      }
+    } else if (sourcePlotContent.trim()) {
+      // 上轮剧情历史
+      const tagMap = buildPlotTagMapFromText_ACU(sourcePlotContent, allTagNames);
+      tagMap.forEach((contents, tagName) => {
+        const block = buildPlotTagBlock_ACU(tagName, contents);
+        if (block) blocks.push(block);
+      });
+    }
+
+    return blocks.join('\n');
+  }
+
   // ═══ Task 结果排序/聚合/构建 ═══
 
   export function sortPlotTaskResults_ACU(results: any[]) {
@@ -235,6 +334,8 @@ import { getTemplateVariableStores_ACU, setTemplateVariableStores_ACU, parseRand
 
   export function aggregatePlotTaskTags_ACU(taskResults: any[]) {
     const aggregated = new Map();
+    // 新增：记录哪些 tagName 来自 extractInjectTags（不参与尾追加）
+    const injectOnlyTagNames = new Set<string>();
     const sortedResults = sortPlotTaskResults_ACU(taskResults);
 
     sortedResults.forEach((result: Record<string, any>) => {
@@ -243,9 +344,13 @@ import { getTemplateVariableStores_ACU, setTemplateVariableStores_ACU, parseRand
         if (!aggregated.has(tagName)) aggregated.set(tagName, []);
         aggregated.get(tagName).push(content ?? '');
       });
+      // 收集 injectOnly 标签名
+      if (Array.isArray(result.injectOnlyTagNames)) {
+        result.injectOnlyTagNames.forEach((name: string) => injectOnlyTagNames.add(name));
+      }
     });
 
-    return aggregated;
+    return { aggregated, injectOnlyTagNames };
   }
 
   export function buildAggregatedPlotTagBlocks_ACU(aggregatedTags: Map<string, any>) {
@@ -276,7 +381,7 @@ import { getTemplateVariableStores_ACU, setTemplateVariableStores_ACU, parseRand
     return buildPlotRawFallbackText_ACU(taskResults);
   }
 
-  export function buildFinalPlotInjectionMessage_ACU(finalSystemDirectiveContent: string, taskResults: any[], aggregatedTags: Map<string, any>) {
+  export function buildFinalPlotInjectionMessage_ACU(finalSystemDirectiveContent: string, taskResults: any[], aggregatedTags: Map<string, any>, injectOnlyTagNames: Set<string> = new Set()) {
     const defaultDirective = '[SYSTEM_DIRECTIVE: You are a storyteller. The following <plot> block is your absolute script for this turn. You MUST follow the <directive> within it to generate the story.]';
     const baseDirective = String(finalSystemDirectiveContent || '').trim() || defaultDirective;
     const rawFallbackText = buildPlotRawFallbackText_ACU(taskResults);
@@ -303,6 +408,8 @@ import { getTemplateVariableStores_ACU, setTemplateVariableStores_ACU, parseRand
         const unusedTagBlocks: string[] = [];
         aggregatedTags.forEach((contents, tagName) => {
           if (matchedTags.has(tagName)) return;
+          // injectOnly 标签（extractInjectTags 提取的）即使未使用也不追加到末尾
+          if (injectOnlyTagNames.has(tagName)) return;
           unusedTagBlocks.push(`<${tagName}>${(Array.isArray(contents) ? contents : [contents]).map(content => content ?? '').join('\n\n')}</${tagName}>`);
         });
 
@@ -311,7 +418,14 @@ import { getTemplateVariableStores_ACU, setTemplateVariableStores_ACU, parseRand
           .join('\n');
       }
 
-      const aggregatedTagBlocks = buildAggregatedPlotTagBlocks_ACU(aggregatedTags);
+      // 没有占位符时：只追加非 injectOnly 的标签块
+      const filteredTags = new Map();
+      aggregatedTags.forEach((contents, tagName) => {
+        if (!injectOnlyTagNames.has(tagName)) {
+          filteredTags.set(tagName, contents);
+        }
+      });
+      const aggregatedTagBlocks = buildAggregatedPlotTagBlocks_ACU(filteredTags);
       return [baseDirective, aggregatedTagBlocks].filter(Boolean).join('\n');
     }
 

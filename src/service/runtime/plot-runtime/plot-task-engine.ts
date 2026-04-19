@@ -4,7 +4,7 @@
  * 从 helpers-plot-runtime.ts 拆出（L532-L1023 + L1513-L1618）
  */
 import { DEFAULT_PLOT_SETTINGS_ACU } from '../../../shared/defaults-json.js';
-import { callApi_ACU, getApiConfigByPreset_ACU } from '../../ai/api-call';
+import { callApi_ACU, callApiWithPlotPreset_ACU, getApiConfigByPreset_ACU } from '../../ai/api-call';
 import { abortController_ACU, currentJsonTableData_ACU, planningGuard_ACU, settings_ACU, _set_tempPlotToSave_ACU, _set_currentJsonTableData_ACU } from '../state-manager';
 import { getCharLorebooks_ACU } from '../../../data/gateways/character-gateway';
 import { getChatArray_ACU } from '../../../data/gateways/chat-gateway';
@@ -16,7 +16,7 @@ import { parseRandomTags_ACU, replaceRandomVariables_ACU, getLatestAIMessageCont
 import { applyContextTagFilters_ACU, applyExcludeRulesToText_ACU } from '../helpers-context-tags';
 import { mergeAllIndependentTables_ACU } from '../helpers-data-merge';
 import { formatTableDataForLLM_ACU, formatOutlineTableForPlot_ACU, formatSummaryIndexForPlot_ACU, getSummaryIndexContentForPlot_ACU } from './plot-data-format';
-import { getNormalizedPlotMessageRole_ACU, tryRenderPlotTemplateWithEjs_ACU, renderPlotTaskContentWithIsolatedVariables_ACU, extractPlotTagsFromResponse_ACU, getPlotPlaceholderTagNames_ACU, buildPlotTagMapFromText_ACU, replacePlotTagPlaceholders_ACU, sortPlotTaskResults_ACU, aggregatePlotTaskTags_ACU, buildPlotSaveContentFromTaskResults_ACU, buildFinalPlotInjectionMessage_ACU } from './plot-tag-utils';
+import { getNormalizedPlotMessageRole_ACU, tryRenderPlotTemplateWithEjs_ACU, renderPlotTaskContentWithIsolatedVariables_ACU, extractPlotTagsFromResponse_ACU, getPlotPlaceholderTagNames_ACU, buildPlotTagMapFromText_ACU, replacePlotTagPlaceholders_ACU, buildTaskWorldbookTriggerText_ACU, sortPlotTaskResults_ACU, aggregatePlotTaskTags_ACU, buildPlotSaveContentFromTaskResults_ACU, buildFinalPlotInjectionMessage_ACU } from './plot-tag-utils';
 import { getPlotFromHistory_ACU, savePlotToLatestMessage_ACU } from './plot-history-preset';
 import { abortableDelay } from '../../../shared/abortable-delay';
 
@@ -26,9 +26,10 @@ import { abortableDelay } from '../../../shared/abortable-delay';
     }
   }
 
-  export function willPlotUseMainApiGenerateRaw_ACU() {
+  export function willPlotUseMainApiGenerateRaw_ACU(taskApiPreset: string = '') {
     try {
-      const apiPresetConfig: any = getApiConfigByPreset_ACU(settings_ACU.plotApiPreset) || {};
+      const effectivePreset = taskApiPreset || settings_ACU.plotApiPreset || '';
+      const apiPresetConfig: any = getApiConfigByPreset_ACU(effectivePreset) || {};
       const effectiveApiMode = apiPresetConfig.apiMode ?? settings_ACU.apiMode;
       const effectiveApiConfig = apiPresetConfig.apiConfig || settings_ACU.apiConfig || {};
       return effectiveApiMode !== 'tavern' && !!effectiveApiConfig.useMainApi;
@@ -112,8 +113,10 @@ import { abortableDelay } from '../../../shared/abortable-delay';
     const lastPlotContent = getPlotFromHistory_ACU(historyLookupOptions);
     logDebug_ACU('[剧情推进] $6 上轮规划数据:', lastPlotContent ? `长度=${lastPlotContent.length}` : '(空)');
 
-    let worldbookContent = await getWorldbookContentForPlot_ACU(plotSettings, userMessage, lastPlotContent);
-    logDebug_ACU('[剧情推进] $1 世界书内容(原始):', worldbookContent ? `长度=${worldbookContent.length}` : '(空)');
+    // 世界书内容不再在此处用整段 lastPlotContent 预计算，
+    // 而是延迟到 executeSinglePlotTask_ACU 中按任务实际 {{tag}} 注入内容按需计算。
+    let worldbookContent = '';
+    logDebug_ACU('[剧情推进] $1 世界书内容: 延迟到任务级计算');
 
     let outlineTableContent = '';
     try {
@@ -205,17 +208,21 @@ import { abortableDelay } from '../../../shared/abortable-delay';
       $C: charInfoContent_Plot,
     };
 
-    const performReplacements = (text: string) => {
+    const performReplacements = (text: string, taskOverrides: Record<string, any> = {}) => {
       if (!text) return '';
       let processed = text;
 
-      const worldbookReplacement = worldbookContent
-        ? `\n<worldbook_context>\n${filterPlotInjectedContent(worldbookContent, '$1')}\n</worldbook_context>\n`
+      // 任务级世界书内容优先；若未提供则使用共享预计算值（当前为空）
+      const effectiveWorldbookContent = taskOverrides.$1 !== undefined
+        ? String(taskOverrides.$1)
+        : worldbookContent;
+      const worldbookReplacement = effectiveWorldbookContent
+        ? `\n<worldbook_context>\n${filterPlotInjectedContent(effectiveWorldbookContent, '$1')}\n</worldbook_context>\n`
         : '';
       processed = processed.replace(/(?<!\\)\$1/g, worldbookReplacement);
 
       for (const key in replacements) {
-        const value = replacements[key];
+        const value = taskOverrides[key] !== undefined ? taskOverrides[key] : replacements[key];
         const regex = new RegExp(escapeRegExp_ACU(key), 'g');
         const filteredValue = filterPlotInjectedContent(value, key);
         processed = processed.replace(regex, () => filteredValue);
@@ -223,12 +230,7 @@ import { abortableDelay } from '../../../shared/abortable-delay';
       return processed;
     };
 
-    worldbookContent = await tryRenderPlotTemplateWithEjs_ACU(worldbookContent);
-    logDebug_ACU('[剧情推进] $1 世界书内容(渲染后):', worldbookContent ? `长度=${worldbookContent.length}` : '(空)');
-    worldbookContent = parseRandomTags_ACU(worldbookContent);
-    worldbookContent = replaceRandomVariables_ACU(worldbookContent);
-    // [P4] {[db...]}/{[sql...]} 值替换（SQLite 模式下）
-    worldbookContent = replaceDbSqlVariables(worldbookContent);
+    // 世界书后处理已在任务级逻辑中完成；共享阶段不再做后处理
 
     const defaultDirective = '[SYSTEM_DIRECTIVE: You are a storyteller. The following <plot> block is your absolute script for this turn. You MUST follow the <directive> within it to generate the story.]';
     let finalSystemDirectiveContent = defaultDirective;
@@ -268,11 +270,17 @@ import { abortableDelay } from '../../../shared/abortable-delay';
     const promptGroup = JSON.parse(JSON.stringify(task?.promptGroup || []));
     const messagesToUse = Array.isArray(promptGroup) ? promptGroup : [];
 
+    // 构建 $1 的任务级覆盖值（任务级世界书内容）
+    const replacementOverrides: Record<string, any> = {};
+    if (sharedContext.taskWorldbookContent !== undefined) {
+      replacementOverrides.$1 = sharedContext.taskWorldbookContent;
+    }
+
     for (const seg of messagesToUse) {
       if (!seg || typeof seg.content !== 'string') continue;
       let c = seg.content;
       c = await tryRenderPlotTemplateWithEjs_ACU(c);
-      c = sharedContext.performReplacements(c);
+      c = sharedContext.performReplacements(c, replacementOverrides);
       const relayTagMap = runtimeOptions.useHistoryRelay
         ? buildPlotTagMapFromText_ACU(sharedContext.lastPlotContent, getPlotPlaceholderTagNames_ACU(c))
         : (runtimeOptions.relayTagMap instanceof Map ? runtimeOptions.relayTagMap : new Map());
@@ -296,9 +304,47 @@ import { abortableDelay } from '../../../shared/abortable-delay';
     );
     const minLength = normalizeNonNegativeInteger_ACU(normalizedTask.minLength, 0);
 
+    // 任务级世界书计算：基于当前任务实际使用的 {{tag}} 注入内容 + 本轮上下文触发，
+    // 而不是固定使用整段上一轮剧情内容。
+    // 标签来源与 renderPlotTaskMessages_ACU 一致：
+    // - 第一阶段（useHistoryRelay=true）：relayTagMap 为空，走 lastPlotContent
+    // - 后续阶段（useHistoryRelay=false）：relayTagMap 含本轮先前阶段结果
+    let taskWorldbookContent = '';
+    try {
+      const taskPlotContent = String(sharedContext.lastPlotContent || '');
+      const effectiveRelayTagMap = runtimeOptions.useHistoryRelay
+        ? undefined  // 第一阶段：从 lastPlotContent 提取
+        : (runtimeOptions.relayTagMap instanceof Map ? runtimeOptions.relayTagMap : undefined);
+      // 从任务 prompt 中提取 {{tag}}，按实际标签来源取对应内容，构造触发文本
+      const worldbookTriggerText = buildTaskWorldbookTriggerText_ACU(normalizedTask.promptGroup, taskPlotContent, effectiveRelayTagMap);
+      if (worldbookTriggerText) {
+        logDebug_ACU(`[剧情推进] [任务:${taskLabel}] 基于 {{tag}} 注入内容构造世界书触发文本，长度: ${worldbookTriggerText.length}`);
+      } else {
+        logDebug_ACU(`[剧情推进] [任务:${taskLabel}] 无 {{tag}} 注入内容，世界书仅基于本轮上下文触发`);
+      }
+      taskWorldbookContent = await getWorldbookContentForPlot_ACU(sharedContext.plotSettings, sharedContext.userMessage, worldbookTriggerText);
+      if (taskWorldbookContent) {
+        // 对任务级世界书内容执行与共享管线相同的后处理
+        taskWorldbookContent = await tryRenderPlotTemplateWithEjs_ACU(taskWorldbookContent);
+        taskWorldbookContent = parseRandomTags_ACU(taskWorldbookContent);
+        taskWorldbookContent = replaceRandomVariables_ACU(taskWorldbookContent);
+        taskWorldbookContent = replaceDbSqlVariables(taskWorldbookContent);
+        logDebug_ACU(`[剧情推进] [任务:${taskLabel}] 任务级世界书内容长度: ${taskWorldbookContent.length}`);
+      }
+    } catch (wbError) {
+      logWarn_ACU(`[剧情推进] [任务:${taskLabel}] 任务级世界书计算失败，$1 将为空:`, wbError);
+      taskWorldbookContent = '';
+    }
+
+    // 构建任务级共享上下文：覆盖 $1 替换值，使 performReplacements 使用任务级世界书内容
+    const taskSharedContext = {
+      ...sharedContext,
+      taskWorldbookContent,
+    };
+
     try {
       checkPlotAbortRequested_ACU();
-      const messages = await renderPlotTaskMessages_ACU(normalizedTask, sharedContext, runtimeOptions);
+      const messages = await renderPlotTaskMessages_ACU(normalizedTask, taskSharedContext, runtimeOptions);
       checkPlotAbortRequested_ACU();
 
       if (!messages.length) {
@@ -328,7 +374,11 @@ import { abortableDelay } from '../../../shared/abortable-delay';
         let tempMessage = null;
         let apiError = null;
         try {
-          tempMessage = await callApi_ACU(messages, settings_ACU, abortController_ACU?.signal || null);
+          // [同组统一] API 预设覆盖：优先使用 stage 级决议的 effective preset
+          const effectivePlotApiPreset = runtimeOptions.stageEffectivePreset !== undefined
+            ? String(runtimeOptions.stageEffectivePreset)
+            : (normalizedTask.taskApiPreset || settings_ACU.plotApiPreset || '');
+          tempMessage = await callApiWithPlotPreset_ACU(messages, effectivePlotApiPreset, abortController_ACU?.signal || null);
         } catch (apiCallError) {
           if (apiCallError?.name === 'AbortError' || String(apiCallError?.message || '').toLowerCase().includes('aborted')) {
             throw apiCallError;
@@ -370,7 +420,7 @@ import { abortableDelay } from '../../../shared/abortable-delay';
         };
       }
 
-      const { tagNames, extractedTags, injectedFragments } = extractPlotTagsFromResponse_ACU(rawResponse, normalizedTask.extractTags);
+      const { tagNames, extractedTags, injectedFragments, injectOnlyTags, injectOnlyFragments, injectOnlyTagNames } = extractPlotTagsFromResponse_ACU(rawResponse, normalizedTask.extractTags, normalizedTask.extractInjectTags);
       if (tagNames.length > 0 && Object.keys(extractedTags).length > 0) {
         logDebug_ACU(`[剧情推进] [阶段:${taskStage}] [任务:${taskLabel}] 成功摘取标签: ${Object.keys(extractedTags).join(', ')}`);
       }
@@ -382,6 +432,9 @@ import { abortableDelay } from '../../../shared/abortable-delay';
         rawResponse,
         extractedTags,
         injectedFragments,
+        injectOnlyTags,
+        injectOnlyFragments,
+        injectOnlyTagNames,
         error: null as string | null,
         stage: taskStage,
         order: normalizedTask.order ?? 0,
@@ -430,13 +483,39 @@ import { abortableDelay } from '../../../shared/abortable-delay';
     });
     checkPlotAbortRequested_ACU();
 
+    // 构建历史检索选项，供任务级历史回溯使用
+    const historyAnchorText = String(inputForHash ?? userMessage ?? '');
+    const historyLookupOptions = hasExistingUserMessage && historyAnchorText.trim()
+      ? {
+          beforeUserInputHash: hashUserInput_ACU(historyAnchorText),
+          beforeUserInputText: historyAnchorText,
+        }
+      : {};
+
     const willUseMainApiGenerateRaw = willPlotUseMainApiGenerateRaw_ACU();
     const successfulResults: any[] = [];
     const failedResults: any[] = [];
     let aggregatedTags = new Map();
+    let aggregatedInjectOnlyTagNames = new Set<string>();
 
     for (let stageIndex = 0; stageIndex < stageGroups.length; stageIndex++) {
       const stageGroup = stageGroups[stageIndex];
+
+      // [同组统一] 决议本 stage 的 groupEffectivePreset：
+      // 取 stage 内第一个有显式 taskApiPreset 的任务作为组级 preset；
+      // 若均无显式 preset，则回退到全局 plotApiPreset
+      let stageEffectivePreset = '';
+      for (const t of stageGroup.tasks) {
+        const taskPreset = String(t?.taskApiPreset || '').trim();
+        if (taskPreset) {
+          stageEffectivePreset = taskPreset;
+          break;
+        }
+      }
+      if (!stageEffectivePreset) {
+        stageEffectivePreset = settings_ACU.plotApiPreset || '';
+      }
+      logDebug_ACU(`[剧情推进] 阶段 ${stageGroup.stage} 统一 effective preset: ${stageEffectivePreset || '(当前配置)'}`);
 
       const stageResults = await Promise.all(
         stageGroup.tasks.map((task: any) =>
@@ -444,6 +523,8 @@ import { abortableDelay } from '../../../shared/abortable-delay';
             willUseMainApiGenerateRaw,
             relayTagMap: aggregatedTags,
             useHistoryRelay: stageIndex === 0,
+            historyLookupOptions,
+            stageEffectivePreset,
           }),
         ),
       );
@@ -473,7 +554,10 @@ import { abortableDelay } from '../../../shared/abortable-delay';
         };
       }
 
-      aggregatedTags = aggregatePlotTaskTags_ACU(successfulResults);
+      const { aggregated: stageAggregated, injectOnlyTagNames: stageInjectOnly } = aggregatePlotTaskTags_ACU(successfulResults);
+      aggregatedTags = stageAggregated;
+      // 合并 injectOnly 标签名
+      stageInjectOnly.forEach((name: string) => aggregatedInjectOnlyTagNames.add(name));
       logDebug_ACU(`[剧情推进] 阶段 ${stageGroup.stage} 已完成，成功任务数: ${stageSuccessfulResults.length}`);
     }
 
@@ -493,6 +577,7 @@ import { abortableDelay } from '../../../shared/abortable-delay';
       content: saveContent,
       userInputHash,
       userInputText: inputForHash,
+      taskResults: successfulResults,
     });
     logDebug_ACU('[剧情推进] [Plot] 已暂存plot数据，用户输入哈希:', userInputHash, '，原始文本长度:', inputForHash?.length || 0);
 
@@ -500,6 +585,7 @@ import { abortableDelay } from '../../../shared/abortable-delay';
       sharedContext.finalSystemDirectiveContent,
       successfulResults,
       aggregatedTags,
+      aggregatedInjectOnlyTagNames,
     );
 
     await savePlotToLatestMessage_ACU(true);

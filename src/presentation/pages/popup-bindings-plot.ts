@@ -16,6 +16,7 @@ import { buildDefaultPlotPromptGroup_ACU } from '../../service/plot/plot-state';
 import { getCurrentChatPlotScopeState_ACU } from '../../service/template/chat-scope';
 import { startAutoLoop_ACU, stopAutoLoop_ACU } from '../triggers/auto-loop';
 import { getCurrentPlotSettingsFromUI_ACU, loadPlotPresetSelect_ACU, loadPlotSettingsToUI_ACU, savePlotPresetAsNew_ACU } from './popup-helpers';
+import { refreshPresetUIAfterSwitch_ACU } from '../components/pipeline-ui-helpers';
 import { applyWorldbookEntryFilter_ACU, applyWorldbookListFilter_ACU, getPlotWorldbookConfig_ACU, isEntryBlocked_ACU, populatePlotWorldbookEntryList_ACU, renderLazyWorldbookEntryItems_ACU, toggleLazyWorldbookEntryGroup_ACU, updateLazyWorldbookEntryCheckedState_ACU, updatePlotWorldbookSourceView_ACU } from '../components/worldbook-selector';
 import { getLorebookEntriesByNames_ACU, getWorldBooks_ACU } from '../../service/worldbook/pipeline';
 
@@ -148,6 +149,7 @@ export async function bindPlotEvents_ACU(): Promise<void> {
       [
         `#${SCRIPT_ID_PREFIX_ACU}-plot-task-name`,
         `#${SCRIPT_ID_PREFIX_ACU}-plot-extract-tags`,
+        `#${SCRIPT_ID_PREFIX_ACU}-plot-extract-inject-tags`,
         `#${SCRIPT_ID_PREFIX_ACU}-plot-min-length`,
         `#${SCRIPT_ID_PREFIX_ACU}-plot-task-stage`,
         `#${SCRIPT_ID_PREFIX_ACU}-plot-task-max-retries`,
@@ -159,6 +161,9 @@ export async function bindPlotEvents_ACU(): Promise<void> {
       $popupInstance_ACU.on('change', `#${SCRIPT_ID_PREFIX_ACU}-plot-task-enabled`, function() {
         saveCurrentPlotTaskFromUI_ACU({ silent: true, renderTaskList: true, persist: true });
         loadCurrentPlotTaskToUI_ACU();
+      });
+      $popupInstance_ACU.on('change', `#${SCRIPT_ID_PREFIX_ACU}-plot-task-api-preset`, function() {
+        saveCurrentPlotTaskFromUI_ACU({ silent: true, renderTaskList: false, persist: true });
       });
 
       // 匹配替换速率保存
@@ -337,8 +342,9 @@ export async function bindPlotEvents_ACU(): Promise<void> {
 
           if (!result) {
             showToastr_ACU('error', '找不到选中的全局预设。');
-            loadPlotPresetSelect_ACU();
           }
+          // 无论成功或失败，统一刷新所有预设相关 UI
+          refreshPresetUIAfterSwitch_ACU();
         });
       }
 
@@ -353,10 +359,12 @@ export async function bindPlotEvents_ACU(): Promise<void> {
 
           if (!result) {
             showToastr_ACU('error', '找不到选中的当前聊天预设。');
-            loadPlotPresetSelect_ACU();
+            refreshPresetUIAfterSwitch_ACU();
             return;
           }
 
+          // 切换成功：统一刷新所有预设相关 UI（下拉框、状态文案、状态卡片、独立窗口）
+          refreshPresetUIAfterSwitch_ACU();
           showToastr_ACU(
             'success',
             result.followsGlobal
@@ -452,7 +460,7 @@ export async function bindPlotEvents_ACU(): Promise<void> {
           });
           persistPlotPresetSelectionState_ACU(selectedName, { source: 'ui_global_save', updateGlobal: true, save: false });
           saveSettingsAndNotify_ACU();
-          loadPlotPresetSelect_ACU();
+          refreshPresetUIAfterSwitch_ACU();
           showToastr_ACU('success', `全局预设 "${selectedName}" 已被成功覆盖。`);
         });
       }
@@ -496,8 +504,8 @@ export async function bindPlotEvents_ACU(): Promise<void> {
 
             saveSettingsAndNotify_ACU();
 
-            // 刷新预设选择器
-            loadPlotPresetSelect_ACU();
+            // 刷新预设选择器 + 状态卡片 + 可视化编辑器
+            refreshPresetUIAfterSwitch_ACU();
             showToastr_ACU('success', `全局预设 "${selectedName}" 已被删除。`);
           } else {
             showToastr_ACU('error', '找不到要删除的全局预设。');
@@ -610,7 +618,7 @@ export async function bindPlotEvents_ACU(): Promise<void> {
               if (importedCount > 0 || overwrittenCount > 0) {
                 settings_ACU.plotSettings.promptPresets = currentPresets;
                 saveSettingsAndNotify_ACU();
-                loadPlotPresetSelect_ACU();
+                refreshPresetUIAfterSwitch_ACU();
 
                 let messages = [];
                 if (importedCount > 0) messages.push(`成功导入 ${importedCount} 个新预设。`);

@@ -74,6 +74,17 @@ import { maybeLiftWorldbookSuppression_ACU } from '../../../service/runtime/help
     loadSettingsAndRefreshUI_ACU();
   }
 
+  /**
+   * 按指定目标模式恢复默认填表提示词（charCardPrompt）。
+   * 与 resetDefaultCharCardPrompt_ACU 不同，此函数接收显式 mode 参数，
+   * 用于"模式切换后恢复目标模式默认提示词"场景——此时当前模式可能已完成切换。
+   */
+  export function applyModeDefaultCharCardPrompt_ACU(mode: 'native' | 'sqlite') {
+    settings_ACU.charCardPrompt = mode === 'sqlite' ? DEFAULT_CHAR_CARD_PROMPT_SQL_ACU : DEFAULT_CHAR_CARD_PROMPT_ACU;
+    saveSettingsAndNotify_ACU();
+    loadSettingsAndRefreshUI_ACU();
+  }
+
   export function loadCharCardPromptFromJson_ACU() {
     const input = document.createElement('input');
     input.type = 'file';

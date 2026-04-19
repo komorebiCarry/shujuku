@@ -22,6 +22,7 @@ import { logDebug_ACU, logError_ACU, logWarn_ACU, isSummaryOrOutlineTable_ACU } 
 import { getLastOptimizationBase_ACU, setLastOptimizationBase_ACU } from '../optimization/content-optimization';
 import { settings_ACU, currentJsonTableData_ACU, getCurrentIsolationKey_ACU } from '../runtime/state-manager';
 import { sanitizeSheetForStorage_ACU } from '../template/chat-scope';
+import { clearTableFieldsForIsolation_ACU } from '../../data/repositories/chat-message-data-repo';
 
 // ─── 业务逻辑函数（从 presentation 层搬迁） ───
 
@@ -228,7 +229,8 @@ export async function purgeOldLayerData_ACU() {
         'TavernDB_ACU_IsolatedData',
         'TavernDB_ACU_Identity',
         'qrf_plot',
-        'qrf_plot_preset'
+        'qrf_plot_preset',
+        'qrf_plot_tasks'
     ];
 
     for (const idx of indicesToPurge) {
@@ -443,4 +445,52 @@ export async function overrideLatestLayerWithTemplateCore_ACU(templateData: any)
     }
 
     return modifiedCount;
+}
+
+/**
+ * 按消息索引列表清空指定 AI 楼层上的当前隔离标签表格数据，并保存聊天。
+ *
+ * 用于手动填表前的"预清空"步骤：先清除目标楼层上的旧表格数据，
+ * 再执行新的手动填表，防止 SQL 严格填表逻辑因旧数据残留导致写入失败。
+ *
+ * 清理范围：当前隔离标签下的新版 IsolatedData 槽 + 旧版兼容字段。
+ * 不影响同一消息上其他隔离标签的数据。
+ * 不删除消息正文或非表格业务字段。
+ *
+ * @param targetMessageIndices 需要清空的目标 AI 消息物理索引列表（已去重）
+ * @returns 实际被清空的消息数量
+ */
+export async function clearTableDataAtFloors_ACU(targetMessageIndices: number[]): Promise<number> {
+    if (!targetMessageIndices || targetMessageIndices.length === 0) return 0;
+
+    const chat = getChatArray_ACU();
+    if (!chat || chat.length === 0) return 0;
+
+    const isolationKey = getCurrentIsolationKey_ACU();
+    const isolationConfig = {
+        enabled: settings_ACU.dataIsolationEnabled,
+        code: settings_ACU.dataIsolationCode,
+    };
+
+    let clearedCount = 0;
+
+    for (const idx of targetMessageIndices) {
+        if (idx < 0 || idx >= chat.length) continue;
+        const msg = chat[idx];
+        // 只处理 AI 消息（跳过用户消息）
+        if (!msg || msg.is_user) continue;
+
+        const changed = clearTableFieldsForIsolation_ACU(msg, isolationKey, isolationConfig);
+        if (changed) {
+            clearedCount++;
+            logDebug_ACU(`[清空楼层] 已清空消息索引 ${idx} 上的表格数据 (标签: ${isolationKey || '无'})`);
+        }
+    }
+
+    if (clearedCount > 0) {
+        await saveChatToHost_ACU();
+        logDebug_ACU(`[清空楼层] 共清空 ${clearedCount} 条消息的表格数据，聊天已保存。`);
+    }
+
+    return clearedCount;
 }

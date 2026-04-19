@@ -2,14 +2,16 @@
 // 状态&操作标签页事件绑定（对话编辑器 + 设置参数自动保存 + checkbox）
 
 import { showToastr_ACU } from '../theme/toast';
+import { showCustomConfirm_ACU } from '../theme/custom-confirm';
 import { ACU_TOAST_CATEGORY_ACU, SCRIPT_ID_PREFIX_ACU } from '../../shared/constants';
 import { logDebug_ACU, logError_ACU, logWarn_ACU } from '../../shared/utils';
 import { jQuery_API_ACU } from '../dom-utils';
 import { settings_ACU } from '../../service/runtime/state-manager';
-import { $popupInstance_ACU, $charCardPromptSegmentsContainer_ACU, $autoUpdateTokenThresholdInput_ACU, $autoUpdateThresholdInput_ACU, $autoUpdateFrequencyInput_ACU, $updateBatchSizeInput_ACU, $maxConcurrentGroupsInput_ACU, $skipUpdateFloorsInput_ACU, $retainRecentLayersInput_ACU, $tableMaxRetriesInput_ACU, $autoUpdateEnabledCheckbox_ACU, $standardizedTableFillEnabledCheckbox_ACU, $toastMuteEnabledCheckbox_ACU, $promptTemplateEnabledCheckbox_ACU, $tableEditLastPairOnlyCheckbox_ACU, $manualUpdateCardButton_ACU } from '../state/ui-refs';
+import { $popupInstance_ACU, $charCardPromptSegmentsContainer_ACU, $autoUpdateTokenThresholdInput_ACU, $autoUpdateThresholdInput_ACU, $autoUpdateFrequencyInput_ACU, $updateBatchSizeInput_ACU, $maxConcurrentGroupsInput_ACU, $skipUpdateFloorsInput_ACU, $retainRecentLayersInput_ACU, $tableMaxRetriesInput_ACU, $autoUpdateEnabledCheckbox_ACU, $standardizedTableFillEnabledCheckbox_ACU, $toastMuteEnabledCheckbox_ACU, $promptTemplateEnabledCheckbox_ACU, $tableEditLastPairOnlyCheckbox_ACU, $manualUpdateCardButton_ACU, $manualTableSelectAll_ACU, $manualTableSelectNone_ACU } from '../state/ui-refs';
 import { saveSettingsAndNotify_ACU } from '../components/settings-ui-helpers';
-import { saveAutoUpdateFrequency_ACU, saveAutoUpdateThreshold_ACU, saveAutoUpdateTokenThreshold_ACU, saveMaxConcurrentGroups_ACU, saveRetainRecentLayers_ACU, saveSkipUpdateFloors_ACU, saveTableMaxRetries_ACU, saveUpdateBatchSize_ACU } from '../triggers/settings-ui-sync';
+import { saveAutoUpdateFrequency_ACU, saveAutoUpdateThreshold_ACU, saveAutoUpdateTokenThreshold_ACU, saveMaxConcurrentGroups_ACU, saveRetainRecentLayers_ACU, saveSkipUpdateFloors_ACU, saveTableMaxRetries_ACU, saveUpdateBatchSize_ACU, applyModeDefaultCharCardPrompt_ACU } from '../triggers/settings-ui-sync';
 import { handleManualUpdate_ACU } from '../triggers/update-process';
+import { handleManualSelectAll_ACU, handleManualSelectNone_ACU } from '../components/table-selector';
 import { renderPromptSegments_ACU, getCharCardPromptFromUI_ACU } from '../components/plot-editors';
 import { switchStorageMode } from '../../service/table/table-storage-strategy';
 import { getCurrentStorageMode } from '../../service/table/storage-mode';
@@ -157,6 +159,14 @@ export async function bindStatusEvents_ACU(): Promise<void> {
           $manualUpdateCardButton_ACU.on('click', handleManualUpdate_ACU);
       }
 
+      // 手动更新表选择：全选 / 全不选
+      if ($manualTableSelectAll_ACU && $manualTableSelectAll_ACU.length) {
+          $manualTableSelectAll_ACU.on('click', handleManualSelectAll_ACU);
+      }
+      if ($manualTableSelectNone_ACU && $manualTableSelectNone_ACU.length) {
+          $manualTableSelectNone_ACU.on('click', handleManualSelectNone_ACU);
+      }
+
       // [新增] 存储模式切换（原生 / SQLite）
       const $storageModeRadios = $popupInstance_ACU.find(`input[name="${SCRIPT_ID_PREFIX_ACU}-storage-mode"]`);
       if ($storageModeRadios.length) {
@@ -169,7 +179,15 @@ export async function bindStatusEvents_ACU(): Promise<void> {
               const previousMode = getCurrentStorageMode();
               if (selectedMode === previousMode) return;
 
-              showToastr_ACU('info', `正在切换到 ${selectedMode === 'sqlite' ? 'SQLite' : '原生'} 模式...`);
+              // 弹出确认框：询问是否恢复到目标模式对应的默认填表提示词
+              const targetModeLabel = selectedMode === 'sqlite' ? 'SQLite' : '原生';
+              const shouldResetPrompt = await showCustomConfirm_ACU(
+                  `切换到${targetModeLabel}模式`,
+                  `即将切换到${targetModeLabel}模式。\n\n是否同时恢复到${targetModeLabel}模式的默认填表提示词？\n\n选择"${'取消'}"将保留当前自定义提示词，仅切换模式。`,
+                  { confirmLabel: '恢复默认并切换', cancelLabel: '仅切换模式' }
+              );
+
+              showToastr_ACU('info', `正在切换到 ${targetModeLabel} 模式...`);
 
               try {
                   // 更新设置
@@ -179,8 +197,14 @@ export async function bindStatusEvents_ACU(): Promise<void> {
                   // 执行模式切换（包含数据重载和 fallback）
                   await switchStorageMode(selectedMode);
 
-                  showToastr_ACU('success', `已切换到 ${selectedMode === 'sqlite' ? 'SQLite' : '原生'} 模式！数据已重新加载。`);
-                  logDebug_ACU(`存储模式已切换: ${previousMode} → ${selectedMode}`);
+                  // 模式切换成功后，根据用户意图决定是否恢复默认提示词
+                  if (shouldResetPrompt) {
+                      applyModeDefaultCharCardPrompt_ACU(selectedMode);
+                      showToastr_ACU('success', `已切换到 ${targetModeLabel} 模式，并恢复到该模式的默认提示词。`);
+                  } else {
+                      showToastr_ACU('success', `已切换到 ${targetModeLabel} 模式！数据已重新加载。`);
+                  }
+                  logDebug_ACU(`存储模式已切换: ${previousMode} → ${selectedMode}${shouldResetPrompt ? '（已恢复默认提示词）' : ''}`);
               } catch (e: any) {
                   // 切换失败，回退 radio 状态和设置
                   const fallbackMode = getCurrentStorageMode(); // switchStorageMode 内部可能已 fallback

@@ -13,10 +13,33 @@ import { getChatSheetGuideDataForIsolationKey_ACU } from '../template/chat-scope
 import { loadAllChatMessages_ACU, updateReadableLorebookEntry_ACU } from '../worldbook/pipeline';
 
 import { isSummaryOrOutlineTable_ACU, logDebug_ACU, logError_ACU, logWarn_ACU, parseTableTemplateJson_ACU } from '../../shared/utils';
+
+/**
+ * 表名标准化：trim 后空串视为无效键
+ */
+function normalizeTableNameForPresetLookup_ACU(name: any): string {
+    const trimmed = String(name ?? '').trim();
+    return trimmed;
+}
+
+/**
+ * 根据起始表的名称，查找表级 API 预设覆盖
+ * @returns 预设名称，空字符串表示使用全局 tableApiPreset
+ */
+function resolveTableApiPresetOverride_ACU(tableName: any): string {
+    const normalizedName = normalizeTableNameForPresetLookup_ACU(tableName);
+    if (!normalizedName) return '';
+    const overrides = settings_ACU.tableApiPresetOverridesByName;
+    if (!overrides || typeof overrides !== 'object') return '';
+    const preset = overrides[normalizedName];
+    return (typeof preset === 'string' && preset.trim()) ? preset.trim() : '';
+}
 import { checkIfFirstTimeInit_ACU, saveIndependentTableToChatHistory_ACU } from './table-service';
 import { parseAndApplyTableEdits_ACU, prepareAIInput_ACU } from '../ai/prompt-builder';
 import { buildGuidedBaseDataFromSheetGuide_ACU, getSortedSheetKeys_ACU } from '../template/chat-scope';
 import { isSqliteMode } from './storage-mode';
+import { reloadStorageProvider } from './table-storage-strategy';
+import { clearTableDataAtFloors_ACU } from '../chat/chat-service';
 
 // ============================================================
 // 类型定义：返回值 + 进度事件（service 层不驱动 UI）
@@ -483,7 +506,19 @@ export async function processUpdatesBatch_ACU(
         // 确定更新模式
         const updateMode = resolveUpdateMode_ACU(mode);
 
-        const result = await executeUpdate(messagesForContext, finalSaveTargetIndex, updateMode, isSilentMode, targetSheetKeys, requestOptions);
+        // 决议 effective API preset：如果调用方未指定 tableApiPreset，
+        // 则以 targetSheetKeys 中第一个表名为准查覆盖映射
+        let effectiveRequestOptions = requestOptions;
+        if (!effectiveRequestOptions?.tableApiPreset && targetSheetKeys && targetSheetKeys.length > 0) {
+            const templateForLookup = parseTableTemplateJson_ACU({ stripSeedRows: true });
+            const firstTableName = templateForLookup?.[targetSheetKeys[0]]?.name || '';
+            const resolvedPreset = resolveTableApiPresetOverride_ACU(firstTableName);
+            if (resolvedPreset) {
+                effectiveRequestOptions = { ...(effectiveRequestOptions || {}), tableApiPreset: resolvedPreset };
+            }
+        }
+
+        const result = await executeUpdate(messagesForContext, finalSaveTargetIndex, updateMode, isSilentMode, targetSheetKeys, effectiveRequestOptions);
 
         if (!result.success) {
             _set_isAutoUpdatingCard_ACU(false);
@@ -498,12 +533,22 @@ export async function processUpdatesBatch_ACU(
 /**
  * 手动更新编排（纯业务逻辑）
  * 从 handleManualUpdate_ACU 提取。不驱动 UI，只返回结果。
- * presentation 层负责：收集 manualSelection、设置 manualExtraHint、刷新 UI、显示 toast。
+ * presentation 层负责：收集 manualSelection、设置 manualExtraHint、刷新 UI、显示 toast、弹出确认框。
+ *
+ * @param targetKeys 手动选择的目标表格键列表
+ * @param processBatch 批处理执行回调
+ * @param refreshData 数据刷新回调
+ * @param options 可选参数：
+ *   - clearBeforeUpdate: 是否在手动填表前先清空目标楼层的表格数据（默认 false）。
+ *     由 presentation 层根据用户确认框结果传入。当设为 true 时，
+ *     会先计算所有 update group 的目标保存楼层，去重后逐个清空当前隔离标签的表格数据，
+ *     再刷新内存状态，最后执行新的手动填表。
  */
 export async function orchestrateManualUpdate_ACU(
     targetKeys: string[],
     processBatch: (indices: number[], mode: string, options: any) => Promise<BatchUpdateResult>,
-    refreshData: () => Promise<void>
+    refreshData: () => Promise<void>,
+    options: { clearBeforeUpdate?: boolean } = {},
 ): Promise<ManualUpdateResult> {
     try {
         if (isAutoUpdatingCard_ACU) {
@@ -572,13 +617,73 @@ export async function orchestrateManualUpdate_ACU(
         });
         const groupKeys = Object.keys(updateGroups);
 
+        // ── 手动填表前预清空目标楼层的表格数据 ──
+        // 当 clearBeforeUpdate 为 true 时（用户已在 presentation 层确认），
+        // 先计算每个 update group 的最终保存楼层（每批最后一条 AI 消息的物理索引），
+        // 去重后逐个清空当前隔离标签下的表格数据，再刷新内存状态。
+        // 这样可以防止 SQL 严格填表逻辑因目标楼层上的旧数据残留导致写入失败。
+        if (options.clearBeforeUpdate) {
+            const targetFloorSet = new Set<number>();
+            for (const gKey of groupKeys) {
+                const group = updateGroups[gKey];
+                // 每个 group 的 indices 按 batchSize 分批，每批的最后一条就是该批的 finalSaveTargetIndex。
+                // 这里简化处理：取该 group 的 indices 列表中最后一个 index 作为最终保存目标。
+                // （同一个 group 内所有 batch 的 contextScopeIndices 是相同的，
+                //   processUpdatesBatch 会按 batchSize 切分后取每批最后一个作为保存目标，
+                //   但对于"清空目标楼层"来说，只需要清空 indices 中涉及的最后几个楼层即可。
+                //   考虑到 batch 切分逻辑较复杂，这里保守地清空所有 contextScopeIndices 涉及的楼层。）
+                if (group.indices && group.indices.length > 0) {
+                    // 取该 group 上下文范围内的最后 batchSize 个楼层作为清空目标
+                    // 因为 processUpdatesBatch 会把 indices 按 batchSize 切分，
+                    // 每批保存到该批最后一条消息。所以只需要清空 indices 列表中的楼层。
+                    group.indices.forEach((idx: number) => targetFloorSet.add(idx));
+                }
+            }
+
+            const targetFloors = Array.from(targetFloorSet);
+            if (targetFloors.length > 0) {
+                logDebug_ACU(`[Manual Update] 预清空目标楼层: ${targetFloors.join(', ')} (共 ${targetFloors.length} 层)`);
+                const clearedCount = await clearTableDataAtFloors_ACU(targetFloors);
+                logDebug_ACU(`[Manual Update] 预清空完成: ${clearedCount} 层已清空`);
+
+                // 清空后必须刷新内存数据，确保后续填表基于干净状态
+                await loadAllChatMessages_ACU();
+
+                // [关键] 重建 Storage Provider（尤其是 SQLite 模式）
+                // 只清空聊天消息字段是不够的——SQLite 引擎在内存中持有独立的数据库实例，
+                // 必须先 dispose 旧引擎、创建新引擎、从已清空的聊天消息重新 loadFromChat，
+                // 否则后续 applyEdits 仍会在旧内存数据库上执行 SQL，
+                // 导致 UNIQUE constraint 等冲突。
+                try {
+                    await reloadStorageProvider();
+                } catch (reloadError: any) {
+                    logWarn_ACU(`[Manual Update] reloadStorageProvider 失败: ${reloadError?.message}，继续使用当前 provider`);
+                }
+
+                await refreshData();
+            }
+        }
+
         _set_isAutoUpdatingCard_ACU(true);
         for (const gKey of groupKeys) {
             const group = updateGroups[gKey];
-            logDebug_ACU(`[Manual Parallel] Processing group update for groupId=${group.groupId}, sheets: ${group.sheetKeys.join(', ')}`);
+
+            // 决议本次 group 的 effective API preset：
+            // 以 group 内第一个表为准，查 settings_ACU.tableApiPresetOverridesByName
+            let groupEffectivePreset = '';
+            if (group.sheetKeys && group.sheetKeys.length > 0) {
+                const firstSheetKey = group.sheetKeys[0];
+                const firstTableName = templateData?.[firstSheetKey]?.name || '';
+                groupEffectivePreset = resolveTableApiPresetOverride_ACU(firstTableName);
+            }
+
+            logDebug_ACU(`[Manual Parallel] Processing group update for groupId=${group.groupId}, sheets: ${group.sheetKeys.join(', ')}, effectivePreset=${groupEffectivePreset || '(全局)'}`);
             const batchResult = await processBatch(group.indices, 'manual_independent', {
                 targetSheetKeys: group.sheetKeys,
-                batchSize: group.batchSize
+                batchSize: group.batchSize,
+                requestOptions: groupEffectivePreset
+                    ? { tableApiPreset: groupEffectivePreset }
+                    : null,
             });
             if (!batchResult.success) {
                 _set_isAutoUpdatingCard_ACU(false);

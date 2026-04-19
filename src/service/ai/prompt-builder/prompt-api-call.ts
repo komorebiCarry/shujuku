@@ -29,7 +29,10 @@ import { replaceDbSqlVariables } from '../../runtime/template-vars/sql-query-var
     const skipProfileSwitch = !!options?.skipProfileSwitch;
     const forceDirectApi = !!options?.forceDirectApi;
 
-    const apiPresetConfig = getApiConfigByPreset_ACU(settings_ACU.tableApiPreset);
+    const effectiveTableApiPreset = options?.tableApiPreset !== undefined
+        ? String(options.tableApiPreset)
+        : (settings_ACU.tableApiPreset || '');
+    const apiPresetConfig = getApiConfigByPreset_ACU(effectiveTableApiPreset);
     const effectiveApiMode = apiPresetConfig.apiMode;
     const effectiveApiConfig = apiPresetConfig.apiConfig;
     const effectiveTavernProfile = apiPresetConfig.tavernProfile;
@@ -111,7 +114,7 @@ import { replaceDbSqlVariables } from '../../runtime/template-vars/sql-query-var
     }
     
     logDebug_ACU('Final messages array being sent to API:', messages);
-    logDebug_ACU(`使用API预设: ${settings_ACU.tableApiPreset || '当前配置'}, 模式: ${effectiveApiMode}`);
+    logDebug_ACU(`使用API预设: ${effectiveTableApiPreset || '当前配置'}, 模式: ${effectiveApiMode}`);
 
     try {
         if (effectiveApiMode === 'tavern') {

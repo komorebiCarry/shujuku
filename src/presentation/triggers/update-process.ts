@@ -4,6 +4,7 @@
 import { _set_isAutoUpdatingCard_ACU, _set_wasStoppedByUser_ACU } from '../../service/runtime/state-manager';
 import { getManualSelectionFromUI_ACU } from '../components/table-selector';
 import { showToastr_ACU } from '../theme/toast';
+import { showCustomConfirm_ACU } from '../theme/custom-confirm';
 import { ACU_TOAST_CATEGORY_ACU } from '../../shared/constants';
 import { logDebug_ACU, logError_ACU, logWarn_ACU } from '../../shared/utils';
 // re-export 从 service 层搬迁的业务逻辑函数，保持外部调用方兼容
@@ -186,7 +187,7 @@ export async function processUpdates_ACU(indicesToUpdate: number[], mode = 'auto
 }
 
 /**
- * 手动更新：presentation 层负责收集 UI 输入、显示 toast、重置按钮
+ * 手动更新：presentation 层负责收集 UI 输入、显示确认框、显示 toast、重置按钮
  * service 层只返回 ManualUpdateResult
  */
 export async function handleManualUpdate_ACU() {
@@ -198,7 +199,31 @@ export async function handleManualUpdate_ACU() {
         // UI：获取手动选择的表格
         const targetKeys = getManualSelectionFromUI_ACU();
 
-        // 调用 service 层
+        // [前置校验] 在弹出确认框之前，先做基本有效性检查
+        // 避免用户确认后又因为"没选表格"或"聊天为空"而报错
+        if (!targetKeys || targetKeys.length === 0) {
+            showToastr_ACU('warning', '未选择需要更新的表格。');
+            return;
+        }
+
+        // 弹出确认框：告知用户将先清除对应楼层的所有表格数据，再执行新的手动填表
+        // 这是防止 SQL 严格填表逻辑因旧数据残留导致写入失败的关键步骤
+        const confirmed = await showCustomConfirm_ACU(
+            '手动填表确认',
+            '即将执行手动填表。\n\n' +
+            '为确保填表成功，系统将先清除本次涉及楼层的所有表格数据，再进行新的数据填写。\n' +
+            '（此操作可防止 SQL 严格填表逻辑因旧数据残留导致写入失败）\n\n' +
+            '如果不想清空旧数据，可以选择取消。',
+            { confirmLabel: '确认并继续', cancelLabel: '取消' }
+        );
+
+        if (!confirmed) {
+            logDebug_ACU('[更新流程] 用户取消了手动填表确认框');
+            showToastr_ACU('info', '已取消手动填表。');
+            return;
+        }
+
+        // 调用 service 层，传入 clearBeforeUpdate: true（用户已确认清空）
         const result = await orchestrateManualUpdate_ACU(
             targetKeys,
             // processBatch 回调
@@ -208,7 +233,9 @@ export async function handleManualUpdate_ACU() {
             // refreshData 回调（纯数据刷新 + UI 刷新）
             async () => {
                 await refreshMergedDataAndNotifyWithUI_ACU();
-            }
+            },
+            // [新增] 传入用户确认后的预清空选项
+            { clearBeforeUpdate: true }
         );
 
         // UI：根据返回值显示 toast

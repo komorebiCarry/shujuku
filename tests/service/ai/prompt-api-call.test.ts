@@ -458,4 +458,71 @@ describe('callCustomOpenAI_ACU — AbortController 管理', () => {
     await expect(callCustomOpenAI_ACU({})).rejects.toThrow();
     expect(mockUntrackAbortController).toHaveBeenCalledTimes(1);
   });
+
+  // ═══════════════════════════════════════════════════════════════
+  // options.tableApiPreset 覆盖
+  // ═══════════════════════════════════════════════════════════════
+  it('options.tableApiPreset 覆盖全局 tableApiPreset', async () => {
+    mockSettings.tableApiPreset = 'global-preset';
+    mockGetApiConfigByPreset.mockReturnValue({
+      apiMode: 'custom',
+      apiConfig: { useMainApi: true, url: '', model: '', max_tokens: 4096, temperature: 1.0 },
+      tavernProfile: '',
+    });
+    mockGenerateRaw.mockResolvedValue('AI回复内容');
+
+    const dynamicContent = {
+      tableDataText: '表格数据',
+      messagesText: '消息',
+      worldbookContent: '世界书',
+      manualExtraHint: '',
+    };
+
+    await callCustomOpenAI_ACU(dynamicContent, null, { tableApiPreset: 'override-preset' });
+
+    // getApiConfigByPreset 应被调用时传入 override-preset，而非 global-preset
+    expect(mockGetApiConfigByPreset).toHaveBeenCalledWith('override-preset');
+  });
+
+  it('options 无 tableApiPreset 时使用全局 tableApiPreset', async () => {
+    mockSettings.tableApiPreset = 'global-preset';
+    mockGetApiConfigByPreset.mockReturnValue({
+      apiMode: 'custom',
+      apiConfig: { useMainApi: true, url: '', model: '', max_tokens: 4096, temperature: 1.0 },
+      tavernProfile: '',
+    });
+    mockGenerateRaw.mockResolvedValue('AI回复内容');
+
+    const dynamicContent = {
+      tableDataText: '表格数据',
+      messagesText: '消息',
+      worldbookContent: '世界书',
+      manualExtraHint: '',
+    };
+
+    await callCustomOpenAI_ACU(dynamicContent, null, {});
+
+    expect(mockGetApiConfigByPreset).toHaveBeenCalledWith('global-preset');
+  });
+
+  it('options 为 null 时使用全局 tableApiPreset', async () => {
+    mockSettings.tableApiPreset = 'global-preset';
+    mockGetApiConfigByPreset.mockReturnValue({
+      apiMode: 'custom',
+      apiConfig: { useMainApi: true, url: '', model: '', max_tokens: 4096, temperature: 1.0 },
+      tavernProfile: '',
+    });
+    mockGenerateRaw.mockResolvedValue('AI回复内容');
+
+    const dynamicContent = {
+      tableDataText: '表格数据',
+      messagesText: '消息',
+      worldbookContent: '世界书',
+      manualExtraHint: '',
+    };
+
+    await callCustomOpenAI_ACU(dynamicContent, null, null);
+
+    expect(mockGetApiConfigByPreset).toHaveBeenCalledWith('global-preset');
+  });
 });

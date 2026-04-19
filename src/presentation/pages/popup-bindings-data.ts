@@ -11,14 +11,14 @@ import { logDebug_ACU, logError_ACU, logWarn_ACU } from '../../shared/utils';
 import { jQuery_API_ACU } from '../dom-utils';
 import { isSqliteMode } from '../../service/table/storage-mode';
 import { settings_ACU, currentChatFileIdentifier_ACU, currentJsonTableData_ACU, getCurrentIsolationKey_ACU } from '../../service/runtime/state-manager';
-import { $popupInstance_ACU, $charCardPromptToggle_ACU, $charCardPromptAreaDiv_ACU, $saveCharCardPromptButton_ACU, $resetCharCardPromptButton_ACU, $loadModelsButton_ACU, $saveApiConfigButton_ACU, $clearApiConfigButton_ACU, $useMainApiCheckbox_ACU, $streamingEnabledCheckbox_ACU, $customApiModelInput_ACU, $customApiModelSelect_ACU } from '../state/ui-refs';
+import { $popupInstance_ACU, $charCardPromptToggle_ACU, $charCardPromptAreaDiv_ACU, $saveCharCardPromptButton_ACU, $resetCharCardPromptButton_ACU, $loadModelsButton_ACU, $saveApiConfigButton_ACU, $clearApiConfigButton_ACU, $useMainApiCheckbox_ACU, $streamingEnabledCheckbox_ACU, $customApiModelInput_ACU, $customApiModelSelect_ACU, $importTableSelectAll_ACU, $importTableSelectNone_ACU } from '../state/ui-refs';
 import { saveSettingsAndNotify_ACU, loadSettingsAndRefreshUI_ACU } from '../components/settings-ui-helpers';
 import { updateImportStatusUI_ACU, handleTxtImportAndSplit_ACU } from '../components/import-status-ui';
 import { clearImportLocalStorage_ACU, clearImportedEntries_ACU, deleteImportedEntries_ACU, handleInjectImportedTxtSelected_ACU } from '../triggers/import-process';
 import { importCombinedSettings_ACU } from '../triggers/admin-ui';
 import { applyTemplateScopeForCurrentChat_ACU, getDataIsolationHistory_ACU, removeDataIsolationHistory_ACU, switchIsolationProfile_ACU, persistCurrentTemplatePresetName_ACU } from '../../service/settings/settings-service';
 import { deleteAllGeneratedEntries_ACU } from '../../service/worldbook/pipeline';
-import { refreshMergedDataAndNotifyWithUI_ACU } from '../components/pipeline-ui-helpers';
+import { refreshMergedDataAndNotifyWithUI_ACU, refreshPresetUIAfterSwitch_ACU } from '../components/pipeline-ui-helpers';
 import { loadOrCreateJsonTableFromChatHistory_ACU } from '../../service/table/table-service';
 import { getTemplatePreset_ACU, applyTemplatePresetToCurrent_ACU, applyTemplateSnapshotToScope_ACU, deleteTemplatePreset_ACU, ensureUniqueTemplatePresetName_ACU, normalizeTemplateForPresetSave_ACU, parseImportedTemplateData_ACU, persistTemplateScopeSelectionState_ACU, resolveActiveTemplatePresetName_ACU, upsertTemplatePreset_ACU } from '../../service/template/template-preset-service';
 import { getChatSheetGuideDataForIsolationKey_ACU, getCurrentChatTemplateScopeState_ACU, sanitizeTemplateSnapshotForChat_ACU } from '../../service/template/chat-scope';
@@ -31,6 +31,7 @@ import { appendExcludeRuleRow_ACU, readExcludeRulesFromRows_ACU } from '../compo
 import { updateCardUpdateStatusDisplay_ACU } from '../components/update-status-display';
 import { populateImportWorldbookTargetSelector_ACU } from '../components/worldbook-selector';
 import { saveApiConfig_ACU, clearApiConfig_ACU, fetchModelsAndConnect_ACU, loadApiPreset_ACU, saveApiPreset_ACU, deleteApiPreset_ACU, saveCustomCharCardPrompt_ACU, saveImportSplitSize_ACU, resetDefaultCharCardPrompt_ACU, updateCustomApiInputsState_ACU, refreshApiPresetSelectors_ACU } from '../triggers/settings-ui-sync';
+import { handleImportSelectAll_ACU, handleImportSelectNone_ACU } from '../components/table-selector';
 
 /**
  * 绑定数据管理标签页的所有事件（数据隔离 + 外部导入 + 模板预设 + 数据管理按钮）
@@ -286,6 +287,14 @@ export async function bindDataEvents_ACU(): Promise<void> {
       if ($injectImportedTxtButton && $injectImportedTxtButton.length) {
           $injectImportedTxtButton.on('click', handleInjectImportedTxtSelected_ACU);
       }
+
+      // 导入表选择：全选 / 全不选
+      if ($importTableSelectAll_ACU && $importTableSelectAll_ACU.length) {
+          $importTableSelectAll_ACU.on('click', handleImportSelectAll_ACU);
+      }
+      if ($importTableSelectNone_ACU && $importTableSelectNone_ACU.length) {
+          $importTableSelectNone_ACU.on('click', handleImportSelectNone_ACU);
+      }
       
       // [新增] 删除注入条目按钮的事件绑定
       const $deleteImportedEntriesButton = $popupInstance_ACU.find(`#${SCRIPT_ID_PREFIX_ACU}-delete-imported-entries`);
@@ -463,7 +472,7 @@ export async function bindDataEvents_ACU(): Promise<void> {
             });
             applyTemplateScopeForCurrentChat_ACU();
             try { await refreshMergedDataAndNotifyWithUI_ACU(); } catch (e) {}
-            refreshTemplatePresetUiState_ACU({ keepGlobalValue: true });
+            refreshPresetUIAfterSwitch_ACU({ keepTemplateGlobalValue: true });
             if (showToast) {
                 showToastr_ACU('success', `当前聊天预设已保存${resolvedPresetName ? `（预设名：${resolvedPresetName}）` : '（默认预设）'}；后续在此聊天再次保存会直接覆盖同名聊天预设。`, {
                     acuToastCategory: ACU_TOAST_CATEGORY_ACU.IMPORT,
@@ -496,7 +505,7 @@ export async function bindDataEvents_ACU(): Promise<void> {
             });
         };
 
-        refreshTemplatePresetUiState_ACU({ keepGlobalValue: false });
+        refreshPresetUIAfterSwitch_ACU({ keepTemplateGlobalValue: false });
 
         // --- [模板预设库] 全局 / 当前聊天双作用域 ---
         if ($templatePresetSelect_ACU && $templatePresetSelect_ACU.length) {
@@ -511,11 +520,11 @@ export async function bindDataEvents_ACU(): Promise<void> {
                     persistChatScope: false,
                 });
                 if (result) {
-                    refreshTemplatePresetUiState_ACU({ globalSelectName: name, keepGlobalValue: false });
+                    refreshPresetUIAfterSwitch_ACU({ templateGlobalSelectName: name, keepTemplateGlobalValue: false });
                     showToastr_ACU('success', `全局模板预设已切换：${displayName}`, { acuToastCategory: ACU_TOAST_CATEGORY_ACU.IMPORT });
                 } else {
                     showToastr_ACU('error', `全局模板预设切换失败：${displayName}`, { acuToastCategory: ACU_TOAST_CATEGORY_ACU.ERROR });
-                    refreshTemplatePresetUiState_ACU({ keepGlobalValue: false });
+                    refreshPresetUIAfterSwitch_ACU({ keepTemplateGlobalValue: false });
                 }
             });
         }
@@ -531,7 +540,7 @@ export async function bindDataEvents_ACU(): Promise<void> {
                     persistChatScope: true,
                 });
                 if (result) {
-                    refreshTemplatePresetUiState_ACU({ keepGlobalValue: true });
+                    refreshPresetUIAfterSwitch_ACU({ keepTemplateGlobalValue: true });
                     if ((result as any).mode === 'chat_override') {
                         showToastr_ACU('success', `当前聊天已切换到本地模板预设：${displayName}`, { acuToastCategory: ACU_TOAST_CATEGORY_ACU.IMPORT });
                     } else {
@@ -539,7 +548,7 @@ export async function bindDataEvents_ACU(): Promise<void> {
                     }
                 } else {
                     showToastr_ACU('error', `当前聊天模板预设切换失败：${displayName}`, { acuToastCategory: ACU_TOAST_CATEGORY_ACU.ERROR });
-                    refreshTemplatePresetUiState_ACU({ keepGlobalValue: true });
+                    refreshPresetUIAfterSwitch_ACU({ keepTemplateGlobalValue: true });
                 }
             });
         }
@@ -641,7 +650,7 @@ export async function bindDataEvents_ACU(): Promise<void> {
                     persistCurrentTemplatePresetName_ACU(settings_ACU, nn, { save: false });
                     saveSettingsAndNotify_ACU();
                 }
-                refreshTemplatePresetUiState_ACU({ globalSelectName: nn, keepGlobalValue: false });
+                refreshPresetUIAfterSwitch_ACU({ templateGlobalSelectName: nn, keepTemplateGlobalValue: false });
                 showToastr_ACU('success', `全局模板预设已重命名：${oldName} → ${nn}`, { acuToastCategory: ACU_TOAST_CATEGORY_ACU.IMPORT });
             });
         }
@@ -654,7 +663,7 @@ export async function bindDataEvents_ACU(): Promise<void> {
                 }
                 if (!confirm(`确定要删除全局模板预设 "${name}" 吗？此操作不可撤销。`)) return;
                 const ok = deleteTemplatePreset_ACU(name);
-                refreshTemplatePresetUiState_ACU({ keepGlobalValue: false });
+                refreshPresetUIAfterSwitch_ACU({ keepTemplateGlobalValue: false });
                 if (ok) {
                     const activeGlobalName = normalizeTemplatePresetSelectionValue_ACU(getCurrentTemplatePresetName_ACU(settings_ACU, { requireExisting: false }));
                     if (activeGlobalName === name) {
@@ -709,7 +718,7 @@ export async function bindDataEvents_ACU(): Promise<void> {
                     showToastr_ACU('error', '保存到全局后切换全局模板预设失败。', { acuToastCategory: ACU_TOAST_CATEGORY_ACU.ERROR });
                     return;
                 }
-                refreshTemplatePresetUiState_ACU({ globalSelectName: finalName, keepGlobalValue: false });
+                refreshPresetUIAfterSwitch_ACU({ templateGlobalSelectName: finalName, keepTemplateGlobalValue: false });
                 showToastr_ACU('success', `当前聊天模板配置已保存到全局预设：${finalName}`, { acuToastCategory: ACU_TOAST_CATEGORY_ACU.IMPORT });
             });
         }
@@ -749,7 +758,7 @@ export async function bindDataEvents_ACU(): Promise<void> {
                             throw new Error('模板结构无效，无法生成当前聊天模板预设。');
                         }
                         try { await refreshMergedDataAndNotifyWithUI_ACU(); } catch (e) {}
-                        refreshTemplatePresetUiState_ACU({ keepGlobalValue: true });
+                        refreshPresetUIAfterSwitch_ACU({ keepTemplateGlobalValue: true });
                         showToastr_ACU('success', `当前聊天模板预设已导入${presetName ? `（预设名：${presetName}）` : ''}；同名聊天预设会直接覆盖。`, {
                             acuToastCategory: ACU_TOAST_CATEGORY_ACU.IMPORT,
                         });

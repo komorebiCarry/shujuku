@@ -146,9 +146,23 @@ export function generatePlotTabHTML(): string {
                                             <small class="notes">仅作用于当前选中的剧情任务</small>
                                         </div>
                                         <div class="qrf_settings_block" style="margin-bottom:0;">
+                                            <label for="${SCRIPT_ID_PREFIX_ACU}-plot-extract-inject-tags" style="font-weight:500;">提取注入标签</label>
+                                            <input id="${SCRIPT_ID_PREFIX_ACU}-plot-extract-inject-tags" type="text" class="text_pole" placeholder="例如: recall,supplement" style="width:100%;">
+                                            <small class="notes">优先级高于标签摘取；未使用时不自动注入末尾</small>
+                                        </div>
+                                        <div class="qrf_settings_block" style="margin-bottom:0;">
                                             <label for="${SCRIPT_ID_PREFIX_ACU}-plot-min-length" style="font-weight:500;">当前任务最小回复长度</label>
                                             <input id="${SCRIPT_ID_PREFIX_ACU}-plot-min-length" type="number" class="text_pole" min="0" max="2000" step="10" value="0" style="width:100%;">
                                             <small class="notes">当前任务回复少于此长度时自动重试</small>
+                                        </div>
+                                    </div>
+                                    <div style="margin-bottom:15px;">
+                                        <div class="qrf_settings_block" style="margin-bottom:0;">
+                                            <label for="${SCRIPT_ID_PREFIX_ACU}-plot-task-api-preset" style="font-weight:500;">任务数据库API预设</label>
+                                            <select id="${SCRIPT_ID_PREFIX_ACU}-plot-task-api-preset" class="text_pole" style="width:100%;">
+                                                <option value="">继承全局剧情推进API预设</option>
+                                            </select>
+                                            <small class="notes">仅保存到数据库设置，不随模板导出</small>
                                         </div>
                                     </div>
                                     <div id="${SCRIPT_ID_PREFIX_ACU}-plot-prompt-constructor-area">

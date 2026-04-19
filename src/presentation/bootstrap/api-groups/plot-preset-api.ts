@@ -12,6 +12,7 @@ import { getCurrentRuntimePlotPresetName_ACU, normalizePlotPresetExcludeRules_AC
 import { fillFirstLayerWithTemplateData_ACU } from '../../../service/runtime/helpers-remaining';
 import { overwriteChatSheetGuideFromTemplate_ACU } from '../../../service/template/chat-scope';
 import { saveSettingsAndNotify_ACU } from '../../components/settings-ui-helpers';
+import { refreshPresetUIAfterSwitch_ACU } from '../../components/pipeline-ui-helpers';
 import type { ApiGroupContext } from './callback-api';
 
 export function createPlotPresetApi(ctx: ApiGroupContext): Record<string, Function> {
@@ -53,6 +54,7 @@ export function createPlotPresetApi(ctx: ApiGroupContext): Record<string, Functi
                 }
 
                 logDebug_ACU(`Successfully switched current chat to plot preset: "${result.followsGlobal ? '跟随全局' : result.presetName}"`);
+                refreshPresetUIAfterSwitch_ACU();
                 return true;
             } catch (e) {
                 logError_ACU('switchPlotPreset failed:', e);
@@ -78,6 +80,7 @@ export function createPlotPresetApi(ctx: ApiGroupContext): Record<string, Functi
                 }
 
                 logDebug_ACU(`Injected global plot preset into current chat: "${result.followsGlobal ? '跟随全局' : result.presetName}"`);
+                refreshPresetUIAfterSwitch_ACU();
                 return true;
             } catch (e) {
                 logError_ACU('injectPlotPresetToCurrentChat failed:', e);
@@ -163,6 +166,9 @@ export function createPlotPresetApi(ctx: ApiGroupContext): Record<string, Functi
                 let switchedCurrentChat = false;
                 if (switchTo) {
                     switchedCurrentChat = ctx.getApi().injectPlotPresetToCurrentChat(finalName) === true;
+                } else {
+                    // 导入预设后刷新 UI 下拉框与状态显示
+                    refreshPresetUIAfterSwitch_ACU();
                 }
 
                 return {
@@ -198,6 +204,9 @@ export function createPlotPresetApi(ctx: ApiGroupContext): Record<string, Functi
                         failed++;
                     }
                 }
+
+                // 批量导入结束后统一刷新一次 UI
+                refreshPresetUIAfterSwitch_ACU();
 
                 return {
                     success: failed === 0,

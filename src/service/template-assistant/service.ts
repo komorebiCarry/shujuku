@@ -407,7 +407,19 @@ export async function generateTemplateAssistantDraft_ACU(input: TemplateAssistan
         { role: 'system', content: buildSystemPrompt_ACU() },
         { role: 'user', content: buildUserPrompt_ACU({ ...input, tempData }, baseFingerprint) },
     ];
-    const aiRawText = await callAIWithPreset_ACU(messages, settings_ACU.tableApiPreset || '');
+
+    // 查找表级 API 预设覆盖：基于当前选中表的名称
+    let effectivePreset = settings_ACU.tableApiPreset || '';
+    const currentSheet = input.currentSheetKey ? tempData[input.currentSheetKey] : null;
+    const currentTableName = String(currentSheet?.name || '').trim();
+    if (currentTableName) {
+        const overrides = settings_ACU.tableApiPresetOverridesByName;
+        if (overrides && typeof overrides === 'object' && typeof overrides[currentTableName] === 'string' && overrides[currentTableName].trim()) {
+            effectivePreset = overrides[currentTableName].trim();
+        }
+    }
+
+    const aiRawText = await callAIWithPreset_ACU(messages, effectivePreset);
     if (!aiRawText) {
         throw new Error('AI 未返回有效内容');
     }

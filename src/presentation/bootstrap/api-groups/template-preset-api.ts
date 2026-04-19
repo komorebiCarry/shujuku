@@ -15,6 +15,7 @@ import {
     upsertTemplatePreset_ACU,
 } from '../../../service/template/template-preset-service';
 import { refreshTemplatePresetSelectInUI_ACU } from '../../components/template-preset-ui';
+import { refreshPresetUIAfterSwitch_ACU } from '../../components/pipeline-ui-helpers';
 import type { ApiGroupContext } from './callback-api';
 
 export function createTemplatePresetApi(ctx: ApiGroupContext): Record<string, Function> {
@@ -41,9 +42,9 @@ export function createTemplatePresetApi(ctx: ApiGroupContext): Record<string, Fu
                     persistChatScope: normalizedScope === 'chat',
                 });
                 if (result) {
-                    refreshTemplatePresetSelectInUI_ACU({
-                        selectName: normalizedScope === 'global' ? name : null,
-                        keepValue: normalizedScope !== 'global',
+                    refreshPresetUIAfterSwitch_ACU({
+                        templateGlobalSelectName: normalizedScope === 'global' ? name : null,
+                        keepTemplateGlobalValue: normalizedScope !== 'global',
                     });
                     return {
                         success: true,
@@ -110,6 +111,7 @@ export function createTemplatePresetApi(ctx: ApiGroupContext): Record<string, Fu
                 }
 
                 logDebug_ACU(`[API] importTemplateFromData: 模板已成功导入到${normalizedScope === 'chat' ? '当前聊天' : '全局'}。`);
+                refreshPresetUIAfterSwitch_ACU();
                 return {
                     success: true,
                     scope: normalizedScope,

@@ -153,6 +153,8 @@ export function normalizePlotTask_ACU(task: Record<string, any> | null, { index 
       enabled: cloned.enabled !== false,
       promptGroup,
       extractTags: typeof cloned.extractTags === 'string' ? cloned.extractTags : (fallback?.extractTags || ''),
+      extractInjectTags: typeof cloned.extractInjectTags === 'string' ? cloned.extractInjectTags : (fallback?.extractInjectTags || ''),
+      taskApiPreset: typeof cloned.taskApiPreset === 'string' ? cloned.taskApiPreset : (fallback?.taskApiPreset || ''),
       finalDirectiveTemplate: typeof cloned.finalDirectiveTemplate === 'string' ? cloned.finalDirectiveTemplate : (fallback?.finalDirectiveTemplate || ''),
       minLength: normalizeNonNegativeInteger_ACU(cloned.minLength, fallback?.minLength ?? 0),
       maxRetries: normalizePositiveInteger_ACU(

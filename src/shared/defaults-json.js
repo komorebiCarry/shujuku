@@ -180,6 +180,7 @@ DELETE FROM table_name WHERE row_id = 2;
   "rateCuckold": 1,
   "recallCount": 20,
   "extractTags": "recall,supplement",
+  "extractInjectTags": "",
   "contextExtractTags": "",
   "contextExtractRules": [],
   "contextExcludeTags": "",

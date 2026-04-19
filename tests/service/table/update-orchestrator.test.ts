@@ -40,6 +40,7 @@ let mockSettings: any = {
   toastMuteEnabled: false,
   dataIsolationEnabled: false,
   dataIsolationCode: '',
+  tableApiPresetOverridesByName: {},
 };
 
 let mockCurrentJsonTableData: any = null;
@@ -927,5 +928,108 @@ describe('executeCardUpdateCore_ACU — SQL 错误反馈重试', () => {
     expect(capturedTableDataTexts[2]).not.toContain('错误1: no such table');
 
     vi.mocked(isSqliteMode).mockReturnValue(false);
+  });
+});
+
+// ═══════════════════════════════════════════════════════════════
+// 表级 API 预设覆盖决议（orchestrateManualUpdate_ACU）
+// ═══════════════════════════════════════════════════════════════
+describe('orchestrateManualUpdate_ACU — 表级 API 预设覆盖', () => {
+  const mockProcessBatch = vi.fn();
+  const mockRefreshData = vi.fn().mockResolvedValue(undefined);
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockIsAutoUpdating = false;
+    mockCoreApisReady = true;
+    mockCurrentJsonTableData = { sheet_0: { name: '纪要表', updateConfig: {} } };
+    mockSettings = {
+      ...mockSettings,
+      apiMode: 'custom',
+      apiConfig: { useMainApi: true, url: '', model: '' },
+      autoUpdateThreshold: 3,
+      updateBatchSize: 3,
+      skipUpdateFloors: 0,
+      tableApiPresetOverridesByName: {},
+    };
+  });
+
+  it('表有覆盖预设时，requestOptions 携带 tableApiPreset', async () => {
+    const { getChatArray_ACU } = await import('../../../src/service/chat/chat-service');
+    vi.mocked(getChatArray_ACU).mockReturnValue([
+      { is_user: true },
+      { is_user: false, mes: 'AI回复' },
+    ]);
+    mockProcessBatch.mockResolvedValue({ success: true });
+
+    // parseTableTemplateJson_ACU mock 返回 { sheet_0: { name: '测试表' } }
+    mockSettings.tableApiPresetOverridesByName = { '测试表': 'special-preset' };
+
+    const result = await orchestrateManualUpdate_ACU(['sheet_0'], mockProcessBatch, mockRefreshData);
+    expect(result.success).toBe(true);
+
+    // 验证 processBatch 被调用时携带了 requestOptions.tableApiPreset
+    const processBatchCall = mockProcessBatch.mock.calls[0];
+    const optionsArg = processBatchCall[2]; // 第三个参数是 options
+    expect(optionsArg.requestOptions).toBeDefined();
+    expect(optionsArg.requestOptions.tableApiPreset).toBe('special-preset');
+  });
+
+  it('表无覆盖预设时，requestOptions 为 null', async () => {
+    const { getChatArray_ACU } = await import('../../../src/service/chat/chat-service');
+    vi.mocked(getChatArray_ACU).mockReturnValue([
+      { is_user: true },
+      { is_user: false, mes: 'AI回复' },
+    ]);
+    mockProcessBatch.mockResolvedValue({ success: true });
+
+    mockSettings.tableApiPresetOverridesByName = {};
+
+    const result = await orchestrateManualUpdate_ACU(['sheet_0'], mockProcessBatch, mockRefreshData);
+    expect(result.success).toBe(true);
+
+    const processBatchCall = mockProcessBatch.mock.calls[0];
+    const optionsArg = processBatchCall[2];
+    expect(optionsArg.requestOptions).toBeNull();
+  });
+
+  it('表名为空时忽略覆盖', async () => {
+    const { getChatArray_ACU } = await import('../../../src/service/chat/chat-service');
+    vi.mocked(getChatArray_ACU).mockReturnValue([
+      { is_user: true },
+      { is_user: false, mes: 'AI回复' },
+    ]);
+    mockProcessBatch.mockResolvedValue({ success: true });
+    mockCurrentJsonTableData = { sheet_0: { name: '', updateConfig: {} } };
+
+    mockSettings.tableApiPresetOverridesByName = { '': 'should-not-apply' };
+
+    const result = await orchestrateManualUpdate_ACU(['sheet_0'], mockProcessBatch, mockRefreshData);
+    expect(result.success).toBe(true);
+
+    const processBatchCall = mockProcessBatch.mock.calls[0];
+    const optionsArg = processBatchCall[2];
+    expect(optionsArg.requestOptions).toBeNull();
+  });
+
+  it('表名有空格时进行标准化匹配', async () => {
+    const { getChatArray_ACU } = await import('../../../src/service/chat/chat-service');
+    vi.mocked(getChatArray_ACU).mockReturnValue([
+      { is_user: true },
+      { is_user: false, mes: 'AI回复' },
+    ]);
+    mockProcessBatch.mockResolvedValue({ success: true });
+
+    // parseTableTemplateJson_ACU mock 返回 { sheet_0: { name: '测试表' } }
+    // 设置 mockCurrentJsonTableData 的 name 带空格并不影响决议，
+    // 因为决议用的是 parseTableTemplateJson_ACU 的返回值
+    mockSettings.tableApiPresetOverridesByName = { '测试表': 'trimmed-preset' };
+
+    const result = await orchestrateManualUpdate_ACU(['sheet_0'], mockProcessBatch, mockRefreshData);
+    expect(result.success).toBe(true);
+
+    const processBatchCall = mockProcessBatch.mock.calls[0];
+    const optionsArg = processBatchCall[2];
+    expect(optionsArg.requestOptions.tableApiPreset).toBe('trimmed-preset');
   });
 });

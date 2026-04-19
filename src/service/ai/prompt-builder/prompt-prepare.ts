@@ -79,7 +79,11 @@ import { isSqliteMode } from '../../table/storage-mode';
 
         if (effectiveAllRows.length === 0) {
             tableDataText += `[${tableIndex}:${table.name}]\n`;
-            const headers = table.content[0] ? table.content[0].slice(1).map((h: any, i: number) => `[${i + 1}:${h}]`).join(', ') : 'No Headers';
+            // [修复] 列头编号使用 0 基索引，与原生 DSL insertRow/updateRow 的对象键语义一致。
+            // 原先使用 i + 1 导致列头标注为 [1:列名],[2:列名]...，
+            // 而默认提示词示例使用 {"0":"...","1":"..."} 的 0 基格式，
+            // 模型会把列头编号 "1" 跟对象键 "1" 做映射，导致所有数据整体右移一列。
+            const headers = table.content[0] ? table.content[0].slice(1).map((h: any, i: number) => `[${i}:${h}]`).join(', ') : 'No Headers';
             tableDataText += `  Columns: ${headers}\n`;
 
             if (table.sourceData) {
@@ -90,7 +94,8 @@ import { isSqliteMode } from '../../table/storage-mode';
             tableDataText += `  (该表格为空，请进行初始化。)\n\n`;
         } else {
             tableDataText += `[${tableIndex}:${table.name}]\n`;
-            const headers = table.content[0] ? table.content[0].slice(1).map((h: any, i: number) => `[${i + 1}:${h}]`).join(', ') : 'No Headers';
+            // [修复] 同上——列头编号 0 基，与原生 DSL 对象键语义对齐
+            const headers = table.content[0] ? table.content[0].slice(1).map((h: any, i: number) => `[${i}:${h}]`).join(', ') : 'No Headers';
             tableDataText += `  Columns: ${headers}\n`;
             if (table.sourceData) {
                 tableDataText += `  - Note: ${table.sourceData.note || 'N/A'}\n`;

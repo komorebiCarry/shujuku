@@ -21,6 +21,7 @@ import { escapeHtml_ACU } from '../../shared/html-helpers';
 import { safeJsonStringify_ACU } from '../../shared/json-helpers';
 import { applySheetOrderNumbers_ACU, ensureSheetOrderNumbers_ACU, isSummaryOrOutlineTable_ACU, logDebug_ACU, logError_ACU, logWarn_ACU, parseTableTemplateJson_ACU } from '../../shared/utils';
 import { saveIndependentTableToChatHistory_ACU } from '../../service/table/table-service';
+import { saveSettingsAndNotify_ACU } from '../components/settings-ui-helpers';
 import { applyTemplatePresetToCurrent_ACU, resolveActiveTemplatePresetName_ACU, upsertTemplatePreset_ACU } from '../../service/template/template-preset-service';
 import { loadTemplatePresetSelect_ACU } from '../components/template-preset-ui';
 import { updateCardUpdateStatusDisplay_ACU } from '../components/update-status-display';
@@ -84,6 +85,15 @@ export function validateDDLText(ddlText: string, tableHeaders: string[]): { vali
       const updateConfig = sheet.updateConfig || {};
       const sourceData = sheet.sourceData || {};
       const ucVal = (v: any) => (Number.isFinite(v) ? v : -1);
+      // [新增] 表级 API 预设覆盖：按标准化表名从 settings 映射中读取
+      const normalizedSheetName = String(sheet.name || '').trim();
+      const currentTableApiPreset = (settings_ACU.tableApiPresetOverridesByName && normalizedSheetName)
+          ? (settings_ACU.tableApiPresetOverridesByName[normalizedSheetName] || '')
+          : '';
+      const apiPresets = settings_ACU.apiPresets || [];
+      const tableApiPresetOptionsHtml = apiPresets.length > 0
+          ? apiPresets.map((p: any) => `<option value="${escapeHtml_ACU(p.name)}" ${currentTableApiPreset === p.name ? 'selected' : ''}>${escapeHtml_ACU(p.name)}</option>`).join('')
+          : '';
       const entryPlacement = normalizePlacementConfig_ACU(config.entryPlacement, DEFAULT_ENTRY_PLACEMENT_ACU);
       const extraIndexPlacement = normalizePlacementConfig_ACU(config.extraIndexPlacement, DEFAULT_EXTRA_INDEX_PLACEMENT_ACU);
       const fixedDefaults = getFixedPlacementDefaultsForTable_ACU(sheet.name);
@@ -218,11 +228,18 @@ export function validateDDLText(ddlText: string, tableHeaders: string[]): { vali
                       <label>跳过更新楼层 (Skip Floors): <span class="acu-hint">(-1 = 沿用UI全局, 0+ = 生效)</span></label>
                       <input type="number" class="acu-form-input" id="cfg-skip" min="-1" step="1" value="${ucVal(updateConfig.skipFloors)}">
                   </div>
-                  <div class="acu-form-group">
-                      <label>发送最新N行 (Send Latest Rows): <span class="acu-hint">(-1 = 全部发送, 0 = 沿用UI全局, 1+ = 仅发送最新N条；纪要表固定使用10条)</span></label>
-                      <input type="number" class="acu-form-input" id="cfg-send-rows" min="-1" step="1" value="${ucVal(updateConfig.sendLatestRows)}">
-                  </div>
-              </div>
+                   <div class="acu-form-group">
+                       <label>发送最新N行 (Send Latest Rows): <span class="acu-hint">(-1 = 全部发送, 0 = 沿用UI全局, 1+ = 仅发送最新N条；纪要表固定使用10条)</span></label>
+                       <input type="number" class="acu-form-input" id="cfg-send-rows" min="-1" step="1" value="${ucVal(updateConfig.sendLatestRows)}">
+                   </div>
+                   <div class="acu-form-group">
+                       <label>表级API预设覆盖: <span class="acu-hint">仅保存到数据库插件设置，不随模板导出；该表及同组其他表将使用此预设</span></label>
+                       <select class="acu-form-input" id="cfg-table-api-preset">
+                           <option value="">使用填表整体API配置</option>
+                           ${tableApiPresetOptionsHtml}
+                       </select>
+                   </div>
+               </div>
 
               <div class="acu-config-section">
                   <h4>AI提示词指令 (Source Data)</h4>
@@ -480,6 +497,23 @@ export function validateDDLText(ddlText: string, tableHeaders: string[]): { vali
       jQuery_API_ACU('#cfg-group-id').on('input', function() { if (!sheet.updateConfig) sheet.updateConfig = {}; sheet.updateConfig.uiSentinel = -1; sheet.updateConfig.groupId = parseIntOrDefault_ACU(jQuery_API_ACU(this).val(), -1); });
       jQuery_API_ACU('#cfg-skip').on('input', function() { if (!sheet.updateConfig) sheet.updateConfig = {}; sheet.updateConfig.uiSentinel = -1; sheet.updateConfig.skipFloors = parseIntOrDefault_ACU(jQuery_API_ACU(this).val(), -1); });
       jQuery_API_ACU('#cfg-send-rows').on('input', function() { if (!sheet.updateConfig) sheet.updateConfig = {}; sheet.updateConfig.uiSentinel = -1; sheet.updateConfig.sendLatestRows = parseIntOrDefault_ACU(jQuery_API_ACU(this).val(), -1); });
+      
+      // [新增] 表级 API 预设覆盖：按标准化表名写入 settings 映射（不写入模板对象）
+      jQuery_API_ACU('#cfg-table-api-preset').on('change', function() {
+          const presetVal = String(jQuery_API_ACU(this).val() || '').trim();
+          const sheetName = String(sheet.name || '').trim();
+          if (!sheetName) return;
+          if (!settings_ACU.tableApiPresetOverridesByName) {
+              settings_ACU.tableApiPresetOverridesByName = {};
+          }
+          if (presetVal) {
+              settings_ACU.tableApiPresetOverridesByName[sheetName] = presetVal;
+          } else {
+              delete settings_ACU.tableApiPresetOverridesByName[sheetName];
+          }
+          saveSettingsAndNotify_ACU();
+          logDebug_ACU(`[表级API预设] "${sheetName}" -> "${presetVal || '(使用整体配置)'}"`);
+      });
       
       jQuery_API_ACU('#cfg-note').on('input', function() { if (!sheet.sourceData) sheet.sourceData = {}; sheet.sourceData.note = jQuery_API_ACU(this).val(); });
       jQuery_API_ACU('#cfg-init').on('input', function() { if (!sheet.sourceData) sheet.sourceData = {}; sheet.sourceData.initNode = jQuery_API_ACU(this).val(); });

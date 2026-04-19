@@ -172,6 +172,23 @@ import { applyPlotPresetToSettings_ACU, clearPlotPresetBindingForChat_ACU, ensur
       return '';
     }
 
+    // 如果指定了 taskId，优先从新结构 qrf_plot_tasks 中按任务维度读取
+    const targetTaskId = String(options?.taskId || '').trim();
+    if (targetTaskId) {
+      for (let i = upperBound; i >= 0; i--) {
+        const message = chat[i];
+        if (message && message.qrf_plot_tasks && typeof message.qrf_plot_tasks === 'object') {
+          const taskContent = message.qrf_plot_tasks[targetTaskId];
+          if (typeof taskContent === 'string' && taskContent.trim()) {
+            logDebug_ACU(`[剧情推进] [Plot] ✓ 在消息 ${i} 找到任务 "${targetTaskId}" 的 qrf_plot_tasks 数据，长度: ${taskContent.length}`);
+            return taskContent;
+          }
+        }
+      }
+      // 任务级新结构未找到，回退到旧结构
+      logDebug_ACU(`[剧情推进] [Plot] 任务 "${targetTaskId}" 在 qrf_plot_tasks 中未找到，回退到旧 qrf_plot 结构。`);
+    }
+
     let latestPlotContent = '';
     let latestPlotIndex = -1;
 
@@ -327,6 +344,22 @@ import { applyPlotPresetToSettings_ACU, clearPlotPresetBindingForChat_ACU, ensur
         target.qrf_plot = plotContent;
         const currentPresetName = getCurrentRuntimePlotPresetName_ACU({ fallbackToGlobal: true });
         target.qrf_plot_preset = currentPresetName;
+
+        // 同时写入任务级结果映射 qrf_plot_tasks
+        if (typeof tempPlotToSave_ACU === 'object' && tempPlotToSave_ACU !== null) {
+          const taskResults = tempPlotToSave_ACU.taskResults;
+          if (Array.isArray(taskResults) && taskResults.length > 0) {
+            if (!target.qrf_plot_tasks || typeof target.qrf_plot_tasks !== 'object') {
+              target.qrf_plot_tasks = {};
+            }
+            for (const result of taskResults) {
+              if (result && result.success && result.taskId && typeof result.rawResponse === 'string' && result.rawResponse.trim()) {
+                target.qrf_plot_tasks[result.taskId] = result.rawResponse.trim();
+              }
+            }
+          }
+        }
+
         logDebug_ACU('[剧情推进] [Plot] ✓ Plot数据已精确附加到目标用户消息，长度:', plotContent.length, '，预设:', currentPresetName || '(默认预设)');
         
         _set_tempPlotToSave_ACU(null);

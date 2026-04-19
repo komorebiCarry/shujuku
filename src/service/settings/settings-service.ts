@@ -336,6 +336,9 @@ export   function buildDefaultSettings_ACU() {
           apiPresets: [] as any[],
           tableApiPreset: '',
           plotApiPreset: '',
+          // [新增] 按表格名称保存的表级 API 预设覆盖（key=标准化表名, value=presetName）
+          // 不保存入模板，只写进数据库插件设置；同名表跨模板复用
+          tableApiPresetOverridesByName: {} as Record<string, string>,
           charCardPrompt: DEFAULT_CHAR_CARD_PROMPT_ACU,
           autoUpdateThreshold: DEFAULT_AUTO_UPDATE_THRESHOLD_ACU,
           autoUpdateFrequency: DEFAULT_AUTO_UPDATE_FREQUENCY_ACU,

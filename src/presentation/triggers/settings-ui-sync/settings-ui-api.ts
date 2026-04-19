@@ -241,6 +241,15 @@ import { maybeLiftWorldbookSuppression_ACU } from '../../../service/runtime/help
     if (settings_ACU.plotApiPreset === presetName) {
       settings_ACU.plotApiPreset = '';
     }
+    // [新增] 清除按表名保存的表级 API 预设覆盖中引用了该预设的条目
+    if (settings_ACU.tableApiPresetOverridesByName && typeof settings_ACU.tableApiPresetOverridesByName === 'object') {
+      const overrides = settings_ACU.tableApiPresetOverridesByName;
+      Object.keys(overrides).forEach((tableName: string) => {
+        if (overrides[tableName] === presetName) {
+          delete overrides[tableName];
+        }
+      });
+    }
     
     saveSettingsAndNotify_ACU();
     refreshApiPresetSelectors_ACU();
@@ -282,6 +291,17 @@ $plotApiPresetSelect.append(renderOption_ACU(p.name, p.name));
       $plotApiPresetSelect.val(settings_ACU.plotApiPreset || '');
     }
 
+    // 刷新任务级数据库API预设选择器
+    const $plotTaskApiPresetSelect = $popupInstance_ACU.find(`#${SCRIPT_ID_PREFIX_ACU}-plot-task-api-preset`);
+    if ($plotTaskApiPresetSelect.length) {
+      const currentTaskApiPreset = $plotTaskApiPresetSelect.val() || '';
+      $plotTaskApiPresetSelect.empty().append('<option value="">继承全局剧情推进API预设</option>');
+      presets.forEach((p: any) => {
+$plotTaskApiPresetSelect.append(renderOption_ACU(p.name, p.name));
+      });
+      $plotTaskApiPresetSelect.val(currentTaskApiPreset);
+    }
+
     // 刷新正文替换的API预设选择器
     const $optimizationApiPresetSelect = $popupInstance_ACU.find(`#${SCRIPT_ID_PREFIX_ACU}-optimization-api-preset`);
     if ($optimizationApiPresetSelect.length) {
@@ -290,6 +310,18 @@ $plotApiPresetSelect.append(renderOption_ACU(p.name, p.name));
 $optimizationApiPresetSelect.append(renderOption_ACU(p.name, p.name));
       });
       $optimizationApiPresetSelect.val(settings_ACU.contentOptimizationSettings?.apiPreset || '');
+    }
+
+    // [新增] 刷新可视化编辑器配置面板中的表级 API 预设覆盖选择器
+    // 该 select 可能不在 popup 中，而是在可视化编辑器容器里
+    const $cfgTableApiPreset = jQuery_API_ACU('#cfg-table-api-preset');
+    if ($cfgTableApiPreset.length) {
+      const currentVal = String($cfgTableApiPreset.val() || '');
+      $cfgTableApiPreset.empty().append('<option value="">使用填表整体API配置</option>');
+      presets.forEach((p: any) => {
+        $cfgTableApiPreset.append(renderOption_ACU(p.name, p.name));
+      });
+      $cfgTableApiPreset.val(currentVal);
     }
   }
 

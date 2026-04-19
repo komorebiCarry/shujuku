@@ -6,6 +6,77 @@ import { settings_ACU } from '../runtime/state-manager';
 import { isGenerateRawAvailable_ACU, generateRaw_ACU, sendConnectionManagerRequest_ACU, getHostRequestHeaders_ACU } from '../../data/gateways/ai-gateway';
 import { logDebug_ACU, logWarn_ACU } from '../../shared/utils';
 
+/**
+ * 剧情推进任务级 API 调用 — 接受显式预设名称
+ * 调用优先级：presetName 参数 > 全局 plotApiPreset > 当前 API 配置
+ */
+export async function callApiWithPlotPreset_ACU(messages: any[], presetName: string, abortSignal: AbortSignal | null = null) {
+    const effectivePresetName = presetName || settings_ACU.plotApiPreset || '';
+    const apiPresetConfig = getApiConfigByPreset_ACU(effectivePresetName);
+    const effectiveApiMode = apiPresetConfig.apiMode ?? settings_ACU.apiMode;
+    const effectiveApiConfig = apiPresetConfig.apiConfig || settings_ACU.apiConfig || {};
+
+    logDebug_ACU(`[剧情推进] 任务级API调用，预设: ${effectivePresetName || '当前配置'}, 模式: ${effectiveApiMode}`);
+
+    if (effectiveApiMode === 'tavern' || effectiveApiConfig.useMainApi) {
+      logDebug_ACU('[剧情推进] 通过酒馆主API发送请求（流式传输）...');
+      if (!isGenerateRawAvailable_ACU()) {
+        throw new Error('TavernHelper.generateRaw 函数不存在。请检查酒馆版本。');
+      }
+      const response = await generateRaw_ACU({
+        ordered_prompts: messages,
+        should_stream: settings_ACU.streamingEnabled || false,
+      });
+      if (typeof response !== 'string') {
+        throw new Error('主API调用未返回预期的文本响应。');
+      }
+      return response.trim();
+    } else {
+      if (!effectiveApiConfig.url || !effectiveApiConfig.model) {
+        throw new Error('自定义API的URL或模型未配置。');
+      }
+
+      const requestBody = {
+        messages: messages,
+        model: effectiveApiConfig.model.replace(/^models\//, ''),
+        max_tokens: effectiveApiConfig.maxTokens || effectiveApiConfig.max_tokens || 20000,
+        temperature: effectiveApiConfig.temperature || 0.7,
+        top_p: effectiveApiConfig.topP || effectiveApiConfig.top_p || 0.95,
+        stream: settings_ACU.streamingEnabled || false,
+        chat_completion_source: 'custom',
+        group_names: [] as string[],
+        include_reasoning: false,
+        reasoning_effort: 'medium',
+        enable_web_search: false,
+        request_images: false,
+        custom_prompt_post_processing: 'strict',
+        reverse_proxy: effectiveApiConfig.url,
+        proxy_password: '',
+        custom_url: effectiveApiConfig.url,
+        custom_include_headers: effectiveApiConfig.apiKey ? `Authorization: Bearer ${effectiveApiConfig.apiKey}` : '',
+      };
+
+      const response = await fetch('/api/backends/chat-completions/generate', {
+        method: 'POST',
+        headers: { ...getHostRequestHeaders_ACU(), 'Content-Type': 'application/json' },
+        body: JSON.stringify(requestBody),
+        signal: abortSignal,
+      });
+
+      if (!response.ok) {
+        const errTxt = await response.text();
+        throw new Error(`API请求失败: ${response.status} ${errTxt}`);
+      }
+
+      const content = await handleApiResponse_ACU(response, abortSignal);
+      if (content) {
+        return content.trim();
+      }
+
+      throw new Error(`API调用返回无效响应`);
+    }
+}
+
 export   async function callApi_ACU(messages: any[], apiSettings: any, abortSignal: AbortSignal | null = null) {
     // [新增] 获取剧情推进使用的API配置（支持API预设）
     const apiPresetConfig = getApiConfigByPreset_ACU(settings_ACU.plotApiPreset);
