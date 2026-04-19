@@ -40,9 +40,45 @@ const USER_SCRIPT_BANNER = `// ==UserScript==
 // ==/UserScript==`;
 
 // ═══════════════════════════════════════════════════════════════
+// Node.js 内置模块浏览器 shim
+// sql.js (sql-asm-memory-growth.js) 内部引用了 fs 和 crypto：
+//   var fs = require('fs')       → require$$0
+//   var a  = require('crypto')   → require$$1（用于 randomFillSync）
+// 浏览器环境下这些代码路径不会真正执行（被 typeof process 条件分支保护），
+// 但 Rollup commonjs 插件会把 require() 调用提升为 IIFE 形参，
+// 导致浏览器运行时出现 ReferenceError: require$$0 is not defined。
+// 解决方式：在 Rollup 解析阶段将 fs/crypto 替换为空模块 shim。
+//
+// 必须同时拦截裸名 (fs/crypto) 和 node: 前缀 (node:fs/node:crypto) 两种形式，
+// 因为 sql.js 内部使用裸名 require('fs')，而部分工具链可能用 node: 前缀。
+// ═══════════════════════════════════════════════════════════════
+const nodeBuiltinsShim = {
+  name: 'node-builtins-shim',
+  resolveId(source) {
+    if (source === 'fs' || source === 'node:fs') {
+      return { id: '\0shim:fs', moduleSideEffects: false };
+    }
+    if (source === 'crypto' || source === 'node:crypto') {
+      return { id: '\0shim:crypto', moduleSideEffects: false };
+    }
+    return null;
+  },
+  load(id) {
+    if (id === '\0shim:fs') {
+      return 'export default {}; export const readFileSync = () => null;';
+    }
+    if (id === '\0shim:crypto') {
+      return 'export default {}; export const randomFillSync = (buf) => { for(let i=0;i<buf.length;i++) buf[i]=Math.random()*256|0; return buf; };';
+    }
+    return null;
+  },
+};
+
+// ═══════════════════════════════════════════════════════════════
 // 共享插件配置
 // ═══════════════════════════════════════════════════════════════
 const sharedPlugins = [
+  nodeBuiltinsShim,
   nodeResolve({
     browser: true,
     preferBuiltins: false,
@@ -102,26 +138,6 @@ const extensionConfig = {
   },
   treeshake: false,
   plugins: [
-    // 将 Node.js 内置模块替换为空的浏览器 shim
-    // sql.js 在浏览器模式下不会真正调用这些模块，但 import 语句仍会被保留
-    {
-      name: 'node-builtins-shim',
-      resolveId(source) {
-        if (source === 'node:fs' || source === 'node:crypto') {
-          return { id: `\0shim:${source}`, moduleSideEffects: false };
-        }
-        return null;
-      },
-      load(id) {
-        if (id === '\0shim:node:fs') {
-          return 'export default {}; export const readFileSync = () => null;';
-        }
-        if (id === '\0shim:node:crypto') {
-          return 'export default {}; export const randomFillSync = (buf) => { for(let i=0;i<buf.length;i++) buf[i]=Math.random()*256|0; return buf; };';
-        }
-        return null;
-      },
-    },
     ...sharedPlugins,
     createTsPlugin(),
     // 构建完成后复制 manifest.json 到 dist/extension/

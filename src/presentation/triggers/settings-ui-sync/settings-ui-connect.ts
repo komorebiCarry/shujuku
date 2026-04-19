@@ -144,14 +144,42 @@ import { evaluateNewMessageAction_ACU } from '../../../service/runtime/message-h
         logWarn_ACU('[CoreAPI] 插件模式：SillyTavern.getContext 不可用，降级为直接访问 SillyTavern 对象');
       }
     } else {
-      // 油猴脚本模式：iframe 下的 window.SillyTavern 已经是扁平 API
-      stApi = typeof hostWin.SillyTavern !== 'undefined' ? hostWin.SillyTavern : (window as any).SillyTavern;
+      // ═══════════════════════════════════════════════════════════════
+      // 油猴脚本模式：运行在酒馆助手创建的 iframe 中。
+      //
+      // 关键事实：iframe 自身的 window.SillyTavern 是酒馆助手注入的
+      // 扁平化 API 对象（包含 chatId/eventSource/eventTypes 等），
+      // 而 window.parent（hostWin）上的 SillyTavern 只有
+      // {libs, getContext} 骨架，不含业务字段。
+      //
+      // 因此必须优先使用 iframe 自身的对象，把 parent 作为 fallback。
+      // 这与旧版 userscript 的行为一致：
+      //   SillyTavern_API_ACU = typeof SillyTavern !== 'undefined'
+      //     ? SillyTavern : parentWin.SillyTavern;
+      // ═══════════════════════════════════════════════════════════════
+      const iframeST = typeof (window as any).SillyTavern !== 'undefined' ? (window as any).SillyTavern : undefined;
+      const parentST = typeof hostWin.SillyTavern !== 'undefined' ? hostWin.SillyTavern : undefined;
+      // 优先使用 iframe 自身的扁平化 API（含 chatId 等业务字段），
+      // fallback 到 parent 的骨架对象
+      stApi = iframeST || parentST;
+      if (iframeST) {
+        logDebug_ACU('[CoreAPI] 油猴脚本模式：使用 iframe 自身的 SillyTavern 扁平 API');
+      } else if (parentST) {
+        logWarn_ACU('[CoreAPI] 油猴脚本模式：iframe 自身无 SillyTavern，降级使用 parent 的骨架对象（可能缺少 chatId 等字段）');
+      }
     }
 
     _set_SillyTavern_API_ACU(stApi);
-    _set_TavernHelper_API_ACU(typeof hostWin.TavernHelper !== 'undefined' ? hostWin.TavernHelper : (window as any).TavernHelper);
-    _set_jQuery_API_ACU(typeof hostWin.$ !== 'undefined' ? hostWin.$ : (window as any).jQuery);
-    _set_toastr_API_ACU(hostWin.toastr || (typeof (window as any).toastr !== 'undefined' ? (window as any).toastr : null));
+    // TavernHelper/jQuery/toastr 同理：优先 iframe 自身，fallback 到 parent
+    const iframeTH = typeof (window as any).TavernHelper !== 'undefined' ? (window as any).TavernHelper : undefined;
+    const parentTH = typeof hostWin.TavernHelper !== 'undefined' ? hostWin.TavernHelper : undefined;
+    _set_TavernHelper_API_ACU(iframeTH || parentTH);
+
+    const iframe$ = typeof (window as any).$ !== 'undefined' ? (window as any).$ : undefined;
+    const parent$ = typeof hostWin.$ !== 'undefined' ? hostWin.$ : undefined;
+    _set_jQuery_API_ACU(iframe$ || parent$);
+
+    _set_toastr_API_ACU((typeof (window as any).toastr !== 'undefined' ? (window as any).toastr : null) || hostWin.toastr || null);
     _set_coreApisAreReady_ACU(!!(
       SillyTavern_API_ACU &&
       TavernHelper_API_ACU &&

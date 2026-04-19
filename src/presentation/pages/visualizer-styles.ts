@@ -1293,4 +1293,161 @@
     #acu-visualizer-content #acu-vis-add-row div {
         color: var(--vis-accent) !important;
     }
+
+    /* ═══════════════════════════════════════════════════════════════
+       AI 改表助手面板
+       使用 flex containment 模式确保内部滚动
+       ═══════════════════════════════════════════════════════════════ */
+    #acu-vis-assistant-host {
+        display: flex;
+        flex-direction: column;
+        min-height: 0;
+    }
+    .acu-vis-assistant-panel {
+        display: flex;
+        flex-direction: column;
+        min-height: 0;
+        height: 100%;
+        flex-shrink: 0;
+    }
+    .acu-vis-assistant-header {
+        flex-shrink: 0;
+    }
+    .acu-vis-assistant-body {
+        flex: 1;
+        min-height: 0;
+        overflow-y: auto;
+    }
+    .acu-vis-assistant-body::-webkit-scrollbar {
+        width: 4px;
+    }
+    .acu-vis-assistant-body::-webkit-scrollbar-track {
+        background: transparent;
+    }
+    .acu-vis-assistant-body::-webkit-scrollbar-thumb {
+        background: var(--vis-border-color);
+        border-radius: 1px;
+    }
+    .acu-vis-assistant-body::-webkit-scrollbar-thumb:hover {
+        background: var(--vis-text-mute);
+    }
+    /* assistant 内的区块样式 */
+    .acu-assistant-section {
+        padding: 12px;
+        background: var(--vis-bg-light);
+        border: 1px solid var(--vis-border-color);
+        border-radius: 2px;
+        margin-bottom: 12px;
+    }
+    .acu-assistant-title {
+        font-size: 12px;
+        color: var(--vis-text-mute);
+        letter-spacing: 1px;
+        margin-bottom: 8px;
+    }
+    .acu-assistant-diff-block {
+        margin-bottom: 8px;
+        font-size: 13px;
+    }
+    .acu-assistant-diff-block strong {
+        color: var(--vis-text-dim);
+        letter-spacing: 1px;
+    }
+    .acu-assistant-diff-block ul {
+        margin: 4px 0 0 12px;
+        padding: 0;
+        list-style: none;
+    }
+    .acu-assistant-diff-block li {
+        padding: 2px 0;
+        color: var(--vis-text-main);
+    }
+    .acu-assistant-risk-list {
+        display: flex;
+        flex-direction: column;
+        gap: 8px;
+    }
+    .acu-assistant-risk-item {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        cursor: pointer;
+    }
+    .acu-assistant-risk-item span {
+        font-size: 13px;
+        color: var(--vis-text-main);
+    }
+    .acu-assistant-actions-row {
+        padding-top: 12px;
+        border-top: 1px solid var(--vis-border-color);
+    }
+    /* assistant session meta */
+    .acu-assistant-session-meta {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 12px;
+        padding: 10px 12px;
+        background: var(--vis-bg-stats);
+        border: 1px solid var(--vis-border-color);
+        border-radius: 2px;
+        margin-bottom: 12px;
+        font-size: 12px;
+    }
+    .acu-assistant-meta-item {
+        color: var(--vis-text-dim);
+    }
+    .acu-assistant-error-text {
+        color: #c55;
+    }
+    /* assistant round history */
+    .acu-assistant-round-item {
+        border: 1px solid var(--vis-border-color);
+        border-radius: 2px;
+        margin-bottom: 8px;
+        background: var(--vis-bg-stats);
+    }
+    .acu-assistant-round-header {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        padding: 8px 12px;
+        cursor: default;
+    }
+    .acu-assistant-round-badge {
+        font-size: 11px;
+        color: var(--vis-accent);
+        background: rgba(125, 73, 64, 0.10);
+        padding: 2px 6px;
+        border-radius: 1px;
+        letter-spacing: 1px;
+    }
+    .acu-assistant-round-summary {
+        flex: 1;
+        min-width: 0;
+        font-size: 13px;
+        color: var(--vis-text-main);
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+    }
+    .acu-assistant-round-op-count {
+        font-size: 11px;
+        color: var(--vis-text-mute);
+    }
+    .acu-assistant-round-toggle {
+        padding: 4px 8px;
+        font-size: 11px;
+    }
+    .acu-assistant-round-detail {
+        padding: 8px 12px;
+        border-top: 1px solid var(--vis-border-color);
+        background: var(--vis-bg-light);
+    }
+    .acu-assistant-round-detail .acu-assistant-section {
+        margin-bottom: 8px;
+        padding: 8px;
+    }
+    .acu-assistant-round-detail .acu-assistant-section:last-child {
+        margin-bottom: 0;
+    }
   `;
