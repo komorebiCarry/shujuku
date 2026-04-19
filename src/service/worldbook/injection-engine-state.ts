@@ -5,7 +5,7 @@
 import { getCurrentWorldbookConfig_ACU } from '../settings/settings-readers';
 import { CHAT_SHEET_GUIDE_FIELD_ACU } from '../../data/storage/chat-history';
 import { currentChatFileIdentifier_ACU, currentJsonTableData_ACU, generationGate_ACU, settings_ACU, _set_currentChatFileIdentifier_ACU, _set_allChatMessages_ACU, _set_lastTotalAiMessages_ACU } from '../runtime/state-manager';
-import { getLorebookEntries_ACU, deleteLorebookEntries_ACU, getCurrentCharPrimaryLorebook_ACU as gwGetCurrentCharPrimaryLorebook_ACU } from '../../data/gateways/worldbook-gateway';
+import { getLorebookEntries_ACU, deleteLorebookEntries_ACU, getCurrentCharPrimaryLorebook_ACU as gwGetCurrentCharPrimaryLorebook_ACU, listLorebooks_ACU } from '../../data/gateways/worldbook-gateway';
 import { getChatArray_ACU, saveChatToHost_ACU } from '../../data/gateways/chat-gateway';
 import { applyTemplateScopeForCurrentChat_ACU, loadSettings_ACU, saveSettings_ACU } from '../settings/settings-service';
 import { getSortedSheetKeys_ACU } from '../template/chat-scope';
@@ -95,10 +95,30 @@ import { purgeSheetKeysFromMessage_ACU } from '../../data/repositories/chat-mess
   export async function getInjectionTargetLorebook_ACU() {
       const worldbookConfig = getCurrentWorldbookConfig_ACU();
       const target = worldbookConfig.injectionTarget;
+      let lorebookName: string | null = null;
       if (target === 'character') {
-      return await gwGetCurrentCharPrimaryLorebook_ACU();
+          lorebookName = await gwGetCurrentCharPrimaryLorebook_ACU();
+      } else {
+          lorebookName = target || null;
       }
-      return target; // 直接返回世界书名称
+
+      // [防御] 验证世界书是否真实存在于 SillyTavern 的世界书列表中
+      // 防止 SillyTavern API 返回残留/缓存的不存在世界书名称导致报错
+      // 验证不通过时静默返回 null，不输出警告（避免用户看到无意义的重复警告）
+      if (lorebookName) {
+          try {
+              const availableBooks = await listLorebooks_ACU();
+              if (!availableBooks.includes(lorebookName)) {
+                  logDebug_ACU(`[Worldbook] 注入目标世界书 "${lorebookName}" 不存在于可用列表中，静默跳过。`);
+                  return null;
+              }
+          } catch (e) {
+              // 验证失败时静默降级，不打扰用户
+              return null;
+          }
+      }
+
+      return lorebookName;
   }
 
 
