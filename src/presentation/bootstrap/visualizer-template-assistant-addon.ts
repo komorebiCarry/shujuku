@@ -13,7 +13,6 @@ const VISUALIZER_CONTENT_SELECTOR_ACU = '.acu-vis-content';
 const ASSISTANT_BUTTON_ID_ACU = 'acu-vis-assistant-btn';
 const ASSISTANT_HOST_ID_ACU = 'acu-vis-assistant-host';
 const LIFECYCLE_POLL_MS_ACU = 200;
-const DISABLE_AUTO_INIT_FLAG_ACU = '__ACU_DISABLE_TEMPLATE_ASSISTANT_ADDON_AUTO_INIT__';
 
 let addonInitialized_ACU = false;
 let lifecycleTimer_ACU: ReturnType<typeof globalThis.setInterval> | null = null;
@@ -148,8 +147,4 @@ export function initVisualizerTemplateAssistantAddon_ACU() {
     startVisualizerObserver_ACU();
     startLifecyclePoll_ACU();
     syncVisualizerTemplateAssistantAddon_ACU(true);
-}
-
-if (!(globalThis as Record<string, unknown>)[DISABLE_AUTO_INIT_FLAG_ACU]) {
-    initVisualizerTemplateAssistantAddon_ACU();
 }

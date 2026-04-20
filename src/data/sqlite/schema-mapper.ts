@@ -20,11 +20,13 @@ export {
   buildColumnNameMap,
   getDDLColumnNameByIndex,
   updateDDLColumnComment,
+  parseDDLColumnInfos_ACU,
+  validateDDLTextAgainstHeaders_ACU,
 } from '../../shared/ddl-utils';
 import {
   parseDDLTableName,
   parseDDLColumnNames,
-  parseDDLColumnComments,
+  validateDDLTextAgainstHeaders_ACU,
 } from '../../shared/ddl-utils';
 
 // ═══════════════════════════════════════════════════════════════
@@ -206,36 +208,12 @@ export function validateDDLAgainstHeaders(
   ddl: string,
   headers: (string | null)[]
 ): { valid: boolean; mismatches: string[] } {
-  const ddlColumns = parseDDLColumnNames(ddl);
-  const ddlComments = parseDDLColumnComments(ddl);
-  const mismatches: string[] = [];
-
-  // 列数检查
-  const filteredHeaders = headers.filter(h => h !== null);
-  if (ddlColumns.length !== filteredHeaders.length) {
-    mismatches.push(
-      `列数不匹配: DDL 有 ${ddlColumns.length} 列, content 表头有 ${filteredHeaders.length} 列`
-    );
-  }
-
-  // 逐列检查：DDL 注释中的中文名应该和 content 表头对应
-  for (let i = 0; i < Math.min(ddlColumns.length, filteredHeaders.length); i++) {
-    const header = filteredHeaders[i];
-    const ddlCol = ddlColumns[i];
-    const ddlComment = ddlComments.get(ddlCol);
-
-    // row_id 列特殊处理
-    if (ddlCol === 'row_id' && header === 'row_id') continue;
-
-    // 如果 DDL 有注释，检查注释是否和表头匹配
-    if (ddlComment && header && ddlComment !== header) {
-      mismatches.push(
-        `第 ${i + 1} 列不匹配: DDL 列 "${ddlCol}" 注释 "${ddlComment}" ≠ 表头 "${header}"`
-      );
-    }
-  }
-
-  return { valid: mismatches.length === 0, mismatches };
+  const normalizedHeaders = headers.filter(h => h !== null).map(h => String(h ?? ''));
+  const result = validateDDLTextAgainstHeaders_ACU(ddl, normalizedHeaders);
+  return {
+    valid: result.valid,
+    mismatches: result.valid ? [] : [result.message],
+  };
 }
 
 

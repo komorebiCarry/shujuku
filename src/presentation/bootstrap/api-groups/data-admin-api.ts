@@ -9,6 +9,7 @@ import { importCombinedSettings_ACU } from '../../triggers/admin-ui';
 import { exportCombinedSettings_ACU, handleManualMergeSummary_ACU } from '../../triggers/update-trigger';
 import { clearImportLocalStorage_ACU, clearImportedEntries_ACU, deleteImportedEntries_ACU, handleInjectImportedTxtSelected_ACU } from '../../triggers/import-process';
 import { handleTxtImportAndSplit_ACU, handleInjectSplitEntriesFull_ACU, handleInjectSplitEntriesStandard_ACU, handleInjectSplitEntriesSummary_ACU } from '../../components/import-status-ui';
+import { openNewVisualizer_ACU } from '../../pages/visualizer';
 import type { ApiGroupContext } from './callback-api';
 
 export function createDataAdminApi(_ctx: ApiGroupContext): Record<string, Function> {
@@ -22,6 +23,7 @@ export function createDataAdminApi(_ctx: ApiGroupContext): Record<string, Functi
         importCombinedSettings: async function() { try { return await importCombinedSettings_ACU(); } catch (e) { logError_ACU('importCombinedSettings failed:', e); return false; } },
         exportCombinedSettings: async function() { try { return await exportCombinedSettings_ACU(); } catch (e) { logError_ACU('exportCombinedSettings failed:', e); return false; } },
         overrideWithTemplate: async function() { try { return await overrideLatestLayerWithTemplate_ACU(); } catch (e) { logError_ACU('overrideWithTemplate failed:', e); return false; } },
+        openVisualizer: async function() { try { return await openNewVisualizer_ACU(); } catch (e) { logError_ACU('openVisualizer failed:', e); return false; } },
 
         // 导入TXT链路
         importTxtAndSplit: async function() { try { return await handleTxtImportAndSplit_ACU(); } catch (e) { logError_ACU('importTxtAndSplit failed:', e); return false; } },

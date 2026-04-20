@@ -32,7 +32,7 @@ import { _acuVisState } from './visualizer';
 import { $popupInstance_ACU } from '../state/ui-refs';
 import { closeACUWindow } from '../window/window-system';
 import { isSqliteMode } from '../../service/table/storage-mode';
-import { updateDDLColumnComment, parseDDLColumnNames } from '../../shared/ddl-utils';
+import { updateDDLColumnComment, parseDDLColumnNames, validateDDLTextAgainstHeaders_ACU } from '../../shared/ddl-utils';
 
 // 循环 import — 运行时安全
 import { renderVisualizerMain_ACU } from './visualizer-main-render';
@@ -42,41 +42,7 @@ import { renderVisualizerMain_ACU } from './visualizer-main-render';
  * @returns { valid: boolean; message: string } 校验结果
  */
 export function validateDDLText(ddlText: string, tableHeaders: string[]): { valid: boolean; message: string } {
-    const trimmed = (ddlText || '').trim();
-    if (!trimmed) {
-        return { valid: false, message: '⚠ DDL 为空' };
-    }
-
-    // 校验 1：是否包含 CREATE TABLE
-    if (!/CREATE\s+TABLE/i.test(trimmed)) {
-        return { valid: false, message: '✗ 不是有效的 CREATE TABLE 语句' };
-    }
-
-    // 校验 2：是否包含 row_id 主键列
-    if (!/row_id\s+INTEGER\s+PRIMARY\s+KEY/i.test(trimmed)) {
-        return { valid: false, message: '✗ 缺少 row_id INTEGER PRIMARY KEY 列（必须作为第一列）' };
-    }
-
-    // 校验 3：提取 DDL 列名，与当前表头对比
-    const colMatches = trimmed.match(/\(([^)]+)\)/s);
-    if (colMatches) {
-        const ddlCols = colMatches[1]
-            .split(',')
-            .map(c => c.trim().split(/\s+/)[0])
-            .filter(c => c && !c.startsWith('--'));
-        const ddlColsNoRowId = ddlCols.filter(c => c.toLowerCase() !== 'row_id');
-        const mismatch = ddlColsNoRowId.filter(c => !tableHeaders.includes(c));
-        const missing = tableHeaders.filter((h: string) => !ddlColsNoRowId.includes(h));
-
-        if (mismatch.length > 0 || missing.length > 0) {
-            let msg = '⚠ DDL 列名与表头不完全匹配：';
-            if (mismatch.length > 0) msg += `DDL 多出: ${mismatch.join(', ')}；`;
-            if (missing.length > 0) msg += `表头多出: ${missing.join(', ')}`;
-            return { valid: false, message: msg };
-        }
-    }
-
-    return { valid: true, message: '✓ DDL 格式正确，列名与表头匹配' };
+    return validateDDLTextAgainstHeaders_ACU(ddlText, tableHeaders);
 }
 
   export function renderVisualizerConfigMode_ACU($container: any, sheet: any) {

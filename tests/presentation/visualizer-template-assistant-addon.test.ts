@@ -8,18 +8,15 @@ const {
   mockResetState,
   mockToggle,
   state,
-} = vi.hoisted(() => {
-  (globalThis as any).__ACU_DISABLE_TEMPLATE_ASSISTANT_ADDON_AUTO_INIT__ = true;
-  return {
-    mockHandleSheetChange: vi.fn(),
-    mockRenderPanel: vi.fn(),
-    mockResetState: vi.fn(),
-    mockToggle: vi.fn(),
-    state: {
-      currentSheetKey: 'sheet_a',
-    } as any,
-  };
-});
+} = vi.hoisted(() => ({
+  mockHandleSheetChange: vi.fn(),
+  mockRenderPanel: vi.fn(),
+  mockResetState: vi.fn(),
+  mockToggle: vi.fn(),
+  state: {
+    currentSheetKey: 'sheet_a',
+  } as any,
+}));
 
 vi.mock('../../src/shared/env', () => ({
   topLevelWindow_ACU: globalThis.window,
@@ -104,5 +101,29 @@ describe('visualizer template assistant addon', () => {
     (document.querySelector('#acu-vis-assistant-btn') as HTMLButtonElement).click();
 
     expect(mockToggle).toHaveBeenCalledTimes(1);
+  });
+
+  it('assistant host 元素被正确注入到 acu-vis-content 中', () => {
+    document.body.innerHTML = `
+      <div id="acu-visualizer-content">
+        <div class="acu-vis-toolbar">
+          <div class="acu-vis-actions"></div>
+        </div>
+        <div class="acu-vis-content">
+          <div class="acu-vis-sidebar"></div>
+          <div class="acu-vis-main"></div>
+        </div>
+      </div>
+    `;
+
+    ensureVisualizerTemplateAssistantAddonDom_ACU();
+    
+    const content = document.querySelector('.acu-vis-content');
+    const host = document.querySelector('#acu-vis-assistant-host');
+    
+    expect(host).toBeTruthy();
+    expect(content?.contains(host)).toBe(true);
+    // 验证 host 是 content 的最后一个子元素
+    expect(content?.lastElementChild).toBe(host);
   });
 });

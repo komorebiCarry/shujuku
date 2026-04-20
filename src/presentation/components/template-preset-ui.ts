@@ -60,6 +60,12 @@ import { getTemplatePresetDisplayName_ACU, getTemplatePreset_ACU, listTemplatePr
       });
   }
 
+  function hasOptionValue_ACU($select: JQuery<HTMLElement> | null, value: string) {
+      if (!$select || !$select.length) return false;
+      const normalizedValue = String(value ?? '');
+      return $select.find('option').toArray().some((option) => String(jQuery_API_ACU(option).val() ?? '') === normalizedValue);
+  }
+
   export function loadTemplatePresetSelect_ACU({ globalSelectName = null as string | null, keepGlobalValue = false } = {}) {
       if (!$popupInstance_ACU || !$popupInstance_ACU.length) return;
 
@@ -121,9 +127,9 @@ import { getTemplatePresetDisplayName_ACU, getTemplatePreset_ACU, listTemplatePr
           } else if (keepGlobalValue) {
               resolvedGlobalValue = normalizeTemplatePresetSelectionValue_ACU($globalSelect.val());
           }
-          const finalGlobalValue = resolvedGlobalValue && $globalSelect.find(`option[value="${resolvedGlobalValue.replace(/"/g, '\\"')}"]`).length > 0
+          const finalGlobalValue = resolvedGlobalValue && hasOptionValue_ACU($globalSelect, resolvedGlobalValue)
               ? resolvedGlobalValue
-              : (hasGlobalPreset || (!!globalPresetName && $globalSelect.find(`option[value="${globalPresetName.replace(/"/g, '\\"')}"]`).length > 0)
+              : (hasGlobalPreset || (!!globalPresetName && hasOptionValue_ACU($globalSelect, globalPresetName))
                   ? globalPresetName
                   : DEFAULT_TEMPLATE_PRESET_OPTION_VALUE_ACU);
           $globalSelect.val(finalGlobalValue || DEFAULT_TEMPLATE_PRESET_OPTION_VALUE_ACU);
@@ -134,7 +140,7 @@ import { getTemplatePresetDisplayName_ACU, getTemplatePreset_ACU, listTemplatePr
       }
 
       if ($chatSelect && $chatSelect.length) {
-          const finalChatValue = chatSelectedPresetName && $chatSelect.find(`option[value="${chatSelectedPresetName.replace(/"/g, '\\"')}"]`).length > 0
+          const finalChatValue = chatSelectedPresetName && hasOptionValue_ACU($chatSelect, chatSelectedPresetName)
               ? chatSelectedPresetName
               : DEFAULT_TEMPLATE_PRESET_OPTION_VALUE_ACU;
           $chatSelect.val(finalChatValue || DEFAULT_TEMPLATE_PRESET_OPTION_VALUE_ACU);

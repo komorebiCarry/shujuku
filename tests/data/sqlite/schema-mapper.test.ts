@@ -334,6 +334,18 @@ describe('validateDDLAgainstHeaders', () => {
     expect(result.mismatches).toHaveLength(0);
   });
 
+  it('英文物理列名配中文注释时按中文表头校验通过', () => {
+    const ddl = `CREATE TABLE inventory (
+      row_id INTEGER PRIMARY KEY, -- 行号
+      item_name TEXT, -- 物品名称
+      quantity INTEGER, -- 数量
+      description TEXT -- 描述/效果
+    );`;
+    const result = validateDDLAgainstHeaders(ddl, ['row_id', '物品名称', '数量', '描述/效果']);
+    expect(result.valid).toBe(true);
+    expect(result.mismatches).toHaveLength(0);
+  });
+
   it('列数不匹配时报告', () => {
     const ddl = `CREATE TABLE test (
       row_id INTEGER PRIMARY KEY,
@@ -353,5 +365,16 @@ describe('validateDDLAgainstHeaders', () => {
     const result = validateDDLAgainstHeaders(ddl, ['row_id', '姓名', '年龄']);
     expect(result.valid).toBe(false);
     expect(result.mismatches.some(m => m.includes('不匹配'))).toBe(true);
+  });
+
+  it('列顺序与表头不一致时报告', () => {
+    const ddl = `CREATE TABLE test (
+      row_id INTEGER PRIMARY KEY, -- 行号
+      age INTEGER, -- 年龄
+      name TEXT -- 姓名
+    );`;
+    const result = validateDDLAgainstHeaders(ddl, ['row_id', '姓名', '年龄']);
+    expect(result.valid).toBe(false);
+    expect(result.mismatches.some(m => m.includes('第 1 列不匹配'))).toBe(true);
   });
 });

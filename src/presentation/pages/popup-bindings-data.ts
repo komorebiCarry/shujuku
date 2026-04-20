@@ -68,6 +68,26 @@ export async function bindDataEvents_ACU(): Promise<void> {
       const $exportCombinedSettingsButton = $popupInstance_ACU.find(`#${SCRIPT_ID_PREFIX_ACU}-export-combined-settings`);
       const $openNewVisualizerButton_ACU = $popupInstance_ACU.find(`#${SCRIPT_ID_PREFIX_ACU}-open-new-visualizer`);
 
+      const handleOpenVisualizerClick_ACU = async () => {
+          try {
+              const topLevelApi = (topLevelWindow_ACU as any)?.AutoCardUpdaterAPI;
+              if (topLevelApi?.openVisualizer) {
+                  await topLevelApi.openVisualizer();
+                  return;
+              }
+              await openNewVisualizer_ACU();
+          } catch (e: any) {
+              logError_ACU('打开可视化表格编辑器失败:', e);
+              showToastr_ACU('error', `打开可视化表格编辑器失败: ${e?.message || '未知错误'}`);
+          }
+      };
+
+      if ($openNewVisualizerButton_ACU.length) {
+          $openNewVisualizerButton_ACU
+              .off('click.acu_visualizer')
+              .on('click.acu_visualizer', handleOpenVisualizerClick_ACU);
+      }
+
         const closeDataIsolationHistoryDropdown_ACU = () => {
             if ($dataIsolationCombo.length && $dataIsolationHistoryList.length) {
                 $dataIsolationCombo.removeClass('open');
@@ -828,15 +848,6 @@ export async function bindDataEvents_ACU(): Promise<void> {
 
         if ($importCombinedSettingsButton.length) $importCombinedSettingsButton.on('click', importCombinedSettings_ACU);
         if ($exportCombinedSettingsButton.length) $exportCombinedSettingsButton.on('click', exportCombinedSettings_ACU);
-        if ($openNewVisualizerButton_ACU.length) {
-            $openNewVisualizerButton_ACU.on('click', function() {
-                if ((topLevelWindow_ACU as any).AutoCardUpdaterAPI && (topLevelWindow_ACU as any).AutoCardUpdaterAPI.openVisualizer) {
-                    (topLevelWindow_ACU as any).AutoCardUpdaterAPI.openVisualizer();
-                } else {
-                     openNewVisualizer_ACU(); // Fallback direct call
-                }
-            });
-        }
 
         // [新增] 绑定合并总结按钮事件
         const $startMergeSummaryButton = $popupInstance_ACU.find(`#${SCRIPT_ID_PREFIX_ACU}-start-merge-summary`);
