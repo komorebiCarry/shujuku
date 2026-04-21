@@ -109,4 +109,27 @@ describe('visualizer template assistant addon', () => {
 
     expect(mockToggle).toHaveBeenCalledTimes(1);
   });
+
+  it('assistant host 元素被正确注入到 acu-vis-content 中', () => {
+    document.body.innerHTML = `
+      <div id="acu-visualizer-content">
+        <div class="acu-vis-toolbar">
+          <div class="acu-vis-actions"></div>
+        </div>
+        <div class="acu-vis-content">
+          <div class="acu-vis-sidebar"></div>
+          <div class="acu-vis-main"></div>
+        </div>
+      </div>
+    `;
+
+    ensureVisualizerTemplateAssistantAddonDom_ACU();
+
+    const content = document.querySelector('.acu-vis-content');
+    const host = document.querySelector('#acu-vis-assistant-host');
+
+    expect(host).toBeTruthy();
+    expect(content?.contains(host)).toBe(true);
+    expect(content?.lastElementChild).toBe(host);
+  });
 });

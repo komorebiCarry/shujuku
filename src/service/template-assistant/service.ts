@@ -3,28 +3,195 @@ import { settings_ACU } from '../runtime/state-manager';
 import { getSortedSheetKeys_ACU } from '../template/chat-scope';
 import { getGlobalInjectionConfigFromData_ACU } from '../worldbook/injection-engine';
 import { safeJsonStringify_ACU } from '../../shared/json-helpers';
-import { hashUserInput_ACU } from '../../shared/utils';
-import {
-    buildTemplateAssistantCumulativeCompileResult_ACU,
-    compileTemplateAssistantDraft_ACU,
-    type TemplateAssistantCompileResult_ACU,
-} from './compiler';
+import { hashUserInput_ACU, logError_ACU } from '../../shared/utils';
+import { buildTemplateAssistantCumulativeCompileResult_ACU, compileTemplateAssistantDraft_ACU, type TemplateAssistantCompileResult_ACU } from './compiler';
+import { buildTemplateAssistantEmbeddedReferenceText_ACU } from './reference-docs';
 
 type AnyRecord = Record<string, any>;
 
-export interface TemplateAssistantOperation_ACU {
-    op: string;
-    [key: string]: any;
+const TEMPLATE_ASSISTANT_SOURCE_DATA_ALLOWED_KEYS_ACU = ['note', 'initNode', 'insertNode', 'updateNode', 'deleteNode'] as const;
+const TEMPLATE_ASSISTANT_SOURCE_DATA_ALLOWED_KEY_SET_ACU = new Set<string>(TEMPLATE_ASSISTANT_SOURCE_DATA_ALLOWED_KEYS_ACU);
+
+export interface TemplateAssistantAddSheetOperation_ACU {
+    op: 'add_sheet';
+    sheetName: string;
+    headers: string[];
+    insertAfterSheetKey?: string;
+    sourceData?: Record<string, any>;
+    updateConfig?: Record<string, any>;
+    exportConfig?: Record<string, any>;
 }
 
-export interface TemplateAssistantDraft_ACU {
-    protocolVersion: number;
+export interface TemplateAssistantRenameSheetOperation_ACU {
+    op: 'rename_sheet';
+    sheetKey: string;
+    newName: string;
+}
+
+export interface TemplateAssistantDeleteSheetOperation_ACU {
+    op: 'delete_sheet';
+    sheetKey: string;
+}
+
+export interface TemplateAssistantMoveSheetOperation_ACU {
+    op: 'move_sheet';
+    sheetKey: string;
+    beforeSheetKey?: string;
+    afterSheetKey?: string;
+}
+
+export interface TemplateAssistantPatchSheetSourceDataPatch_ACU {
+    note?: string;
+    initNode?: string;
+    insertNode?: string;
+    updateNode?: string;
+    deleteNode?: string;
+}
+
+export interface TemplateAssistantPatchSheetUpdateConfigPatch_ACU {
+    contextDepth?: number;
+    updateFrequency?: number;
+    batchSize?: number;
+    groupId?: number;
+    skipFloors?: number;
+    sendLatestRows?: number;
+}
+
+export interface TemplateAssistantContentUpdateCell_ACU {
+    rowNumber: number;
+    columnName: string;
+    value: any;
+}
+
+export interface TemplateAssistantContentAddRow_ACU {
+    [columnName: string]: any;
+}
+
+export interface TemplateAssistantPatchSheetContentPatch_ACU {
+    updateCells?: TemplateAssistantContentUpdateCell_ACU[];
+    addRows?: TemplateAssistantContentAddRow_ACU[];
+    deleteRows?: number[];
+}
+
+export interface TemplateAssistantSchemaRenameColumn_ACU {
+    from: string;
+    to: string;
+}
+
+export interface TemplateAssistantSchemaAddColumn_ACU {
+    name: string;
+    defaultValue?: any;
+}
+
+export interface TemplateAssistantPatchSheetSchemaPatch_ACU {
+    renameColumns?: TemplateAssistantSchemaRenameColumn_ACU[];
+    addColumns?: TemplateAssistantSchemaAddColumn_ACU[];
+    deleteColumns?: string[];
+    ddl?: string;
+}
+
+export interface TemplateAssistantLockRowPatch_ACU {
+    rowNumber: number;
+    locked: boolean;
+}
+
+export interface TemplateAssistantLockColumnPatch_ACU {
+    columnName: string;
+    locked: boolean;
+}
+
+export interface TemplateAssistantLockCellPatch_ACU {
+    rowNumber: number;
+    columnName: string;
+    locked: boolean;
+}
+
+export interface TemplateAssistantPatchSheetLocksPatch_ACU {
+    rows?: TemplateAssistantLockRowPatch_ACU[];
+    columns?: TemplateAssistantLockColumnPatch_ACU[];
+    cells?: TemplateAssistantLockCellPatch_ACU[];
+    specialIndexLocked?: boolean;
+}
+
+export interface TemplateAssistantPatchSheetSourceDataOperation_ACU {
+    op: 'patch_sheet_source_data';
+    sheetKey: string;
+    patch: TemplateAssistantPatchSheetSourceDataPatch_ACU;
+}
+
+export interface TemplateAssistantPatchSheetUpdateConfigOperation_ACU {
+    op: 'patch_sheet_update_config';
+    sheetKey: string;
+    patch: TemplateAssistantPatchSheetUpdateConfigPatch_ACU;
+}
+
+export interface TemplateAssistantPatchSheetExportConfigOperation_ACU {
+    op: 'patch_sheet_export_config';
+    sheetKey: string;
+    patch: Record<string, any>;
+}
+
+export interface TemplateAssistantPatchSheetContentOperation_ACU {
+    op: 'patch_sheet_content';
+    sheetKey: string;
+    patch: TemplateAssistantPatchSheetContentPatch_ACU;
+}
+
+export interface TemplateAssistantPatchSheetSchemaOperation_ACU {
+    op: 'patch_sheet_schema';
+    sheetKey: string;
+    patch: TemplateAssistantPatchSheetSchemaPatch_ACU;
+}
+
+export interface TemplateAssistantPatchSheetLocksOperation_ACU {
+    op: 'patch_sheet_locks';
+    sheetKey: string;
+    patch: TemplateAssistantPatchSheetLocksPatch_ACU;
+}
+
+export interface TemplateAssistantPatchGlobalInjectionConfigOperation_ACU {
+    op: 'patch_global_injection_config';
+    patch: Record<string, any>;
+}
+
+export type TemplateAssistantOperation_ACU =
+    | TemplateAssistantAddSheetOperation_ACU
+    | TemplateAssistantRenameSheetOperation_ACU
+    | TemplateAssistantDeleteSheetOperation_ACU
+    | TemplateAssistantMoveSheetOperation_ACU
+    | TemplateAssistantPatchSheetSourceDataOperation_ACU
+    | TemplateAssistantPatchSheetUpdateConfigOperation_ACU
+    | TemplateAssistantPatchSheetExportConfigOperation_ACU
+    | TemplateAssistantPatchSheetContentOperation_ACU
+    | TemplateAssistantPatchSheetSchemaOperation_ACU
+    | TemplateAssistantPatchSheetLocksOperation_ACU
+    | TemplateAssistantPatchGlobalInjectionConfigOperation_ACU;
+
+type TemplateAssistantBaseDraft_ACU = {
+    protocolVersion: 1 | 2;
     mode: 'modify_current_template_incremental';
     baseFingerprint: string;
     selectedSheetKey: string;
     summary: string;
     warnings: string[];
     operations: TemplateAssistantOperation_ACU[];
+};
+
+export interface TemplateAssistantDraftV1_ACU extends TemplateAssistantBaseDraft_ACU {
+    protocolVersion: 1;
+}
+
+export interface TemplateAssistantDraftV2_ACU extends TemplateAssistantBaseDraft_ACU {
+    protocolVersion: 2;
+    requestId: string;
+    atomic: true;
+}
+
+export type TemplateAssistantDraft_ACU = TemplateAssistantDraftV1_ACU | TemplateAssistantDraftV2_ACU;
+
+export interface TemplateAssistantPriorTurn_ACU {
+    user: string;
+    assistant?: string;
 }
 
 export interface TemplateAssistantGenerateInput_ACU {
@@ -32,6 +199,7 @@ export interface TemplateAssistantGenerateInput_ACU {
     currentSheetKey: string | null;
     sheetOrder?: string[] | null;
     userRequest: string;
+    priorTurns?: TemplateAssistantPriorTurn_ACU[] | null;
 }
 
 export interface TemplateAssistantGenerateResult_ACU {
@@ -79,6 +247,12 @@ export interface TemplateAssistantSessionResult_ACU extends TemplateAssistantGen
     session: TemplateAssistantSessionMeta_ACU;
 }
 
+export interface TemplateAssistantSessionProgress_ACU {
+    round: TemplateAssistantSessionRound_ACU;
+    rounds: TemplateAssistantSessionRound_ACU[];
+    maxRounds: number;
+}
+
 export interface TemplateAssistantSessionRunGuard_ACU {
     isCancelled?: () => boolean;
     isStale?: () => boolean;
@@ -94,6 +268,7 @@ export interface TemplateAssistantSessionGuardController_ACU {
 export interface TemplateAssistantSessionRunInput_ACU extends TemplateAssistantGenerateInput_ACU {
     maxRounds?: number;
     maxRepairRetries?: number;
+    onRoundComplete?: (progress: TemplateAssistantSessionProgress_ACU) => void;
     guard?: TemplateAssistantSessionRunGuard_ACU | null;
 }
 
@@ -132,33 +307,82 @@ function asObject_ACU(value: any, fallback: AnyRecord = {}) {
     return value && typeof value === 'object' && !Array.isArray(value) ? value : fallback;
 }
 
+function trimAssistantMessage_ACU(value: any) {
+    return String(value ?? '').trim();
+}
+
+function normalizePriorTurns_ACU(priorTurns: TemplateAssistantPriorTurn_ACU[] | null | undefined) {
+    if (!Array.isArray(priorTurns)) return [];
+    return priorTurns
+        .map((turn) => ({
+            user: trimAssistantMessage_ACU(turn?.user),
+            assistant: trimAssistantMessage_ACU(turn?.assistant),
+        }))
+        .filter((turn) => !!turn.user || !!turn.assistant);
+}
+
+function buildTemplateAssistantMessages_ACU(input: TemplateAssistantGenerateInput_ACU, baseFingerprint: string) {
+    const messages: Array<{ role: string; content: string }> = [
+        { role: 'system', content: buildSystemPrompt_ACU() },
+    ];
+    normalizePriorTurns_ACU(input.priorTurns).forEach((turn) => {
+        if (turn.user) {
+            messages.push({ role: 'user', content: turn.user });
+        }
+        if (turn.assistant) {
+            messages.push({ role: 'assistant', content: turn.assistant });
+        }
+    });
+    messages.push({ role: 'user', content: buildUserPrompt_ACU(input, baseFingerprint) });
+    return messages;
+}
+
+function sanitizeSourceDataSnapshotForAssistant_ACU(value: any) {
+    const sourceData = asObject_ACU(value);
+    const sanitized: AnyRecord = {};
+    TEMPLATE_ASSISTANT_SOURCE_DATA_ALLOWED_KEYS_ACU.forEach((key) => {
+        if (Object.prototype.hasOwnProperty.call(sourceData, key)) {
+            sanitized[key] = clone_ACU(sourceData[key]);
+        }
+    });
+    return sanitized;
+}
+
+function validateSourceDataPayload_ACU(value: any, label: string) {
+    if (value == null) return;
+    if (!value || typeof value !== 'object' || Array.isArray(value)) {
+        throw new Error(`${label} 必须是对象`);
+    }
+    Object.keys(value).forEach((key) => {
+        if (TEMPLATE_ASSISTANT_SOURCE_DATA_ALLOWED_KEY_SET_ACU.has(key)) return;
+        if (key === 'ddl') {
+            throw new Error(`${label} 不能直接修改 ddl，请改用 patch_sheet_schema.ddl`);
+        }
+        throw new Error(`${label} 包含未知字段: ${key}`);
+    });
+}
+
 function extractHeaders_ACU(sheet: any) {
     return Array.isArray(sheet?.content?.[0]) ? sheet.content[0].slice(1).map((item: any) => String(item ?? '')) : [];
 }
 
-function getSelectedSheetSnapshot_ACU(tempData: AnyRecord, sheetKey: string | null) {
-    if (!sheetKey || !tempData?.[sheetKey]) return null;
-    const sheet = tempData[sheetKey];
+function getSheetSnapshot_ACU(tempData: AnyRecord, sheetKey: string) {
+    const sheet = tempData?.[sheetKey] || {};
     return {
         sheetKey,
         name: String(sheet?.name || ''),
+        orderNo: Number.isFinite(sheet?.orderNo) ? sheet.orderNo : null,
         headers: extractHeaders_ACU(sheet),
-        sourceData: clone_ACU(asObject_ACU(sheet?.sourceData)),
+        content: clone_ACU(Array.isArray(sheet?.content) ? sheet.content : []),
+        sourceData: sanitizeSourceDataSnapshotForAssistant_ACU(sheet?.sourceData),
         updateConfig: clone_ACU(asObject_ACU(sheet?.updateConfig)),
         exportConfig: clone_ACU(asObject_ACU(sheet?.exportConfig)),
     };
 }
 
-function buildTemplateAssistantNoopDraft_ACU(baseFingerprint: string, selectedSheetKey: string | null, summary = '', warnings: string[] = []): TemplateAssistantDraft_ACU {
-    return {
-        protocolVersion: 1,
-        mode: 'modify_current_template_incremental',
-        baseFingerprint,
-        selectedSheetKey: String(selectedSheetKey || ''),
-        summary,
-        warnings: warnings.map((item) => String(item ?? '')),
-        operations: [],
-    };
+function getSelectedSheetSnapshot_ACU(tempData: AnyRecord, sheetKey: string | null) {
+    if (!sheetKey || !tempData?.[sheetKey]) return null;
+    return getSheetSnapshot_ACU(tempData, sheetKey);
 }
 
 function buildSheetSummary_ACU(tempData: AnyRecord) {
@@ -170,8 +394,13 @@ function buildSheetSummary_ACU(tempData: AnyRecord) {
             name: String(sheet.name || ''),
             orderNo: Number.isFinite(sheet.orderNo) ? sheet.orderNo : null,
             headers: extractHeaders_ACU(sheet),
+            rowCount: Math.max(0, (Array.isArray(sheet?.content) ? sheet.content.length : 0) - 1),
         };
     });
+}
+
+function buildDetailedSheetSnapshots_ACU(tempData: AnyRecord) {
+    return buildSheetSummary_ACU(tempData).map((item) => getSheetSnapshot_ACU(tempData, item.sheetKey));
 }
 
 export function buildTemplateAssistantFingerprint_ACU(tempData: AnyRecord) {
@@ -186,7 +415,7 @@ export function buildTemplateAssistantFingerprint_ACU(tempData: AnyRecord) {
                 uid: sheet.uid ?? '',
                 name: sheet.name ?? '',
                 orderNo: sheet.orderNo ?? null,
-                headers: Array.isArray(sheet?.content?.[0]) ? sheet.content[0] : [],
+                content: Array.isArray(sheet?.content) ? sheet.content : [],
                 sourceData: asObject_ACU(sheet.sourceData),
                 updateConfig: asObject_ACU(sheet.updateConfig),
                 exportConfig: asObject_ACU(sheet.exportConfig),
@@ -194,17 +423,6 @@ export function buildTemplateAssistantFingerprint_ACU(tempData: AnyRecord) {
         }),
     };
     return `acu-struct:${hashUserInput_ACU(safeJsonStringify_ACU(snapshot, '{}'))}`;
-}
-
-export function getTemplateAssistantApplyBaselineFingerprint_ACU(result: TemplateAssistantGenerateResult_ACU | null | undefined) {
-    const originalBaseFingerprint = String(result?.originalBaseFingerprint || '').trim();
-    if (originalBaseFingerprint) {
-        return originalBaseFingerprint;
-    }
-    if (Array.isArray(result?.rounds) || !!result?.session) {
-        return '';
-    }
-    return String(result?.draft?.baseFingerprint || '').trim();
 }
 
 function getLastTaggedDraftText_ACU(aiText: string) {
@@ -227,7 +445,8 @@ export function parseTemplateAssistantDraft_ACU(aiText: string): TemplateAssista
     return validateTemplateAssistantDraft_ACU(parsed);
 }
 
-function validatePatchSheetBoundary_ACU(op: any, selectedSheetKey: string, currentSheetKey: string | null) {
+function validatePatchSheetBoundary_ACU(op: any, selectedSheetKey: string, currentSheetKey: string | null, protocolVersion: 1 | 2) {
+    if (protocolVersion !== 1) return;
     if (op.sheetKey !== selectedSheetKey) {
         throw new Error(`${op.op} 的 sheetKey 必须与 draft.selectedSheetKey 一致`);
     }
@@ -236,12 +455,224 @@ function validatePatchSheetBoundary_ACU(op: any, selectedSheetKey: string, curre
     }
 }
 
+function validateTemplateAssistantContentPatch_ACU(op: any) {
+    const patch = op?.patch;
+    const allowedKeys = new Set(['updateCells', 'addRows', 'deleteRows']);
+    Object.keys(patch).forEach((key) => {
+        if (!allowedKeys.has(key)) {
+            throw new Error(`patch_sheet_content.patch 包含未知字段: ${key}`);
+        }
+    });
+
+    const updateCells = patch?.updateCells;
+    const addRows = patch?.addRows;
+    const deleteRows = patch?.deleteRows;
+    const hasAnyOperation =
+        (Array.isArray(updateCells) && updateCells.length > 0)
+        || (Array.isArray(addRows) && addRows.length > 0)
+        || (Array.isArray(deleteRows) && deleteRows.length > 0);
+    if (!hasAnyOperation) {
+        throw new Error('patch_sheet_content 至少需要 updateCells、addRows、deleteRows 之一');
+    }
+
+    if (updateCells != null) {
+        if (!Array.isArray(updateCells)) {
+            throw new Error('patch_sheet_content.patch.updateCells 必须是数组');
+        }
+        updateCells.forEach((item: any, index: number) => {
+            if (!item || typeof item !== 'object' || Array.isArray(item)) {
+                throw new Error(`patch_sheet_content.patch.updateCells[${index}] 必须是对象`);
+            }
+            if (!Number.isInteger(item.rowNumber) || item.rowNumber <= 0) {
+                throw new Error(`patch_sheet_content.patch.updateCells[${index}].rowNumber 必须是正整数`);
+            }
+            if (typeof item.columnName !== 'string' || !item.columnName.trim()) {
+                throw new Error(`patch_sheet_content.patch.updateCells[${index}].columnName 必须是非空字符串`);
+            }
+            if (!Object.prototype.hasOwnProperty.call(item, 'value')) {
+                throw new Error(`patch_sheet_content.patch.updateCells[${index}].value 缺失`);
+            }
+        });
+    }
+
+    if (addRows != null) {
+        if (!Array.isArray(addRows)) {
+            throw new Error('patch_sheet_content.patch.addRows 必须是数组');
+        }
+        addRows.forEach((item: any, index: number) => {
+            if (!item || typeof item !== 'object' || Array.isArray(item)) {
+                throw new Error(`patch_sheet_content.patch.addRows[${index}] 必须是对象`);
+            }
+        });
+    }
+
+    if (deleteRows != null) {
+        if (!Array.isArray(deleteRows)) {
+            throw new Error('patch_sheet_content.patch.deleteRows 必须是数组');
+        }
+        deleteRows.forEach((rowNumber: any, index: number) => {
+            if (!Number.isInteger(rowNumber) || rowNumber <= 0) {
+                throw new Error(`patch_sheet_content.patch.deleteRows[${index}] 必须是正整数`);
+            }
+        });
+    }
+}
+
+function validateTemplateAssistantSchemaPatch_ACU(op: any) {
+    const patch = op?.patch;
+    const allowedKeys = new Set(['renameColumns', 'addColumns', 'deleteColumns', 'ddl']);
+    Object.keys(patch).forEach((key) => {
+        if (!allowedKeys.has(key)) {
+            throw new Error(`patch_sheet_schema.patch 包含未知字段: ${key}`);
+        }
+    });
+
+    const renameColumns = patch?.renameColumns;
+    const addColumns = patch?.addColumns;
+    const deleteColumns = patch?.deleteColumns;
+    const ddl = patch?.ddl;
+    const hasAnyOperation =
+        (Array.isArray(renameColumns) && renameColumns.length > 0)
+        || (Array.isArray(addColumns) && addColumns.length > 0)
+        || (Array.isArray(deleteColumns) && deleteColumns.length > 0)
+        || (typeof ddl === 'string' && !!ddl.trim());
+    if (!hasAnyOperation) {
+        throw new Error('patch_sheet_schema 至少需要 renameColumns、addColumns、deleteColumns、ddl 之一');
+    }
+
+    if (renameColumns != null) {
+        if (!Array.isArray(renameColumns)) {
+            throw new Error('patch_sheet_schema.patch.renameColumns 必须是数组');
+        }
+        renameColumns.forEach((item: any, index: number) => {
+            if (!item || typeof item !== 'object' || Array.isArray(item)) {
+                throw new Error(`patch_sheet_schema.patch.renameColumns[${index}] 必须是对象`);
+            }
+            if (typeof item.from !== 'string' || !item.from.trim()) {
+                throw new Error(`patch_sheet_schema.patch.renameColumns[${index}].from 必须是非空字符串`);
+            }
+            if (typeof item.to !== 'string' || !item.to.trim()) {
+                throw new Error(`patch_sheet_schema.patch.renameColumns[${index}].to 必须是非空字符串`);
+            }
+        });
+    }
+
+    if (addColumns != null) {
+        if (!Array.isArray(addColumns)) {
+            throw new Error('patch_sheet_schema.patch.addColumns 必须是数组');
+        }
+        addColumns.forEach((item: any, index: number) => {
+            if (!item || typeof item !== 'object' || Array.isArray(item)) {
+                throw new Error(`patch_sheet_schema.patch.addColumns[${index}] 必须是对象`);
+            }
+            if (typeof item.name !== 'string' || !item.name.trim()) {
+                throw new Error(`patch_sheet_schema.patch.addColumns[${index}].name 必须是非空字符串`);
+            }
+        });
+    }
+
+    if (deleteColumns != null) {
+        if (!Array.isArray(deleteColumns)) {
+            throw new Error('patch_sheet_schema.patch.deleteColumns 必须是数组');
+        }
+        deleteColumns.forEach((item: any, index: number) => {
+            if (typeof item !== 'string' || !item.trim()) {
+                throw new Error(`patch_sheet_schema.patch.deleteColumns[${index}] 必须是非空字符串`);
+            }
+        });
+    }
+
+    if (ddl != null && (typeof ddl !== 'string' || !ddl.trim())) {
+        throw new Error('patch_sheet_schema.patch.ddl 必须是非空字符串');
+    }
+}
+
+function validateTemplateAssistantLockPatch_ACU(op: any) {
+    const patch = op?.patch;
+    const allowedKeys = new Set(['rows', 'columns', 'cells', 'specialIndexLocked']);
+    Object.keys(patch).forEach((key) => {
+        if (!allowedKeys.has(key)) {
+            throw new Error(`patch_sheet_locks.patch 包含未知字段: ${key}`);
+        }
+    });
+
+    const rows = patch?.rows;
+    const columns = patch?.columns;
+    const cells = patch?.cells;
+    const hasAnyOperation =
+        (Array.isArray(rows) && rows.length > 0)
+        || (Array.isArray(columns) && columns.length > 0)
+        || (Array.isArray(cells) && cells.length > 0)
+        || typeof patch?.specialIndexLocked === 'boolean';
+    if (!hasAnyOperation) {
+        throw new Error('patch_sheet_locks 至少需要 rows、columns、cells、specialIndexLocked 之一');
+    }
+
+    if (rows != null) {
+        if (!Array.isArray(rows)) {
+            throw new Error('patch_sheet_locks.patch.rows 必须是数组');
+        }
+        rows.forEach((item: any, index: number) => {
+            if (!item || typeof item !== 'object' || Array.isArray(item)) {
+                throw new Error(`patch_sheet_locks.patch.rows[${index}] 必须是对象`);
+            }
+            if (!Number.isInteger(item.rowNumber) || item.rowNumber <= 0) {
+                throw new Error(`patch_sheet_locks.patch.rows[${index}].rowNumber 必须是正整数`);
+            }
+            if (typeof item.locked !== 'boolean') {
+                throw new Error(`patch_sheet_locks.patch.rows[${index}].locked 必须是布尔值`);
+            }
+        });
+    }
+
+    if (columns != null) {
+        if (!Array.isArray(columns)) {
+            throw new Error('patch_sheet_locks.patch.columns 必须是数组');
+        }
+        columns.forEach((item: any, index: number) => {
+            if (!item || typeof item !== 'object' || Array.isArray(item)) {
+                throw new Error(`patch_sheet_locks.patch.columns[${index}] 必须是对象`);
+            }
+            if (typeof item.columnName !== 'string' || !item.columnName.trim()) {
+                throw new Error(`patch_sheet_locks.patch.columns[${index}].columnName 必须是非空字符串`);
+            }
+            if (typeof item.locked !== 'boolean') {
+                throw new Error(`patch_sheet_locks.patch.columns[${index}].locked 必须是布尔值`);
+            }
+        });
+    }
+
+    if (cells != null) {
+        if (!Array.isArray(cells)) {
+            throw new Error('patch_sheet_locks.patch.cells 必须是数组');
+        }
+        cells.forEach((item: any, index: number) => {
+            if (!item || typeof item !== 'object' || Array.isArray(item)) {
+                throw new Error(`patch_sheet_locks.patch.cells[${index}] 必须是对象`);
+            }
+            if (!Number.isInteger(item.rowNumber) || item.rowNumber <= 0) {
+                throw new Error(`patch_sheet_locks.patch.cells[${index}].rowNumber 必须是正整数`);
+            }
+            if (typeof item.columnName !== 'string' || !item.columnName.trim()) {
+                throw new Error(`patch_sheet_locks.patch.cells[${index}].columnName 必须是非空字符串`);
+            }
+            if (typeof item.locked !== 'boolean') {
+                throw new Error(`patch_sheet_locks.patch.cells[${index}].locked 必须是布尔值`);
+            }
+        });
+    }
+
+    if (patch?.specialIndexLocked != null && typeof patch.specialIndexLocked !== 'boolean') {
+        throw new Error('patch_sheet_locks.patch.specialIndexLocked 必须是布尔值');
+    }
+}
+
 export function validateTemplateAssistantDraft_ACU(draft: any): TemplateAssistantDraft_ACU {
     if (!draft || typeof draft !== 'object') {
         throw new Error('assistant draft 必须是对象');
     }
-    if (draft.protocolVersion !== 1) {
-        throw new Error('assistant draft.protocolVersion 必须为 1');
+    if (draft.protocolVersion !== 1 && draft.protocolVersion !== 2) {
+        throw new Error('assistant draft.protocolVersion 必须为 1 或 2');
     }
     if (draft.mode !== 'modify_current_template_incremental') {
         throw new Error('assistant draft.mode 非法');
@@ -262,6 +693,16 @@ export function validateTemplateAssistantDraft_ACU(draft: any): TemplateAssistan
         throw new Error('assistant draft.operations 必须是数组');
     }
 
+    const protocolVersion = draft.protocolVersion as 1 | 2;
+    if (protocolVersion === 2) {
+        if (typeof draft.requestId !== 'string' || !draft.requestId.trim()) {
+            throw new Error('assistant draft.requestId 必须是非空字符串');
+        }
+        if (draft.atomic !== true) {
+            throw new Error('assistant draft.atomic 目前必须为 true');
+        }
+    }
+
     draft.operations.forEach((op: any, index: number) => {
         if (!op || typeof op !== 'object') {
             throw new Error(`operations[${index}] 必须是对象`);
@@ -276,12 +717,13 @@ export function validateTemplateAssistantDraft_ACU(draft: any): TemplateAssistan
             'patch_sheet_update_config',
             'patch_sheet_export_config',
             'patch_global_injection_config',
+            ...(protocolVersion === 2 ? ['patch_sheet_content', 'patch_sheet_schema', 'patch_sheet_locks'] : []),
         ]);
         if (!allowedOps.has(opName)) {
-            throw new Error(`operations[${index}] 包含一期不支持的操作: ${opName}`);
+            throw new Error(`operations[${index}] 包含当前协议不支持的操作: ${opName}`);
         }
         if (opName === 'replace_sheet_schema') {
-            throw new Error('一期禁止 replace_sheet_schema');
+            throw new Error('当前协议禁止 replace_sheet_schema');
         }
         if (opName.startsWith('patch_sheet_')) {
             if (typeof op.sheetKey !== 'string' || !op.sheetKey) {
@@ -291,49 +733,120 @@ export function validateTemplateAssistantDraft_ACU(draft: any): TemplateAssistan
                 throw new Error(`${opName} 缺少合法 patch 对象`);
             }
         }
+        if (opName === 'add_sheet') {
+            validateSourceDataPayload_ACU(op.sourceData, 'add_sheet.sourceData');
+        }
+        if (opName === 'patch_sheet_source_data') {
+            validateSourceDataPayload_ACU(op.patch, 'patch_sheet_source_data.patch');
+        }
+        if (opName === 'patch_sheet_content') {
+            validateTemplateAssistantContentPatch_ACU(op);
+        }
+        if (opName === 'patch_sheet_schema') {
+            validateTemplateAssistantSchemaPatch_ACU(op);
+        }
+        if (opName === 'patch_sheet_locks') {
+            validateTemplateAssistantLockPatch_ACU(op);
+        }
     });
 
-    return {
-        protocolVersion: 1,
-        mode: 'modify_current_template_incremental',
+    const normalizedBase = {
+        protocolVersion,
+        mode: 'modify_current_template_incremental' as const,
         baseFingerprint: draft.baseFingerprint,
         selectedSheetKey: String(draft.selectedSheetKey || ''),
         summary: String(draft.summary || ''),
         warnings: draft.warnings.map((item: any) => String(item ?? '')),
         operations: draft.operations.map((item: any) => clone_ACU(item)),
     };
+
+    if (protocolVersion === 2) {
+        return {
+            ...normalizedBase,
+            protocolVersion: 2,
+            requestId: String(draft.requestId || ''),
+            atomic: true,
+        };
+    }
+
+    return {
+        ...normalizedBase,
+        protocolVersion: 1,
+    };
 }
 
 function buildSystemPrompt_ACU() {
+    const embeddedReferenceText = buildTemplateAssistantEmbeddedReferenceText_ACU();
     return [
         '你是 visualizer 内的模板改表助手。',
         '你只能输出一个被 <templateAssistantDraft> 和 </templateAssistantDraft> 包裹的 JSON 对象，不能输出解释文本。',
-        '严格只允许以下操作：add_sheet、rename_sheet、delete_sheet、move_sheet、patch_sheet_source_data、patch_sheet_update_config、patch_sheet_export_config、patch_global_injection_config。',
-        '严格禁止 replace_sheet_schema、任何现有表结构重建、任何数据行内容改写、任何跨表迁移、任何直接保存行为。',
-        'patch_sheet_source_data / patch_sheet_update_config / patch_sheet_export_config 只能作用于当前选中表，并且 op.sheetKey 必须与顶层 selectedSheetKey 完全一致。',
+        '严格使用 protocolVersion=2、mode="modify_current_template_incremental"、atomic=true。',
+        '下面会附带两份本地语法文档的原文分块嵌入内容；这些内容不是摘要，而是从 `syntax-reference (1).md` 和 `SQL模板语法从0开始上手教程.txt` 摘取的原文片段。凡是涉及提示词模板、条件表达式、SQLite 查询、变量、内置表、执行顺序、常见踩坑时，优先以这些原文片段为准。',
+        '如果需求信息不足、字段缺失、或当前协议无法安全表达，仍然必须返回合法 draft：summary 简述原因、warnings 写明原因、operations 输出空数组；不要输出追问文本，不要输出非法操作。',
+        '严格只允许以下操作：add_sheet、rename_sheet、delete_sheet、move_sheet、patch_sheet_source_data、patch_sheet_update_config、patch_sheet_export_config、patch_sheet_content、patch_sheet_schema、patch_sheet_locks、patch_global_injection_config。',
+        '每个 operations[i] 必须使用 op 字段表示操作名；禁止使用 type、operation、action 等别名。',
+        '严格禁止任何直接保存行为。',
+        'add_sheet 必须同时提供非空 sheetName 和至少一个 headers 项；并且应尽量同时提供 sourceData.note、sourceData.initNode、sourceData.insertNode、sourceData.updateNode、sourceData.deleteNode；sheetName 缺失时不要猜名字，直接返回空 operations。',
+        'add_sheet.sourceData 与 patch_sheet_source_data.patch 只允许 note、initNode、insertNode、updateNode、deleteNode 五个字段；禁止出现 ddl、sql、schema、createTable 等字段。',
+        '新建表时，不要只给空壳。sourceData.note 要写清这张表记录什么、一行代表什么、是单行表还是多行表、各列含义、哪列可以作为稳定标识。sourceData.initNode/insertNode/updateNode/deleteNode 要写清何时初始化、何时新增、何时更新、何时删除。',
+        '当用户只表达“新增某某表”但没有给出表头时，可以根据表名语义生成一组最小、合理、通用、可直接用于后续剧情更新的 headers；自定义表头尽量避免使用带 / 的列名；不要伪造数据行。',
+        '物品/战利品/库存类表，优先考虑“物品名称、数量、描述/效果、类别、备注、来源/掉落来源”等能直接支撑后续更新的列；其中应至少包含一个稳定标识列。',
+        '默认优先 add_sheet + 完整 sourceData，让新表立刻具备初始化/新增/更新/删除指引；除非用户明确要求 DDL、字段类型、约束或 SQLite 建表语句，否则不要主动输出 patch_sheet_schema.ddl。',
+        '即使用户要求“顺便写 SQL/DDL”，也不要把 ddl 或 sql 塞进 add_sheet.sourceData；新建表时优先输出 headers + 合法的五段 sourceData。',
+        '如果当前 headers 主要是中文，自定义 ddl 只有在你能提供英文/ASCII 物理列名，并用 `-- 中文表头` 注释按原顺序一一对应时才安全；除非用户明确要求并且已经给出可直接落地的列名方案，否则不要生成 ddl。',
+        '示例 add_sheet：{"op":"add_sheet","sheetName":"角色关系表","headers":["角色A","角色B","关系","备注"]}。',
+        '示例（库存/战利品类）add_sheet：{"op":"add_sheet","sheetName":"战利品表","headers":["物品名称","数量","描述/效果","类别"],"sourceData":{"note":"记录战利品条目，一行代表一种物品。","initNode":"当剧情或设定已经明确存在初始战利品时初始化。","insertNode":"出现新的战利品时新增。","updateNode":"已有战利品数量或状态变化时更新。","deleteNode":"战利品被清空、移除或失效时删除。"}}。',
+        'patch_sheet_source_data 不能修改 ddl；DDL 只能通过 patch_sheet_schema.patch.ddl 修改。',
+        '当前协议校验会逐列对比 patch_sheet_schema.patch.ddl 与当前 headers：ASCII/英文 headers 必须由同名物理列匹配；中文 headers 必须使用英文/ASCII 物理列名，并用 `-- 中文表头` 注释匹配。第一列必须是 row_id INTEGER PRIMARY KEY。',
+        '正确示例（中文 headers）：CREATE TABLE loot_table ( -- 战利品表\n  row_id INTEGER PRIMARY KEY, -- 行号\n  item_name TEXT, -- 物品名称\n  quantity INTEGER, -- 数量\n  time_span TEXT NOT NULL, -- 时间跨度\n  remarks TEXT -- 备注\n);',
+        '即使是 row_id INTEGER PRIMARY KEY 这一行，也必须保留 `-- 行号` 注释，不能省略。',
+        '错误示例：CREATE TABLE loot_table (\n  row_id INTEGER PRIMARY KEY,\n  物品名称 TEXT,\n  数量 INTEGER\n); 这种把中文表头直接写成物理列名的 ddl 会被拒绝；即使再写 `-- 物品名称` 这类同名注释也不合法。',
+        '不要为刚 add_sheet 的新表生成依赖真实 sheetKey 的 follow-up patch 来补 DDL 或 starter rows；当前同一份 draft 无法可靠引用尚未落地的新表。',
+        'patch_sheet_content.patch 只允许使用 updateCells、addRows、deleteRows；其中 rowNumber 必须使用 1-based 行号，列使用 columnName。',
+        'patch_sheet_schema.patch 只允许使用 renameColumns、addColumns、deleteColumns、ddl。',
+        'patch_sheet_locks.patch 只允许使用 rows、columns、cells、specialIndexLocked；rows/cells 使用 1-based rowNumber，列使用 columnName，所有锁变更都必须显式给出 locked 布尔值。',
         'move_sheet 只能提供 beforeSheetKey 或 afterSheetKey 之一。',
         'add_sheet 不要生成最终 sheetKey，本地会自动生成。',
-        'patch 对象只能填写当前结构里真实存在的字段，不要猜测未知字段。',
-        '顶层 JSON 必须包含 protocolVersion=1、mode="modify_current_template_incremental"、baseFingerprint、selectedSheetKey、summary、warnings、operations。',
+        'patch 对象只能填写当前结构里真实存在的字段、表头和表格，不要猜测未知字段。',
+        '顶层 JSON 必须包含 protocolVersion、mode、requestId、baseFingerprint、atomic、selectedSheetKey、summary、warnings、operations。',
         'warnings 必须是字符串数组；没有则输出空数组。',
+        '如果无法生成合法操作，请保持 warnings 为字符串数组，并让 operations=[]，不要输出协议外字段。',
+        embeddedReferenceText,
     ].join('\n');
 }
 
 function buildUserPrompt_ACU(input: TemplateAssistantGenerateInput_ACU, baseFingerprint: string) {
     const tempData = input.tempData;
-    const selectedSheet = getSelectedSheetSnapshot_ACU(tempData, input.currentSheetKey);
     const payload = {
         userRequest: String(input.userRequest || '').trim(),
         baseFingerprint,
+        selectedSheetKey: input.currentSheetKey || '',
+        selectedSheet: getSelectedSheetSnapshot_ACU(tempData, input.currentSheetKey),
         sheetCount: buildSheetSummary_ACU(tempData).length,
-        allSheets: buildSheetSummary_ACU(tempData),
-        selectedSheet,
+        allSheets: buildDetailedSheetSnapshots_ACU(tempData),
         globalInjectionConfig: getGlobalInjectionConfigFromData_ACU(tempData, { ensureWriteBack: false }),
         constraints: {
-            selectedSheetKey: input.currentSheetKey || '',
-            patchOnlyCurrentSheet: true,
-            forbidSchemaReplace: true,
-            forbidDataRowRewrite: true,
+            protocolVersion: 2,
+            requestIdRequired: true,
+            atomicOnly: true,
+            allowCrossSheetPatch: true,
+            patchSourceDataForbidDdl: true,
+            sourceDataAllowedKeys: [...TEMPLATE_ASSISTANT_SOURCE_DATA_ALLOWED_KEYS_ACU],
+            addSheetSourceDataForbidDdl: true,
+            allowStructuredContentPatch: true,
+            allowStructuredSchemaPatch: true,
+            allowStructuredLockPatch: true,
+            contentPatchRowNumberBase: 1,
+            lockPatchRowNumberBase: 1,
+            preferRichSourceDataForAddSheet: true,
+            defaultNoDdlForNewSheetUnlessExplicitlyRequested: true,
+            ddlMustPreserveHeaderOrder: true,
+            ddlChineseHeadersRequireCommentMapping: true,
+            ddlChineseHeadersForbidChinesePhysicalNames: true,
+            ddlPhysicalColumnNamesShouldBeAsciiWhenHeadersAreChinese: true,
+            avoidSlashInNewCustomHeaders: true,
+            cannotPatchNewSheetAfterAddInSameDraft: true,
+            redactExistingSourceDataDdlFromSnapshots: true,
         },
     };
     return safeJsonStringify_ACU(payload, '{}');
@@ -393,6 +906,120 @@ export function createTemplateAssistantSessionGuard_ACU(): TemplateAssistantSess
     };
 }
 
+function buildTemplateAssistantNoopDraft_ACU(baseFingerprint: string, selectedSheetKey: string | null, summary = '', warnings: string[] = []): TemplateAssistantDraft_ACU {
+    return {
+        protocolVersion: 2,
+        mode: 'modify_current_template_incremental',
+        requestId: 'template-assistant-noop',
+        baseFingerprint,
+        atomic: true,
+        selectedSheetKey: String(selectedSheetKey || ''),
+        summary,
+        warnings: warnings.map((item) => String(item ?? '')),
+        operations: [],
+    };
+}
+
+function appendUniqueByJson_ACU<T>(target: T[], source: T[]) {
+    const seen = new Set(target.map((item) => safeJsonStringify_ACU(item, 'null')));
+    source.forEach((item) => {
+        const key = safeJsonStringify_ACU(item, 'null');
+        if (seen.has(key)) return;
+        seen.add(key);
+        target.push(clone_ACU(item));
+    });
+}
+
+function aggregateCompileResults_ACU(params: {
+    baselineSheetOrder: string[] | null;
+    currentSheetKey: string | null;
+    rounds: TemplateAssistantSessionRound_ACU[];
+    workingTempData: AnyRecord;
+    workingSheetOrder: string[] | null;
+    workingCurrentSheetKey: string | null;
+}): TemplateAssistantCompileResult_ACU {
+    const aggregated: TemplateAssistantCompileResult_ACU = {
+        candidateData: clone_ACU(params.workingTempData),
+        orderedSheetKeys: Array.isArray(params.workingSheetOrder)
+            ? [...params.workingSheetOrder]
+            : (params.baselineSheetOrder ? [...params.baselineSheetOrder] : []),
+        deletedSheetKeys: [],
+        focusSheetKey: params.workingCurrentSheetKey || params.currentSheetKey,
+        diff: {
+            addedSheets: [],
+            deletedSheets: [],
+            renamedSheets: [],
+            movedSheets: [],
+            patchedSourceDataSheets: [],
+            patchedUpdateConfigSheets: [],
+            patchedExportConfigSheets: [],
+            patchedContentSheets: [],
+            patchedSchemaSheets: [],
+            patchedLockSheets: [],
+            globalInjectionChanged: false,
+        },
+        highRiskItems: [],
+        lockChanges: [],
+    };
+    params.rounds.forEach((round) => {
+        appendUniqueByJson_ACU(aggregated.deletedSheetKeys, round.perRoundCompileResult.deletedSheetKeys || []);
+        appendUniqueByJson_ACU(aggregated.diff.addedSheets, round.perRoundCompileResult.diff?.addedSheets || []);
+        appendUniqueByJson_ACU(aggregated.diff.deletedSheets, round.perRoundCompileResult.diff?.deletedSheets || []);
+        appendUniqueByJson_ACU(aggregated.diff.renamedSheets, round.perRoundCompileResult.diff?.renamedSheets || []);
+        appendUniqueByJson_ACU(aggregated.diff.movedSheets, round.perRoundCompileResult.diff?.movedSheets || []);
+        appendUniqueByJson_ACU(aggregated.diff.patchedSourceDataSheets, round.perRoundCompileResult.diff?.patchedSourceDataSheets || []);
+        appendUniqueByJson_ACU(aggregated.diff.patchedUpdateConfigSheets, round.perRoundCompileResult.diff?.patchedUpdateConfigSheets || []);
+        appendUniqueByJson_ACU(aggregated.diff.patchedExportConfigSheets, round.perRoundCompileResult.diff?.patchedExportConfigSheets || []);
+        appendUniqueByJson_ACU(aggregated.diff.patchedContentSheets, round.perRoundCompileResult.diff?.patchedContentSheets || []);
+        appendUniqueByJson_ACU(aggregated.diff.patchedSchemaSheets, round.perRoundCompileResult.diff?.patchedSchemaSheets || []);
+        appendUniqueByJson_ACU(aggregated.diff.patchedLockSheets, round.perRoundCompileResult.diff?.patchedLockSheets || []);
+        if (round.perRoundCompileResult.diff?.globalInjectionChanged) {
+            aggregated.diff.globalInjectionChanged = true;
+        }
+        appendUniqueByJson_ACU(aggregated.highRiskItems, round.perRoundCompileResult.highRiskItems || []);
+        appendUniqueByJson_ACU(aggregated.lockChanges, round.perRoundCompileResult.lockChanges || []);
+        if (round.perRoundCompileResult.focusSheetKey) {
+            aggregated.focusSheetKey = round.perRoundCompileResult.focusSheetKey;
+        }
+    });
+    if (aggregated.focusSheetKey && !aggregated.candidateData?.[aggregated.focusSheetKey]) {
+        aggregated.focusSheetKey = aggregated.orderedSheetKeys[0] || null;
+    }
+    return aggregated;
+}
+
+export function getTemplateAssistantApplyBaselineFingerprint_ACU(result: TemplateAssistantGenerateResult_ACU | null | undefined) {
+    const originalBaseFingerprint = String(result?.originalBaseFingerprint || '').trim();
+    if (originalBaseFingerprint) {
+        return originalBaseFingerprint;
+    }
+    if (Array.isArray(result?.rounds) || !!result?.session) {
+        return '';
+    }
+    return String(result?.draft?.baseFingerprint || '').trim();
+}
+
+function emitTemplateAssistantRoundComplete_ACU(
+    onRoundComplete: TemplateAssistantSessionRunInput_ACU['onRoundComplete'],
+    round: TemplateAssistantSessionRound_ACU,
+    rounds: TemplateAssistantSessionRound_ACU[],
+    maxRounds: number,
+) {
+    if (typeof onRoundComplete !== 'function') return;
+    try {
+        onRoundComplete({
+            round: clone_ACU(round),
+            rounds: clone_ACU(rounds),
+            maxRounds,
+        });
+    } catch (error: any) {
+        logError_ACU('[TemplateAssistant] onRoundComplete 执行失败', {
+            errorMessage: error?.message || '未知错误',
+            round: round.round,
+        });
+    }
+}
+
 export async function generateTemplateAssistantDraft_ACU(input: TemplateAssistantGenerateInput_ACU): Promise<TemplateAssistantGenerateResult_ACU> {
     const tempData = asObject_ACU(input?.tempData);
     const userRequest = String(input?.userRequest || '').trim();
@@ -403,12 +1030,8 @@ export async function generateTemplateAssistantDraft_ACU(input: TemplateAssistan
         throw new Error('请先选中一个表后再使用 AI 改表助手');
     }
     const baseFingerprint = buildTemplateAssistantFingerprint_ACU(tempData);
-    const messages = [
-        { role: 'system', content: buildSystemPrompt_ACU() },
-        { role: 'user', content: buildUserPrompt_ACU({ ...input, tempData }, baseFingerprint) },
-    ];
+    const messages = buildTemplateAssistantMessages_ACU({ ...input, tempData }, baseFingerprint);
 
-    // 查找表级 API 预设覆盖：基于当前选中表的名称
     let effectivePreset = settings_ACU.tableApiPreset || '';
     const currentSheet = input.currentSheetKey ? tempData[input.currentSheetKey] : null;
     const currentTableName = String(currentSheet?.name || '').trim();
@@ -424,13 +1047,26 @@ export async function generateTemplateAssistantDraft_ACU(input: TemplateAssistan
         throw new Error('AI 未返回有效内容');
     }
 
-    const draft = parseTemplateAssistantDraft_ACU(aiRawText);
+    let draft: TemplateAssistantDraft_ACU;
+    try {
+        draft = parseTemplateAssistantDraft_ACU(aiRawText);
+    } catch (error: any) {
+        logError_ACU('[TemplateAssistant] draft 解析失败', {
+            currentSheetKey: input.currentSheetKey,
+            baseFingerprint,
+            userRequest,
+            errorMessage: error?.message || '未知错误',
+            aiRawText,
+        });
+        throw error;
+    }
+
     if (draft.baseFingerprint !== baseFingerprint) {
         throw new Error('AI 返回的 baseFingerprint 与当前结构不一致');
     }
     draft.operations.forEach((op) => {
         if (String(op?.op || '').startsWith('patch_sheet_')) {
-            validatePatchSheetBoundary_ACU(op, draft.selectedSheetKey, input.currentSheetKey);
+            validatePatchSheetBoundary_ACU(op, draft.selectedSheetKey, input.currentSheetKey, draft.protocolVersion);
         }
     });
 
@@ -465,17 +1101,18 @@ export async function runTemplateAssistantSession_ACU(input: TemplateAssistantSe
     const originalTempData = clone_ACU(tempData);
     const originalSheetOrder = Array.isArray(input?.sheetOrder) ? [...input.sheetOrder] : null;
     const originalBaseFingerprint = buildTemplateAssistantFingerprint_ACU(originalTempData);
-    const fallbackDraft = buildTemplateAssistantNoopDraft_ACU(originalBaseFingerprint, currentSheetKey);
     const rounds: TemplateAssistantSessionRound_ACU[] = [];
+    const basePriorTurns = normalizePriorTurns_ACU(input?.priorTurns);
+    const onRoundComplete = input?.onRoundComplete;
 
     let workingTempData = clone_ACU(originalTempData);
     let workingSheetOrder = Array.isArray(originalSheetOrder) ? [...originalSheetOrder] : null;
     let workingCurrentSheetKey: string | null = currentSheetKey;
     let workingFingerprint = originalBaseFingerprint;
-    let lastResult: TemplateAssistantGenerateResult_ACU | null = null;
     let stopReason: TemplateAssistantSessionStopReason_ACU = 'max_rounds';
     let repairRetriesUsed = 0;
     let lastErrorMessage = '';
+    let lastResult: TemplateAssistantGenerateResult_ACU | null = null;
 
     outerLoop:
     for (let round = 1; round <= maxRounds; round += 1) {
@@ -489,14 +1126,21 @@ export async function runTemplateAssistantSession_ACU(input: TemplateAssistantSe
                 repairReason,
             });
             try {
+                const historyForRound = [
+                    ...basePriorTurns,
+                    ...rounds.map((item) => ({
+                        user: item.userRequest,
+                        assistant: item.aiRawText,
+                    })),
+                ];
                 const result = await generateTemplateAssistantDraft_ACU({
                     tempData: workingTempData,
                     currentSheetKey: workingCurrentSheetKey,
                     sheetOrder: workingSheetOrder,
                     userRequest: roundUserRequest,
+                    priorTurns: historyForRound,
                 });
                 assertTemplateAssistantSessionActive_ACU(input.guard);
-
                 lastResult = result;
                 const hasOperations = result.draft.operations.length > 0;
                 const nextWorkingTempData = hasOperations ? clone_ACU(result.compileResult.candidateData || {}) : clone_ACU(workingTempData);
@@ -504,7 +1148,8 @@ export async function runTemplateAssistantSession_ACU(input: TemplateAssistantSe
                     ? (Array.isArray(result.compileResult.orderedSheetKeys) ? [...result.compileResult.orderedSheetKeys] : [])
                     : (Array.isArray(workingSheetOrder) ? [...workingSheetOrder] : null);
                 const nextWorkingFingerprint = hasOperations ? buildTemplateAssistantFingerprint_ACU(nextWorkingTempData) : workingFingerprint;
-                rounds.push({
+
+                const roundRecord: TemplateAssistantSessionRound_ACU = {
                     round,
                     userRequest: roundUserRequest,
                     draft: result.draft,
@@ -512,7 +1157,9 @@ export async function runTemplateAssistantSession_ACU(input: TemplateAssistantSe
                     messages: result.messages,
                     perRoundCompileResult: result.compileResult,
                     workingFingerprint: nextWorkingFingerprint,
-                });
+                };
+                rounds.push(roundRecord);
+                emitTemplateAssistantRoundComplete_ACU(onRoundComplete, roundRecord, rounds, maxRounds);
 
                 if (!hasOperations) {
                     stopReason = 'empty_operations';
@@ -523,8 +1170,8 @@ export async function runTemplateAssistantSession_ACU(input: TemplateAssistantSe
                 workingSheetOrder = nextWorkingSheetOrder;
                 workingCurrentSheetKey = result.compileResult.focusSheetKey || workingCurrentSheetKey;
                 if (nextWorkingFingerprint === workingFingerprint) {
-                    stopReason = 'repeated_working_fingerprint';
                     workingFingerprint = nextWorkingFingerprint;
+                    stopReason = 'repeated_working_fingerprint';
                     break outerLoop;
                 }
 
@@ -548,14 +1195,23 @@ export async function runTemplateAssistantSession_ACU(input: TemplateAssistantSe
         }
     }
 
-    const compileResult = buildTemplateAssistantCumulativeCompileResult_ACU({
-        baselineData: originalTempData,
-        baselineSheetOrder: originalSheetOrder,
-        candidateData: workingTempData,
-        candidateSheetOrder: workingSheetOrder,
-        focusSheetKey: workingCurrentSheetKey,
-    });
-    const finalDraft = lastResult?.draft || fallbackDraft;
+    const compileResult = rounds.length
+        ? aggregateCompileResults_ACU({
+            baselineSheetOrder: originalSheetOrder,
+            currentSheetKey,
+            rounds,
+            workingTempData,
+            workingSheetOrder,
+            workingCurrentSheetKey,
+        })
+        : buildTemplateAssistantCumulativeCompileResult_ACU({
+            baselineData: originalTempData,
+            baselineSheetOrder: originalSheetOrder,
+            candidateData: workingTempData,
+            candidateSheetOrder: workingSheetOrder,
+            focusSheetKey: workingCurrentSheetKey,
+        });
+    const finalDraft = lastResult?.draft || buildTemplateAssistantNoopDraft_ACU(originalBaseFingerprint, currentSheetKey);
     const finalWorkingFingerprint = buildTemplateAssistantFingerprint_ACU(compileResult.candidateData || workingTempData);
 
     return {

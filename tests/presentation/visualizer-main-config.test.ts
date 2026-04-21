@@ -163,18 +163,19 @@ import { validateDDLText } from '../../src/presentation/pages/visualizer-main-co
 // ═══════════════════════════════════════════════════════════════
 describe('validateDDLText', () => {
   const headers = ['物品名', '数量', '描述'];
+  const asciiHeaders = ['item_name', 'quantity', 'description'];
 
   // ─── 正常情况 ───
   it('有效 DDL 返回 valid', () => {
-    const ddl = 'CREATE TABLE inventory (row_id INTEGER PRIMARY KEY, 物品名 TEXT, 数量 INTEGER, 描述 TEXT);';
-    const result = validateDDLText(ddl, headers);
+    const ddl = 'CREATE TABLE inventory (row_id INTEGER PRIMARY KEY, item_name TEXT, quantity INTEGER, description TEXT);';
+    const result = validateDDLText(ddl, asciiHeaders);
     expect(result.valid).toBe(true);
     expect(result.message).toContain('✓');
   });
 
   it('大小写不敏感', () => {
-    const ddl = 'create table inventory (ROW_ID integer primary key, 物品名 TEXT, 数量 INTEGER, 描述 TEXT);';
-    const result = validateDDLText(ddl, headers);
+    const ddl = 'create table inventory (ROW_ID integer primary key, item_name TEXT, quantity INTEGER, description TEXT);';
+    const result = validateDDLText(ddl, asciiHeaders);
     expect(result.valid).toBe(true);
   });
 
@@ -217,22 +218,21 @@ describe('validateDDLText', () => {
     const ddl = 'CREATE TABLE inventory (row_id INTEGER PRIMARY KEY, 物品名 TEXT, 数量 INTEGER, 描述 TEXT, 额外列 TEXT);';
     const result = validateDDLText(ddl, headers);
     expect(result.valid).toBe(false);
-    expect(result.message).toContain('DDL 多出: 额外列');
+    expect(result.message).toContain('列数不匹配');
   });
 
   it('表头多出列', () => {
     const ddl = 'CREATE TABLE inventory (row_id INTEGER PRIMARY KEY, 物品名 TEXT);';
     const result = validateDDLText(ddl, ['物品名', '数量']);
     expect(result.valid).toBe(false);
-    expect(result.message).toContain('表头多出: 数量');
+    expect(result.message).toContain('列数不匹配');
   });
 
   it('DDL 和表头都有多出', () => {
     const ddl = 'CREATE TABLE inventory (row_id INTEGER PRIMARY KEY, 物品名 TEXT, 额外列 TEXT);';
     const result = validateDDLText(ddl, ['物品名', '数量']);
     expect(result.valid).toBe(false);
-    expect(result.message).toContain('DDL 多出');
-    expect(result.message).toContain('表头多出');
+    expect(result.message).toContain('第 2 列不匹配');
   });
 
   // ─── 空表头 ───
@@ -246,9 +246,9 @@ describe('validateDDLText', () => {
   it('多行 DDL 格式', () => {
     const ddl = `CREATE TABLE inventory (
       row_id INTEGER PRIMARY KEY,
-      物品名 TEXT,
-      数量 INTEGER,
-      描述 TEXT
+      item_name TEXT, -- 物品名
+      quantity INTEGER, -- 数量
+      description TEXT -- 描述
     );`;
     const result = validateDDLText(ddl, headers);
     expect(result.valid).toBe(true);
@@ -256,9 +256,36 @@ describe('validateDDLText', () => {
 
   // ─── DDL 中有注释 ───
   it('DDL 列定义中有注释', () => {
-    const ddl = 'CREATE TABLE inventory (row_id INTEGER PRIMARY KEY -- 行号, 物品名 TEXT, 数量 INTEGER, 描述 TEXT);';
+    const ddl = `CREATE TABLE inventory (
+      row_id INTEGER PRIMARY KEY, -- 行号
+      item_name TEXT, -- 物品名
+      quantity INTEGER, -- 数量
+      description TEXT -- 描述
+    );`;
     const result = validateDDLText(ddl, headers);
-    // 注释行会被 filter 掉（startsWith('--')），所以 row_id 后面的注释不影响
     expect(result.valid).toBe(true);
+  });
+
+  it('英文物理列名配中文注释时校验通过', () => {
+    const ddl = `CREATE TABLE inventory (
+      row_id INTEGER PRIMARY KEY, -- 行号
+      item_name TEXT, -- 物品名
+      quantity INTEGER, -- 数量
+      description TEXT -- 描述
+    );`;
+    const result = validateDDLText(ddl, headers);
+    expect(result.valid).toBe(true);
+  });
+
+  it('英文物理列名缺少中文注释时校验失败', () => {
+    const ddl = `CREATE TABLE inventory (
+      row_id INTEGER PRIMARY KEY,
+      item_name TEXT,
+      quantity INTEGER,
+      description TEXT
+    );`;
+    const result = validateDDLText(ddl, headers);
+    expect(result.valid).toBe(false);
+    expect(result.message).toContain('第 1 列不匹配');
   });
 });

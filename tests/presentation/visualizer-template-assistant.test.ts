@@ -30,7 +30,9 @@ function jqueryStub_ACU(selectorOrElement: any) {
     },
     find(selector: string) {
       const found = elements.flatMap((el) => Array.from(el.querySelectorAll(selector)) as HTMLElement[]);
-      return jqueryStub_ACU(found[0] ?? { __elements: found });
+      if (found.length === 0) return jqueryStub_ACU({ __elements: [] });
+      if (found.length === 1) return jqueryStub_ACU(found[0]);
+      return jqueryStub_ACU({ __elements: found });
     },
     on(event: string, handler: any) {
       elements.forEach((el) => el.addEventListener(event, handler));
@@ -46,13 +48,48 @@ function jqueryStub_ACU(selectorOrElement: any) {
     data(name: string) {
       return elements[0]?.getAttribute(`data-${name}`);
     },
-    prop(name: string) {
-      return (elements[0] as any)?.[name];
+    prop(name: string, value?: any) {
+      const el = elements[0] as any;
+      if (!el) return value === undefined ? undefined : api;
+      if (value === undefined) return el[name];
+      el[name] = value;
+      return api;
+    },
+    closest(selector: string) {
+      // Simplified closest implementation for tests
+      // Since we're working with fake elements, we return a stub with the data method
+      const el = elements[0];
+      if (!el) return jqueryStub_ACU({ __elements: [] });
+      
+      // Try to find data-turn-id in the HTML by looking at the parent context
+      const html = document.body.innerHTML;
+      
+      // For .acu-collapsible-section
+      if (selector === '.acu-collapsible-section' || selector === '.acu-chat-turn-assistant') {
+        // Find the turn-id by searching in the HTML for the closest parent with this element
+        // Since we have the section-key, we can find the corresponding turn-id
+        const sectionKey = el.getAttribute('data-section-key');
+        if (sectionKey) {
+          // Find the turn that contains this section
+          const turnMatch = html.match(new RegExp(`data-turn-id="([^"]+)"[^>]*>[^]*?data-section-key="${sectionKey}"`));
+          if (turnMatch) {
+            return jqueryStub_ACU({ __elements: [], __turnId: turnMatch[1] });
+          }
+        }
+      }
+      
+      return jqueryStub_ACU({ __elements: [] });
     },
   };
   if ((selectorOrElement as any)?.__elements) {
     elements = (selectorOrElement as any).__elements;
     api.length = elements.length;
+  }
+  if ((selectorOrElement as any)?.__turnId) {
+    api.data = (name: string) => {
+      if (name === 'turn-id') return (selectorOrElement as any).__turnId;
+      return null;
+    };
   }
   return api;
 }
@@ -65,6 +102,9 @@ class FakeHTMLElement_ACU {
   value = '';
   disabled = false;
   checked = false;
+  scrollTop = 0;
+  scrollHeight = 0;
+  clientHeight = 0;
   listeners: ListenerMap_ACU = {};
   attributes: Record<string, string> = {};
 
@@ -110,57 +150,34 @@ class FakeHTMLElement_ACU {
 
     if (this.selector === '.acu-vis-assistant-panel') {
       const styleMatch = html.match(/class="acu-vis-assistant-panel"[^>]*style="([^"]*)"/);
-      const styleStr = styleMatch?.[1] || '';
-      const displayMatch = styleStr.match(/display\s*:\s*([^;]+)/);
+      const displayMatch = styleMatch?.[1]?.match(/display\s*:\s*([^;]+)/);
       this.style.display = displayMatch ? displayMatch[1].trim() : '';
-      const overflowMatch = styleStr.match(/overflow\s*:\s*([^;]+)/);
-      this.style.overflow = overflowMatch ? overflowMatch[1].trim() : '';
-      const heightMatch = styleStr.match(/height\s*:\s*([^;]+)/);
-      this.style.height = heightMatch ? heightMatch[1].trim() : '';
-      return;
-    }
-
-    if (this.selector === '.acu-vis-assistant-body') {
-      const styleMatch = html.match(/class="acu-vis-assistant-body"[^>]*style="([^"]*)"/);
-      const styleStr = styleMatch?.[1] || '';
-      const overflowYMatch = styleStr.match(/overflow-y\s*:\s*([^;]+)/);
-      this.style.overflowY = overflowYMatch ? overflowYMatch[1].trim() : '';
-      const flexMatch = styleStr.match(/flex\s*:\s*([^;]+)/);
-      this.style.flex = flexMatch ? flexMatch[1].trim() : '';
-      const minHeightMatch = styleStr.match(/min-height\s*:\s*([^;]+)/);
-      this.style.minHeight = minHeightMatch ? minHeightMatch[1].trim() : '';
       return;
     }
 
     if (this.selector.startsWith('#')) {
       const id = this.selector.slice(1);
       const match = html.match(new RegExp(`<([a-zA-Z0-9-]+)[^>]*id="${id}"([^>]*)>`, 'i'));
+      const tag = match?.[1] || '';
       const attrs = match?.[2] || '';
       this.disabled = /disabled/.test(attrs);
       const dataRiskKeyMatch = attrs.match(/data-risk-key="([^"]+)"/);
-      this.attributes = dataRiskKeyMatch ? { 'data-risk-key': dataRiskKeyMatch[1] } : {};
+      const dataTurnIdMatch = attrs.match(/data-turn-id="([^"]+)"/);
+      const valueMatch = attrs.match(/value="([^"]*)"/);
+      this.attributes = {};
+      if (dataRiskKeyMatch) this.attributes['data-risk-key'] = dataRiskKeyMatch[1];
+      if (dataTurnIdMatch) this.attributes['data-turn-id'] = dataTurnIdMatch[1];
+      if (tag.toLowerCase() === 'input' && valueMatch) {
+        this.value = valueMatch[1];
+      }
       return;
     }
 
     if (this.selector === '.acu-assistant-risk-confirm') {
-      const match = html.match(/class="acu-assistant-risk-confirm"[^>]*data-risk-key="([^"]+)"([^>]*)/);
+      const match = html.match(/class="acu-assistant-risk-confirm"[^>]*data-turn-id="([^"]+)"[^>]*data-risk-key="([^"]+)"([^>]*)/);
       if (match) {
-        this.attributes = { 'data-risk-key': match[1] };
-        this.checked = /checked/.test(match[2] || '');
-      }
-    }
-
-    if (this.selector === '.acu-assistant-round-toggle') {
-      const match = html.match(/class="acu-btn-small acu-assistant-round-toggle"[^>]*data-round-toggle="([^"]+)"/);
-      if (match) {
-        this.attributes = { 'data-round-toggle': match[1] };
-      }
-    }
-
-    if (this.selector === '.acu-assistant-round-item') {
-      const match = html.match(/class="acu-assistant-round-item"[^>]*data-round-index="([^"]+)"/);
-      if (match) {
-        this.attributes = { 'data-round-index': match[1] };
+        this.attributes = { 'data-turn-id': match[1], 'data-risk-key': match[2] };
+        this.checked = /checked/.test(match[3] || '');
       }
     }
   }
@@ -168,9 +185,26 @@ class FakeHTMLElement_ACU {
 
 class FakeDocument_ACU {
   private elementCache = new Map<string, FakeHTMLElement_ACU[]>();
+  private lastChatContainerState = { scrollTop: 0, scrollHeight: 1000, clientHeight: 500 };
   body = new FakeHTMLElement_ACU('#acu-vis-assistant-host', this);
 
+  resetChatContainerState() {
+    this.lastChatContainerState = { scrollTop: 0, scrollHeight: 1000, clientHeight: 500 };
+  }
+
   invalidateCache() {
+    const currentChatContainer = this.elementCache.get('.acu-chat-container')?.[0];
+    if (currentChatContainer) {
+      const scrollHeight = currentChatContainer.scrollHeight || this.lastChatContainerState.scrollHeight;
+      const clientHeight = currentChatContainer.clientHeight || this.lastChatContainerState.clientHeight;
+      const maxScrollTop = Math.max(0, scrollHeight - clientHeight);
+      const isNearBottom = currentChatContainer.scrollTop + clientHeight >= scrollHeight - 50;
+      this.lastChatContainerState = {
+        scrollTop: isNearBottom ? maxScrollTop : currentChatContainer.scrollTop,
+        scrollHeight,
+        clientHeight,
+      };
+    }
     this.elementCache.clear();
   }
 
@@ -186,12 +220,6 @@ class FakeDocument_ACU {
       el.syncFromHtml(html);
       return [el];
     }
-    if (selector === '.acu-vis-assistant-body') {
-      if (!html.includes('acu-vis-assistant-body')) return [];
-      const el = new FakeHTMLElement_ACU(selector, this);
-      el.syncFromHtml(html);
-      return [el];
-    }
     if (selector.startsWith('#')) {
       const id = selector.slice(1);
       if (!new RegExp(`id="${id}"`, 'i').test(html)) return [];
@@ -201,31 +229,86 @@ class FakeDocument_ACU {
     }
     if (selector === '.acu-assistant-risk-confirm') {
       if (!html.includes('acu-assistant-risk-confirm')) return [];
-      const matches = Array.from(html.matchAll(/class="acu-assistant-risk-confirm"[^>]*data-risk-key="([^"]+)"([^>]*)/g));
+      const matches = Array.from(html.matchAll(/class="acu-assistant-risk-confirm"[^>]*data-turn-id="([^"]+)"[^>]*data-risk-key="([^"]+)"([^>]*)/g));
       return matches.map((match) => {
         const el = new FakeHTMLElement_ACU(selector, this);
-        el.attributes = { 'data-risk-key': match[1] };
-        el.checked = /checked/.test(match[2] || '');
+        el.attributes = { 'data-turn-id': match[1], 'data-risk-key': match[2] };
+        el.checked = /checked/.test(match[3] || '');
         return el;
       });
     }
-    if (selector === '.acu-assistant-round-toggle') {
-      if (!html.includes('acu-assistant-round-toggle')) return [];
-      const matches = Array.from(html.matchAll(/class="acu-btn-small acu-assistant-round-toggle"[^>]*data-round-toggle="([^"]+)"/g));
-      return matches.map((match) => {
+    // Chat turn selectors
+    if (selector === '.acu-chat-turn-user') {
+      if (!html.includes('acu-chat-turn-user')) return [];
+      const matches = Array.from(html.matchAll(/class="[^"]*acu-chat-turn-user[^"]*"/g));
+      return matches.map(() => {
         const el = new FakeHTMLElement_ACU(selector, this);
-        el.attributes = { 'data-round-toggle': match[1] };
         return el;
       });
     }
-    if (selector === '.acu-assistant-round-item') {
-      if (!html.includes('acu-assistant-round-item')) return [];
-      const matches = Array.from(html.matchAll(/class="acu-assistant-round-item"[^>]*data-round-index="([^"]+)"/g));
-      return matches.map((match) => {
+    if (selector === '.acu-chat-turn-assistant') {
+      if (!html.includes('acu-chat-turn-assistant')) return [];
+      const matches = Array.from(html.matchAll(/class="[^"]*acu-chat-turn-assistant[^"]*"/g));
+      return matches.map(() => {
         const el = new FakeHTMLElement_ACU(selector, this);
-        el.attributes = { 'data-round-index': match[1] };
         return el;
       });
+    }
+    if (selector === '.acu-chat-turn-error') {
+      if (!html.includes('acu-chat-turn-error')) return [];
+      const matches = Array.from(html.matchAll(/class="[^"]*acu-chat-turn-error[^"]*"/g));
+      return matches.map(() => {
+        const el = new FakeHTMLElement_ACU(selector, this);
+        return el;
+      });
+    }
+    if (selector === '.acu-collapsed-summary') {
+      if (!html.includes('acu-collapsed-summary')) return [];
+      const matches = Array.from(html.matchAll(/class="[^"]*acu-collapsed-summary[^"]*"/g));
+      return matches.map(() => {
+        const el = new FakeHTMLElement_ACU(selector, this);
+        return el;
+      });
+    }
+    if (selector === '.acu-expand-toggle') {
+      if (!html.includes('acu-expand-toggle')) return [];
+      const matches = Array.from(html.matchAll(/class="[^"]*acu-expand-toggle[^"]*"/g));
+      return matches.map(() => {
+        const el = new FakeHTMLElement_ACU(selector, this);
+        return el;
+      });
+    }
+    if (selector === '.acu-detail-block') {
+      if (!html.includes('acu-detail-block')) return [];
+      const matches = Array.from(html.matchAll(/class="[^"]*acu-detail-block[^"]*"/g));
+      return matches.map(() => {
+        const el = new FakeHTMLElement_ACU(selector, this);
+        return el;
+      });
+    }
+    if (selector === '.acu-chat-scroll-frame') {
+      if (!html.includes('acu-chat-scroll-frame')) return [];
+      const matches = Array.from(html.matchAll(/class="[^"]*acu-chat-scroll-frame[^"]*"/g));
+      return matches.map(() => {
+        const el = new FakeHTMLElement_ACU(selector, this);
+        return el;
+      });
+    }
+    if (selector === '.acu-chat-container') {
+      if (!html.includes('acu-chat-container')) return [];
+      const matches = Array.from(html.matchAll(/class="[^"]*acu-chat-container[^"]*"/g));
+      return matches.map(() => {
+        const el = new FakeHTMLElement_ACU(selector, this);
+        el.scrollTop = this.lastChatContainerState.scrollTop;
+        el.scrollHeight = this.lastChatContainerState.scrollHeight;
+        el.clientHeight = this.lastChatContainerState.clientHeight;
+        return el;
+      });
+    }
+    if (selector === '.acu-message-bubble') {
+      if (!html.includes('acu-message-bubble')) return [];
+      const matches = Array.from(html.matchAll(/class="[^"]*acu-message-bubble[^"]*"/g));
+      return matches.map(() => new FakeHTMLElement_ACU(selector, this));
     }
     return [];
   }
@@ -297,139 +380,16 @@ vi.mock('../../src/shared/html-helpers', () => ({
 
 import {
   handleVisualizerTemplateAssistantSheetChange_ACU,
-  invalidateVisualizerTemplateAssistantSession_ACU,
   renderVisualizerTemplateAssistantPanel_ACU,
+  resetVisualizerTemplateAssistantState_ACU,
   setVisualizerTemplateAssistantOpen_ACU,
 } from '../../src/presentation/pages/visualizer-template-assistant';
 
-function buildSingleRoundResult() {
-  return {
-    draft: { selectedSheetKey: 'sheet_a', summary: '新增战利品表', warnings: ['注意命名一致性'], operations: [{ op: 'add_sheet', name: '战利品表' }] },
-    aiRawText: '',
-    messages: [],
-    compileResult: {
-      diff: {
-        addedSheets: [{ sheetKey: 'sheet_new', name: '战利品表' }],
-        deletedSheets: [],
-        renamedSheets: [{ sheetKey: 'sheet_a', beforeName: 'A表', afterName: '新A表' }],
-        movedSheets: [],
-        patchedSourceDataSheets: [],
-        patchedUpdateConfigSheets: [{ sheetKey: 'sheet_a', name: 'A表', keys: ['contextDepth'] }],
-        patchedExportConfigSheets: [],
-        globalInjectionChanged: false,
-      },
-      highRiskItems: [],
-      candidateData: {},
-      orderedSheetKeys: ['sheet_a', 'sheet_new'],
-      focusSheetKey: 'sheet_a',
-      deletedSheetKeys: [],
-    },
-    originalBaseFingerprint: 'fp-orig',
-    rounds: [],
-    session: {
-      originalBaseFingerprint: 'fp-orig',
-      finalWorkingFingerprint: 'fp-final',
-      stopReason: 'empty_operations',
-      roundsExecuted: 1,
-      maxRounds: 3,
-      repairRetriesUsed: 0,
-      maxRepairRetries: 1,
-      lastErrorMessage: '',
-    },
-  };
-}
-
-function buildMultiRoundResult() {
-  return {
-    draft: { selectedSheetKey: 'sheet_a', summary: '最终草稿', warnings: [], operations: [] },
-    aiRawText: '',
-    messages: [],
-    compileResult: {
-      diff: {
-        addedSheets: [{ sheetKey: 'sheet_new1', name: '表1' }, { sheetKey: 'sheet_new2', name: '表2' }],
-        deletedSheets: [],
-        renamedSheets: [],
-        movedSheets: [],
-        patchedSourceDataSheets: [],
-        patchedUpdateConfigSheets: [],
-        patchedExportConfigSheets: [],
-        globalInjectionChanged: false,
-      },
-      highRiskItems: [],
-      candidateData: {},
-      orderedSheetKeys: ['sheet_a', 'sheet_new1', 'sheet_new2'],
-      focusSheetKey: 'sheet_a',
-      deletedSheetKeys: [],
-    },
-    originalBaseFingerprint: 'fp-orig',
-    rounds: [
-      {
-        round: 1,
-        userRequest: '新增表',
-        draft: { selectedSheetKey: 'sheet_a', summary: '第1轮摘要：新增表1', warnings: [], operations: [{ op: 'add_sheet', name: '表1' }] },
-        aiRawText: '',
-        messages: [],
-        perRoundCompileResult: {
-          diff: {
-            addedSheets: [{ sheetKey: 'sheet_new1', name: '表1' }],
-            deletedSheets: [],
-            renamedSheets: [],
-            movedSheets: [],
-            patchedSourceDataSheets: [],
-            patchedUpdateConfigSheets: [],
-            patchedExportConfigSheets: [],
-            globalInjectionChanged: false,
-          },
-          highRiskItems: [],
-          candidateData: {},
-          orderedSheetKeys: ['sheet_a', 'sheet_new1'],
-          focusSheetKey: 'sheet_a',
-          deletedSheetKeys: [],
-        },
-        workingFingerprint: 'fp-round1',
-      },
-      {
-        round: 2,
-        userRequest: '新增表',
-        draft: { selectedSheetKey: 'sheet_a', summary: '第2轮摘要：新增表2', warnings: ['注意'], operations: [{ op: 'add_sheet', name: '表2' }] },
-        aiRawText: '',
-        messages: [],
-        perRoundCompileResult: {
-          diff: {
-            addedSheets: [{ sheetKey: 'sheet_new2', name: '表2' }],
-            deletedSheets: [],
-            renamedSheets: [],
-            movedSheets: [],
-            patchedSourceDataSheets: [],
-            patchedUpdateConfigSheets: [],
-            patchedExportConfigSheets: [],
-            globalInjectionChanged: false,
-          },
-          highRiskItems: [],
-          candidateData: {},
-          orderedSheetKeys: ['sheet_a', 'sheet_new1', 'sheet_new2'],
-          focusSheetKey: 'sheet_a',
-          deletedSheetKeys: [],
-        },
-        workingFingerprint: 'fp-round2',
-      },
-    ],
-    session: {
-      originalBaseFingerprint: 'fp-orig',
-      finalWorkingFingerprint: 'fp-final',
-      stopReason: 'max_rounds',
-      roundsExecuted: 2,
-      maxRounds: 3,
-      repairRetriesUsed: 0,
-      maxRepairRetries: 1,
-      lastErrorMessage: '',
-    },
-  };
-}
-
 describe('visualizer template assistant panel', () => {
   beforeEach(() => {
+    resetVisualizerTemplateAssistantState_ACU();
     document.body.innerHTML = '<div id="acu-vis-assistant-host"></div>';
+    fakeDocument_ACU.resetChatContainerState();
     fakeDocument_ACU.invalidateCache();
     mockShowToastr.mockReset();
     mockRunSession.mockReset();
@@ -450,11 +410,11 @@ describe('visualizer template assistant panel', () => {
     expect((document.querySelector('.acu-vis-assistant-panel') as HTMLElement).style.display).toBe('none');
   });
 
-  it('生成时调用 runTemplateAssistantSession_ACU 并传入最新快照', async () => {
+  it('生成时读取 _acuVisState.tempData 最新快照', async () => {
     setVisualizerTemplateAssistantOpen_ACU(true);
     renderVisualizerTemplateAssistantPanel_ACU();
     state.tempData.sheet_b = { name: 'B表' } as any;
-    mockRunSession.mockResolvedValue(buildSingleRoundResult());
+    mockRunSession.mockResolvedValue({ draft: { protocolVersion: 2, requestId: 'req-1', atomic: true, warnings: [] }, compileResult: { diff: { addedSheets: [], deletedSheets: [], renamedSheets: [], movedSheets: [], patchedSourceDataSheets: [], patchedUpdateConfigSheets: [], patchedExportConfigSheets: [], patchedContentSheets: [], patchedSchemaSheets: [], patchedLockSheets: [], globalInjectionChanged: false }, highRiskItems: [], lockChanges: [] } });
 
     const textarea = document.querySelector('#acu-vis-assistant-input') as HTMLTextAreaElement;
     textarea.value = '新增';
@@ -467,10 +427,29 @@ describe('visualizer template assistant panel', () => {
     expect(mockRunSession.mock.calls[0][0].tempData.sheet_b.name).toBe('B表');
   });
 
-  it('单轮结果能展示 diff 和 session meta', async () => {
+  it('draft 能展示 diff', async () => {
     setVisualizerTemplateAssistantOpen_ACU(true);
     renderVisualizerTemplateAssistantPanel_ACU();
-    mockRunSession.mockResolvedValue(buildSingleRoundResult());
+    mockRunSession.mockResolvedValue({
+      draft: { protocolVersion: 2, requestId: 'req-2', atomic: true, summary: '新增战利品表', warnings: ['注意命名一致性'] },
+      compileResult: {
+        diff: {
+          addedSheets: [{ sheetKey: 'sheet_new', name: '战利品表' }],
+          deletedSheets: [],
+          renamedSheets: [{ sheetKey: 'sheet_a', beforeName: 'A表', afterName: '新A表' }],
+          movedSheets: [],
+          patchedSourceDataSheets: [],
+          patchedUpdateConfigSheets: [{ sheetKey: 'sheet_a', name: 'A表', keys: ['contextDepth'] }],
+          patchedExportConfigSheets: [],
+          patchedContentSheets: [{ sheetKey: 'sheet_a', name: 'A表', changes: ['新增 1 行'] }],
+          patchedSchemaSheets: [{ sheetKey: 'sheet_a', name: 'A表', changes: ['新增列: 金额'] }],
+          patchedLockSheets: [{ sheetKey: 'sheet_a', name: 'A表', changes: ['锁定列: 金额'] }],
+          globalInjectionChanged: false,
+        },
+        highRiskItems: [],
+        lockChanges: [],
+      },
+    });
 
     const textarea = document.querySelector('#acu-vis-assistant-input') as HTMLTextAreaElement;
     textarea.value = '新增战利品表';
@@ -482,65 +461,34 @@ describe('visualizer template assistant panel', () => {
     expect(document.body.innerHTML).toContain('战利品表 [sheet_new]');
     expect(document.body.innerHTML).toContain('A表: contextDepth');
     expect(document.body.innerHTML).toContain('A表 -> 新A表');
-    expect(document.body.innerHTML).toContain('轮次: 1/3');
-    expect(document.body.innerHTML).toContain('结束原因');
-  });
-
-  it('多轮结果能展示轮次历史', async () => {
-    setVisualizerTemplateAssistantOpen_ACU(true);
-    renderVisualizerTemplateAssistantPanel_ACU();
-    mockRunSession.mockResolvedValue(buildMultiRoundResult());
-
-    const textarea = document.querySelector('#acu-vis-assistant-input') as HTMLTextAreaElement;
-    textarea.value = '新增两张表';
-    textarea.dispatchEvent(new Event('input'));
-    (document.querySelector('#acu-vis-assistant-generate') as HTMLButtonElement).click();
-    await Promise.resolve();
-    await Promise.resolve();
-
-    expect(document.body.innerHTML).toContain('轮次历史');
-    expect(document.body.innerHTML).toContain('第 1 轮');
-    expect(document.body.innerHTML).toContain('第 2 轮');
-    expect(document.body.innerHTML).toContain('第1轮摘要：新增表1');
-    expect(document.body.innerHTML).toContain('第2轮摘要：新增表2');
-  });
-
-  it('能展开/收起轮次详情', async () => {
-    setVisualizerTemplateAssistantOpen_ACU(true);
-    renderVisualizerTemplateAssistantPanel_ACU();
-    mockRunSession.mockResolvedValue(buildMultiRoundResult());
-
-    const textarea = document.querySelector('#acu-vis-assistant-input') as HTMLTextAreaElement;
-    textarea.value = '新增两张表';
-    textarea.dispatchEvent(new Event('input'));
-    (document.querySelector('#acu-vis-assistant-generate') as HTMLButtonElement).click();
-    await Promise.resolve();
-    await Promise.resolve();
-
-    // 初始状态轮次详情应该收起
-    expect(document.body.innerHTML).not.toContain('本轮变更 diff');
-
-    // 点击第一个轮次的展开按钮
-    const toggleBtns = document.querySelectorAll('.acu-assistant-round-toggle') as unknown as HTMLButtonElement[];
-    expect(toggleBtns.length).toBeGreaterThan(0);
-    toggleBtns[0].click();
-
-    // 展开后应该显示详情
-    expect(document.body.innerHTML).toContain('本轮变更 diff');
-    expect(document.body.innerHTML).toContain('表1 [sheet_new1]');
-
-    // 再次点击收起
-    toggleBtns[0].click();
-    expect(document.body.innerHTML).not.toContain('本轮变更 diff');
+    expect(document.body.innerHTML).toContain('A表: 新增 1 行');
+    expect(document.body.innerHTML).toContain('A表: 新增列: 金额');
+    expect(document.body.innerHTML).toContain('A表: 锁定列: 金额');
   });
 
   it('存在高风险项时未确认前应用按钮不可用', async () => {
     setVisualizerTemplateAssistantOpen_ACU(true);
     renderVisualizerTemplateAssistantPanel_ACU();
-    const result = buildSingleRoundResult();
-    result.compileResult.highRiskItems = [{ type: 'delete_sheet', label: '删除表: A表' }];
-    result.compileResult.diff.deletedSheets = [{ sheetKey: 'sheet_a', name: 'A表' }];
-    mockRunSession.mockResolvedValue(result);
+    mockRunSession.mockResolvedValue({
+      draft: { protocolVersion: 2, requestId: 'req-3', atomic: true, summary: '删除旧表', warnings: [] },
+      compileResult: {
+        diff: {
+          addedSheets: [],
+          deletedSheets: [{ sheetKey: 'sheet_a', name: 'A表' }],
+          renamedSheets: [],
+          movedSheets: [],
+          patchedSourceDataSheets: [],
+          patchedUpdateConfigSheets: [],
+          patchedExportConfigSheets: [],
+          patchedContentSheets: [],
+          patchedSchemaSheets: [],
+          patchedLockSheets: [],
+          globalInjectionChanged: false,
+        },
+        highRiskItems: [{ type: 'delete_sheet', label: '删除表: A表' }],
+        lockChanges: [],
+      },
+    });
 
     const textarea = document.querySelector('#acu-vis-assistant-input') as HTMLTextAreaElement;
     textarea.value = '删除旧表';
@@ -552,10 +500,153 @@ describe('visualizer template assistant panel', () => {
     expect((document.querySelector('#acu-vis-assistant-apply') as HTMLButtonElement).disabled).toBe(true);
   });
 
-  it('切换当前表时会刷新标题并清空旧草稿', async () => {
+  it('确认高风险项后原地启用应用按钮而不重渲染整个聊天区', async () => {
     setVisualizerTemplateAssistantOpen_ACU(true);
     renderVisualizerTemplateAssistantPanel_ACU();
-    mockRunSession.mockResolvedValue(buildSingleRoundResult());
+    mockRunSession.mockResolvedValue({
+      draft: { protocolVersion: 2, requestId: 'req-3b', atomic: true, summary: '更新 DDL', warnings: [] },
+      compileResult: {
+        diff: {
+          addedSheets: [],
+          deletedSheets: [],
+          renamedSheets: [],
+          movedSheets: [],
+          patchedSourceDataSheets: [],
+          patchedUpdateConfigSheets: [],
+          patchedExportConfigSheets: [],
+          patchedContentSheets: [],
+          patchedSchemaSheets: [{ sheetKey: 'sheet_a', name: 'A表', changes: ['更新 DDL: 战利品表'] }],
+          patchedLockSheets: [],
+          globalInjectionChanged: false,
+        },
+        highRiskItems: [{ type: 'patch_sheet_schema', label: '更新 DDL: 战利品表' }],
+        lockChanges: [],
+      },
+    });
+
+    const textarea = document.querySelector('#acu-vis-assistant-input') as HTMLTextAreaElement;
+    textarea.value = '更新 DDL';
+    textarea.dispatchEvent(new Event('input'));
+    (document.querySelector('#acu-vis-assistant-generate') as HTMLButtonElement).click();
+    await Promise.resolve();
+    await Promise.resolve();
+
+    const beforeHtml = document.body.innerHTML;
+    const checkbox = document.querySelector('.acu-assistant-risk-confirm') as HTMLInputElement;
+    const applyBtn = document.querySelector('#acu-vis-assistant-apply') as HTMLButtonElement;
+    expect(applyBtn.disabled).toBe(true);
+
+    checkbox.checked = true;
+    checkbox.dispatchEvent(new Event('change'));
+
+    expect(applyBtn.disabled).toBe(false);
+    expect(document.body.innerHTML).toBe(beforeHtml);
+  });
+
+  it('高风险项确认后点击应用按钮会真正触发 apply', async () => {
+    setVisualizerTemplateAssistantOpen_ACU(true);
+    renderVisualizerTemplateAssistantPanel_ACU();
+    mockRunSession.mockResolvedValue({
+      draft: { protocolVersion: 2, requestId: 'req-3c', atomic: true, summary: '更新 DDL', warnings: [] },
+      compileResult: {
+        diff: {
+          addedSheets: [],
+          deletedSheets: [],
+          renamedSheets: [],
+          movedSheets: [],
+          patchedSourceDataSheets: [],
+          patchedUpdateConfigSheets: [],
+          patchedExportConfigSheets: [],
+          patchedContentSheets: [],
+          patchedSchemaSheets: [{ sheetKey: 'sheet_a', name: 'A表', changes: ['更新 DDL: 战利品表'] }],
+          patchedLockSheets: [],
+          globalInjectionChanged: false,
+        },
+        highRiskItems: [{ type: 'patch_sheet_schema', label: '更新 DDL: 战利品表' }],
+        lockChanges: [],
+      },
+    });
+
+    const textarea = document.querySelector('#acu-vis-assistant-input') as HTMLTextAreaElement;
+    textarea.value = '更新 DDL';
+    textarea.dispatchEvent(new Event('input'));
+    (document.querySelector('#acu-vis-assistant-generate') as HTMLButtonElement).click();
+    await Promise.resolve();
+    await Promise.resolve();
+
+    const checkbox = document.querySelector('.acu-assistant-risk-confirm') as HTMLInputElement;
+    const applyBtn = document.querySelector('#acu-vis-assistant-apply') as HTMLButtonElement;
+    checkbox.checked = true;
+    checkbox.dispatchEvent(new Event('change'));
+
+    expect(applyBtn.disabled).toBe(false);
+    applyBtn.click();
+
+    expect(mockApply).toHaveBeenCalledTimes(1);
+  });
+
+  it('高风险项未确认时即使触发 apply click 也不会执行应用', async () => {
+    setVisualizerTemplateAssistantOpen_ACU(true);
+    renderVisualizerTemplateAssistantPanel_ACU();
+    mockRunSession.mockResolvedValue({
+      draft: { protocolVersion: 2, requestId: 'req-3d', atomic: true, summary: '更新 DDL', warnings: [] },
+      compileResult: {
+        diff: {
+          addedSheets: [],
+          deletedSheets: [],
+          renamedSheets: [],
+          movedSheets: [],
+          patchedSourceDataSheets: [],
+          patchedUpdateConfigSheets: [],
+          patchedExportConfigSheets: [],
+          patchedContentSheets: [],
+          patchedSchemaSheets: [{ sheetKey: 'sheet_a', name: 'A表', changes: ['更新 DDL: 战利品表'] }],
+          patchedLockSheets: [],
+          globalInjectionChanged: false,
+        },
+        highRiskItems: [{ type: 'patch_sheet_schema', label: '更新 DDL: 战利品表' }],
+        lockChanges: [],
+      },
+    });
+
+    const textarea = document.querySelector('#acu-vis-assistant-input') as HTMLTextAreaElement;
+    textarea.value = '更新 DDL';
+    textarea.dispatchEvent(new Event('input'));
+    (document.querySelector('#acu-vis-assistant-generate') as HTMLButtonElement).click();
+    await Promise.resolve();
+    await Promise.resolve();
+
+    const applyBtn = document.querySelector('#acu-vis-assistant-apply') as HTMLButtonElement;
+    expect(applyBtn.disabled).toBe(true);
+    applyBtn.click();
+
+    expect(mockApply).not.toHaveBeenCalled();
+    expect(mockShowToastr).toHaveBeenCalledWith('warning', '请先确认所有高风险项后再应用。');
+  });
+
+  it('v1 草稿在切换当前表时会刷新标题并清空旧草稿', async () => {
+    setVisualizerTemplateAssistantOpen_ACU(true);
+    renderVisualizerTemplateAssistantPanel_ACU();
+    mockRunSession.mockResolvedValue({
+      draft: { protocolVersion: 1, selectedSheetKey: 'sheet_a', summary: '新增战利品表', warnings: [] },
+      compileResult: {
+        diff: {
+          addedSheets: [{ sheetKey: 'sheet_new', name: '战利品表' }],
+          deletedSheets: [],
+          renamedSheets: [],
+          movedSheets: [],
+          patchedSourceDataSheets: [],
+          patchedUpdateConfigSheets: [],
+          patchedExportConfigSheets: [],
+          patchedContentSheets: [],
+          patchedSchemaSheets: [],
+          patchedLockSheets: [],
+          globalInjectionChanged: false,
+        },
+        highRiskItems: [],
+        lockChanges: [],
+      },
+    });
 
     const textarea = document.querySelector('#acu-vis-assistant-input') as HTMLTextAreaElement;
     textarea.value = '新增战利品表';
@@ -575,17 +666,71 @@ describe('visualizer template assistant panel', () => {
     expect(document.body.innerHTML).not.toContain('战利品表 [sheet_new]');
   });
 
+  it('v2 草稿在切换当前表时保留已生成 diff', async () => {
+    setVisualizerTemplateAssistantOpen_ACU(true);
+    renderVisualizerTemplateAssistantPanel_ACU();
+    mockRunSession.mockResolvedValue({
+      draft: { protocolVersion: 2, requestId: 'req-4', atomic: true, selectedSheetKey: 'sheet_a', summary: '跨表修改', warnings: [] },
+      compileResult: {
+        diff: {
+          addedSheets: [{ sheetKey: 'sheet_new', name: '战利品表' }],
+          deletedSheets: [],
+          renamedSheets: [],
+          movedSheets: [],
+          patchedSourceDataSheets: [],
+          patchedUpdateConfigSheets: [],
+          patchedExportConfigSheets: [],
+          patchedContentSheets: [],
+          patchedSchemaSheets: [],
+          patchedLockSheets: [],
+          globalInjectionChanged: false,
+        },
+        highRiskItems: [],
+        lockChanges: [],
+      },
+    });
+
+    const textarea = document.querySelector('#acu-vis-assistant-input') as HTMLTextAreaElement;
+    textarea.value = '跨表修改';
+    textarea.dispatchEvent(new Event('input'));
+    (document.querySelector('#acu-vis-assistant-generate') as HTMLButtonElement).click();
+    await Promise.resolve();
+    await Promise.resolve();
+
+    state.tempData.sheet_b = { name: 'B表' } as any;
+    state.currentSheetKey = 'sheet_b';
+    handleVisualizerTemplateAssistantSheetChange_ACU();
+
+    expect(document.body.innerHTML).toContain('当前表：B表 (sheet_b)');
+    expect(document.body.innerHTML).toContain('战利品表 [sheet_new]');
+  });
+
   it('多条高风险操作需要逐项确认', async () => {
     setVisualizerTemplateAssistantOpen_ACU(true);
     renderVisualizerTemplateAssistantPanel_ACU();
-    const result = buildSingleRoundResult();
-    result.draft.summary = '删除多张旧表';
-    result.compileResult.highRiskItems = [
-      { type: 'delete_sheet', label: '删除表: A表' },
-      { type: 'delete_sheet', label: '删除表: B表' },
-    ];
-    result.compileResult.diff.deletedSheets = [{ sheetKey: 'sheet_a', name: 'A表' }, { sheetKey: 'sheet_b', name: 'B表' }];
-    mockRunSession.mockResolvedValue(result);
+    mockRunSession.mockResolvedValue({
+      draft: { protocolVersion: 2, requestId: 'req-5', atomic: true, summary: '删除多张旧表', warnings: [] },
+      compileResult: {
+        diff: {
+          addedSheets: [],
+          deletedSheets: [{ sheetKey: 'sheet_a', name: 'A表' }, { sheetKey: 'sheet_b', name: 'B表' }],
+          renamedSheets: [],
+          movedSheets: [],
+          patchedSourceDataSheets: [],
+          patchedUpdateConfigSheets: [],
+          patchedExportConfigSheets: [],
+          patchedContentSheets: [],
+          patchedSchemaSheets: [],
+          patchedLockSheets: [],
+          globalInjectionChanged: false,
+        },
+        highRiskItems: [
+          { type: 'delete_sheet', label: '删除表: A表' },
+          { type: 'delete_sheet', label: '删除表: B表' },
+        ],
+        lockChanges: [],
+      },
+    });
 
     const textarea = document.querySelector('#acu-vis-assistant-input') as HTMLTextAreaElement;
     textarea.value = '删除两张旧表';
@@ -602,48 +747,1013 @@ describe('visualizer template assistant panel', () => {
     checkboxes[0].dispatchEvent(new Event('change'));
 
     expect((document.querySelector('#acu-vis-assistant-apply') as HTMLButtonElement).disabled).toBe(true);
+
+    checkboxes[1].checked = true;
+    checkboxes[1].dispatchEvent(new Event('change'));
+
+    expect((document.querySelector('#acu-vis-assistant-apply') as HTMLButtonElement).disabled).toBe(false);
   });
 
-  it('panel 使用 flex containment 模式确保内部滚动', () => {
-    setVisualizerTemplateAssistantOpen_ACU(true);
-    renderVisualizerTemplateAssistantPanel_ACU();
+  // Chat-first UI tests
+  describe('chat-first transcript behavior', () => {
+    it('聊天区域有专用的可滚动框架容器', () => {
+      setVisualizerTemplateAssistantOpen_ACU(true);
+      renderVisualizerTemplateAssistantPanel_ACU();
 
-    const panel = document.querySelector('.acu-vis-assistant-panel') as HTMLElement;
-    expect(panel).toBeTruthy();
-    expect(panel.style.overflow).toBe('hidden');
+      const html = document.body.innerHTML;
+      const scrollFrame = document.querySelector('.acu-chat-scroll-frame');
+      expect(scrollFrame).toBeTruthy();
+      expect(html).toContain('acu-chat-scroll-frame');
+      expect(html).toContain('border-radius:12px');
+      expect(html).toContain('overflow:hidden');
+      expect(html).toContain('box-shadow:inset 0 1px 0 rgba(255,255,255,0.04)');
+      const chatContainer = document.querySelector('.acu-chat-container');
+      expect(chatContainer).toBeTruthy();
+      expect(html).toContain('overflow-y:auto');
+    });
 
-    const body = document.querySelector('.acu-vis-assistant-body') as HTMLElement;
-    expect(body).toBeTruthy();
-    expect(body.style.overflowY).toBe('auto');
-    expect(body.style.flex).toBe('1');
-    expect(body.style.minHeight).toBe('0');
+    it('输入内容后发送按钮变为可用状态（regression test for input-does-not-enable-button bug）', () => {
+      setVisualizerTemplateAssistantOpen_ACU(true);
+      renderVisualizerTemplateAssistantPanel_ACU();
+
+      // 初始状态下按钮应该是disabled
+      const btn = document.querySelector('#acu-vis-assistant-generate') as HTMLButtonElement;
+      expect(btn.disabled).toBe(true);
+
+      // 输入内容
+      const textarea = document.querySelector('#acu-vis-assistant-input') as HTMLTextAreaElement;
+      textarea.value = '新增战利品表';
+      textarea.dispatchEvent(new Event('input'));
+
+      // 按钮应该变为enabled
+      expect(btn.disabled).toBe(false);
+
+      // 清空内容
+      textarea.value = '';
+      textarea.dispatchEvent(new Event('input'));
+
+      // 按钮应该再次变为disabled
+      expect(btn.disabled).toBe(true);
+    });
+
+    it('提交后用户请求显示为用户聊天轮次', async () => {
+      setVisualizerTemplateAssistantOpen_ACU(true);
+      renderVisualizerTemplateAssistantPanel_ACU();
+      mockRunSession.mockResolvedValue({
+        draft: { protocolVersion: 2, requestId: 'req-chat-1', atomic: true, summary: '新增战利品表', warnings: [] },
+        compileResult: {
+          diff: { addedSheets: [{ sheetKey: 'sheet_new', name: '战利品表' }], deletedSheets: [], renamedSheets: [], movedSheets: [], patchedSourceDataSheets: [], patchedUpdateConfigSheets: [], patchedExportConfigSheets: [], patchedContentSheets: [], patchedSchemaSheets: [], patchedLockSheets: [], globalInjectionChanged: false },
+          highRiskItems: [],
+          lockChanges: [],
+        },
+      });
+
+      const textarea = document.querySelector('#acu-vis-assistant-input') as HTMLTextAreaElement;
+      textarea.value = '新增战利品表';
+      textarea.dispatchEvent(new Event('input'));
+      (document.querySelector('#acu-vis-assistant-generate') as HTMLButtonElement).click();
+
+      // 用户轮次应立即出现
+      const userTurns = document.querySelectorAll('.acu-chat-turn-user');
+      expect(userTurns.length).toBeGreaterThan(0);
+      expect(document.body.innerHTML).toContain('新增战利品表');
+
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    it('生成成功后AI结果显示为助手聊天轮次', async () => {
+      setVisualizerTemplateAssistantOpen_ACU(true);
+      renderVisualizerTemplateAssistantPanel_ACU();
+      mockRunSession.mockResolvedValue({
+        draft: { protocolVersion: 2, requestId: 'req-chat-2', atomic: true, summary: '新增战利品表', warnings: [] },
+        compileResult: {
+          diff: { addedSheets: [{ sheetKey: 'sheet_new', name: '战利品表' }], deletedSheets: [], renamedSheets: [], movedSheets: [], patchedSourceDataSheets: [], patchedUpdateConfigSheets: [], patchedExportConfigSheets: [], patchedContentSheets: [], patchedSchemaSheets: [], patchedLockSheets: [], globalInjectionChanged: false },
+          highRiskItems: [],
+          lockChanges: [],
+        },
+      });
+
+      const textarea = document.querySelector('#acu-vis-assistant-input') as HTMLTextAreaElement;
+      textarea.value = '新增战利品表';
+      textarea.dispatchEvent(new Event('input'));
+      (document.querySelector('#acu-vis-assistant-generate') as HTMLButtonElement).click();
+      await Promise.resolve();
+      await Promise.resolve();
+
+      const assistantTurns = document.querySelectorAll('.acu-chat-turn-assistant');
+      expect(assistantTurns.length).toBeGreaterThan(0);
+      expect(document.body.innerHTML).toContain('新增战利品表');
+    });
+
+    it('生成失败时显示错误助手轮次', async () => {
+      setVisualizerTemplateAssistantOpen_ACU(true);
+      renderVisualizerTemplateAssistantPanel_ACU();
+      mockRunSession.mockRejectedValue(new Error('网络错误'));
+
+      const textarea = document.querySelector('#acu-vis-assistant-input') as HTMLTextAreaElement;
+      textarea.value = '新增战利品表';
+      textarea.dispatchEvent(new Event('input'));
+      (document.querySelector('#acu-vis-assistant-generate') as HTMLButtonElement).click();
+      await Promise.resolve();
+      await Promise.resolve();
+
+      const errorTurns = document.querySelectorAll('.acu-chat-turn-error');
+      expect(errorTurns.length).toBeGreaterThan(0);
+      expect(document.body.innerHTML).toContain('网络错误');
+    });
+
+    it('AI操作默认显示为折叠的单行摘要', async () => {
+      setVisualizerTemplateAssistantOpen_ACU(true);
+      renderVisualizerTemplateAssistantPanel_ACU();
+      mockRunSession.mockResolvedValue({
+        draft: { protocolVersion: 2, requestId: 'req-collapse-1', atomic: true, summary: '新增战利品表', warnings: ['警告1', '警告2'] },
+        compileResult: {
+          diff: { addedSheets: [{ sheetKey: 'sheet_new', name: '战利品表' }], deletedSheets: [], renamedSheets: [], movedSheets: [], patchedSourceDataSheets: [], patchedUpdateConfigSheets: [], patchedExportConfigSheets: [], patchedContentSheets: [], patchedSchemaSheets: [], patchedLockSheets: [], globalInjectionChanged: false },
+          highRiskItems: [],
+          lockChanges: [],
+        },
+      });
+
+      const textarea = document.querySelector('#acu-vis-assistant-input') as HTMLTextAreaElement;
+      textarea.value = '新增战利品表';
+      textarea.dispatchEvent(new Event('input'));
+      (document.querySelector('#acu-vis-assistant-generate') as HTMLButtonElement).click();
+      await Promise.resolve();
+      await Promise.resolve();
+
+      // 检查只有一个详情折叠摘要
+      const collapsedSummaries = document.querySelectorAll('.acu-collapsed-summary');
+      expect(collapsedSummaries.length).toBe(1);
+      expect(document.body.innerHTML).toContain('详情');
+    });
+
+    it('展开摘要后显示详细内容', async () => {
+      setVisualizerTemplateAssistantOpen_ACU(true);
+      renderVisualizerTemplateAssistantPanel_ACU();
+      mockRunSession.mockResolvedValue({
+        draft: { protocolVersion: 2, requestId: 'req-expand-1', atomic: true, summary: '新增战利品表', warnings: ['警告1'] },
+        compileResult: {
+          diff: { addedSheets: [{ sheetKey: 'sheet_new', name: '战利品表' }], deletedSheets: [], renamedSheets: [], movedSheets: [], patchedSourceDataSheets: [], patchedUpdateConfigSheets: [], patchedExportConfigSheets: [], patchedContentSheets: [], patchedSchemaSheets: [], patchedLockSheets: [], globalInjectionChanged: false },
+          highRiskItems: [],
+          lockChanges: [],
+        },
+      });
+
+      const textarea = document.querySelector('#acu-vis-assistant-input') as HTMLTextAreaElement;
+      textarea.value = '新增战利品表';
+      textarea.dispatchEvent(new Event('input'));
+      (document.querySelector('#acu-vis-assistant-generate') as HTMLButtonElement).click();
+      await Promise.resolve();
+      await Promise.resolve();
+
+      // 点击展开按钮
+      const expandBtn = document.querySelector('.acu-expand-toggle') as HTMLElement;
+      if (expandBtn) {
+        expandBtn.click();
+        // 详细内容区域应该可见
+        const detailBlock = document.querySelector('.acu-detail-block');
+        expect(detailBlock).toBeTruthy();
+      }
+    });
+
+    it('v1模式下切换sheet时清空整个transcript', async () => {
+      setVisualizerTemplateAssistantOpen_ACU(true);
+      renderVisualizerTemplateAssistantPanel_ACU();
+      mockRunSession.mockResolvedValue({
+        draft: { protocolVersion: 1, selectedSheetKey: 'sheet_a', summary: '新增战利品表', warnings: [] },
+        compileResult: {
+          diff: { addedSheets: [{ sheetKey: 'sheet_new', name: '战利品表' }], deletedSheets: [], renamedSheets: [], movedSheets: [], patchedSourceDataSheets: [], patchedUpdateConfigSheets: [], patchedExportConfigSheets: [], patchedContentSheets: [], patchedSchemaSheets: [], patchedLockSheets: [], globalInjectionChanged: false },
+          highRiskItems: [],
+          lockChanges: [],
+        },
+      });
+
+      const textarea = document.querySelector('#acu-vis-assistant-input') as HTMLTextAreaElement;
+      textarea.value = '新增战利品表';
+      textarea.dispatchEvent(new Event('input'));
+      (document.querySelector('#acu-vis-assistant-generate') as HTMLButtonElement).click();
+      await Promise.resolve();
+      await Promise.resolve();
+
+      // 切换sheet
+      state.tempData.sheet_b = { name: 'B表' } as any;
+      state.currentSheetKey = 'sheet_b';
+      handleVisualizerTemplateAssistantSheetChange_ACU();
+
+      // transcript应该被清空
+      const userTurns = document.querySelectorAll('.acu-chat-turn-user');
+      const assistantTurns = document.querySelectorAll('.acu-chat-turn-assistant');
+      expect(userTurns.length).toBe(0);
+      expect(assistantTurns.length).toBe(0);
+    });
+
+    it('v2模式下切换sheet时保留transcript', async () => {
+      setVisualizerTemplateAssistantOpen_ACU(true);
+      renderVisualizerTemplateAssistantPanel_ACU();
+      mockRunSession.mockResolvedValue({
+        draft: { protocolVersion: 2, requestId: 'req-v2-preserve', atomic: true, selectedSheetKey: 'sheet_a', summary: '跨表修改', warnings: [] },
+        compileResult: {
+          diff: { addedSheets: [{ sheetKey: 'sheet_new', name: '战利品表' }], deletedSheets: [], renamedSheets: [], movedSheets: [], patchedSourceDataSheets: [], patchedUpdateConfigSheets: [], patchedExportConfigSheets: [], patchedContentSheets: [], patchedSchemaSheets: [], patchedLockSheets: [], globalInjectionChanged: false },
+          highRiskItems: [],
+          lockChanges: [],
+        },
+      });
+
+      const textarea = document.querySelector('#acu-vis-assistant-input') as HTMLTextAreaElement;
+      textarea.value = '跨表修改';
+      textarea.dispatchEvent(new Event('input'));
+      (document.querySelector('#acu-vis-assistant-generate') as HTMLButtonElement).click();
+      await Promise.resolve();
+      await Promise.resolve();
+
+      // 切换sheet
+      state.tempData.sheet_b = { name: 'B表' } as any;
+      state.currentSheetKey = 'sheet_b';
+      handleVisualizerTemplateAssistantSheetChange_ACU();
+
+      // transcript应该保留
+      const assistantTurns = document.querySelectorAll('.acu-chat-turn-assistant');
+      expect(assistantTurns.length).toBeGreaterThan(0);
+    });
+
+    it('成功应用后保留transcript以支持连续改造', async () => {
+      setVisualizerTemplateAssistantOpen_ACU(true);
+      renderVisualizerTemplateAssistantPanel_ACU();
+      mockRunSession.mockResolvedValue({
+        draft: { protocolVersion: 2, requestId: 'req-apply-clear', atomic: true, summary: '新增战利品表', warnings: [] },
+        compileResult: {
+          diff: { addedSheets: [{ sheetKey: 'sheet_new', name: '战利品表' }], deletedSheets: [], renamedSheets: [], movedSheets: [], patchedSourceDataSheets: [], patchedUpdateConfigSheets: [], patchedExportConfigSheets: [], patchedContentSheets: [], patchedSchemaSheets: [], patchedLockSheets: [], globalInjectionChanged: false },
+          highRiskItems: [],
+          lockChanges: [],
+        },
+      });
+
+      const textarea = document.querySelector('#acu-vis-assistant-input') as HTMLTextAreaElement;
+      textarea.value = '新增战利品表';
+      textarea.dispatchEvent(new Event('input'));
+      (document.querySelector('#acu-vis-assistant-generate') as HTMLButtonElement).click();
+      await Promise.resolve();
+      await Promise.resolve();
+
+      // 点击应用按钮
+      (document.querySelector('#acu-vis-assistant-apply') as HTMLButtonElement).click();
+
+      // transcript应该保留
+      const userTurns = document.querySelectorAll('.acu-chat-turn-user');
+      const assistantTurns = document.querySelectorAll('.acu-chat-turn-assistant');
+      expect(userTurns.length).toBe(1);
+      expect(assistantTurns.length).toBe(1);
+    });
+
+    it('应用后继续发送下一轮请求时 transcript 会累积追加', async () => {
+      setVisualizerTemplateAssistantOpen_ACU(true);
+      renderVisualizerTemplateAssistantPanel_ACU();
+
+      mockRunSession
+        .mockResolvedValueOnce({
+          draft: { protocolVersion: 2, requestId: 'req-apply-keep-1', atomic: true, summary: '第一轮修改', warnings: [] },
+          compileResult: {
+            diff: { addedSheets: [{ sheetKey: 'sheet_new', name: '战利品表' }], deletedSheets: [], renamedSheets: [], movedSheets: [], patchedSourceDataSheets: [], patchedUpdateConfigSheets: [], patchedExportConfigSheets: [], patchedContentSheets: [], patchedSchemaSheets: [], patchedLockSheets: [], globalInjectionChanged: false },
+            highRiskItems: [],
+            lockChanges: [],
+          },
+        })
+        .mockResolvedValueOnce({
+          draft: { protocolVersion: 2, requestId: 'req-apply-keep-2', atomic: true, summary: '第二轮修改', warnings: [] },
+          compileResult: {
+            diff: { addedSheets: [], deletedSheets: [], renamedSheets: [], movedSheets: [], patchedSourceDataSheets: [], patchedUpdateConfigSheets: [], patchedExportConfigSheets: [], patchedContentSheets: [{ sheetKey: 'sheet_a', name: 'A表', changes: ['改单元格: 第1行.姓名'] }], patchedSchemaSheets: [], patchedLockSheets: [], globalInjectionChanged: false },
+            highRiskItems: [],
+            lockChanges: [],
+          },
+        });
+
+      const textarea = document.querySelector('#acu-vis-assistant-input') as HTMLTextAreaElement;
+      textarea.value = '第一轮修改';
+      textarea.dispatchEvent(new Event('input'));
+      (document.querySelector('#acu-vis-assistant-generate') as HTMLButtonElement).click();
+      await Promise.resolve();
+      await Promise.resolve();
+
+      (document.querySelector('#acu-vis-assistant-apply') as HTMLButtonElement).click();
+
+      const secondTextarea = document.querySelector('#acu-vis-assistant-input') as HTMLTextAreaElement;
+      secondTextarea.value = '第二轮修改';
+      secondTextarea.dispatchEvent(new Event('input'));
+      (document.querySelector('#acu-vis-assistant-generate') as HTMLButtonElement).click();
+      await Promise.resolve();
+      await Promise.resolve();
+
+      const userTurns = document.querySelectorAll('.acu-chat-turn-user');
+      const assistantTurns = document.querySelectorAll('.acu-chat-turn-assistant');
+      expect(userTurns.length).toBe(2);
+      expect(assistantTurns.length).toBe(2);
+      expect(document.body.innerHTML).toContain('第一轮修改');
+      expect(document.body.innerHTML).toContain('第二轮修改');
+    });
+
+    it('只有最新的助手轮次可以进行确认和应用', async () => {
+      setVisualizerTemplateAssistantOpen_ACU(true);
+      renderVisualizerTemplateAssistantPanel_ACU();
+      mockRunSession.mockResolvedValue({
+        draft: { protocolVersion: 2, requestId: 'req-latest-1', atomic: true, summary: '新增战利品表', warnings: [] },
+        compileResult: {
+          diff: { addedSheets: [{ sheetKey: 'sheet_new', name: '战利品表' }], deletedSheets: [], renamedSheets: [], movedSheets: [], patchedSourceDataSheets: [], patchedUpdateConfigSheets: [], patchedExportConfigSheets: [], patchedContentSheets: [], patchedSchemaSheets: [], patchedLockSheets: [], globalInjectionChanged: false },
+          highRiskItems: [],
+          lockChanges: [],
+        },
+      });
+
+      const textarea = document.querySelector('#acu-vis-assistant-input') as HTMLTextAreaElement;
+      textarea.value = '新增战利品表';
+      textarea.dispatchEvent(new Event('input'));
+      (document.querySelector('#acu-vis-assistant-generate') as HTMLButtonElement).click();
+      await Promise.resolve();
+      await Promise.resolve();
+
+      // 只有一个应用按钮，且在最新的助手轮次中
+      const applyBtns = document.querySelectorAll('#acu-vis-assistant-apply');
+      expect(applyBtns.length).toBe(1);
+    });
+
+    it('连续对话时 priorTurns 正确传入 API（第二轮包含第一轮的 user 和 assistant）', async () => {
+      setVisualizerTemplateAssistantOpen_ACU(true);
+      renderVisualizerTemplateAssistantPanel_ACU();
+
+      mockRunSession
+        .mockResolvedValueOnce({
+          draft: { protocolVersion: 2, requestId: 'req-prior-1', atomic: true, summary: '第一轮', warnings: [] },
+          aiRawText: '第一轮AI响应文本',
+          compileResult: {
+            diff: { addedSheets: [{ sheetKey: 'sheet_new', name: '新表' }], deletedSheets: [], renamedSheets: [], movedSheets: [], patchedSourceDataSheets: [], patchedUpdateConfigSheets: [], patchedExportConfigSheets: [], patchedContentSheets: [], patchedSchemaSheets: [], patchedLockSheets: [], globalInjectionChanged: false },
+            highRiskItems: [],
+            lockChanges: [],
+          },
+        })
+        .mockResolvedValueOnce({
+          draft: { protocolVersion: 2, requestId: 'req-prior-2', atomic: true, summary: '第二轮', warnings: [] },
+          aiRawText: '第二轮AI响应文本',
+          compileResult: {
+            diff: { addedSheets: [], deletedSheets: [], renamedSheets: [], movedSheets: [], patchedSourceDataSheets: [], patchedUpdateConfigSheets: [], patchedExportConfigSheets: [], patchedContentSheets: [{ sheetKey: 'sheet_a', name: 'A表', changes: ['修改'] }], patchedSchemaSheets: [], patchedLockSheets: [], globalInjectionChanged: false },
+            highRiskItems: [],
+            lockChanges: [],
+          },
+        });
+
+      // 第一轮请求
+      const textarea = document.querySelector('#acu-vis-assistant-input') as HTMLTextAreaElement;
+      textarea.value = '新增新表';
+      textarea.dispatchEvent(new Event('input'));
+      (document.querySelector('#acu-vis-assistant-generate') as HTMLButtonElement).click();
+      await Promise.resolve();
+      await Promise.resolve();
+
+      // 应用第一轮结果
+      (document.querySelector('#acu-vis-assistant-apply') as HTMLButtonElement).click();
+
+      // 第二轮请求
+      const textarea2 = document.querySelector('#acu-vis-assistant-input') as HTMLTextAreaElement;
+      textarea2.value = '修改A表';
+      textarea2.dispatchEvent(new Event('input'));
+      (document.querySelector('#acu-vis-assistant-generate') as HTMLButtonElement).click();
+      await Promise.resolve();
+      await Promise.resolve();
+
+      // 验证第二轮调用时 priorTurns 包含第一轮的 user 和 assistant
+      expect(mockRunSession).toHaveBeenCalledTimes(2);
+      const secondCallArgs = mockRunSession.mock.calls[1][0];
+      expect(secondCallArgs.priorTurns).toBeTruthy();
+      expect(Array.isArray(secondCallArgs.priorTurns)).toBe(true);
+      expect(secondCallArgs.priorTurns.length).toBe(1);
+      expect(secondCallArgs.priorTurns[0].user).toBe('新增新表');
+      expect(secondCallArgs.priorTurns[0].assistant).toBe('第一轮AI响应文本');
+    });
+
+    it('首轮请求时 priorTurns 为空数组', async () => {
+      setVisualizerTemplateAssistantOpen_ACU(true);
+      renderVisualizerTemplateAssistantPanel_ACU();
+      mockRunSession.mockResolvedValue({
+        draft: { protocolVersion: 2, requestId: 'req-empty-prior', atomic: true, summary: '首轮', warnings: [] },
+        compileResult: {
+          diff: { addedSheets: [], deletedSheets: [], renamedSheets: [], movedSheets: [], patchedSourceDataSheets: [], patchedUpdateConfigSheets: [], patchedExportConfigSheets: [], patchedContentSheets: [], patchedSchemaSheets: [], patchedLockSheets: [], globalInjectionChanged: false },
+          highRiskItems: [],
+          lockChanges: [],
+        },
+      });
+
+      const textarea = document.querySelector('#acu-vis-assistant-input') as HTMLTextAreaElement;
+      textarea.value = '首轮请求';
+      textarea.dispatchEvent(new Event('input'));
+      (document.querySelector('#acu-vis-assistant-generate') as HTMLButtonElement).click();
+      await Promise.resolve();
+      await Promise.resolve();
+
+      expect(mockRunSession).toHaveBeenCalledTimes(1);
+      const callArgs = mockRunSession.mock.calls[0][0];
+      expect(callArgs.priorTurns).toBeTruthy();
+      expect(Array.isArray(callArgs.priorTurns)).toBe(true);
+      expect(callArgs.priorTurns.length).toBe(0);
+    });
+
+    it('请求过程中切换当前表时，不把失效 user turn 带入后续 priorTurns', async () => {
+      setVisualizerTemplateAssistantOpen_ACU(true);
+      renderVisualizerTemplateAssistantPanel_ACU();
+
+      let resolveFirstRequest: ((value: any) => void) | null = null;
+      mockRunSession.mockImplementationOnce(() => new Promise((resolve) => {
+        resolveFirstRequest = resolve;
+      }));
+      mockRunSession.mockResolvedValueOnce({
+        draft: { protocolVersion: 2, requestId: 'req-valid-second', atomic: true, summary: '有效第二轮', warnings: [] },
+        aiRawText: '有效第二轮响应',
+        compileResult: {
+          diff: { addedSheets: [], deletedSheets: [], renamedSheets: [], movedSheets: [], patchedSourceDataSheets: [], patchedUpdateConfigSheets: [], patchedExportConfigSheets: [], patchedContentSheets: [], patchedSchemaSheets: [], patchedLockSheets: [], globalInjectionChanged: false },
+          highRiskItems: [],
+          lockChanges: [],
+        },
+      });
+
+      const textarea = document.querySelector('#acu-vis-assistant-input') as HTMLTextAreaElement;
+      textarea.value = '会失效的请求';
+      textarea.dispatchEvent(new Event('input'));
+      (document.querySelector('#acu-vis-assistant-generate') as HTMLButtonElement).click();
+      await Promise.resolve();
+
+      state.tempData.sheet_b = { name: 'B表' } as any;
+      state.currentSheetKey = 'sheet_b';
+
+      resolveFirstRequest?.({
+        draft: { protocolVersion: 2, requestId: 'req-stale-first', atomic: true, summary: '旧请求返回', warnings: [] },
+        aiRawText: '旧请求返回',
+        compileResult: {
+          diff: { addedSheets: [], deletedSheets: [], renamedSheets: [], movedSheets: [], patchedSourceDataSheets: [], patchedUpdateConfigSheets: [], patchedExportConfigSheets: [], patchedContentSheets: [], patchedSchemaSheets: [], patchedLockSheets: [], globalInjectionChanged: false },
+          highRiskItems: [],
+          lockChanges: [],
+        },
+      });
+      await Promise.resolve();
+      await Promise.resolve();
+
+      const textarea2 = document.querySelector('#acu-vis-assistant-input') as HTMLTextAreaElement;
+      textarea2.value = '新的有效请求';
+      textarea2.dispatchEvent(new Event('input'));
+      (document.querySelector('#acu-vis-assistant-generate') as HTMLButtonElement).click();
+      await Promise.resolve();
+      await Promise.resolve();
+
+      const secondCallArgs = mockRunSession.mock.calls[1][0];
+      expect(secondCallArgs.priorTurns).toEqual([]);
+      expect(document.body.innerHTML).toContain('当前选中表已变化，请重新生成 assistant 草稿。');
+      expect(document.body.innerHTML).not.toContain('会失效的请求');
+    });
+
+    it('session 结果会在详情摘要中显示轮次信息', async () => {
+      setVisualizerTemplateAssistantOpen_ACU(true);
+      renderVisualizerTemplateAssistantPanel_ACU();
+      mockRunSession.mockResolvedValue({
+        draft: { protocolVersion: 2, requestId: 'req-session-ui', atomic: true, summary: '带会话信息', warnings: [] },
+        compileResult: {
+          diff: { addedSheets: [], deletedSheets: [], renamedSheets: [], movedSheets: [], patchedSourceDataSheets: [], patchedUpdateConfigSheets: [], patchedExportConfigSheets: [], patchedContentSheets: [], patchedSchemaSheets: [], patchedLockSheets: [], globalInjectionChanged: false },
+          highRiskItems: [],
+          lockChanges: [],
+        },
+        session: {
+          originalBaseFingerprint: 'acu-struct:base',
+          finalWorkingFingerprint: 'acu-struct:final',
+          stopReason: 'empty_operations',
+          roundsExecuted: 2,
+          maxRounds: 3,
+          repairRetriesUsed: 0,
+          maxRepairRetries: 1,
+          lastErrorMessage: '',
+        },
+        rounds: [],
+      });
+
+      const textarea = document.querySelector('#acu-vis-assistant-input') as HTMLTextAreaElement;
+      textarea.value = '带会话信息';
+      textarea.dispatchEvent(new Event('input'));
+      (document.querySelector('#acu-vis-assistant-generate') as HTMLButtonElement).click();
+      await Promise.resolve();
+      await Promise.resolve();
+
+      expect(document.body.innerHTML).toContain('会话2轮');
+      expect(document.body.innerHTML).toContain('空操作停止');
+    });
+
+    it('session 每轮完成后都会立即显示中间结果，而不是等全部结束', async () => {
+      setVisualizerTemplateAssistantOpen_ACU(true);
+      renderVisualizerTemplateAssistantPanel_ACU();
+
+      let resolveFinal: ((value: any) => void) | null = null;
+      mockRunSession.mockImplementationOnce((input: any) => {
+        input.onRoundComplete?.({
+          round: {
+            round: 1,
+            userRequest: '第一轮请求',
+            draft: { protocolVersion: 2, requestId: 'req-round-1', atomic: true, selectedSheetKey: 'sheet_a', summary: '第一轮结果', warnings: [] },
+            aiRawText: '第一轮AI响应',
+            messages: [],
+            perRoundCompileResult: {
+              diff: { addedSheets: [{ sheetKey: 'sheet_b', name: 'B表' }], deletedSheets: [], renamedSheets: [], movedSheets: [], patchedSourceDataSheets: [], patchedUpdateConfigSheets: [], patchedExportConfigSheets: [], patchedContentSheets: [], patchedSchemaSheets: [], patchedLockSheets: [], globalInjectionChanged: false },
+              highRiskItems: [],
+              lockChanges: [],
+            },
+            workingFingerprint: 'acu-struct:round-1',
+          },
+          rounds: [{
+            round: 1,
+            userRequest: '第一轮请求',
+            draft: { protocolVersion: 2, requestId: 'req-round-1', atomic: true, selectedSheetKey: 'sheet_a', summary: '第一轮结果', warnings: [] },
+            aiRawText: '第一轮AI响应',
+            messages: [],
+            perRoundCompileResult: { diff: { addedSheets: [{ sheetKey: 'sheet_b', name: 'B表' }], deletedSheets: [], renamedSheets: [], movedSheets: [], patchedSourceDataSheets: [], patchedUpdateConfigSheets: [], patchedExportConfigSheets: [], patchedContentSheets: [], patchedSchemaSheets: [], patchedLockSheets: [], globalInjectionChanged: false }, highRiskItems: [], lockChanges: [] },
+            workingFingerprint: 'acu-struct:round-1',
+          }],
+          maxRounds: 3,
+        });
+        input.onRoundComplete?.({
+          round: {
+            round: 2,
+            userRequest: '第二轮请求',
+            draft: { protocolVersion: 2, requestId: 'req-round-2', atomic: true, selectedSheetKey: 'sheet_b', summary: '第二轮结果', warnings: [] },
+            aiRawText: '第二轮AI响应',
+            messages: [],
+            perRoundCompileResult: {
+              diff: { addedSheets: [], deletedSheets: [], renamedSheets: [], movedSheets: [], patchedSourceDataSheets: [], patchedUpdateConfigSheets: [], patchedExportConfigSheets: [], patchedContentSheets: [{ sheetKey: 'sheet_b', name: 'B表', changes: ['修改列'] }], patchedSchemaSheets: [], patchedLockSheets: [], globalInjectionChanged: false },
+              highRiskItems: [],
+              lockChanges: [],
+            },
+            workingFingerprint: 'acu-struct:round-2',
+          },
+          rounds: [
+            {
+              round: 1,
+              userRequest: '第一轮请求',
+              draft: { protocolVersion: 2, requestId: 'req-round-1', atomic: true, selectedSheetKey: 'sheet_a', summary: '第一轮结果', warnings: [] },
+              aiRawText: '第一轮AI响应',
+              messages: [],
+              perRoundCompileResult: { diff: { addedSheets: [{ sheetKey: 'sheet_b', name: 'B表' }], deletedSheets: [], renamedSheets: [], movedSheets: [], patchedSourceDataSheets: [], patchedUpdateConfigSheets: [], patchedExportConfigSheets: [], patchedContentSheets: [], patchedSchemaSheets: [], patchedLockSheets: [], globalInjectionChanged: false }, highRiskItems: [], lockChanges: [] },
+              workingFingerprint: 'acu-struct:round-1',
+            },
+            {
+              round: 2,
+              userRequest: '第二轮请求',
+              draft: { protocolVersion: 2, requestId: 'req-round-2', atomic: true, selectedSheetKey: 'sheet_b', summary: '第二轮结果', warnings: [] },
+              aiRawText: '第二轮AI响应',
+              messages: [],
+              perRoundCompileResult: { diff: { addedSheets: [], deletedSheets: [], renamedSheets: [], movedSheets: [], patchedSourceDataSheets: [], patchedUpdateConfigSheets: [], patchedExportConfigSheets: [], patchedContentSheets: [{ sheetKey: 'sheet_b', name: 'B表', changes: ['修改列'] }], patchedSchemaSheets: [], patchedLockSheets: [], globalInjectionChanged: false }, highRiskItems: [], lockChanges: [] },
+              workingFingerprint: 'acu-struct:round-2',
+            },
+          ],
+          maxRounds: 3,
+        });
+
+        return new Promise((resolve) => {
+          resolveFinal = resolve;
+        });
+      });
+
+      const textarea = document.querySelector('#acu-vis-assistant-input') as HTMLTextAreaElement;
+      textarea.value = '逐轮显示';
+      textarea.dispatchEvent(new Event('input'));
+      (document.querySelector('#acu-vis-assistant-generate') as HTMLButtonElement).click();
+      await Promise.resolve();
+
+      expect(document.body.innerHTML).toContain('第一轮结果');
+      expect(document.body.innerHTML).toContain('第二轮结果');
+      expect(document.body.innerHTML).toContain('第 1 / 3 轮');
+      expect(document.body.innerHTML).toContain('第 2 / 3 轮');
+      expect(document.querySelectorAll('.acu-chat-turn-assistant').length).toBe(2);
+      expect(document.querySelector('#acu-vis-assistant-apply')).toBeNull();
+
+      resolveFinal?.({
+        draft: { protocolVersion: 2, requestId: 'req-final', atomic: true, selectedSheetKey: 'sheet_b', summary: '最终结果', warnings: [] },
+        aiRawText: '最终AI响应',
+        compileResult: {
+          diff: { addedSheets: [{ sheetKey: 'sheet_b', name: 'B表' }], deletedSheets: [], renamedSheets: [], movedSheets: [], patchedSourceDataSheets: [], patchedUpdateConfigSheets: [], patchedExportConfigSheets: [], patchedContentSheets: [{ sheetKey: 'sheet_b', name: 'B表', changes: ['修改列'] }], patchedSchemaSheets: [], patchedLockSheets: [], globalInjectionChanged: false },
+          highRiskItems: [],
+          lockChanges: [],
+        },
+        originalBaseFingerprint: 'acu-struct:base',
+        rounds: [],
+        messages: [],
+        session: {
+          originalBaseFingerprint: 'acu-struct:base',
+          finalWorkingFingerprint: 'acu-struct:round-2',
+          stopReason: 'empty_operations',
+          roundsExecuted: 2,
+          maxRounds: 3,
+          repairRetriesUsed: 0,
+          maxRepairRetries: 1,
+          lastErrorMessage: '',
+        },
+      });
+      await Promise.resolve();
+      await Promise.resolve();
+
+      expect(document.body.innerHTML).toContain('最终结果');
+      expect(document.body.innerHTML).toContain('会话2轮');
+      expect(document.querySelector('#acu-vis-assistant-apply')).toBeTruthy();
+    });
+
+    it('展开/折叠详情时滚动位置保持不变', async () => {
+      setVisualizerTemplateAssistantOpen_ACU(true);
+      renderVisualizerTemplateAssistantPanel_ACU();
+      mockRunSession.mockResolvedValue({
+        draft: { protocolVersion: 2, requestId: 'req-scroll-1', atomic: true, summary: '测试滚动', warnings: ['警告内容'] },
+        compileResult: {
+          diff: { addedSheets: [{ sheetKey: 'sheet_new', name: '新表' }], deletedSheets: [], renamedSheets: [], movedSheets: [], patchedSourceDataSheets: [], patchedUpdateConfigSheets: [], patchedExportConfigSheets: [], patchedContentSheets: [], patchedSchemaSheets: [], patchedLockSheets: [], globalInjectionChanged: false },
+          highRiskItems: [],
+          lockChanges: [],
+        },
+      });
+
+      const textarea = document.querySelector('#acu-vis-assistant-input') as HTMLTextAreaElement;
+      textarea.value = '测试滚动';
+      textarea.dispatchEvent(new Event('input'));
+      (document.querySelector('#acu-vis-assistant-generate') as HTMLButtonElement).click();
+      await Promise.resolve();
+      await Promise.resolve();
+
+      // 获取聊天容器并设置模拟滚动位置
+      const chatContainer = document.querySelector('.acu-chat-container') as any;
+      expect(chatContainer).toBeTruthy();
+      
+      // 模拟用户滚动到某个位置
+      chatContainer.scrollTop = 150;
+
+      // 点击展开按钮
+      const expandBtn = document.querySelector('.acu-expand-toggle') as HTMLElement;
+      expect(expandBtn).toBeTruthy();
+      expandBtn.click();
+
+      // 等待重新渲染完成
+      await Promise.resolve();
+
+      // 验证滚动位置保持不变
+      const newContainer = document.querySelector('.acu-chat-container') as any;
+      expect(newContainer).toBeTruthy();
+      expect(newContainer.scrollTop).toBe(150);
+    });
+
+    it('首次打开面板时滚动位置为0且不会出错', async () => {
+      setVisualizerTemplateAssistantOpen_ACU(true);
+      // 首次渲染，没有之前的容器
+      expect(() => renderVisualizerTemplateAssistantPanel_ACU()).not.toThrow();
+      
+      const chatContainer = document.querySelector('.acu-chat-container') as any;
+      expect(chatContainer).toBeTruthy();
+      expect(chatContainer.scrollTop).toBe(0);
+    });
+
+    it('气泡样式渲染：无emoji头像', async () => {
+      setVisualizerTemplateAssistantOpen_ACU(true);
+      renderVisualizerTemplateAssistantPanel_ACU();
+      mockRunSession.mockResolvedValue({
+        draft: { protocolVersion: 2, requestId: 'req-bubble-1', atomic: true, summary: '测试气泡样式', warnings: [] },
+        compileResult: {
+          diff: { addedSheets: [{ sheetKey: 'sheet_new', name: '新表' }], deletedSheets: [], renamedSheets: [], movedSheets: [], patchedSourceDataSheets: [], patchedUpdateConfigSheets: [], patchedExportConfigSheets: [], patchedContentSheets: [], patchedSchemaSheets: [], patchedLockSheets: [], globalInjectionChanged: false },
+          highRiskItems: [],
+          lockChanges: [],
+        },
+      });
+
+      const textarea = document.querySelector('#acu-vis-assistant-input') as HTMLTextAreaElement;
+      textarea.value = '测试气泡样式';
+      textarea.dispatchEvent(new Event('input'));
+      (document.querySelector('#acu-vis-assistant-generate') as HTMLButtonElement).click();
+      await Promise.resolve();
+      await Promise.resolve();
+
+      const html = document.body.innerHTML;
+      // 验证没有emoji头像
+      expect(html).not.toContain('🤖');
+      expect(html).not.toContain('👤');
+      expect(html).not.toContain('⚠️');
+      // 验证存在气泡类和原有 turn 选择器
+      expect(html).toContain('acu-message-bubble-user');
+      expect(html).toContain('acu-message-bubble-assistant');
+      expect(document.querySelectorAll('.acu-message-bubble').length).toBeGreaterThan(0);
+      expect(document.querySelector('.acu-chat-turn-user')).toBeTruthy();
+      expect(document.querySelector('.acu-chat-turn-assistant')).toBeTruthy();
+    });
+
+    it('单一折叠区域：只有一个详情折叠区域', async () => {
+      setVisualizerTemplateAssistantOpen_ACU(true);
+      renderVisualizerTemplateAssistantPanel_ACU();
+      mockRunSession.mockResolvedValue({
+        draft: { protocolVersion: 2, requestId: 'req-single-accordion-1', atomic: true, summary: '测试单一折叠', warnings: ['警告1'] },
+        compileResult: {
+          diff: { addedSheets: [{ sheetKey: 'sheet_new', name: '新表' }], deletedSheets: [], renamedSheets: [], movedSheets: [], patchedSourceDataSheets: [], patchedUpdateConfigSheets: [], patchedExportConfigSheets: [], patchedContentSheets: [], patchedSchemaSheets: [], patchedLockSheets: [], globalInjectionChanged: false },
+          highRiskItems: [{ type: 'delete_sheet', label: '删除表: A表' }],
+          lockChanges: [],
+        },
+      });
+
+      const textarea = document.querySelector('#acu-vis-assistant-input') as HTMLTextAreaElement;
+      textarea.value = '测试单一折叠';
+      textarea.dispatchEvent(new Event('input'));
+      (document.querySelector('#acu-vis-assistant-generate') as HTMLButtonElement).click();
+      await Promise.resolve();
+      await Promise.resolve();
+
+      const html = document.body.innerHTML;
+      // 验证有一个详情折叠区域
+      const summaryElements = document.querySelectorAll('.acu-collapsed-summary');
+      expect(summaryElements.length).toBe(1);
+      // 验证摘要包含警告、变更、高风险信息
+      expect(html).toContain('警告1条');
+      expect(html).toContain('变更1处');
+      expect(html).toContain('高风险1项');
+    });
+
+    it('near-bottom用户：新消息追加后自动滚动到底部', async () => {
+      setVisualizerTemplateAssistantOpen_ACU(true);
+      renderVisualizerTemplateAssistantPanel_ACU();
+
+      // 先生成第一条消息，建立可滚动上下文
+      mockRunSession.mockResolvedValueOnce({
+        draft: { protocolVersion: 2, requestId: 'req-near-1', atomic: true, summary: '第一条消息', warnings: [] },
+        compileResult: {
+          diff: { addedSheets: [], deletedSheets: [], renamedSheets: [], movedSheets: [], patchedSourceDataSheets: [], patchedUpdateConfigSheets: [], patchedExportConfigSheets: [], patchedContentSheets: [], patchedSchemaSheets: [], patchedLockSheets: [], globalInjectionChanged: false },
+          highRiskItems: [],
+          lockChanges: [],
+        },
+      });
+
+      const textarea = document.querySelector('#acu-vis-assistant-input') as HTMLTextAreaElement;
+      textarea.value = '第一条消息';
+      textarea.dispatchEvent(new Event('input'));
+      (document.querySelector('#acu-vis-assistant-generate') as HTMLButtonElement).click();
+      await Promise.resolve();
+      await Promise.resolve();
+
+      // 模拟用户在底部附近（设置较大的scrollTop和scrollHeight差值小于阈值）
+      const chatContainer = document.querySelector('.acu-chat-container') as any;
+      chatContainer.scrollHeight = 1000;
+      chatContainer.clientHeight = 500;
+      chatContainer.scrollTop = 450; // 450 + 500 = 950 >= 1000 - 50 = 950，所以是near-bottom
+
+      mockRunSession.mockResolvedValueOnce({
+        draft: { protocolVersion: 2, requestId: 'req-near-2', atomic: true, summary: '第二条消息', warnings: [] },
+        compileResult: {
+          diff: { addedSheets: [], deletedSheets: [], renamedSheets: [], movedSheets: [], patchedSourceDataSheets: [], patchedUpdateConfigSheets: [], patchedExportConfigSheets: [], patchedContentSheets: [], patchedSchemaSheets: [], patchedLockSheets: [], globalInjectionChanged: false },
+          highRiskItems: [],
+          lockChanges: [],
+        },
+      });
+
+      const textarea2 = document.querySelector('#acu-vis-assistant-input') as HTMLTextAreaElement;
+      textarea2.value = '第二条消息';
+      textarea2.dispatchEvent(new Event('input'));
+      (document.querySelector('#acu-vis-assistant-generate') as HTMLButtonElement).click();
+      await Promise.resolve();
+      await Promise.resolve();
+
+      const newContainer = document.querySelector('.acu-chat-container') as any;
+      expect(newContainer.scrollTop).toBe(newContainer.scrollHeight - newContainer.clientHeight);
+    });
+
+    it('非near-bottom用户：新消息追加后保持原滚动位置', async () => {
+      setVisualizerTemplateAssistantOpen_ACU(true);
+      renderVisualizerTemplateAssistantPanel_ACU();
+
+      // 先生成第一条消息，建立可滚动上下文
+      mockRunSession.mockResolvedValueOnce({
+        draft: { protocolVersion: 2, requestId: 'req-preserve-1', atomic: true, summary: '第一条消息', warnings: [] },
+        compileResult: {
+          diff: { addedSheets: [], deletedSheets: [], renamedSheets: [], movedSheets: [], patchedSourceDataSheets: [], patchedUpdateConfigSheets: [], patchedExportConfigSheets: [], patchedContentSheets: [], patchedSchemaSheets: [], patchedLockSheets: [], globalInjectionChanged: false },
+          highRiskItems: [],
+          lockChanges: [],
+        },
+      });
+
+      const textarea = document.querySelector('#acu-vis-assistant-input') as HTMLTextAreaElement;
+      textarea.value = '第一条消息';
+      textarea.dispatchEvent(new Event('input'));
+      (document.querySelector('#acu-vis-assistant-generate') as HTMLButtonElement).click();
+      await Promise.resolve();
+      await Promise.resolve();
+
+      // 模拟用户不在底部附近
+      const chatContainer = document.querySelector('.acu-chat-container') as any;
+      chatContainer.scrollHeight = 1000;
+      chatContainer.clientHeight = 500;
+      chatContainer.scrollTop = 100; // 100 + 500 = 600 < 1000 - 50 = 950，所以不是near-bottom
+
+      mockRunSession.mockResolvedValueOnce({
+        draft: { protocolVersion: 2, requestId: 'req-preserve-2', atomic: true, summary: '第二条消息', warnings: [] },
+        compileResult: {
+          diff: { addedSheets: [], deletedSheets: [], renamedSheets: [], movedSheets: [], patchedSourceDataSheets: [], patchedUpdateConfigSheets: [], patchedExportConfigSheets: [], patchedContentSheets: [], patchedSchemaSheets: [], patchedLockSheets: [], globalInjectionChanged: false },
+          highRiskItems: [],
+          lockChanges: [],
+        },
+      });
+
+      const textarea2 = document.querySelector('#acu-vis-assistant-input') as HTMLTextAreaElement;
+      textarea2.value = '第二条消息';
+      textarea2.dispatchEvent(new Event('input'));
+      (document.querySelector('#acu-vis-assistant-generate') as HTMLButtonElement).click();
+      await Promise.resolve();
+      await Promise.resolve();
+
+      const newContainer = document.querySelector('.acu-chat-container') as any;
+      expect(newContainer.scrollTop).toBe(100);
+    });
   });
 
-  it('调用 invalidateVisualizerTemplateAssistantSession_ACU 会清空结果', async () => {
-    setVisualizerTemplateAssistantOpen_ACU(true);
-    renderVisualizerTemplateAssistantPanel_ACU();
-    mockRunSession.mockResolvedValue(buildSingleRoundResult());
+  // maxRounds UI control tests
+  describe('maxRounds UI control', () => {
+    it('默认渲染 maxRounds 为 3', () => {
+      setVisualizerTemplateAssistantOpen_ACU(true);
+      renderVisualizerTemplateAssistantPanel_ACU();
 
-    const textarea = document.querySelector('#acu-vis-assistant-input') as HTMLTextAreaElement;
-    textarea.value = '新增战利品表';
-    textarea.dispatchEvent(new Event('input'));
-    (document.querySelector('#acu-vis-assistant-generate') as HTMLButtonElement).click();
-    await Promise.resolve();
-    await Promise.resolve();
+      const maxRoundsInput = document.querySelector('#acu-vis-assistant-max-rounds') as HTMLInputElement;
+      expect(maxRoundsInput).toBeTruthy();
+      expect(maxRoundsInput.value).toBe('3');
+    });
 
-    expect(document.body.innerHTML).toContain('战利品表 [sheet_new]');
+    it('配置 passthrough：输入 5 提交验证 maxRounds=5', async () => {
+      setVisualizerTemplateAssistantOpen_ACU(true);
+      renderVisualizerTemplateAssistantPanel_ACU();
+      mockRunSession.mockResolvedValue({
+        draft: { protocolVersion: 2, requestId: 'req-maxrounds-5', atomic: true, summary: '测试', warnings: [] },
+        compileResult: {
+          diff: { addedSheets: [], deletedSheets: [], renamedSheets: [], movedSheets: [], patchedSourceDataSheets: [], patchedUpdateConfigSheets: [], patchedExportConfigSheets: [], patchedContentSheets: [], patchedSchemaSheets: [], patchedLockSheets: [], globalInjectionChanged: false },
+          highRiskItems: [],
+          lockChanges: [],
+        },
+      });
 
-    invalidateVisualizerTemplateAssistantSession_ACU();
+      const maxRoundsInput = document.querySelector('#acu-vis-assistant-max-rounds') as HTMLInputElement;
+      maxRoundsInput.value = '5';
+      maxRoundsInput.dispatchEvent(new Event('input'));
 
-    expect(document.body.innerHTML).not.toContain('战利品表 [sheet_new]');
-  });
+      const textarea = document.querySelector('#acu-vis-assistant-input') as HTMLTextAreaElement;
+      textarea.value = '测试';
+      textarea.dispatchEvent(new Event('input'));
+      (document.querySelector('#acu-vis-assistant-generate') as HTMLButtonElement).click();
+      await Promise.resolve();
+      await Promise.resolve();
 
-  it('停止按钮存在且初始不可用', () => {
-    setVisualizerTemplateAssistantOpen_ACU(true);
-    renderVisualizerTemplateAssistantPanel_ACU();
+      expect(mockRunSession).toHaveBeenCalledTimes(1);
+      expect(mockRunSession.mock.calls[0][0].maxRounds).toBe(5);
+    });
 
-    const stopBtn = document.querySelector('#acu-vis-assistant-stop') as HTMLButtonElement;
-    expect(stopBtn).toBeTruthy();
-    expect(stopBtn.disabled).toBe(true);
+    it('invalid-input fallback：空字符串 fallback 到 3', async () => {
+      setVisualizerTemplateAssistantOpen_ACU(true);
+      renderVisualizerTemplateAssistantPanel_ACU();
+      mockRunSession.mockResolvedValue({
+        draft: { protocolVersion: 2, requestId: 'req-maxrounds-empty', atomic: true, summary: '测试', warnings: [] },
+        compileResult: {
+          diff: { addedSheets: [], deletedSheets: [], renamedSheets: [], movedSheets: [], patchedSourceDataSheets: [], patchedUpdateConfigSheets: [], patchedExportConfigSheets: [], patchedContentSheets: [], patchedSchemaSheets: [], patchedLockSheets: [], globalInjectionChanged: false },
+          highRiskItems: [],
+          lockChanges: [],
+        },
+      });
+
+      const maxRoundsInput = document.querySelector('#acu-vis-assistant-max-rounds') as HTMLInputElement;
+      maxRoundsInput.value = '';
+      maxRoundsInput.dispatchEvent(new Event('input'));
+
+      const textarea = document.querySelector('#acu-vis-assistant-input') as HTMLTextAreaElement;
+      textarea.value = '测试';
+      textarea.dispatchEvent(new Event('input'));
+      (document.querySelector('#acu-vis-assistant-generate') as HTMLButtonElement).click();
+      await Promise.resolve();
+      await Promise.resolve();
+
+      expect(mockRunSession.mock.calls[0][0].maxRounds).toBe(3);
+    });
+
+    it('invalid-input fallback：0 和负数 fallback 到 3', async () => {
+      setVisualizerTemplateAssistantOpen_ACU(true);
+      renderVisualizerTemplateAssistantPanel_ACU();
+      mockRunSession.mockResolvedValue({
+        draft: { protocolVersion: 2, requestId: 'req-maxrounds-zero', atomic: true, summary: '测试', warnings: [] },
+        compileResult: {
+          diff: { addedSheets: [], deletedSheets: [], renamedSheets: [], movedSheets: [], patchedSourceDataSheets: [], patchedUpdateConfigSheets: [], patchedExportConfigSheets: [], patchedContentSheets: [], patchedSchemaSheets: [], patchedLockSheets: [], globalInjectionChanged: false },
+          highRiskItems: [],
+          lockChanges: [],
+        },
+      });
+
+      const maxRoundsInput = document.querySelector('#acu-vis-assistant-max-rounds') as HTMLInputElement;
+      maxRoundsInput.value = '0';
+      maxRoundsInput.dispatchEvent(new Event('input'));
+
+      const textarea = document.querySelector('#acu-vis-assistant-input') as HTMLTextAreaElement;
+      textarea.value = '测试';
+      textarea.dispatchEvent(new Event('input'));
+      (document.querySelector('#acu-vis-assistant-generate') as HTMLButtonElement).click();
+      await Promise.resolve();
+      await Promise.resolve();
+
+      expect(mockRunSession.mock.calls[0][0].maxRounds).toBe(3);
+    });
+
+    it('invalid-input fallback：非数字 fallback 到 3', async () => {
+      setVisualizerTemplateAssistantOpen_ACU(true);
+      renderVisualizerTemplateAssistantPanel_ACU();
+      mockRunSession.mockResolvedValue({
+        draft: { protocolVersion: 2, requestId: 'req-maxrounds-abc', atomic: true, summary: '测试', warnings: [] },
+        compileResult: {
+          diff: { addedSheets: [], deletedSheets: [], renamedSheets: [], movedSheets: [], patchedSourceDataSheets: [], patchedUpdateConfigSheets: [], patchedExportConfigSheets: [], patchedContentSheets: [], patchedSchemaSheets: [], patchedLockSheets: [], globalInjectionChanged: false },
+          highRiskItems: [],
+          lockChanges: [],
+        },
+      });
+
+      const maxRoundsInput = document.querySelector('#acu-vis-assistant-max-rounds') as HTMLInputElement;
+      maxRoundsInput.value = 'abc';
+      maxRoundsInput.dispatchEvent(new Event('input'));
+
+      const textarea = document.querySelector('#acu-vis-assistant-input') as HTMLTextAreaElement;
+      textarea.value = '测试';
+      textarea.dispatchEvent(new Event('input'));
+      (document.querySelector('#acu-vis-assistant-generate') as HTMLButtonElement).click();
+      await Promise.resolve();
+      await Promise.resolve();
+
+      expect(mockRunSession.mock.calls[0][0].maxRounds).toBe(3);
+    });
+
+    it('小数 floor：2.5 -> 2', async () => {
+      setVisualizerTemplateAssistantOpen_ACU(true);
+      renderVisualizerTemplateAssistantPanel_ACU();
+      mockRunSession.mockResolvedValue({
+        draft: { protocolVersion: 2, requestId: 'req-maxrounds-decimal', atomic: true, summary: '测试', warnings: [] },
+        compileResult: {
+          diff: { addedSheets: [], deletedSheets: [], renamedSheets: [], movedSheets: [], patchedSourceDataSheets: [], patchedUpdateConfigSheets: [], patchedExportConfigSheets: [], patchedContentSheets: [], patchedSchemaSheets: [], patchedLockSheets: [], globalInjectionChanged: false },
+          highRiskItems: [],
+          lockChanges: [],
+        },
+      });
+
+      const maxRoundsInput = document.querySelector('#acu-vis-assistant-max-rounds') as HTMLInputElement;
+      maxRoundsInput.value = '2.5';
+      maxRoundsInput.dispatchEvent(new Event('input'));
+
+      const textarea = document.querySelector('#acu-vis-assistant-input') as HTMLTextAreaElement;
+      textarea.value = '测试';
+      textarea.dispatchEvent(new Event('input'));
+      (document.querySelector('#acu-vis-assistant-generate') as HTMLButtonElement).click();
+      await Promise.resolve();
+      await Promise.resolve();
+
+      expect(mockRunSession.mock.calls[0][0].maxRounds).toBe(2);
+    });
+
+    it('reset 行为：修改后 reset 恢复到 3', async () => {
+      setVisualizerTemplateAssistantOpen_ACU(true);
+      renderVisualizerTemplateAssistantPanel_ACU();
+
+      const maxRoundsInput = document.querySelector('#acu-vis-assistant-max-rounds') as HTMLInputElement;
+      maxRoundsInput.value = '5';
+      maxRoundsInput.dispatchEvent(new Event('input'));
+
+      expect(maxRoundsInput.value).toBe('5');
+
+      resetVisualizerTemplateAssistantState_ACU();
+      setVisualizerTemplateAssistantOpen_ACU(true);
+      renderVisualizerTemplateAssistantPanel_ACU();
+
+      const resetInput = document.querySelector('#acu-vis-assistant-max-rounds') as HTMLInputElement;
+      expect(resetInput.value).toBe('3');
+    });
+
+    it('payload 兼容性：其他字段仍正常传入', async () => {
+      setVisualizerTemplateAssistantOpen_ACU(true);
+      renderVisualizerTemplateAssistantPanel_ACU();
+      mockRunSession.mockResolvedValue({
+        draft: { protocolVersion: 2, requestId: 'req-maxrounds-compat', atomic: true, summary: '测试', warnings: [] },
+        compileResult: {
+          diff: { addedSheets: [], deletedSheets: [], renamedSheets: [], movedSheets: [], patchedSourceDataSheets: [], patchedUpdateConfigSheets: [], patchedExportConfigSheets: [], patchedContentSheets: [], patchedSchemaSheets: [], patchedLockSheets: [], globalInjectionChanged: false },
+          highRiskItems: [],
+          lockChanges: [],
+        },
+      });
+
+      const maxRoundsInput = document.querySelector('#acu-vis-assistant-max-rounds') as HTMLInputElement;
+      maxRoundsInput.value = '7';
+      maxRoundsInput.dispatchEvent(new Event('input'));
+
+      const textarea = document.querySelector('#acu-vis-assistant-input') as HTMLTextAreaElement;
+      textarea.value = '测试payload兼容';
+      textarea.dispatchEvent(new Event('input'));
+      (document.querySelector('#acu-vis-assistant-generate') as HTMLButtonElement).click();
+      await Promise.resolve();
+      await Promise.resolve();
+
+      const callArgs = mockRunSession.mock.calls[0][0];
+      expect(callArgs.maxRounds).toBe(7);
+      expect(callArgs.tempData).toBeTruthy();
+      expect(callArgs.currentSheetKey).toBe('sheet_a');
+      expect(callArgs.sheetOrder).toEqual(['sheet_a']);
+      expect(callArgs.userRequest).toBe('测试payload兼容');
+      expect(callArgs.priorTurns).toEqual([]);
+      expect(typeof callArgs.onRoundComplete).toBe('function');
+    });
   });
 });

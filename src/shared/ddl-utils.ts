@@ -19,7 +19,7 @@ import { logWarn_ACU } from './utils';
 export function parseDDLTableName(ddl: string): string | null {
   if (!ddl) return null;
   // 匹配 CREATE TABLE [IF NOT EXISTS] table_name
-  const match = ddl.match(/CREATE\s+TABLE\s+(?:IF\s+NOT\s+EXISTS\s+)?(\w+)/i);
+  const match = ddl.match(/CREATE\s+TABLE\s+(?:IF\s+NOT\s+EXISTS\s+)?([^\s(]+)/i);
   return match ? match[1] : null;
 }
 
@@ -61,7 +61,7 @@ export function parseDDLColumnNames(ddl: string): string[] {
     // 跳过表级约束（PRIMARY KEY、FOREIGN KEY、UNIQUE、CHECK、CONSTRAINT）
     if (/^(?:PRIMARY\s+KEY|FOREIGN\s+KEY|UNIQUE|CHECK|CONSTRAINT)\b/i.test(withoutComments)) continue;
     // 提取列名（第一个标识符）
-    const colMatch = withoutComments.match(/^(\w+)/);
+    const colMatch = withoutComments.match(/^([^\s,()]+)/);
     if (colMatch) {
       columns.push(colMatch[1]);
     }
@@ -92,7 +92,7 @@ export function parseDDLColumnComments(ddl: string): Map<string, string> {
     const trimmed = line.trim();
     if (!trimmed) continue;
     // 匹配 column_name ... -- 注释（行内可能有逗号、CHECK 约束等）
-    const match = trimmed.match(/^(\w+)\s+.*?--\s*(.+?)\s*,?\s*$/);
+    const match = trimmed.match(/^([^\s,()]+)\s+.*?--\s*(.+?)\s*,?\s*$/);
     if (match) {
       comments.set(match[1], match[2]);
     }
@@ -120,6 +120,102 @@ export function buildColumnNameMap(ddl: string): {
   }
 
   return { sqlToChinese, chineseToSql };
+}
+
+export interface DDLColumnInfo_ACU {
+  index: number;
+  sqlName: string;
+  comment: string | null;
+}
+
+export function parseDDLColumnInfos_ACU(ddl: string): DDLColumnInfo_ACU[] {
+  const columnNames = parseDDLColumnNames(ddl);
+  const comments = parseDDLColumnComments(ddl);
+  return columnNames.map((sqlName, index) => {
+    const rawComment = comments.get(sqlName);
+    const comment = typeof rawComment === 'string' && rawComment.trim() ? rawComment.trim() : null;
+    return {
+      index,
+      sqlName,
+      comment,
+    };
+  });
+}
+
+function isAsciiOnly_ACU(value: string): boolean {
+  return /^[\x00-\x7F]+$/.test(String(value || ''));
+}
+
+function buildDDLHeaderMismatchMessage_ACU(index: number, ddlColumn: DDLColumnInfo_ACU, header: string): string {
+  return ddlColumn.comment
+    ? `第 ${index + 1} 列不匹配：DDL 列名为「${ddlColumn.sqlName}」，注释为「${ddlColumn.comment}」，表头为「${header}」`
+    : `第 ${index + 1} 列不匹配：DDL 列名为「${ddlColumn.sqlName}」，表头为「${header}」`;
+}
+
+export function validateDDLTextAgainstHeaders_ACU(
+  ddlText: string,
+  tableHeaders: string[],
+): { valid: boolean; message: string } {
+  const trimmed = String(ddlText || '').trim();
+  if (!trimmed) {
+    return { valid: false, message: '⚠ DDL 为空' };
+  }
+  if (!/CREATE\s+TABLE/i.test(trimmed)) {
+    return { valid: false, message: '✗ 不是有效的 CREATE TABLE 语句' };
+  }
+
+  const columnInfos = parseDDLColumnInfos_ACU(trimmed);
+  const firstColumn = columnInfos[0];
+  if (!firstColumn || firstColumn.sqlName.toLowerCase() !== 'row_id' || !/row_id\s+INTEGER\s+PRIMARY\s+KEY/i.test(trimmed)) {
+    return { valid: false, message: '✗ 缺少 row_id INTEGER PRIMARY KEY 列（必须作为第一列）' };
+  }
+
+  const normalizedHeaders = Array.isArray(tableHeaders)
+    ? tableHeaders.map((item) => String(item ?? '').trim()).filter(Boolean)
+    : [];
+  const comparableHeaders = normalizedHeaders[0] === 'row_id'
+    ? normalizedHeaders.slice(1)
+    : normalizedHeaders;
+  const comparableColumns = columnInfos.filter((item) => item.sqlName.toLowerCase() !== 'row_id');
+  const issues: string[] = [];
+
+  if (comparableColumns.length !== comparableHeaders.length) {
+    issues.push(`列数不匹配：DDL 有 ${comparableColumns.length} 列，表头有 ${comparableHeaders.length} 列`);
+  }
+
+  const compareLength = Math.min(comparableColumns.length, comparableHeaders.length);
+  for (let index = 0; index < compareLength; index += 1) {
+    const ddlColumn = comparableColumns[index];
+    const header = comparableHeaders[index];
+    const headerIsAscii = isAsciiOnly_ACU(header);
+    const sqlNameIsAscii = isAsciiOnly_ACU(ddlColumn.sqlName);
+    const matchesPhysical = ddlColumn.sqlName === header;
+    const matchesComment = !!ddlColumn.comment && ddlColumn.comment === header;
+
+    if (headerIsAscii) {
+      if (!matchesPhysical) {
+        issues.push(buildDDLHeaderMismatchMessage_ACU(index, ddlColumn, header));
+      }
+      continue;
+    }
+
+    if (!matchesComment) {
+      issues.push(buildDDLHeaderMismatchMessage_ACU(index, ddlColumn, header));
+      continue;
+    }
+
+    if (!sqlNameIsAscii) {
+      issues.push(
+        `第 ${index + 1} 列不匹配：表头为「${header}」时，DDL 物理列名必须使用英文/ASCII，当前 DDL 列名为「${ddlColumn.sqlName}」，注释为「${ddlColumn.comment}」`,
+      );
+    }
+  }
+
+  if (issues.length > 0) {
+    return { valid: false, message: `⚠ DDL 列名与表头不完全匹配：${issues.join('；')}` };
+  }
+
+  return { valid: true, message: '✓ DDL 格式正确，列名与表头匹配' };
 }
 
 /**
@@ -157,7 +253,7 @@ export function updateDDLColumnComment(ddl: string, columnName: string, newComme
     if (!trimmed) continue;
 
     // 检查该行是否以目标列名开头（列定义行）
-    const colMatch = trimmed.match(/^(\w+)\s+/);
+    const colMatch = trimmed.match(/^([^\s,()]+)\s+/);
     if (!colMatch || colMatch[1] !== columnName) continue;
 
     // 找到目标列，替换或添加注释

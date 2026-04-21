@@ -99,7 +99,7 @@
     }
     
     .acu-vis-actions { display: flex; gap: 10px; }
-    .acu-vis-content { flex: 1; display: flex; overflow: hidden; }
+    .acu-vis-content { flex: 1; display: flex; overflow: hidden; min-width: 0; }
     
     /* ═══ 侧边栏 ═══ */
     .acu-vis-sidebar {
@@ -129,12 +129,20 @@
     /* ═══ 主内容区 ═══ */
     .acu-vis-main {
         flex: 1;
+        min-width: 0;
         background: var(--vis-bg-color);
         background-image:
           url("data:image/svg+xml,%3Csvg viewBox='0 0 200 200' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='noise'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.8' numOctaves='3' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23noise)' opacity='0.04'/%3E%3C/svg%3E");
         color: var(--vis-text-main);
         overflow-y: auto;
         padding: 24px;
+    }
+    
+    /* ═══ AI 改表助手面板宿主 ═══ */
+    #acu-vis-assistant-host {
+        flex: 0 0 auto;
+        min-width: 0;
+        overflow: hidden;
     }
     
     /* ═══ 表格导航项 ═══ */
@@ -880,6 +888,19 @@
         .acu-btn-secondary {
             padding: 10px 16px;
             font-size: 12px;
+        }
+        
+        /* AI 改表助手面板 - 移动端适配 */
+        #acu-vis-assistant-host {
+            flex: 0 0 auto;
+            width: 100%;
+            max-height: 50%;
+            order: 3;
+        }
+        
+        #acu-vis-assistant-host .acu-vis-assistant-panel {
+            width: 100% !important;
+            max-height: 100%;
         }
     }
     

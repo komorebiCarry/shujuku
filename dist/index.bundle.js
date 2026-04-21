@@ -7413,7 +7413,7 @@ $CONTENT
         if (!ddl)
             return null;
         // 匹配 CREATE TABLE [IF NOT EXISTS] table_name
-        const match = ddl.match(/CREATE\s+TABLE\s+(?:IF\s+NOT\s+EXISTS\s+)?(\w+)/i);
+        const match = ddl.match(/CREATE\s+TABLE\s+(?:IF\s+NOT\s+EXISTS\s+)?([^\s(]+)/i);
         return match ? match[1] : null;
     }
     /**
@@ -7455,7 +7455,7 @@ $CONTENT
             if (/^(?:PRIMARY\s+KEY|FOREIGN\s+KEY|UNIQUE|CHECK|CONSTRAINT)\b/i.test(withoutComments))
                 continue;
             // 提取列名（第一个标识符）
-            const colMatch = withoutComments.match(/^(\w+)/);
+            const colMatch = withoutComments.match(/^([^\s,()]+)/);
             if (colMatch) {
                 columns.push(colMatch[1]);
             }
@@ -7484,7 +7484,7 @@ $CONTENT
             if (!trimmed)
                 continue;
             // 匹配 column_name ... -- 注释（行内可能有逗号、CHECK 约束等）
-            const match = trimmed.match(/^(\w+)\s+.*?--\s*(.+?)\s*,?\s*$/);
+            const match = trimmed.match(/^([^\s,()]+)\s+.*?--\s*(.+?)\s*,?\s*$/);
             if (match) {
                 comments.set(match[1], match[2]);
             }
@@ -7505,6 +7505,78 @@ $CONTENT
             chineseToSql.set(comment, colName);
         }
         return { sqlToChinese, chineseToSql };
+    }
+    function parseDDLColumnInfos_ACU(ddl) {
+        const columnNames = parseDDLColumnNames(ddl);
+        const comments = parseDDLColumnComments(ddl);
+        return columnNames.map((sqlName, index) => {
+            const rawComment = comments.get(sqlName);
+            const comment = typeof rawComment === 'string' && rawComment.trim() ? rawComment.trim() : null;
+            return {
+                index,
+                sqlName,
+                comment,
+            };
+        });
+    }
+    function isAsciiOnly_ACU(value) {
+        return /^[\x00-\x7F]+$/.test(String(value || ''));
+    }
+    function buildDDLHeaderMismatchMessage_ACU(index, ddlColumn, header) {
+        return ddlColumn.comment
+            ? `第 ${index + 1} 列不匹配：DDL 列名为「${ddlColumn.sqlName}」，注释为「${ddlColumn.comment}」，表头为「${header}」`
+            : `第 ${index + 1} 列不匹配：DDL 列名为「${ddlColumn.sqlName}」，表头为「${header}」`;
+    }
+    function validateDDLTextAgainstHeaders_ACU(ddlText, tableHeaders) {
+        const trimmed = String(ddlText || '').trim();
+        if (!trimmed) {
+            return { valid: false, message: '⚠ DDL 为空' };
+        }
+        if (!/CREATE\s+TABLE/i.test(trimmed)) {
+            return { valid: false, message: '✗ 不是有效的 CREATE TABLE 语句' };
+        }
+        const columnInfos = parseDDLColumnInfos_ACU(trimmed);
+        const firstColumn = columnInfos[0];
+        if (!firstColumn || firstColumn.sqlName.toLowerCase() !== 'row_id' || !/row_id\s+INTEGER\s+PRIMARY\s+KEY/i.test(trimmed)) {
+            return { valid: false, message: '✗ 缺少 row_id INTEGER PRIMARY KEY 列（必须作为第一列）' };
+        }
+        const normalizedHeaders = Array.isArray(tableHeaders)
+            ? tableHeaders.map((item) => String(item ?? '').trim()).filter(Boolean)
+            : [];
+        const comparableHeaders = normalizedHeaders[0] === 'row_id'
+            ? normalizedHeaders.slice(1)
+            : normalizedHeaders;
+        const comparableColumns = columnInfos.filter((item) => item.sqlName.toLowerCase() !== 'row_id');
+        const issues = [];
+        if (comparableColumns.length !== comparableHeaders.length) {
+            issues.push(`列数不匹配：DDL 有 ${comparableColumns.length} 列，表头有 ${comparableHeaders.length} 列`);
+        }
+        const compareLength = Math.min(comparableColumns.length, comparableHeaders.length);
+        for (let index = 0; index < compareLength; index += 1) {
+            const ddlColumn = comparableColumns[index];
+            const header = comparableHeaders[index];
+            const headerIsAscii = isAsciiOnly_ACU(header);
+            const sqlNameIsAscii = isAsciiOnly_ACU(ddlColumn.sqlName);
+            const matchesPhysical = ddlColumn.sqlName === header;
+            const matchesComment = !!ddlColumn.comment && ddlColumn.comment === header;
+            if (headerIsAscii) {
+                if (!matchesPhysical) {
+                    issues.push(buildDDLHeaderMismatchMessage_ACU(index, ddlColumn, header));
+                }
+                continue;
+            }
+            if (!matchesComment) {
+                issues.push(buildDDLHeaderMismatchMessage_ACU(index, ddlColumn, header));
+                continue;
+            }
+            if (!sqlNameIsAscii) {
+                issues.push(`第 ${index + 1} 列不匹配：表头为「${header}」时，DDL 物理列名必须使用英文/ASCII，当前 DDL 列名为「${ddlColumn.sqlName}」，注释为「${ddlColumn.comment}」`);
+            }
+        }
+        if (issues.length > 0) {
+            return { valid: false, message: `⚠ DDL 列名与表头不完全匹配：${issues.join('；')}` };
+        }
+        return { valid: true, message: '✓ DDL 格式正确，列名与表头匹配' };
     }
     /**
      * 根据列在 DDL 中的位置索引获取英文列名
@@ -7540,7 +7612,7 @@ $CONTENT
             if (!trimmed)
                 continue;
             // 检查该行是否以目标列名开头（列定义行）
-            const colMatch = trimmed.match(/^(\w+)\s+/);
+            const colMatch = trimmed.match(/^([^\s,()]+)\s+/);
             if (!colMatch || colMatch[1] !== columnName)
                 continue;
             // 找到目标列，替换或添加注释
@@ -7785,28 +7857,12 @@ $CONTENT
      * @returns 校验结果
      */
     function validateDDLAgainstHeaders(ddl, headers) {
-        const ddlColumns = parseDDLColumnNames(ddl);
-        const ddlComments = parseDDLColumnComments(ddl);
-        const mismatches = [];
-        // 列数检查
-        const filteredHeaders = headers.filter(h => h !== null);
-        if (ddlColumns.length !== filteredHeaders.length) {
-            mismatches.push(`列数不匹配: DDL 有 ${ddlColumns.length} 列, content 表头有 ${filteredHeaders.length} 列`);
-        }
-        // 逐列检查：DDL 注释中的中文名应该和 content 表头对应
-        for (let i = 0; i < Math.min(ddlColumns.length, filteredHeaders.length); i++) {
-            const header = filteredHeaders[i];
-            const ddlCol = ddlColumns[i];
-            const ddlComment = ddlComments.get(ddlCol);
-            // row_id 列特殊处理
-            if (ddlCol === 'row_id' && header === 'row_id')
-                continue;
-            // 如果 DDL 有注释，检查注释是否和表头匹配
-            if (ddlComment && header && ddlComment !== header) {
-                mismatches.push(`第 ${i + 1} 列不匹配: DDL 列 "${ddlCol}" 注释 "${ddlComment}" ≠ 表头 "${header}"`);
-            }
-        }
-        return { valid: mismatches.length === 0, mismatches };
+        const normalizedHeaders = headers.filter(h => h !== null).map(h => String(h ?? ''));
+        const result = validateDDLTextAgainstHeaders_ACU(ddl, normalizedHeaders);
+        return {
+            valid: result.valid,
+            mismatches: result.valid ? [] : [result.message],
+        };
     }
     // ═══════════════════════════════════════════════════════════════
     // 内部工具函数
@@ -23383,6 +23439,12 @@ $CONTENT
             $select.append(jQuery_API_ACU('<option/>').val(value).text(label));
         });
     }
+    function hasOptionValue_ACU($select, value) {
+        if (!$select || !$select.length)
+            return false;
+        const normalizedValue = String(value ?? '');
+        return $select.find('option').toArray().some((option) => String(jQuery_API_ACU(option).val() ?? '') === normalizedValue);
+    }
     function loadTemplatePresetSelect_ACU({ globalSelectName = null, keepGlobalValue = false } = {}) {
         if (!$popupInstance_ACU || !$popupInstance_ACU.length)
             return;
@@ -23444,9 +23506,9 @@ $CONTENT
             else if (keepGlobalValue) {
                 resolvedGlobalValue = normalizeTemplatePresetSelectionValue_ACU($globalSelect.val());
             }
-            const finalGlobalValue = resolvedGlobalValue && $globalSelect.find(`option[value="${resolvedGlobalValue.replace(/"/g, '\\"')}"]`).length > 0
+            const finalGlobalValue = resolvedGlobalValue && hasOptionValue_ACU($globalSelect, resolvedGlobalValue)
                 ? resolvedGlobalValue
-                : (hasGlobalPreset || (!!globalPresetName && $globalSelect.find(`option[value="${globalPresetName.replace(/"/g, '\\"')}"]`).length > 0)
+                : (hasGlobalPreset || (!!globalPresetName && hasOptionValue_ACU($globalSelect, globalPresetName))
                     ? globalPresetName
                     : DEFAULT_TEMPLATE_PRESET_OPTION_VALUE_ACU);
             $globalSelect.val(finalGlobalValue || DEFAULT_TEMPLATE_PRESET_OPTION_VALUE_ACU);
@@ -23455,7 +23517,7 @@ $CONTENT
             $globalDeleteBtn.toggle(!!globalPresetName && presetNames.includes(globalPresetName));
         }
         if ($chatSelect && $chatSelect.length) {
-            const finalChatValue = chatSelectedPresetName && $chatSelect.find(`option[value="${chatSelectedPresetName.replace(/"/g, '\\"')}"]`).length > 0
+            const finalChatValue = chatSelectedPresetName && hasOptionValue_ACU($chatSelect, chatSelectedPresetName)
                 ? chatSelectedPresetName
                 : DEFAULT_TEMPLATE_PRESET_OPTION_VALUE_ACU;
             $chatSelect.val(finalChatValue || DEFAULT_TEMPLATE_PRESET_OPTION_VALUE_ACU);
@@ -28590,38 +28652,7 @@ $CONTENT
      * @returns { valid: boolean; message: string } 校验结果
      */
     function validateDDLText(ddlText, tableHeaders) {
-        const trimmed = (ddlText || '').trim();
-        if (!trimmed) {
-            return { valid: false, message: '⚠ DDL 为空' };
-        }
-        // 校验 1：是否包含 CREATE TABLE
-        if (!/CREATE\s+TABLE/i.test(trimmed)) {
-            return { valid: false, message: '✗ 不是有效的 CREATE TABLE 语句' };
-        }
-        // 校验 2：是否包含 row_id 主键列
-        if (!/row_id\s+INTEGER\s+PRIMARY\s+KEY/i.test(trimmed)) {
-            return { valid: false, message: '✗ 缺少 row_id INTEGER PRIMARY KEY 列（必须作为第一列）' };
-        }
-        // 校验 3：提取 DDL 列名，与当前表头对比
-        const colMatches = trimmed.match(/\(([^)]+)\)/s);
-        if (colMatches) {
-            const ddlCols = colMatches[1]
-                .split(',')
-                .map(c => c.trim().split(/\s+/)[0])
-                .filter(c => c && !c.startsWith('--'));
-            const ddlColsNoRowId = ddlCols.filter(c => c.toLowerCase() !== 'row_id');
-            const mismatch = ddlColsNoRowId.filter(c => !tableHeaders.includes(c));
-            const missing = tableHeaders.filter((h) => !ddlColsNoRowId.includes(h));
-            if (mismatch.length > 0 || missing.length > 0) {
-                let msg = '⚠ DDL 列名与表头不完全匹配：';
-                if (mismatch.length > 0)
-                    msg += `DDL 多出: ${mismatch.join(', ')}；`;
-                if (missing.length > 0)
-                    msg += `表头多出: ${missing.join(', ')}`;
-                return { valid: false, message: msg };
-            }
-        }
-        return { valid: true, message: '✓ DDL 格式正确，列名与表头匹配' };
+        return validateDDLTextAgainstHeaders_ACU(ddlText, tableHeaders);
     }
     function renderVisualizerConfigMode_ACU($container, sheet) {
         const config = ensureSheetExportConfigDefaults_ACU(sheet);
@@ -30901,7 +30932,7 @@ $CONTENT
     }
     
     .acu-vis-actions { display: flex; gap: 10px; }
-    .acu-vis-content { flex: 1; display: flex; overflow: hidden; }
+    .acu-vis-content { flex: 1; display: flex; overflow: hidden; min-width: 0; }
     
     /* ═══ 侧边栏 ═══ */
     .acu-vis-sidebar {
@@ -30931,12 +30962,20 @@ $CONTENT
     /* ═══ 主内容区 ═══ */
     .acu-vis-main {
         flex: 1;
+        min-width: 0;
         background: var(--vis-bg-color);
         background-image:
           url("data:image/svg+xml,%3Csvg viewBox='0 0 200 200' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='noise'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.8' numOctaves='3' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23noise)' opacity='0.04'/%3E%3C/svg%3E");
         color: var(--vis-text-main);
         overflow-y: auto;
         padding: 24px;
+    }
+    
+    /* ═══ AI 改表助手面板宿主 ═══ */
+    #acu-vis-assistant-host {
+        flex: 0 0 auto;
+        min-width: 0;
+        overflow: hidden;
     }
     
     /* ═══ 表格导航项 ═══ */
@@ -31682,6 +31721,19 @@ $CONTENT
         .acu-btn-secondary {
             padding: 10px 16px;
             font-size: 12px;
+        }
+        
+        /* AI 改表助手面板 - 移动端适配 */
+        #acu-vis-assistant-host {
+            flex: 0 0 auto;
+            width: 100%;
+            max-height: 50%;
+            order: 3;
+        }
+        
+        #acu-vis-assistant-host .acu-vis-assistant-panel {
+            width: 100% !important;
+            max-height: 100%;
         }
     }
     
@@ -33350,6 +33402,25 @@ $CONTENT
         const $importCombinedSettingsButton = $popupInstance_ACU.find(`#${SCRIPT_ID_PREFIX_ACU}-import-combined-settings`);
         const $exportCombinedSettingsButton = $popupInstance_ACU.find(`#${SCRIPT_ID_PREFIX_ACU}-export-combined-settings`);
         const $openNewVisualizerButton_ACU = $popupInstance_ACU.find(`#${SCRIPT_ID_PREFIX_ACU}-open-new-visualizer`);
+        const handleOpenVisualizerClick_ACU = async () => {
+            try {
+                const topLevelApi = topLevelWindow_ACU?.AutoCardUpdaterAPI;
+                if (topLevelApi?.openVisualizer) {
+                    await topLevelApi.openVisualizer();
+                    return;
+                }
+                await openNewVisualizer_ACU();
+            }
+            catch (e) {
+                logError_ACU('打开可视化表格编辑器失败:', e);
+                showToastr_ACU('error', `打开可视化表格编辑器失败: ${e?.message || '未知错误'}`);
+            }
+        };
+        if ($openNewVisualizerButton_ACU.length) {
+            $openNewVisualizerButton_ACU
+                .off('click.acu_visualizer')
+                .on('click.acu_visualizer', handleOpenVisualizerClick_ACU);
+        }
         const closeDataIsolationHistoryDropdown_ACU = () => {
             if ($dataIsolationCombo.length && $dataIsolationHistoryList.length) {
                 $dataIsolationCombo.removeClass('open');
@@ -34089,16 +34160,6 @@ $CONTENT
             $importCombinedSettingsButton.on('click', importCombinedSettings_ACU$1);
         if ($exportCombinedSettingsButton.length)
             $exportCombinedSettingsButton.on('click', exportCombinedSettings_ACU);
-        if ($openNewVisualizerButton_ACU.length) {
-            $openNewVisualizerButton_ACU.on('click', function () {
-                if (topLevelWindow_ACU.AutoCardUpdaterAPI && topLevelWindow_ACU.AutoCardUpdaterAPI.openVisualizer) {
-                    topLevelWindow_ACU.AutoCardUpdaterAPI.openVisualizer();
-                }
-                else {
-                    openNewVisualizer_ACU(); // Fallback direct call
-                }
-            });
-        }
         // [新增] 绑定合并总结按钮事件
         const $startMergeSummaryButton = $popupInstance_ACU.find(`#${SCRIPT_ID_PREFIX_ACU}-start-merge-summary`);
         if ($startMergeSummaryButton.length) {
@@ -42778,6 +42839,13 @@ insertRow(1, ["时间2", "大纲事件2...", "关键词"]);
             }
             catch (e) {
                 logError_ACU('overrideWithTemplate failed:', e);
+                return false;
+            } },
+            openVisualizer: async function () { try {
+                return await openNewVisualizer_ACU();
+            }
+            catch (e) {
+                logError_ACU('openVisualizer failed:', e);
                 return false;
             } },
             // 导入TXT链路

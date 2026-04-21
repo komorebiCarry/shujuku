@@ -76,6 +76,7 @@ import './presentation/pages/visualizer-sidebar';
 import './presentation/pages/visualizer-main-render';
 import './presentation/pages/visualizer-main-config';
 import './presentation/pages/visualizer-main-save';
+import './presentation/bootstrap/visualizer-template-assistant-addon';
 import './presentation/components/template-preset-ui';
 import './presentation/components/optimization-ui';
 import './presentation/components/worldbook-selector';
@@ -89,6 +90,7 @@ import './presentation/triggers/settings-ui-sync';
 // 启动入口（酒馆插件模式）
 // ═══════════════════════════════════════════════════════════════
 import { mainInitialize_ACU } from './presentation/bootstrap/init';
+import { initVisualizerTemplateAssistantAddon_ACU } from './presentation/bootstrap/visualizer-template-assistant-addon';
 import { logDebug_ACU, logError_ACU, logWarn_ACU } from './shared/utils';
 
 /**
@@ -173,6 +175,7 @@ async function extensionMain() {
 
     logDebug_ACU('[插件启动] TavernHelper 已就绪，开始初始化...');
     mainInitialize_ACU();
+    initVisualizerTemplateAssistantAddon_ACU();
 }
 
 // 插件加载时 DOM 已就绪，直接启动
