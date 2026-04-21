@@ -158,13 +158,18 @@ class FakeHTMLElement_ACU {
     if (this.selector.startsWith('#')) {
       const id = this.selector.slice(1);
       const match = html.match(new RegExp(`<([a-zA-Z0-9-]+)[^>]*id="${id}"([^>]*)>`, 'i'));
+      const tag = match?.[1] || '';
       const attrs = match?.[2] || '';
       this.disabled = /disabled/.test(attrs);
       const dataRiskKeyMatch = attrs.match(/data-risk-key="([^"]+)"/);
       const dataTurnIdMatch = attrs.match(/data-turn-id="([^"]+)"/);
+      const valueMatch = attrs.match(/value="([^"]*)"/);
       this.attributes = {};
       if (dataRiskKeyMatch) this.attributes['data-risk-key'] = dataRiskKeyMatch[1];
       if (dataTurnIdMatch) this.attributes['data-turn-id'] = dataTurnIdMatch[1];
+      if (tag.toLowerCase() === 'input' && valueMatch) {
+        this.value = valueMatch[1];
+      }
       return;
     }
 
@@ -1540,6 +1545,200 @@ describe('visualizer template assistant panel', () => {
 
       const newContainer = document.querySelector('.acu-chat-container') as any;
       expect(newContainer.scrollTop).toBe(100);
+    });
+  });
+
+  // maxRounds UI control tests
+  describe('maxRounds UI control', () => {
+    it('默认渲染 maxRounds 为 3', () => {
+      setVisualizerTemplateAssistantOpen_ACU(true);
+      renderVisualizerTemplateAssistantPanel_ACU();
+
+      const maxRoundsInput = document.querySelector('#acu-vis-assistant-max-rounds') as HTMLInputElement;
+      expect(maxRoundsInput).toBeTruthy();
+      expect(maxRoundsInput.value).toBe('3');
+    });
+
+    it('配置 passthrough：输入 5 提交验证 maxRounds=5', async () => {
+      setVisualizerTemplateAssistantOpen_ACU(true);
+      renderVisualizerTemplateAssistantPanel_ACU();
+      mockRunSession.mockResolvedValue({
+        draft: { protocolVersion: 2, requestId: 'req-maxrounds-5', atomic: true, summary: '测试', warnings: [] },
+        compileResult: {
+          diff: { addedSheets: [], deletedSheets: [], renamedSheets: [], movedSheets: [], patchedSourceDataSheets: [], patchedUpdateConfigSheets: [], patchedExportConfigSheets: [], patchedContentSheets: [], patchedSchemaSheets: [], patchedLockSheets: [], globalInjectionChanged: false },
+          highRiskItems: [],
+          lockChanges: [],
+        },
+      });
+
+      const maxRoundsInput = document.querySelector('#acu-vis-assistant-max-rounds') as HTMLInputElement;
+      maxRoundsInput.value = '5';
+      maxRoundsInput.dispatchEvent(new Event('input'));
+
+      const textarea = document.querySelector('#acu-vis-assistant-input') as HTMLTextAreaElement;
+      textarea.value = '测试';
+      textarea.dispatchEvent(new Event('input'));
+      (document.querySelector('#acu-vis-assistant-generate') as HTMLButtonElement).click();
+      await Promise.resolve();
+      await Promise.resolve();
+
+      expect(mockRunSession).toHaveBeenCalledTimes(1);
+      expect(mockRunSession.mock.calls[0][0].maxRounds).toBe(5);
+    });
+
+    it('invalid-input fallback：空字符串 fallback 到 3', async () => {
+      setVisualizerTemplateAssistantOpen_ACU(true);
+      renderVisualizerTemplateAssistantPanel_ACU();
+      mockRunSession.mockResolvedValue({
+        draft: { protocolVersion: 2, requestId: 'req-maxrounds-empty', atomic: true, summary: '测试', warnings: [] },
+        compileResult: {
+          diff: { addedSheets: [], deletedSheets: [], renamedSheets: [], movedSheets: [], patchedSourceDataSheets: [], patchedUpdateConfigSheets: [], patchedExportConfigSheets: [], patchedContentSheets: [], patchedSchemaSheets: [], patchedLockSheets: [], globalInjectionChanged: false },
+          highRiskItems: [],
+          lockChanges: [],
+        },
+      });
+
+      const maxRoundsInput = document.querySelector('#acu-vis-assistant-max-rounds') as HTMLInputElement;
+      maxRoundsInput.value = '';
+      maxRoundsInput.dispatchEvent(new Event('input'));
+
+      const textarea = document.querySelector('#acu-vis-assistant-input') as HTMLTextAreaElement;
+      textarea.value = '测试';
+      textarea.dispatchEvent(new Event('input'));
+      (document.querySelector('#acu-vis-assistant-generate') as HTMLButtonElement).click();
+      await Promise.resolve();
+      await Promise.resolve();
+
+      expect(mockRunSession.mock.calls[0][0].maxRounds).toBe(3);
+    });
+
+    it('invalid-input fallback：0 和负数 fallback 到 3', async () => {
+      setVisualizerTemplateAssistantOpen_ACU(true);
+      renderVisualizerTemplateAssistantPanel_ACU();
+      mockRunSession.mockResolvedValue({
+        draft: { protocolVersion: 2, requestId: 'req-maxrounds-zero', atomic: true, summary: '测试', warnings: [] },
+        compileResult: {
+          diff: { addedSheets: [], deletedSheets: [], renamedSheets: [], movedSheets: [], patchedSourceDataSheets: [], patchedUpdateConfigSheets: [], patchedExportConfigSheets: [], patchedContentSheets: [], patchedSchemaSheets: [], patchedLockSheets: [], globalInjectionChanged: false },
+          highRiskItems: [],
+          lockChanges: [],
+        },
+      });
+
+      const maxRoundsInput = document.querySelector('#acu-vis-assistant-max-rounds') as HTMLInputElement;
+      maxRoundsInput.value = '0';
+      maxRoundsInput.dispatchEvent(new Event('input'));
+
+      const textarea = document.querySelector('#acu-vis-assistant-input') as HTMLTextAreaElement;
+      textarea.value = '测试';
+      textarea.dispatchEvent(new Event('input'));
+      (document.querySelector('#acu-vis-assistant-generate') as HTMLButtonElement).click();
+      await Promise.resolve();
+      await Promise.resolve();
+
+      expect(mockRunSession.mock.calls[0][0].maxRounds).toBe(3);
+    });
+
+    it('invalid-input fallback：非数字 fallback 到 3', async () => {
+      setVisualizerTemplateAssistantOpen_ACU(true);
+      renderVisualizerTemplateAssistantPanel_ACU();
+      mockRunSession.mockResolvedValue({
+        draft: { protocolVersion: 2, requestId: 'req-maxrounds-abc', atomic: true, summary: '测试', warnings: [] },
+        compileResult: {
+          diff: { addedSheets: [], deletedSheets: [], renamedSheets: [], movedSheets: [], patchedSourceDataSheets: [], patchedUpdateConfigSheets: [], patchedExportConfigSheets: [], patchedContentSheets: [], patchedSchemaSheets: [], patchedLockSheets: [], globalInjectionChanged: false },
+          highRiskItems: [],
+          lockChanges: [],
+        },
+      });
+
+      const maxRoundsInput = document.querySelector('#acu-vis-assistant-max-rounds') as HTMLInputElement;
+      maxRoundsInput.value = 'abc';
+      maxRoundsInput.dispatchEvent(new Event('input'));
+
+      const textarea = document.querySelector('#acu-vis-assistant-input') as HTMLTextAreaElement;
+      textarea.value = '测试';
+      textarea.dispatchEvent(new Event('input'));
+      (document.querySelector('#acu-vis-assistant-generate') as HTMLButtonElement).click();
+      await Promise.resolve();
+      await Promise.resolve();
+
+      expect(mockRunSession.mock.calls[0][0].maxRounds).toBe(3);
+    });
+
+    it('小数 floor：2.5 -> 2', async () => {
+      setVisualizerTemplateAssistantOpen_ACU(true);
+      renderVisualizerTemplateAssistantPanel_ACU();
+      mockRunSession.mockResolvedValue({
+        draft: { protocolVersion: 2, requestId: 'req-maxrounds-decimal', atomic: true, summary: '测试', warnings: [] },
+        compileResult: {
+          diff: { addedSheets: [], deletedSheets: [], renamedSheets: [], movedSheets: [], patchedSourceDataSheets: [], patchedUpdateConfigSheets: [], patchedExportConfigSheets: [], patchedContentSheets: [], patchedSchemaSheets: [], patchedLockSheets: [], globalInjectionChanged: false },
+          highRiskItems: [],
+          lockChanges: [],
+        },
+      });
+
+      const maxRoundsInput = document.querySelector('#acu-vis-assistant-max-rounds') as HTMLInputElement;
+      maxRoundsInput.value = '2.5';
+      maxRoundsInput.dispatchEvent(new Event('input'));
+
+      const textarea = document.querySelector('#acu-vis-assistant-input') as HTMLTextAreaElement;
+      textarea.value = '测试';
+      textarea.dispatchEvent(new Event('input'));
+      (document.querySelector('#acu-vis-assistant-generate') as HTMLButtonElement).click();
+      await Promise.resolve();
+      await Promise.resolve();
+
+      expect(mockRunSession.mock.calls[0][0].maxRounds).toBe(2);
+    });
+
+    it('reset 行为：修改后 reset 恢复到 3', async () => {
+      setVisualizerTemplateAssistantOpen_ACU(true);
+      renderVisualizerTemplateAssistantPanel_ACU();
+
+      const maxRoundsInput = document.querySelector('#acu-vis-assistant-max-rounds') as HTMLInputElement;
+      maxRoundsInput.value = '5';
+      maxRoundsInput.dispatchEvent(new Event('input'));
+
+      expect(maxRoundsInput.value).toBe('5');
+
+      resetVisualizerTemplateAssistantState_ACU();
+      setVisualizerTemplateAssistantOpen_ACU(true);
+      renderVisualizerTemplateAssistantPanel_ACU();
+
+      const resetInput = document.querySelector('#acu-vis-assistant-max-rounds') as HTMLInputElement;
+      expect(resetInput.value).toBe('3');
+    });
+
+    it('payload 兼容性：其他字段仍正常传入', async () => {
+      setVisualizerTemplateAssistantOpen_ACU(true);
+      renderVisualizerTemplateAssistantPanel_ACU();
+      mockRunSession.mockResolvedValue({
+        draft: { protocolVersion: 2, requestId: 'req-maxrounds-compat', atomic: true, summary: '测试', warnings: [] },
+        compileResult: {
+          diff: { addedSheets: [], deletedSheets: [], renamedSheets: [], movedSheets: [], patchedSourceDataSheets: [], patchedUpdateConfigSheets: [], patchedExportConfigSheets: [], patchedContentSheets: [], patchedSchemaSheets: [], patchedLockSheets: [], globalInjectionChanged: false },
+          highRiskItems: [],
+          lockChanges: [],
+        },
+      });
+
+      const maxRoundsInput = document.querySelector('#acu-vis-assistant-max-rounds') as HTMLInputElement;
+      maxRoundsInput.value = '7';
+      maxRoundsInput.dispatchEvent(new Event('input'));
+
+      const textarea = document.querySelector('#acu-vis-assistant-input') as HTMLTextAreaElement;
+      textarea.value = '测试payload兼容';
+      textarea.dispatchEvent(new Event('input'));
+      (document.querySelector('#acu-vis-assistant-generate') as HTMLButtonElement).click();
+      await Promise.resolve();
+      await Promise.resolve();
+
+      const callArgs = mockRunSession.mock.calls[0][0];
+      expect(callArgs.maxRounds).toBe(7);
+      expect(callArgs.tempData).toBeTruthy();
+      expect(callArgs.currentSheetKey).toBe('sheet_a');
+      expect(callArgs.sheetOrder).toEqual(['sheet_a']);
+      expect(callArgs.userRequest).toBe('测试payload兼容');
+      expect(callArgs.priorTurns).toEqual([]);
+      expect(typeof callArgs.onRoundComplete).toBe('function');
     });
   });
 });

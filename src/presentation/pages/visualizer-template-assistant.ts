@@ -56,6 +56,7 @@ type AssistantUiState = {
     transcript: ChatTurn[];
     pendingScrollTop: number;
     pendingScrollMode: 'preserve' | 'stick-bottom';
+    maxRoundsInput: string;
 };
 
 const assistantUiState_ACU: AssistantUiState = {
@@ -65,6 +66,7 @@ const assistantUiState_ACU: AssistantUiState = {
     transcript: [],
     pendingScrollTop: 0,
     pendingScrollMode: 'preserve',
+    maxRoundsInput: '3',
 };
 
 function generateTurnId_ACU() {
@@ -72,6 +74,15 @@ function generateTurnId_ACU() {
 }
 
 const NEAR_BOTTOM_THRESHOLD_ACU = 50;
+
+const DEFAULT_MAX_ROUNDS_ACU = 3;
+
+function normalizeMaxRounds_ACU(input: string): number {
+    const normalized = Number(input);
+    if (!Number.isFinite(normalized)) return DEFAULT_MAX_ROUNDS_ACU;
+    const integer = Math.floor(normalized);
+    return integer > 0 ? integer : DEFAULT_MAX_ROUNDS_ACU;
+}
 
 function isNearBottom_ACU(container: HTMLElement | null | undefined): boolean {
     if (!container) return true;
@@ -442,6 +453,10 @@ function bindEvents_ACU() {
         }
     });
 
+    $host.find('#acu-vis-assistant-max-rounds').on('input', function() {
+        assistantUiState_ACU.maxRoundsInput = String(jQuery_API_ACU(this).val() || '');
+    });
+
     $host.find('#acu-vis-assistant-generate').on('click', async () => {
         const requestSheetKey = _acuVisState.currentSheetKey || null;
         const userRequest = assistantUiState_ACU.userRequest.trim();
@@ -472,6 +487,7 @@ function bindEvents_ACU() {
                 sheetOrder: Array.isArray(_acuVisState.sheetOrder) ? [..._acuVisState.sheetOrder] : null,
                 userRequest: userRequest,
                 priorTurns: priorTurns,
+                maxRounds: normalizeMaxRounds_ACU(assistantUiState_ACU.maxRoundsInput),
                 onRoundComplete: (progress: TemplateAssistantSessionProgress_ACU) => {
                     if ((requestSheetKey || null) !== (_acuVisState.currentSheetKey || null)) return;
                     captureScrollState_ACU('append');
@@ -589,6 +605,7 @@ export function resetVisualizerTemplateAssistantState_ACU() {
     assistantUiState_ACU.isGenerating = false;
     assistantUiState_ACU.pendingScrollTop = 0;
     assistantUiState_ACU.pendingScrollMode = 'preserve';
+    assistantUiState_ACU.maxRoundsInput = '3';
     clearAssistantDraftState_ACU();
     renderVisualizerTemplateAssistantPanel_ACU();
 }
@@ -641,6 +658,10 @@ export function renderVisualizerTemplateAssistantPanel_ACU() {
                 </div>
             </div>
             <div style="padding:16px; border-top:1px solid var(--vis-border-color);">
+                <div style="display:flex; align-items:center; gap:8px; margin-bottom:8px;">
+                    <label for="acu-vis-assistant-max-rounds" style="font-size:12px; opacity:0.78; white-space:nowrap;">最大轮次</label>
+                    <input id="acu-vis-assistant-max-rounds" type="number" min="1" class="acu-form-input" style="width:60px; text-align:center;" value="${escapeHtml_ACU(assistantUiState_ACU.maxRoundsInput)}">
+                </div>
                 <textarea id="acu-vis-assistant-input" class="acu-form-textarea" style="min-height:80px;" placeholder="例如：新增一张战利品表，并关闭旧表独立导出。">${escapeHtml_ACU(assistantUiState_ACU.userRequest)}</textarea>
                 <button id="acu-vis-assistant-generate" class="acu-btn-primary" style="margin-top:8px; width:100%;" ${generateDisabled ? 'disabled' : ''}>${assistantUiState_ACU.isGenerating ? '生成中...' : '发送'}</button>
             </div>
