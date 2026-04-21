@@ -20503,7 +20503,7 @@ $CONTENT
     // toast.ts — presentation 层 toast 通知（含主题样式注入+消息过滤+去重）
     // 核心逻辑原位于 service/runtime/toast-service.ts，已搬回 presentation 层
     // toast 相关状态
-    const ACU_TOAST_TITLE_ACU = '星·数据库';
+    const ACU_TOAST_TITLE_ACU = 'SP·数据库';
     const _acuToastDedup_ACU = new Map(); // key -> ts
     let _acuToastStyleInjected_ACU = false;
     function _set__acuToastStyleInjected_ACU(v) { _acuToastStyleInjected_ACU = v; }
@@ -20641,6 +20641,7 @@ $CONTENT
         font-family: var(--toast-font) !important;
         cursor: pointer !important;
         font-size: 0.85em;
+        box-shadow: none !important;
       }
       .acu-toast .qrf-abort-btn:hover {
         background: var(--toast-accent) !important;
@@ -26566,29 +26567,31 @@ $CONTENT
         ">
           <button id="${confirmId}-cancel" style="
             padding: 8px 18px;
-            border: 1px solid var(--acu-confirm-cancel-border, var(--acu-border-2, #c8cdd5));
+            border: 1px solid var(--acu-confirm-cancel-border, var(--acu-border-2, #c8cdd5)) !important;
             border-radius: 6px;
-            background: var(--acu-confirm-cancel-bg, transparent);
-            color: var(--acu-confirm-cancel-text, var(--acu-text-2, #4a5568));
+            background: var(--acu-confirm-cancel-bg, transparent) !important;
+            color: var(--acu-confirm-cancel-text, var(--acu-text-2, #4a5568)) !important;
             cursor: pointer;
             font-family: inherit;
             font-size: 13px;
             font-weight: 500;
             letter-spacing: 0.3px;
             transition: background 0.15s ease, border-color 0.15s ease, color 0.15s ease;
+            box-shadow: none !important;
           ">${escapeHtml_ACU(cancelLabel)}</button>
           <button id="${confirmId}-ok" style="
             padding: 8px 18px;
-            border: 1px solid var(--acu-confirm-ok-border, rgba(37, 99, 235, 0.30));
+            border: 1px solid var(--acu-confirm-ok-border, rgba(37, 99, 235, 0.30)) !important;
             border-radius: 6px;
-            background: var(--acu-confirm-ok-bg, rgba(37, 99, 235, 0.08));
-            color: var(--acu-confirm-ok-text, var(--acu-accent, #2563eb));
+            background: var(--acu-confirm-ok-bg, rgba(37, 99, 235, 0.08)) !important;
+            color: var(--acu-confirm-ok-text, var(--acu-accent, #2563eb)) !important;
             cursor: pointer;
             font-family: inherit;
             font-size: 13px;
             font-weight: 600;
             letter-spacing: 0.3px;
             transition: background 0.15s ease, border-color 0.15s ease;
+            box-shadow: none !important;
           ">${escapeHtml_ACU(confirmLabel)}</button>
         </div>
       </div>
@@ -29705,7 +29708,7 @@ $CONTENT
         --acu-panel-text-mute: var(--acu-text-3, #8896a8);
         --acu-panel-accent: var(--acu-accent, #2563eb);
         --acu-panel-hover: var(--acu-bg-2, rgba(0, 0, 0, 0.03));
-        --acu-panel-shadow: var(--acu-shadow, 0 4px 16px rgba(0, 0, 0, 0.10));
+        --acu-panel-shadow: var(--acu-shadow, 0 1px 3px rgba(0, 0, 0, 0.06));
         --acu-panel-close-hover-bg: var(--acu-danger-soft-bg, rgba(239, 68, 68, 0.08));
         --acu-panel-close-hover-border: var(--acu-danger-soft-border, rgba(239, 68, 68, 0.25));
         --acu-panel-close-hover-text: var(--acu-danger, #ef4444);
@@ -29714,12 +29717,12 @@ $CONTENT
         flex-direction: column;
         background-color: var(--acu-panel-bg);
         border: 1px solid var(--acu-panel-border);
-        border-radius: 8px;
-        box-shadow: var(--acu-panel-shadow);
+        border-radius: 10px;
+        box-shadow: 0 4px 20px rgba(0, 0, 0, 0.08);
         overflow: hidden;
         min-width: 400px;
         min-height: 300px;
-        animation: acuWindowSlideIn 0.25s ease-out;
+        animation: acuWindowSlideIn 0.22s ease-out;
         color-scheme: light;
         font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
         font-weight: 500;
@@ -29864,7 +29867,7 @@ $CONTENT
         display: flex;
         align-items: center;
         justify-content: space-between;
-        padding: 12px 16px;
+        padding: 10px 14px;
         background: transparent;
         border-bottom: 1px solid var(--acu-panel-border);
         cursor: move;
@@ -29873,13 +29876,13 @@ $CONTENT
       }
       
       .acu-window-title {
-        font-size: 14px;
+        font-size: 13px;
         font-weight: 600;
-        letter-spacing: 1px;
+        letter-spacing: 0.5px;
         color: var(--acu-panel-text);
         display: flex;
         align-items: center;
-        gap: 10px;
+        gap: 8px;
         flex: 1;
         min-width: 0;
         overflow: hidden;
@@ -29902,11 +29905,11 @@ $CONTENT
       }
       
       .acu-window-btn {
-        width: 30px;
-        height: 30px;
-        border: 1px solid transparent;
+        width: 28px;
+        height: 28px;
+        border: 1px solid transparent !important;
         border-radius: 6px;
-        background: transparent;
+        background: transparent !important;
         color: var(--acu-panel-text-mute);
         cursor: pointer;
         display: flex;
@@ -29914,19 +29917,22 @@ $CONTENT
         justify-content: center;
         transition: all 0.15s ease;
         font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
+        box-shadow: none !important;
       }
       .acu-window-btn:hover {
-        background: var(--acu-panel-hover);
-        border-color: var(--acu-panel-border);
+        background: var(--acu-panel-hover) !important;
+        border-color: var(--acu-panel-border) !important;
         color: var(--acu-panel-text);
+        box-shadow: none !important;
       }
       .acu-window-btn.maximize:hover {
         color: var(--acu-panel-accent);
       }
       .acu-window-btn.close:hover {
-        background: var(--acu-panel-close-hover-bg);
-        border-color: var(--acu-panel-close-hover-border);
+        background: var(--acu-panel-close-hover-bg) !important;
+        border-color: var(--acu-panel-close-hover-border) !important;
         color: var(--acu-panel-close-hover-text);
+        box-shadow: none !important;
       }
       .acu-window-btn.theme-toggle {
         width: auto;
@@ -36581,35 +36587,26 @@ insertRow(1, ["时间2", "大纲事件2...", "关键词"]);
     /**
      * 生成仪表盘标签页的 HTML 片段
      * 包含：数据库状态总览、快速操作、核心功能开关、API快照
-     *
-     * 承接原status页的：
-     * - 数据库状态卡片（状态总览+表格）
-     * - 核心操作区的手动更新按钮
-     * - 自动更新/规范填表/静默提示框/条件模板/0TK 等开关
-     * - 表格存储模式
-     *
-     * 新迁入：
-     * - 0TK占用模式（从worldbook页迁入）
      */
     function generateDashboardTabHTML() {
         return `
                 <div id="acu-tab-dashboard" class="acu-tab-content active">
-                    <!-- A. 数据库状态卡片 -->
+                    <!-- A. 数据库状态 -->
                     <div class="acu-card">
                         <h3>数据库状态</h3>
-                        <div style="display: flex; justify-content: space-between; margin-bottom: 10px; padding-bottom: 10px; border-bottom: 1px solid var(--border-normal);">
+                        <div class="acu-row-between" style="margin-bottom: 10px; padding-bottom: 10px; border-bottom: 1px solid var(--acu-border);">
                             <span id="${SCRIPT_ID_PREFIX_ACU}-total-messages-display">上下文总层数: N/A (仅计算AI回复楼层)</span>
                             <span id="${SCRIPT_ID_PREFIX_ACU}-card-update-status-display">正在获取状态...</span>
                         </div>
                         
-                        <table style="width: 100%; border-collapse: collapse; font-size: 0.9em;">
+                        <table class="acu-table">
                             <thead>
-                                <tr style="border-bottom: 1px solid var(--border-normal); color: var(--text-secondary);">
-                                    <th style="text-align: left; padding: 5px;">表格名称</th>
-                                    <th style="text-align: center; padding: 5px;">更新频率</th>
-                                    <th style="text-align: center; padding: 5px;">未记录楼层</th>
-                                    <th style="text-align: center; padding: 5px;">上次更新</th>
-                                    <th style="text-align: center; padding: 5px;">下次触发</th>
+                                <tr>
+                                    <th>表格名称</th>
+                                    <th>更新频率</th>
+                                    <th>未记录楼层</th>
+                                    <th>上次更新</th>
+                                    <th>下次触发</th>
                                 </tr>
                             </thead>
                             <tbody id="${SCRIPT_ID_PREFIX_ACU}-granular-status-table-body">
@@ -36617,46 +36614,43 @@ insertRow(1, ["时间2", "大纲事件2...", "关键词"]);
                             </tbody>
                         </table>
 
-                        <p id="${SCRIPT_ID_PREFIX_ACU}-next-update-display" style="border-top: 1px dashed var(--border-normal); padding-top: 10px; margin-top: 10px; font-size: 0.95em; text-align: right;">下一次更新: 计算中...</p>
+                        <p id="${SCRIPT_ID_PREFIX_ACU}-next-update-display" class="notes" style="border-top: 1px dashed var(--acu-border); padding-top: 10px; margin-top: 10px; text-align: right;">下一次更新: 计算中...</p>
                     </div>
 
-                    <!-- B. 快速操作卡片 -->
-                    <div class="acu-grid">
-                        <div class="acu-card">
-                            <h3>快速操作</h3>
-                            <div class="flex-center" style="flex-direction: column; gap: 10px;">
-                                <div style="width: 100%; display: flex; gap: 10px; align-items: center;">
-                                    <label style="white-space: nowrap; font-size: 0.9em;">填表API预设:</label>
-                                    <select id="${SCRIPT_ID_PREFIX_ACU}-table-api-preset-select" style="flex: 1; padding: 6px 10px; border-radius: 4px; border: 1px solid var(--border-normal);">
-                                        <option value="">使用当前API配置</option>
-                                    </select>
-                                </div>
-                                <button id="${SCRIPT_ID_PREFIX_ACU}-manual-update-card" class="primary" style="width:100%;">立即手动更新</button>
-                                <div class="checkbox-group">
-                                    <input type="checkbox" id="${SCRIPT_ID_PREFIX_ACU}-manual-extra-hint-checkbox">
-                                    <label for="${SCRIPT_ID_PREFIX_ACU}-manual-extra-hint-checkbox">额外提示词（仅手动更新时临时追加）</label>
-                                </div>
-                            </div>
-                            <p class="notes" style="margin-top: 10px;">手动更新会使用当前UI参数，对勾选的表进行更新；未勾选则默认更新全部表。</p>
-                            <p class="notes" style="margin-top: 6px;">勾选"额外提示词"后，点击手动更新会弹出输入框，内容将写入AI指令预设中的 $8 占位符，仅本次操作生效。</p>
+                    <!-- B. 快速操作 -->
+                    <div class="acu-card">
+                        <h3>快速操作</h3>
+                        <div class="acu-row" style="margin-bottom: 10px;">
+                            <label style="white-space: nowrap;">填表API预设:</label>
+                            <select id="${SCRIPT_ID_PREFIX_ACU}-table-api-preset-select" style="flex: 1;">
+                                <option value="">使用当前API配置</option>
+                            </select>
                         </div>
+                        <div class="button-group" style="margin-bottom: 8px;">
+                            <button id="${SCRIPT_ID_PREFIX_ACU}-manual-update-card" class="primary">立即手动更新</button>
+                        </div>
+                        <div class="checkbox-group">
+                            <input type="checkbox" id="${SCRIPT_ID_PREFIX_ACU}-manual-extra-hint-checkbox">
+                            <label for="${SCRIPT_ID_PREFIX_ACU}-manual-extra-hint-checkbox">额外提示词（仅手动更新时临时追加）</label>
+                        </div>
+                        <p class="notes">手动更新会使用当前UI参数，对勾选的表进行更新；未勾选则默认更新全部表。</p>
                     </div>
 
-                    <!-- 手动更新表选择 -->
+                    <!-- C. 手动更新表选择 -->
                     <div class="acu-card">
                         <h3>手动更新表选择</h3>
-                        <div class="notes" style="margin-bottom:6px;">选择需要手动更新的表（可多选，默认全选新表）：</div>
-                        <div class="button-group" style="justify-content:flex-start; gap:8px; margin-bottom:6px;">
+                        <p class="notes" style="margin-bottom:6px;">选择需要手动更新的表（可多选，默认全选新表）：</p>
+                        <div class="button-group" style="justify-content:flex-start; margin-bottom:8px;">
                             <button id="${SCRIPT_ID_PREFIX_ACU}-manual-table-select-all" class="button">全选</button>
                             <button id="${SCRIPT_ID_PREFIX_ACU}-manual-table-select-none" class="button">全不选</button>
                         </div>
                         <div id="${SCRIPT_ID_PREFIX_ACU}-manual-table-selector" style="min-height:60px;">加载表格列表中...</div>
                     </div>
 
-                    <!-- C. 核心功能开关卡片 -->
+                    <!-- D. 核心功能开关 -->
                     <div class="acu-card">
                         <h3>核心功能开关</h3>
-                        <div style="display: flex; flex-direction: column; gap: 8px;">
+                        <div class="acu-col">
                             <div class="checkbox-group">
                                 <input type="checkbox" id="${SCRIPT_ID_PREFIX_ACU}-auto-update-enabled-checkbox">
                                 <label for="${SCRIPT_ID_PREFIX_ACU}-auto-update-enabled-checkbox">启用自动更新</label>
@@ -36671,32 +36665,27 @@ insertRow(1, ["时间2", "大纲事件2...", "关键词"]);
                             </div>
                             <div class="checkbox-group">
                                 <input type="checkbox" id="${SCRIPT_ID_PREFIX_ACU}-prompt-template-enabled-checkbox">
-                                <label for="${SCRIPT_ID_PREFIX_ACU}-prompt-template-enabled-checkbox">启用条件模板功能（<if>条件判断）</label>
+                                <label for="${SCRIPT_ID_PREFIX_ACU}-prompt-template-enabled-checkbox">启用条件模板功能（&lt;if&gt;条件判断）</label>
                             </div>
-                            <!-- 0TK占用模式：从worldbook页迁入仪表盘 -->
                             <div class="checkbox-group">
-                                <label class="toggle-switch">
-                                    <input id="${SCRIPT_ID_PREFIX_ACU}-worldbook-outline-entry-enabled" type="checkbox" />
-                                    <span class="slider"></span>
-                                </label>
+                                <input type="checkbox" id="${SCRIPT_ID_PREFIX_ACU}-worldbook-outline-entry-enabled">
                                 <label for="${SCRIPT_ID_PREFIX_ACU}-worldbook-outline-entry-enabled">0TK占用模式</label>
                             </div>
                             <small class="notes">0TK占用模式仍然作用于世界书注入链路，仅迁移到此处以提高可见性。</small>
 
-                            <div style="margin-top: 8px; padding-top: 8px; border-top: 1px dashed var(--border-normal);">
-                                <label style="font-weight: 500; font-size: 0.9em; margin-bottom: 8px; display: block;">表格存储模式:</label>
-                                <div style="display: flex; gap: 16px; align-items: center;">
-                                    <label style="display: flex; align-items: center; gap: 6px; cursor: pointer;">
-                                        <input type="radio" name="${SCRIPT_ID_PREFIX_ACU}-storage-mode" value="native" checked>
-                                        <span>原生模式 (JSON/DSL)</span>
-                                    </label>
-                                    <label style="display: flex; align-items: center; gap: 6px; cursor: pointer;">
-                                        <input type="radio" name="${SCRIPT_ID_PREFIX_ACU}-storage-mode" value="sqlite">
-                                        <span>SQLite 模式 (SQL)</span>
-                                    </label>
-                                </div>
-                                <small class="notes" style="margin-top: 4px; display: block;">原生模式使用 JSON 二维数组 + DSL 指令；SQLite 模式使用内存数据库 + 标准 SQL 语句。切换后会自动重新加载数据。</small>
+                            <div class="acu-divider-dashed" style="margin: 4px 0;"></div>
+                            <label class="acu-label">表格存储模式:</label>
+                            <div class="acu-row" style="gap: 16px;">
+                                <label class="acu-row" style="cursor: pointer; gap: 6px;">
+                                    <input type="radio" name="${SCRIPT_ID_PREFIX_ACU}-storage-mode" value="native" checked>
+                                    <span>原生模式 (JSON/DSL)</span>
+                                </label>
+                                <label class="acu-row" style="cursor: pointer; gap: 6px;">
+                                    <input type="radio" name="${SCRIPT_ID_PREFIX_ACU}-storage-mode" value="sqlite">
+                                    <span>SQLite 模式 (SQL)</span>
+                                </label>
                             </div>
+                            <small class="notes">原生模式使用 JSON 二维数组 + DSL 指令；SQLite 模式使用内存数据库 + 标准 SQL 语句。切换后会自动重新加载数据。</small>
                         </div>
                     </div>
                 </div>`;
@@ -36828,7 +36817,6 @@ insertRow(1, ["时间2", "大纲事件2...", "关键词"]);
     // API标签页（API & 连接）HTML生成
     /**
      * 生成 API 标签页的 HTML 片段
-     * 包含：API模式选择、自定义API设置、API预设管理
      */
     function generateApiTabHTML() {
         return `
@@ -36845,7 +36833,7 @@ insertRow(1, ["时间2", "大纲事件2...", "关键词"]);
                             </div>
                         </div>
 
-                        <div id="${SCRIPT_ID_PREFIX_ACU}-tavern-api-profile-block" style="display: none; margin-top: 15px;">
+                        <div id="${SCRIPT_ID_PREFIX_ACU}-tavern-api-profile-block" style="display: none; margin-top: 12px;">
                             <label for="${SCRIPT_ID_PREFIX_ACU}-tavern-api-profile-select">酒馆连接预设:</label>
                              <div class="input-group">
                                 <select id="${SCRIPT_ID_PREFIX_ACU}-tavern-api-profile-select"></select>
@@ -36854,20 +36842,22 @@ insertRow(1, ["时间2", "大纲事件2...", "关键词"]);
                             <small class="notes">选择一个你在酒馆主设置中已经配置好的连接预设。</small>
                         </div>
 
-                        <div id="${SCRIPT_ID_PREFIX_ACU}-custom-api-settings-block" style="margin-top: 15px;">
+                        <div id="${SCRIPT_ID_PREFIX_ACU}-custom-api-settings-block" style="margin-top: 12px;">
                              <div class="checkbox-group">
                                 <input type="checkbox" id="${SCRIPT_ID_PREFIX_ACU}-use-main-api-checkbox">
                                 <label for="${SCRIPT_ID_PREFIX_ACU}-use-main-api-checkbox">使用主API (直接使用酒馆当前API和模型)</label>
                             </div>
-                             <div class="checkbox-group" style="margin-top: 10px;">
+                             <div class="checkbox-group">
                                 <input type="checkbox" id="${SCRIPT_ID_PREFIX_ACU}-streaming-enabled-checkbox">
                                 <label for="${SCRIPT_ID_PREFIX_ACU}-streaming-enabled-checkbox">启用流式传输 (Streaming)</label>
                             </div>
-                            <small class="notes" style="display: block; margin-left: 0; margin-bottom: 10px;">开启后，所有AI调用将使用流式传输，可减少首字节响应时间。默认关闭。</small>
+                            <small class="notes">开启后，所有AI调用将使用流式传输，可减少首字节响应时间。默认关闭。</small>
                             <div id="${SCRIPT_ID_PREFIX_ACU}-custom-api-fields">
-                                <p class="notes" style="color:var(--warning-color);"><b>安全提示:</b>API密钥将保存在浏览器本地存储中。</p>
-                                <label for="${SCRIPT_ID_PREFIX_ACU}-api-url">API基础URL:</label><input type="text" id="${SCRIPT_ID_PREFIX_ACU}-api-url">
-                                <label for="${SCRIPT_ID_PREFIX_ACU}-api-key">API密钥(可选):</label><input type="password" id="${SCRIPT_ID_PREFIX_ACU}-api-key">
+                                <p class="notes" style="color: var(--acu-warning);"><b>安全提示:</b> API密钥将保存在浏览器本地存储中。</p>
+                                <label for="${SCRIPT_ID_PREFIX_ACU}-api-url">API基础URL:</label>
+                                <input type="text" id="${SCRIPT_ID_PREFIX_ACU}-api-url">
+                                <label for="${SCRIPT_ID_PREFIX_ACU}-api-key">API密钥(可选):</label>
+                                <input type="password" id="${SCRIPT_ID_PREFIX_ACU}-api-key">
                                 <div class="acu-grid" style="margin-top: 10px;">
                                     <div>
                                         <label for="${SCRIPT_ID_PREFIX_ACU}-max-tokens">最大Tokens:</label>
@@ -36878,39 +36868,40 @@ insertRow(1, ["时间2", "大纲事件2...", "关键词"]);
                                         <input type="number" id="${SCRIPT_ID_PREFIX_ACU}-temperature" min="0" max="2" step="0.05" placeholder="0.9">
                                     </div>
                                 </div>
-                                <button id="${SCRIPT_ID_PREFIX_ACU}-load-models" style="margin-top: 15px; width: 100%;">加载模型列表</button>
+                                <div class="button-group" style="margin-top: 10px;">
+                                    <button id="${SCRIPT_ID_PREFIX_ACU}-load-models">加载模型列表</button>
+                                </div>
                                 <label for="${SCRIPT_ID_PREFIX_ACU}-api-model-input" style="margin-top: 10px;">模型名称 (手动输入):</label>
-                                <input type="text" id="${SCRIPT_ID_PREFIX_ACU}-api-model-input" class="text_pole" placeholder="输入模型名称或从下方选择" style="width: 100%;">
+                                <input type="text" id="${SCRIPT_ID_PREFIX_ACU}-api-model-input" class="text_pole" placeholder="输入模型名称或从下方选择">
                                 <label for="${SCRIPT_ID_PREFIX_ACU}-api-model-select" style="margin-top: 8px;">或从列表选择:</label>
-                                <select id="${SCRIPT_ID_PREFIX_ACU}-api-model-select" class="text_pole" style="width: 100%;">
+                                <select id="${SCRIPT_ID_PREFIX_ACU}-api-model-select" class="text_pole">
                                     <option value="">-- 请先加载模型列表 --</option>
                                 </select>
                             </div>
-                            <div id="${SCRIPT_ID_PREFIX_ACU}-api-status" class="notes" style="margin-top:15px;">状态: 未配置</div>
+                            <div id="${SCRIPT_ID_PREFIX_ACU}-api-status" class="notes" style="margin-top:12px;">状态: 未配置</div>
                             <div class="button-group">
                                 <button id="${SCRIPT_ID_PREFIX_ACU}-save-config" class="primary">保存API</button>
                                 <button id="${SCRIPT_ID_PREFIX_ACU}-clear-config">清除API</button>
                             </div>
                             
                             <!-- API预设管理 -->
-                            <div style="margin-top: 20px; padding-top: 15px; border-top: 1px dashed var(--border-normal);">
-                                <h4 style="margin-bottom: 10px; font-size: 0.95em; color: var(--text-muted);">API预设管理</h4>
-                                <div style="display: flex; gap: 8px; margin-bottom: 10px;">
-                                    <input type="text" id="${SCRIPT_ID_PREFIX_ACU}-api-preset-name" placeholder="预设名称" style="flex: 1; padding: 6px 10px; border-radius: 4px; border: 1px solid var(--border-normal);">
-                                    <button id="${SCRIPT_ID_PREFIX_ACU}-save-api-preset" class="primary" style="padding: 6px 12px;">保存为预设</button>
-                        </div>
-                                <div style="display: flex; gap: 8px; align-items: center;">
-                                    <select id="${SCRIPT_ID_PREFIX_ACU}-api-preset-select" style="flex: 1; padding: 6px 10px; border-radius: 4px; border: 1px solid var(--border-normal);">
-                                        <option value="">-- 选择预设 --</option>
-                                    </select>
-                                    <button id="${SCRIPT_ID_PREFIX_ACU}-load-api-preset" style="padding: 6px 12px;">加载</button>
-                                    <button id="${SCRIPT_ID_PREFIX_ACU}-delete-api-preset" style="padding: 6px 12px; background: var(--error-color); color: white;">删除</button>
-                                </div>
-                                <small class="notes" style="display: block; margin-top: 8px;">保存当前API配置为预设，可在填表和剧情推进中分别选用。</small>
+                            <div class="acu-divider-dashed" style="margin: 16px 0 12px 0;"></div>
+                            <label class="acu-label">API预设管理</label>
+                            <div class="acu-row" style="margin-bottom: 8px;">
+                                <input type="text" id="${SCRIPT_ID_PREFIX_ACU}-api-preset-name" placeholder="预设名称" style="flex: 1;">
+                                <button id="${SCRIPT_ID_PREFIX_ACU}-save-api-preset" class="primary">保存为预设</button>
                             </div>
+                            <div class="acu-row">
+                                <select id="${SCRIPT_ID_PREFIX_ACU}-api-preset-select" style="flex: 1;">
+                                    <option value="">-- 选择预设 --</option>
+                                </select>
+                                <button id="${SCRIPT_ID_PREFIX_ACU}-load-api-preset">加载</button>
+                                <button id="${SCRIPT_ID_PREFIX_ACU}-delete-api-preset" style="background: var(--acu-danger); color: white; border-color: var(--acu-danger);">删除</button>
+                            </div>
+                            <small class="notes">保存当前API配置为预设，可在填表和剧情推进中分别选用。</small>
                         </div>
                      </div>
-                </div>`;
+                 </div>`;
     }
 
     // main-popup-table.ts
@@ -36926,12 +36917,12 @@ insertRow(1, ["时间2", "大纲事件2...", "关键词"]);
                     <!-- A. 表格模板预设 -->
                     <div class="acu-card">
                         <h3>表格模板预设</h3>
-                        <div class="acu-template-presets" style="background: var(--background-color-light); padding: 12px; border-radius: 8px;">
+                        <div class="acu-template-presets" style="background: var(--acu-bg-2); padding: 12px; border-radius: 8px;">
                             <div class="acu-data-template-grid" style="display: grid; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); gap: 16px; align-items: start;">
-                                <div style="padding: 16px; background: var(--background_default); border-radius: 8px; border: 1px solid var(--border_color_light); display: flex; flex-direction: column; gap: 12px;">
+                                <div style="padding: 16px; background: var(--acu-bg-1); border-radius: 8px; border: 1px solid var(--acu-border); display: flex; flex-direction: column; gap: 12px;">
                                     <div style="display: flex; justify-content: space-between; align-items: flex-start; gap: 12px;">
                                         <div>
-                                            <div style="font-weight: 600; color: var(--text_primary);">全局正在使用</div>
+                                            <div style="font-weight: 600; color: var(--acu-text-1);">全局正在使用</div>
                                             <small id="${SCRIPT_ID_PREFIX_ACU}-template-global-scope-status" class="notes">新聊天会默认继承这里的表格模板</small>
                                         </div>
                                         <span style="padding: 2px 8px; border-radius: 999px; background: color-mix(in srgb, var(--accent-primary) 12%, transparent); color: var(--accent-primary); font-size: 12px; font-weight: 600;">全局</span>
@@ -36968,13 +36959,13 @@ insertRow(1, ["时间2", "大纲事件2...", "关键词"]);
                                     </div>
                                     <small class="notes">这里仅做全局模板预设库管理（导入 / 导出 / 另存为 / 重命名 / 删除）；需要覆盖保存全局模板时，请使用可视化编辑器顶部的"保存到全局"。</small>
                                 </div>
-                                <div style="padding: 16px; background: var(--background_default); border-radius: 8px; border: 1px solid var(--border_color_light); display: flex; flex-direction: column; gap: 12px;">
+                                <div style="padding: 16px; background: var(--acu-bg-1); border-radius: 8px; border: 1px solid var(--acu-border); display: flex; flex-direction: column; gap: 12px;">
                                     <div style="display: flex; justify-content: space-between; align-items: flex-start; gap: 12px;">
                                         <div>
-                                            <div style="font-weight: 600; color: var(--text_primary);">当前聊天正在使用</div>
+                                            <div style="font-weight: 600; color: var(--acu-text-1);">当前聊天正在使用</div>
                                             <small id="${SCRIPT_ID_PREFIX_ACU}-template-chat-scope-status" class="notes">未做聊天级保存时，这里会直接跟随全局模板</small>
                                         </div>
-                                        <span style="padding: 2px 8px; border-radius: 999px; background: color-mix(in srgb, var(--green) 14%, transparent); color: var(--green); font-size: 12px; font-weight: 600;">聊天</span>
+                                        <span style="padding: 2px 8px; border-radius: 999px; background: color-mix(in srgb, var(--acu-success) 14%, transparent); color: var(--acu-success); font-size: 12px; font-weight: 600;">聊天</span>
                                     </div>
                                     <div class="qrf_settings_block" style="margin-bottom: 0;">
                                         <label for="${SCRIPT_ID_PREFIX_ACU}-template-chat-preset-select" style="font-weight: 500;">当前聊天模板预设</label>
@@ -37004,7 +36995,7 @@ insertRow(1, ["时间2", "大纲事件2...", "关键词"]);
                         <p class="notes">配置数据库条目注入到哪个世界书，以及AI读取上下文时使用哪些世界书。</p>
                         <div>
                             <label for="${SCRIPT_ID_PREFIX_ACU}-worldbook-injection-target">数据注入目标:</label>
-                            <input type="text" id="${SCRIPT_ID_PREFIX_ACU}-worldbook-injection-target-filter" placeholder="筛选世界书..." style="width: 100%; margin: 6px 0 8px 0; padding: 6px 10px; border-radius: 6px; border: 1px solid var(--border-normal); background: var(--input-background); color: var(--input-text-color);">
+                            <input type="text" id="${SCRIPT_ID_PREFIX_ACU}-worldbook-injection-target-filter" placeholder="筛选世界书..." style="width: 100%; margin: 6px 0 8px 0; padding: 6px 10px; border-radius: 6px; border: 1px solid var(--acu-border-2); background: var(--acu-control-bg, var(--acu-bg-1)); color: var(--acu-control-text, var(--acu-text-1));">
                             <div class="input-group">
                                 <select id="${SCRIPT_ID_PREFIX_ACU}-worldbook-injection-target" style="width: 100%;"></select>
                             </div>
@@ -37022,7 +37013,7 @@ insertRow(1, ["时间2", "大纲事件2...", "关键词"]);
                         </div>
                         <div id="${SCRIPT_ID_PREFIX_ACU}-worldbook-manual-select-block" style="display: none; margin-top: 10px;">
                             <label for="${SCRIPT_ID_PREFIX_ACU}-worldbook-select">选择世界书 (可多选):</label>
-                            <input type="text" id="${SCRIPT_ID_PREFIX_ACU}-worldbook-select-filter" placeholder="筛选世界书..." style="width: 100%; margin: 6px 0 8px 0; padding: 6px 10px; border-radius: 6px; border: 1px solid var(--border-normal); background: var(--input-background); color: var(--input-text-color);">
+                            <input type="text" id="${SCRIPT_ID_PREFIX_ACU}-worldbook-select-filter" placeholder="筛选世界书..." style="width: 100%; margin: 6px 0 8px 0; padding: 6px 10px; border-radius: 6px; border: 1px solid var(--acu-border-2); background: var(--acu-control-bg, var(--acu-bg-1)); color: var(--acu-control-text, var(--acu-text-1));">
                             <div class="input-group">
                                 <div id="${SCRIPT_ID_PREFIX_ACU}-worldbook-select" class="qrf_worldbook_list"></div>
                                 <button id="${SCRIPT_ID_PREFIX_ACU}-refresh-worldbooks" title="刷新世界书列表">刷新</button>
@@ -37036,7 +37027,7 @@ insertRow(1, ["时间2", "大纲事件2...", "关键词"]);
                                     <button id="${SCRIPT_ID_PREFIX_ACU}-worldbook-deselect-all" class="button" style="padding: 2px 8px; font-size: 0.8em;">全不选</button>
                                 </div>
                             </div>
-                            <input type="text" id="${SCRIPT_ID_PREFIX_ACU}-worldbook-entry-filter" placeholder="筛选条目/世界书..." style="width: 100%; margin: 6px 0 8px 0; padding: 6px 10px; border-radius: 6px; border: 1px solid var(--border-normal); background: var(--input-background); color: var(--input-text-color);">
+                            <input type="text" id="${SCRIPT_ID_PREFIX_ACU}-worldbook-entry-filter" placeholder="筛选条目/世界书..." style="width: 100%; margin: 6px 0 8px 0; padding: 6px 10px; border-radius: 6px; border: 1px solid var(--acu-border-2); background: var(--acu-control-bg, var(--acu-bg-1)); color: var(--acu-control-text, var(--acu-text-1));">
                             <div id="${SCRIPT_ID_PREFIX_ACU}-worldbook-entry-list" class="qrf_worldbook_entry_list">
                                 <!-- 条目将动态加载于此 -->
                             </div>
@@ -37069,11 +37060,11 @@ insertRow(1, ["时间2", "大纲事件2...", "关键词"]);
                         <h3>从TXT文件导入</h3>
                         <p class="notes">从外部TXT文件导入内容，按指定字符数分割，并作为独立条目注入指定的世界书。这些条目独立于聊天记录，不会被自动清除。</p>
                         
-                        <hr style="border-color: var(--border-normal); margin: 15px 0;">
+                        <hr style="border-color: var(--acu-border-2); margin: 15px 0;">
                         
                         <div>
                             <label for="${SCRIPT_ID_PREFIX_ACU}-import-worldbook-injection-target">导入数据注入目标世界书:</label>
-                            <input type="text" id="${SCRIPT_ID_PREFIX_ACU}-import-worldbook-injection-target-filter" placeholder="筛选世界书..." style="width: 100%; margin: 6px 0 8px 0; padding: 6px 10px; border-radius: 6px; border: 1px solid var(--border-normal); background: var(--input-background); color: var(--input-text-color);">
+                            <input type="text" id="${SCRIPT_ID_PREFIX_ACU}-import-worldbook-injection-target-filter" placeholder="筛选世界书..." style="width: 100%; margin: 6px 0 8px 0; padding: 6px 10px; border-radius: 6px; border: 1px solid var(--acu-border-2); background: var(--acu-control-bg, var(--acu-bg-1)); color: var(--acu-control-text, var(--acu-text-1));">
                             <div class="input-group">
                                 <select id="${SCRIPT_ID_PREFIX_ACU}-import-worldbook-injection-target" style="width: 100%;"></select>
                                 <button id="${SCRIPT_ID_PREFIX_ACU}-refresh-import-worldbooks" title="刷新世界书列表">刷新</button>
@@ -37146,9 +37137,9 @@ insertRow(1, ["时间2", "大纲事件2...", "关键词"]);
                 <div id="acu-tab-corefunc" class="acu-tab-content">
                     <div class="acu-card">
                         <!-- 顶部标题和开关区域 -->
-                        <div class="acu-plot-header-row" style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 20px; padding-bottom: 15px; border-bottom: 1px solid var(--border_color);">
+                        <div class="acu-plot-header-row" style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 20px; padding-bottom: 15px; border-bottom: 1px solid var(--acu-border);">
                             <div>
-                                <h3 style="margin: 0; color: var(--text_primary);">剧情推进设置</h3>
+                                <h3 style="margin: 0; color: var(--acu-text-1);">剧情推进设置</h3>
                                 <p class="notes" style="margin: 5px 0 0 0;">通过AI预处理用户输入，增强故事叙述质量和剧情连贯性</p>
                             </div>
                             <div style="display: flex; align-items: center; gap: 8px;">
@@ -37161,15 +37152,15 @@ insertRow(1, ["时间2", "大纲事件2...", "关键词"]);
                         </div>
 
                         <!-- 预设管理区域 -->
-                        <div class="settings-section" style="margin-bottom: 25px; padding: 20px; background: var(--background_light); border-radius: 8px; border: 1px solid var(--border_color_light);">
-                            <h4 style="margin: 0 0 15px 0; color: var(--text_primary); display: flex; align-items: center; gap: 8px;">
+                        <div class="settings-section" style="margin-bottom: 25px; padding: 20px; background: var(--acu-bg-2); border-radius: 8px; border: 1px solid var(--acu-border);">
+                            <h4 style="margin: 0 0 15px 0; color: var(--acu-text-1); display: flex; align-items: center; gap: 8px;">
                                 <i class="fa-solid fa-bookmark"></i> 预设管理
                             </h4>
                             <div class="acu-plot-scope-grid" style="display: grid; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); gap: 16px; align-items: start;">
-                                <div style="padding: 16px; background: var(--background_default); border-radius: 8px; border: 1px solid var(--border_color_light); display: flex; flex-direction: column; gap: 12px;">
+                                <div style="padding: 16px; background: var(--acu-bg-1); border-radius: 8px; border: 1px solid var(--acu-border); display: flex; flex-direction: column; gap: 12px;">
                                     <div style="display: flex; justify-content: space-between; align-items: flex-start; gap: 12px;">
                                         <div>
-                                            <div style="font-weight: 600; color: var(--text_primary);">全局正在使用</div>
+                                            <div style="font-weight: 600; color: var(--acu-text-1);">全局正在使用</div>
                                             <small id="${SCRIPT_ID_PREFIX_ACU}-plot-global-scope-status" class="notes">新聊天会默认继承这里的剧情推进配置</small>
                                         </div>
                                         <span style="padding: 2px 8px; border-radius: 999px; background: color-mix(in srgb, var(--accent-primary) 12%, transparent); color: var(--accent-primary); font-size: 12px; font-weight: 600;">全局</span>
@@ -37185,19 +37176,19 @@ insertRow(1, ["时间2", "大纲事件2...", "关键词"]);
                                         <button id="${SCRIPT_ID_PREFIX_ACU}-plot-global-save-as-new-preset" class="menu_button" title="另存为新的全局预设" style="padding: 8px 12px;"><i class="fa-solid fa-file-export"></i></button>
                                         <button id="${SCRIPT_ID_PREFIX_ACU}-plot-global-import-presets" class="menu_button" title="导入到全局预设库" style="padding: 8px 12px;"><i class="fa-solid fa-upload"></i></button>
                                         <button id="${SCRIPT_ID_PREFIX_ACU}-plot-global-export-presets" class="menu_button" title="导出当前全局预设" style="padding: 8px 12px;"><i class="fa-solid fa-download"></i></button>
-                                        <button id="${SCRIPT_ID_PREFIX_ACU}-plot-global-reset-defaults" class="menu_button" title="恢复全局默认提示词" style="padding: 8px 12px; background-color: var(--orange); color: white;"><i class="fa-solid fa-undo"></i></button>
-                                        <button id="${SCRIPT_ID_PREFIX_ACU}-plot-global-delete-preset" class="menu_button" title="删除当前全局选中的预设" style="display: none; padding: 8px 12px; background-color: var(--red);"><i class="fa-solid fa-trash-alt"></i></button>
+                                        <button id="${SCRIPT_ID_PREFIX_ACU}-plot-global-reset-defaults" class="menu_button" title="恢复全局默认提示词" style="padding: 8px 12px; background-color: var(--acu-warning); color: white;"><i class="fa-solid fa-undo"></i></button>
+                                        <button id="${SCRIPT_ID_PREFIX_ACU}-plot-global-delete-preset" class="menu_button" title="删除当前全局选中的预设" style="display: none; padding: 8px 12px; background-color: var(--acu-danger);"><i class="fa-solid fa-trash-alt"></i></button>
                                         <input type="file" id="${SCRIPT_ID_PREFIX_ACU}-plot-global-preset-file-input" style="display: none;" accept=".json">
                                     </div>
                                     <small class="notes">全局预设区负责导入、导出、修改与保存；切换这里只会切换全局默认使用的剧情推进预设，不会直接改动当前聊天预设。</small>
                                 </div>
-                                <div style="padding: 16px; background: var(--background_default); border-radius: 8px; border: 1px solid var(--border_color_light); display: flex; flex-direction: column; gap: 12px;">
+                                <div style="padding: 16px; background: var(--acu-bg-1); border-radius: 8px; border: 1px solid var(--acu-border); display: flex; flex-direction: column; gap: 12px;">
                                     <div style="display: flex; justify-content: space-between; align-items: flex-start; gap: 12px;">
                                         <div>
-                                            <div style="font-weight: 600; color: var(--text_primary);">当前聊天正在使用</div>
+                                            <div style="font-weight: 600; color: var(--acu-text-1);">当前聊天正在使用</div>
                                             <small id="${SCRIPT_ID_PREFIX_ACU}-plot-chat-scope-status" class="notes">未单独指定时，这里会直接跟随全局剧情推进预设</small>
                                         </div>
-                                        <span style="padding: 2px 8px; border-radius: 999px; background: color-mix(in srgb, var(--green) 14%, transparent); color: var(--green); font-size: 12px; font-weight: 600;">聊天</span>
+                                        <span style="padding: 2px 8px; border-radius: 999px; background: color-mix(in srgb, var(--acu-success) 14%, transparent); color: var(--acu-success); font-size: 12px; font-weight: 600;">聊天</span>
                                     </div>
                                     <div class="qrf_settings_block" style="margin-bottom: 0;">
                                         <label for="${SCRIPT_ID_PREFIX_ACU}-plot-chat-preset-select" style="font-weight: 500;">当前聊天预设</label>
@@ -37208,7 +37199,7 @@ insertRow(1, ["时间2", "大纲事件2...", "关键词"]);
                                     <small id="${SCRIPT_ID_PREFIX_ACU}-plot-chat-origin-status" class="notes">当前聊天预设这里只负责切换当前聊天使用的剧情推进预设；导入、导出、保存与修改统一在全局预设侧处理。</small>
                                 </div>
                             </div>
-                            <div class="qrf_settings_block" style="margin-top: 15px; padding-top: 15px; border-top: 1px dashed var(--border_color_light);">
+                            <div class="qrf_settings_block" style="margin-top: 15px; padding-top: 15px; border-top: 1px dashed var(--acu-border);">
                                 <label for="${SCRIPT_ID_PREFIX_ACU}-plot-api-preset-select" style="font-weight: 500;">剧情推进API预设</label>
                                 <select id="${SCRIPT_ID_PREFIX_ACU}-plot-api-preset-select" class="text_pole" style="width: 100%; margin-top: 5px;">
                                     <option value="">使用当前API配置</option>
@@ -37218,12 +37209,12 @@ insertRow(1, ["时间2", "大纲事件2...", "关键词"]);
                         </div>
 
                         <!-- 提示词设置区域（独立提示词组） -->
-                        <div class="settings-section" style="margin-bottom: 25px; padding: 20px; background: var(--background_light); border-radius: 8px; border: 1px solid var(--border_color_light);">
-                            <h4 style="margin: 0 0 15px 0; color: var(--text_primary); display: flex; align-items: center; gap: 8px;">
+                        <div class="settings-section" style="margin-bottom: 25px; padding: 20px; background: var(--acu-bg-2); border-radius: 8px; border: 1px solid var(--acu-border);">
+                            <h4 style="margin: 0 0 15px 0; color: var(--acu-text-1); display: flex; align-items: center; gap: 8px;">
                                 <i class="fa-solid fa-edit"></i> 提示词设置
                             </h4>
-                            <div style="margin-bottom: 15px; padding: 12px; background: var(--background_default); border-radius: 6px; border-left: 3px solid var(--text_secondary);">
-                                <small class="notes" style="color: var(--text_secondary);">
+                            <div style="margin-bottom: 15px; padding: 12px; background: var(--acu-bg-1); border-radius: 6px; border-left: 3px solid var(--acu-text-2);">
+                                <small class="notes" style="color: var(--acu-text-2);">
                                     <strong>占位符说明：</strong><br>
                                     <code>$1</code> - 自动替换为世界书内容（默认开启）<br>
                                     <code>$6</code> - 自动替换为上一轮保存的剧情规划数据<br>
@@ -37236,7 +37227,7 @@ insertRow(1, ["时间2", "大纲事件2...", "关键词"]);
                                 </small>
                             </div>
                             <div class="acu-plot-task-layout" style="display:grid; grid-template-columns: minmax(240px, 280px) minmax(0, 1fr); gap:16px; align-items:start; margin-bottom:15px;">
-                                <div style="padding:12px; background:var(--background_default); border-radius:8px; border:1px solid var(--border_color_light);">
+                                <div style="padding:12px; background:var(--acu-bg-1); border-radius:8px; border:1px solid var(--acu-border);">
                                     <div style="display:flex; justify-content:space-between; align-items:center; gap:8px; margin-bottom:10px;">
                                         <label style="font-weight:600; margin:0;">剧情任务列表</label>
                                         <button type="button" id="${SCRIPT_ID_PREFIX_ACU}-plot-task-add" class="button" style="padding:4px 10px;">新增</button>
@@ -37245,11 +37236,11 @@ insertRow(1, ["时间2", "大纲事件2...", "关键词"]);
                                     <div class="button-group" style="justify-content:flex-start; gap:8px; margin-top:10px;">
                                         <button type="button" id="${SCRIPT_ID_PREFIX_ACU}-plot-task-move-up" class="button">上移</button>
                                         <button type="button" id="${SCRIPT_ID_PREFIX_ACU}-plot-task-move-down" class="button">下移</button>
-                                        <button type="button" id="${SCRIPT_ID_PREFIX_ACU}-plot-task-delete" class="button" style="background:var(--red); color:#fff;">删除</button>
+                                        <button type="button" id="${SCRIPT_ID_PREFIX_ACU}-plot-task-delete" class="button" style="background:var(--acu-danger); color:#fff;">删除</button>
                                     </div>
                                     <small class="notes" style="display:block; margin-top:10px;">每个任务都有独立提示词、独立标签摘取与独立重试次数；任务按阶段号执行：同阶段并发，不同阶段按编号顺序串行。</small>
                                 </div>
-                                <div style="padding:12px; background:var(--background_default); border-radius:8px; border:1px solid var(--border_color_light);">
+                                <div style="padding:12px; background:var(--acu-bg-1); border-radius:8px; border:1px solid var(--acu-border);">
                                     <div style="display:grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap:12px; margin-bottom:15px;">
                                         <div class="qrf_settings_block" style="margin-bottom:0;">
                                             <label for="${SCRIPT_ID_PREFIX_ACU}-plot-task-name" style="font-weight:500;">当前任务名称</label>
@@ -37320,45 +37311,45 @@ insertRow(1, ["时间2", "大纲事件2...", "关键词"]);
 
 
                         <!-- 匹配替换设置区域 -->
-                        <div class="settings-section" style="margin-bottom: 25px; padding: 20px; background: var(--background_light); border-radius: 8px; border: 1px solid var(--border_color_light);">
-                            <h4 style="margin: 0 0 15px 0; color: var(--text_primary); display: flex; align-items: center; gap: 8px;">
+                        <div class="settings-section" style="margin-bottom: 25px; padding: 20px; background: var(--acu-bg-2); border-radius: 8px; border: 1px solid var(--acu-border);">
+                            <h4 style="margin: 0 0 15px 0; color: var(--acu-text-1); display: flex; align-items: center; gap: 8px;">
                                 <i class="fa-solid fa-right-left"></i> 匹配替换
                             </h4>
-                            <small class="notes" style="display: block; margin-bottom: 15px; color: var(--text_secondary);">
+                            <small class="notes" style="display: block; margin-bottom: 15px; color: var(--acu-text-2);">
                                 在发送前，将下方设置的数值替换掉提示词中的占位符（sulv1-4、zhaohui）
                             </small>
                             <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 15px;">
                                 <div class="qrf_settings_block" style="margin-bottom: 0;">
                                     <label for="${SCRIPT_ID_PREFIX_ACU}-plot-rate-main" style="font-weight: 500;">主线剧情推进速率</label>
                                     <input id="${SCRIPT_ID_PREFIX_ACU}-plot-rate-main" type="number" class="text_pole" step="0.05" value="1.0" style="width: 100%;">
-                                    <small class="notes" style="color: var(--text_secondary);">占位符: sulv1</small>
+                                    <small class="notes" style="color: var(--acu-text-2);">占位符: sulv1</small>
                                 </div>
                                 <div class="qrf_settings_block" style="margin-bottom: 0;">
                                     <label for="${SCRIPT_ID_PREFIX_ACU}-plot-rate-personal" style="font-weight: 500;">个人线推进速率</label>
                                     <input id="${SCRIPT_ID_PREFIX_ACU}-plot-rate-personal" type="number" class="text_pole" step="0.05" value="1.0" style="width: 100%;">
-                                    <small class="notes" style="color: var(--text_secondary);">占位符: sulv2</small>
+                                    <small class="notes" style="color: var(--acu-text-2);">占位符: sulv2</small>
                                 </div>
                                 <div class="qrf_settings_block" style="margin-bottom: 0;">
                                     <label for="${SCRIPT_ID_PREFIX_ACU}-plot-rate-erotic" style="font-weight: 500;">色情事件推进速率</label>
                                     <input id="${SCRIPT_ID_PREFIX_ACU}-plot-rate-erotic" type="number" class="text_pole" step="0.05" value="0" style="width: 100%;">
-                                    <small class="notes" style="color: var(--text_secondary);">占位符: sulv3</small>
+                                    <small class="notes" style="color: var(--acu-text-2);">占位符: sulv3</small>
                                 </div>
                                 <div class="qrf_settings_block" style="margin-bottom: 0;">
                                     <label for="${SCRIPT_ID_PREFIX_ACU}-plot-rate-cuckold" style="font-weight: 500;">绿帽线推进速率</label>
                                     <input id="${SCRIPT_ID_PREFIX_ACU}-plot-rate-cuckold" type="number" class="text_pole" step="0.05" value="1.0" style="width: 100%;">
-                                    <small class="notes" style="color: var(--text_secondary);">占位符: sulv4</small>
+                                    <small class="notes" style="color: var(--acu-text-2);">占位符: sulv4</small>
                                 </div>
                                 <div class="qrf_settings_block" style="margin-bottom: 0;">
                                     <label for="${SCRIPT_ID_PREFIX_ACU}-plot-recall-count" style="font-weight: 500;">记忆召回数量</label>
                                     <input id="${SCRIPT_ID_PREFIX_ACU}-plot-recall-count" type="number" class="text_pole" step="1" min="1" value="20" style="width: 100%;">
-                                    <small class="notes" style="color: var(--text_secondary);">占位符: zhaohui</small>
+                                    <small class="notes" style="color: var(--acu-text-2);">占位符: zhaohui</small>
                                 </div>
                             </div>
                         </div>
 
                         <!-- 自动循环设置区域 -->
-                        <div class="settings-section" style="padding: 20px; background: var(--background_light); border-radius: 8px; border: 1px solid var(--border_color_light);">
-                            <h4 style="margin: 0 0 15px 0; color: var(--text_primary); display: flex; align-items: center; gap: 8px;">
+                        <div class="settings-section" style="padding: 20px; background: var(--acu-bg-2); border-radius: 8px; border: 1px solid var(--acu-border);">
+                            <h4 style="margin: 0 0 15px 0; color: var(--acu-text-1); display: flex; align-items: center; gap: 8px;">
                                 <i class="fa-solid fa-sync-alt"></i> 智能续写
                             </h4>
 
@@ -37387,22 +37378,22 @@ insertRow(1, ["时间2", "大纲事件2...", "关键词"]);
                                 <div class="qrf_settings_block" style="margin-bottom: 0;">
                                     <label for="${SCRIPT_ID_PREFIX_ACU}-plot-loop-delay" style="font-weight: 500;">循环延时</label>
                                     <input id="${SCRIPT_ID_PREFIX_ACU}-plot-loop-delay" type="number" class="text_pole" min="0" step="1" value="5" style="width: 100%;">
-                                    <small class="notes" style="color: var(--text_secondary);">秒</small>
+                                    <small class="notes" style="color: var(--acu-text-2);">秒</small>
                                 </div>
                                 <div class="qrf_settings_block" style="margin-bottom: 0;">
                                     <label for="${SCRIPT_ID_PREFIX_ACU}-plot-loop-total-duration" style="font-weight: 500;">总时长</label>
                                     <input id="${SCRIPT_ID_PREFIX_ACU}-plot-loop-total-duration" type="number" class="text_pole" min="0" step="1" value="0" placeholder="60" style="width: 100%;">
-                                    <small class="notes" style="color: var(--text_secondary);">分钟</small>
+                                    <small class="notes" style="color: var(--acu-text-2);">分钟</small>
                                 </div>
                                 <div class="qrf_settings_block" style="margin-bottom: 0;">
                                     <label for="${SCRIPT_ID_PREFIX_ACU}-plot-max-retries" style="font-weight: 500;">自动循环失败上限</label>
                                     <input id="${SCRIPT_ID_PREFIX_ACU}-plot-max-retries" type="number" class="text_pole" min="0" step="1" value="3" style="width: 100%;">
-                                    <small class="notes" style="color: var(--text_secondary);">仅用于自动循环流程，不影响单个任务的 API 重试次数</small>
+                                    <small class="notes" style="color: var(--acu-text-2);">仅用于自动循环流程，不影响单个任务的 API 重试次数</small>
                                 </div>
                                 <div class="qrf_settings_block" style="margin-bottom: 0;">
                                     <label for="${SCRIPT_ID_PREFIX_ACU}-plot-context-turn-count" style="font-weight: 500;">AI上下文</label>
                                     <input id="${SCRIPT_ID_PREFIX_ACU}-plot-context-turn-count" type="number" class="text_pole" min="0" max="20" step="1" value="3" style="width: 100%;">
-                                    <small class="notes" style="color: var(--text_secondary);">AI输出楼层数（仅计算AI回复，不含用户输入）</small>
+                                    <small class="notes" style="color: var(--acu-text-2);">AI输出楼层数（仅计算AI回复，不含用户输入）</small>
                                 </div>
                             </div>
 
@@ -37422,7 +37413,7 @@ insertRow(1, ["时间2", "大纲事件2...", "关键词"]);
                             </div>
 
                             <!-- [新增] 剧情推进世界书选择（与填表世界书选择互不干扰；UI风格与"世界书设置"页一致） -->
-                            <div class="qrf_settings_block" style="margin: 10px 0 18px 0; padding-top: 15px; border-top: 1px dashed var(--border_color_light);">
+                            <div class="qrf_settings_block" style="margin: 10px 0 18px 0; padding-top: 15px; border-top: 1px dashed var(--acu-border);">
                                 <label style="font-weight: 600; display:flex; align-items:center; gap:8px;">
                                     <i class="fa-solid fa-book"></i> 剧情推进世界书选择（独立）
                                 </label>
@@ -37440,7 +37431,7 @@ insertRow(1, ["时间2", "大纲事件2...", "关键词"]);
 
                                 <div id="${SCRIPT_ID_PREFIX_ACU}-plot-worldbook-manual-select-block" style="display: none; margin-top: 10px;">
                                     <label for="${SCRIPT_ID_PREFIX_ACU}-plot-worldbook-select">选择世界书 (可多选):</label>
-                                    <input type="text" id="${SCRIPT_ID_PREFIX_ACU}-plot-worldbook-select-filter" placeholder="筛选世界书..." style="width: 100%; margin: 6px 0 8px 0; padding: 6px 10px; border-radius: 6px; border: 1px solid var(--border-normal); background: var(--input-background); color: var(--input-text-color);">
+                                    <input type="text" id="${SCRIPT_ID_PREFIX_ACU}-plot-worldbook-select-filter" placeholder="筛选世界书..." style="width: 100%; margin: 6px 0 8px 0; padding: 6px 10px; border-radius: 6px; border: 1px solid var(--acu-border-2); background: var(--acu-control-bg, var(--acu-bg-1)); color: var(--acu-control-text, var(--acu-text-1));">
                                     <div class="input-group">
                                         <div id="${SCRIPT_ID_PREFIX_ACU}-plot-worldbook-select" class="qrf_worldbook_list"></div>
                                         <button id="${SCRIPT_ID_PREFIX_ACU}-plot-refresh-worldbooks" title="刷新世界书列表">刷新</button>
@@ -37455,7 +37446,7 @@ insertRow(1, ["时间2", "大纲事件2...", "关键词"]);
                                             <button id="${SCRIPT_ID_PREFIX_ACU}-plot-worldbook-deselect-all" class="button" style="padding: 2px 8px; font-size: 0.8em;">全不选</button>
                                         </div>
                                     </div>
-                                    <input type="text" id="${SCRIPT_ID_PREFIX_ACU}-plot-worldbook-entry-filter" placeholder="筛选条目/世界书..." style="width: 100%; margin: 6px 0 8px 0; padding: 6px 10px; border-radius: 6px; border: 1px solid var(--border-normal); background: var(--input-background); color: var(--input-text-color);">
+                                    <input type="text" id="${SCRIPT_ID_PREFIX_ACU}-plot-worldbook-entry-filter" placeholder="筛选条目/世界书..." style="width: 100%; margin: 6px 0 8px 0; padding: 6px 10px; border-radius: 6px; border: 1px solid var(--acu-border-2); background: var(--acu-control-bg, var(--acu-bg-1)); color: var(--acu-control-text, var(--acu-text-1));">
                                     <div id="${SCRIPT_ID_PREFIX_ACU}-plot-worldbook-entry-list" class="qrf_worldbook_entry_list">
                                         <!-- 条目将动态加载于此 -->
                                     </div>
@@ -37463,19 +37454,19 @@ insertRow(1, ["时间2", "大纲事件2...", "关键词"]);
                             </div>
 
                             <!-- 循环控制区域 -->
-                            <div style="border-top: 1px solid var(--border_color_light); padding-top: 20px;">
-                                <div id="${SCRIPT_ID_PREFIX_ACU}-plot-loop-status-indicator" style="text-align: center; margin-bottom: 15px; padding: 10px; background: var(--background_default); border-radius: 6px; border: 1px solid var(--border_color_light);">
-                                    <div style="font-weight: 600; color: var(--text_primary); margin-bottom: 5px;">循环状态</div>
-                                    <div style="color: var(--text_secondary);">
+                            <div style="border-top: 1px solid var(--acu-border); padding-top: 20px;">
+                                <div id="${SCRIPT_ID_PREFIX_ACU}-plot-loop-status-indicator" style="text-align: center; margin-bottom: 15px; padding: 10px; background: var(--acu-bg-1); border-radius: 6px; border: 1px solid var(--acu-border);">
+                                    <div style="font-weight: 600; color: var(--acu-text-1); margin-bottom: 5px;">循环状态</div>
+                                    <div style="color: var(--acu-text-2);">
                                         <span id="${SCRIPT_ID_PREFIX_ACU}-plot-loop-status-text">未运行</span>
-                                        <span id="${SCRIPT_ID_PREFIX_ACU}-plot-loop-timer-display" style="display:none; margin-left: 10px; color: var(--text_tertiary);"></span>
+                                        <span id="${SCRIPT_ID_PREFIX_ACU}-plot-loop-timer-display" style="display:none; margin-left: 10px; color: var(--acu-text-3);"></span>
                                     </div>
                                 </div>
                                 <div style="display: flex; gap: 15px; justify-content: center; flex-wrap: wrap;">
-                                    <button id="${SCRIPT_ID_PREFIX_ACU}-plot-start-loop-btn" class="menu_button" style="padding: 12px 25px; background: var(--green); color: white; font-weight: 600; border: none; border-radius: 6px; cursor: pointer; font-size: 14px; min-width: 140px; display: inline-flex; align-items: center; gap: 8px; justify-content: center;">
+                                    <button id="${SCRIPT_ID_PREFIX_ACU}-plot-start-loop-btn" class="menu_button" style="padding: 12px 25px; background: var(--acu-success); color: white; font-weight: 600; border: none; border-radius: 6px; cursor: pointer; font-size: 14px; min-width: 140px; display: inline-flex; align-items: center; gap: 8px; justify-content: center;">
                                         <i class="fas fa-play"></i> 开始循环
                                     </button>
-                                    <button id="${SCRIPT_ID_PREFIX_ACU}-plot-stop-loop-btn" class="menu_button" style="display: none; padding: 12px 25px; background: var(--red); color: white; font-weight: 600; border: none; border-radius: 6px; cursor: pointer; font-size: 14px; min-width: 140px; display: inline-flex; align-items: center; gap: 8px; justify-content: center;">
+                                    <button id="${SCRIPT_ID_PREFIX_ACU}-plot-stop-loop-btn" class="menu_button" style="display: none; padding: 12px 25px; background: var(--acu-danger) !important; color: #fff !important; font-weight: 600; border: none; border-radius: 6px; cursor: pointer; font-size: 14px; min-width: 140px; display: inline-flex; align-items: center; gap: 8px; justify-content: center;">
                                         <i class="fas fa-stop"></i> 停止循环
                                     </button>
                                 </div>
@@ -37483,8 +37474,8 @@ insertRow(1, ["时间2", "大纲事件2...", "关键词"]);
                         </div>
 
                         <!-- 外部导入区块（原独立tab，现作为核心功能区子模块） -->
-                        <div class="settings-section" style="padding: 20px; background: var(--background_light); border-radius: 8px; border: 1px solid var(--border_color_light);">
-                            ${generateImportTabHTML().replace(/id="acu-tab-import" class="acu-tab-content"/, 'id="acu-tab-import-embedded" class="acu-import-embedded"').replace(/<div class="acu-card">/, '<div class="acu-card" style="border: none; box-shadow: none; padding: 0; margin: 0;">').replace('<h3>从TXT文件导入</h3>', '<h3 style="margin: 0 0 15px 0; padding: 0 0 10px 0; border-bottom: 1px solid var(--border_color);">外部导入</h3>').replace('<p class="notes">从外部TXT文件导入内容', '<p class="notes" style="margin-bottom: 12px;">从外部TXT文件导入内容')}
+                        <div class="settings-section" style="padding: 20px; background: var(--acu-bg-2); border-radius: 8px; border: 1px solid var(--acu-border);">
+                            ${generateImportTabHTML().replace(/id="acu-tab-import" class="acu-tab-content"/, 'id="acu-tab-import-embedded" class="acu-import-embedded"').replace(/<div class="acu-card">/, '<div class="acu-card" style="border: none; box-shadow: none; padding: 0; margin: 0;">').replace('<h3>从TXT文件导入</h3>', '<h3 style="margin: 0 0 15px 0; padding: 0 0 10px 0; border-bottom: 1px solid var(--acu-border);">外部导入</h3>').replace('<p class="notes">从外部TXT文件导入内容', '<p class="notes" style="margin-bottom: 12px;">从外部TXT文件导入内容')}
                         </div>
                     </div>
                 </div>`;
@@ -37504,14 +37495,14 @@ insertRow(1, ["时间2", "大纲事件2...", "关键词"]);
                     <div class="acu-card">
                         <h3>数据隔离</h3>
                         <p class="notes">在此处输入特定的标识代码，插件将只读取和保存带有该标识的数据。若留空则使用默认数据。</p>
-                        <div class="setting-item" style="margin-bottom: 15px; border-bottom: 1px dashed var(--border-normal); padding-bottom: 15px;">
+                        <div class="setting-item" style="margin-bottom: 15px; border-bottom: 1px dashed var(--acu-border-2); padding-bottom: 15px;">
                             <div id="${SCRIPT_ID_PREFIX_ACU}-data-isolation-input-area" style="margin-top: 10px;">
                                 <label for="${SCRIPT_ID_PREFIX_ACU}-data-isolation-code">标识代码:</label>
                                 <div class="acu-data-isolation-row" style="display: flex; gap: 10px; margin-top: 5px; align-items: flex-start;">
                                     <div id="${SCRIPT_ID_PREFIX_ACU}-data-isolation-combo" style="position: relative; flex-grow: 1; display: flex; align-items: center;">
                                         <input type="text" id="${SCRIPT_ID_PREFIX_ACU}-data-isolation-code" placeholder="输入标识代码 (留空则不隔离)" style="flex-grow: 1; padding-right: 36px;">
-                                        <button type="button" id="${SCRIPT_ID_PREFIX_ACU}-data-isolation-history-toggle" title="历史标识代码" style="position: absolute; right: 6px; top: 50%; transform: translateY(-50%); border: 1px solid var(--border-normal); background: var(--bg-secondary); color: var(--text-main); padding: 4px 6px; border-radius: 4px; cursor: pointer; font-size: 12px; line-height: 1;">▼</button>
-                                        <ul id="${SCRIPT_ID_PREFIX_ACU}-data-isolation-history-list" style="display: none; position: absolute; top: calc(100% + 6px); left: 0; right: 0; background: var(--bg-primary); border: 1px solid var(--border-normal); border-radius: 6px; box-shadow: 0 4px 12px rgba(0, 0, 0, 0.18); list-style: none; margin: 0; padding: 6px 0; max-height: 220px; overflow-y: auto; z-index: 9999;"></ul>
+                                        <button type="button" id="${SCRIPT_ID_PREFIX_ACU}-data-isolation-history-toggle" title="历史标识代码" style="position: absolute; right: 6px; top: 50%; transform: translateY(-50%); border: 1px solid var(--acu-border-2); background: var(--acu-bg-1); color: var(--acu-text-1); padding: 4px 6px; border-radius: 4px; cursor: pointer; font-size: 12px; line-height: 1;">▼</button>
+                                        <ul id="${SCRIPT_ID_PREFIX_ACU}-data-isolation-history-list" style="display: none; position: absolute; top: calc(100% + 6px); left: 0; right: 0; background: var(--acu-bg-0); border: 1px solid var(--acu-border-2); border-radius: 6px; box-shadow: 0 4px 12px rgba(0, 0, 0, 0.18); list-style: none; margin: 0; padding: 6px 0; max-height: 220px; overflow-y: auto; z-index: 9999;"></ul>
                                     </div>
                                     <button id="${SCRIPT_ID_PREFIX_ACU}-data-isolation-save" class="primary" style="white-space: nowrap;">保存并应用</button>
                                 </div>
@@ -37527,12 +37518,12 @@ insertRow(1, ["时间2", "大纲事件2...", "关键词"]);
                     <div class="acu-card">
                         <h3>备份与恢复</h3>
                         <p class="notes">导入/导出当前对话的数据库，或管理全局模板。</p>
-                        <div class="button-group acu-data-mgmt-buttons acu-cols-2">
+                        <div class="button-group acu-data-mgmt-buttons">
                             <button id="${SCRIPT_ID_PREFIX_ACU}-import-combined-settings" class="primary">合并导入(模板+指令)</button>
                             <button id="${SCRIPT_ID_PREFIX_ACU}-export-combined-settings" class="primary">合并导出(模板+指令)</button>
                         </div>
-                        <hr style="border-color: var(--border-normal); margin: 15px 0;">
-                        <div class="button-group acu-data-mgmt-buttons acu-cols-3">
+                        <hr style="border-color: var(--acu-border-2); margin: 15px 0;">
+                        <div class="button-group acu-data-mgmt-buttons">
                             <button id="${SCRIPT_ID_PREFIX_ACU}-export-json-data">导出JSON数据</button>
                             <button id="${SCRIPT_ID_PREFIX_ACU}-reset-all-defaults" class="btn-warning">恢复默认模板及提示词</button>
                             <button id="${SCRIPT_ID_PREFIX_ACU}-override-with-template" class="btn-danger">模板覆盖最新层数据</button>
@@ -37543,24 +37534,24 @@ insertRow(1, ["时间2", "大纲事件2...", "关键词"]);
                     <div class="acu-card">
                         <h3>删除与清理</h3>
                         <!-- 楼层范围选择 -->
-                        <div style="background: var(--background-color-light); padding: 12px; border-radius: 6px; margin-bottom: 10px;">
-                            <h4 style="margin: 0 0 8px 0; font-size: 0.9em; color: var(--text-color); font-weight: 500;">删除范围设置</h4>
+                        <div style="background: var(--acu-bg-2); padding: 12px; border-radius: 6px; margin-bottom: 10px;">
+                            <h4 style="margin: 0 0 8px 0; font-size: 0.9em; color: var(--acu-text-1); font-weight: 500;">删除范围设置</h4>
                             <div class="acu-grid">
                                 <div>
                                     <label for="${SCRIPT_ID_PREFIX_ACU}-delete-start-floor" style="font-weight: 500; font-size: 0.85em;">起始AI楼层:</label>
-                                    <input type="number" id="${SCRIPT_ID_PREFIX_ACU}-delete-start-floor" min="1" value="1" placeholder="1" style="width: 100%; padding: 4px 8px; border: 1px solid var(--border-normal); border-radius: 4px; background: var(--input-background); color: var(--input-text-color);">
+                                    <input type="number" id="${SCRIPT_ID_PREFIX_ACU}-delete-start-floor" min="1" value="1" placeholder="1" style="width: 100%; padding: 4px 8px; border: 1px solid var(--acu-border-2); border-radius: 4px; background: var(--acu-control-bg, var(--acu-bg-1)); color: var(--acu-control-text, var(--acu-text-1));">
                                 </div>
                                 <div>
                                     <label for="${SCRIPT_ID_PREFIX_ACU}-delete-end-floor" style="font-weight: 500; font-size: 0.85em;">终止AI楼层:</label>
-                                    <input type="number" id="${SCRIPT_ID_PREFIX_ACU}-delete-end-floor" min="1" placeholder="留空删除到最后" style="width: 100%; padding: 4px 8px; border: 1px solid var(--border-normal); border-radius: 4px; background: var(--input-background); color: var(--input-text-color);">
+                                    <input type="number" id="${SCRIPT_ID_PREFIX_ACU}-delete-end-floor" min="1" placeholder="留空删除到最后" style="width: 100%; padding: 4px 8px; border: 1px solid var(--acu-border-2); border-radius: 4px; background: var(--acu-control-bg, var(--acu-bg-1)); color: var(--acu-control-text, var(--acu-text-1));">
                                 </div>
                             </div>
-                            <div style="margin-top: 6px; font-size: 0.8em; color: var(--text-color-dimmed);">
+                            <div style="margin-top: 6px; font-size: 0.8em; color: var(--acu-text-3);">
                                 默认全选所有AI楼层，可设置范围精确删除（只计算AI回复）
                             </div>
                         </div>
 
-                        <div class="button-group acu-data-mgmt-buttons acu-cols-2">
+                        <div class="button-group acu-data-mgmt-buttons">
                             <button id="${SCRIPT_ID_PREFIX_ACU}-delete-current-local-data" class="btn-warning">删除当前标识本地数据</button>
                             <button id="${SCRIPT_ID_PREFIX_ACU}-delete-all-local-data" class="btn-danger">删除所有本地数据 (慎用)</button>
                         </div>
@@ -37572,8 +37563,8 @@ insertRow(1, ["时间2", "大纲事件2...", "关键词"]);
                         <p class="notes" style="text-align: center; margin-bottom: 20px;">将当前的纪要表进行批量合并与精简。</p>
 
                         <!-- 手动合并参数 -->
-                        <div style="background: var(--background-color-light); padding: 15px; border-radius: 8px; margin-bottom: 15px;">
-                            <h4 style="margin: 0 0 12px 0; font-size: 1em; color: var(--text-color); border-bottom: 1px solid var(--border-normal); padding-bottom: 8px;">手动合并参数</h4>
+                        <div style="background: var(--acu-bg-2); padding: 15px; border-radius: 8px; margin-bottom: 15px;">
+                            <h4 style="margin: 0 0 12px 0; font-size: 1em; color: var(--acu-text-1); border-bottom: 1px solid var(--acu-border-2); padding-bottom: 8px;">手动合并参数</h4>
 
                             <div class="acu-grid" style="margin-bottom: 10px;">
                                 <div>
@@ -37599,8 +37590,8 @@ insertRow(1, ["时间2", "大纲事件2...", "关键词"]);
                         </div>
 
                         <!-- 自动合并设置 -->
-                        <div style="background: var(--background-color-light); padding: 15px; border-radius: 8px; margin-bottom: 15px;">
-                            <h4 style="margin: 0 0 12px 0; font-size: 1em; color: var(--text-color); border-bottom: 1px solid var(--border-normal); padding-bottom: 8px;">自动合并设置</h4>
+                        <div style="background: var(--acu-bg-2); padding: 15px; border-radius: 8px; margin-bottom: 15px;">
+                            <h4 style="margin: 0 0 12px 0; font-size: 1em; color: var(--acu-text-1); border-bottom: 1px solid var(--acu-border-2); padding-bottom: 8px;">自动合并设置</h4>
 
                             <div style="margin-bottom: 12px;">
                                 <label for="${SCRIPT_ID_PREFIX_ACU}-auto-merge-enabled" style="display: flex; align-items: center; cursor: pointer;">
@@ -37622,17 +37613,17 @@ insertRow(1, ["时间2", "大纲事件2...", "关键词"]);
                         </div>
 
                         <!-- 提示词设置 -->
-                        <div style="background: var(--background-color-light); padding: 15px; border-radius: 8px; margin-bottom: 15px;">
-                            <h4 style="margin: 0 0 12px 0; font-size: 1em; color: var(--text-color); border-bottom: 1px solid var(--border-normal); padding-bottom: 8px;">提示词模板</h4>
+                        <div style="background: var(--acu-bg-2); padding: 15px; border-radius: 8px; margin-bottom: 15px;">
+                            <h4 style="margin: 0 0 12px 0; font-size: 1em; color: var(--acu-text-1); border-bottom: 1px solid var(--acu-border-2); padding-bottom: 8px;">提示词模板</h4>
                             <textarea id="${SCRIPT_ID_PREFIX_ACU}-merge-prompt-template" style="height: 120px; font-size: 0.85em; font-family: monospace; width: 100%; resize: vertical;" placeholder="正在加载提示词模板..."></textarea>
                         </div>
 
                         <!-- 操作按钮 -->
                         <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-bottom: 15px;">
-                            <button id="${SCRIPT_ID_PREFIX_ACU}-save-merge-settings" style="padding: 10px; background: var(--button-background); border: 1px solid var(--border-normal); border-radius: 6px; cursor: pointer; transition: all 0.2s ease;">
+                            <button id="${SCRIPT_ID_PREFIX_ACU}-save-merge-settings" style="padding: 10px; background: var(--acu-bg-1); border: 1px solid var(--acu-border-2); border-radius: 6px; cursor: pointer; transition: all 0.2s ease;">
                                 <i class="fa-solid fa-save" style="margin-right: 5px;"></i>保存设置
                             </button>
-                            <button id="${SCRIPT_ID_PREFIX_ACU}-restore-merge-settings" style="padding: 10px; background: var(--button-secondary-background, #f8f9fa); border: 1px solid var(--border-normal); border-radius: 6px; cursor: pointer; transition: all 0.2s ease;">
+                            <button id="${SCRIPT_ID_PREFIX_ACU}-restore-merge-settings" style="padding: 10px; background: var(--acu-bg-2); border: 1px solid var(--acu-border-2); border-radius: 6px; cursor: pointer; transition: all 0.2s ease;">
                                 <i class="fa-solid fa-undo" style="margin-right: 5px;"></i>恢复默认
                             </button>
                         </div>
@@ -37648,20 +37639,18 @@ insertRow(1, ["时间2", "大纲事件2...", "关键词"]);
     // Optimization标签页（正文替换）HTML生成
     /**
      * 生成 Optimization 标签页的 HTML 片段
-     * 包含：正文替换设置、基础设置、优化模式、标签筛选、预设管理、优化提示词、手动测试
      */
     function generateOptimizationTabHTML() {
         return `
                 <!-- 正文替换Tab -->
                 <div id="acu-tab-optimization">
                     <div class="acu-card">
-                        <!-- 顶部标题和开关区域 -->
-                        <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 20px; padding-bottom: 15px; border-bottom: 1px solid var(--border_color);">
+                        <div class="acu-card-header">
                             <div>
-                                <h3 style="margin: 0; color: var(--text_primary);">正文替换设置</h3>
-                                <p class="notes" style="margin: 5px 0 0 0;">AI生成正文后，自动替换内容（在填表之前执行）</p>
+                                <h3>正文替换设置</h3>
+                                <p class="notes">AI生成正文后，自动替换内容（在填表之前执行）</p>
                             </div>
-                            <div style="display: flex; align-items: center; gap: 8px;">
+                            <div class="acu-row" style="gap: 8px;">
                                 <label for="${SCRIPT_ID_PREFIX_ACU}-optimization-enabled" style="font-weight: 500; cursor: pointer;">启用功能</label>
                                 <label class="toggle-switch">
                                     <input id="${SCRIPT_ID_PREFIX_ACU}-optimization-enabled" type="checkbox" />
@@ -37670,158 +37659,133 @@ insertRow(1, ["时间2", "大纲事件2...", "关键词"]);
                             </div>
                         </div>
 
-                        <!-- 基础设置区域 -->
-                        <div class="settings-section" style="margin-bottom: 25px; padding: 20px; background: var(--background_light); border-radius: 8px; border: 1px solid var(--border_color_light);">
-                            <h4 style="margin: 0 0 15px 0; color: var(--text_primary); display: flex; align-items: center; gap: 8px;">
-                                <i class="fa-solid fa-cog"></i> 基础设置
-                            </h4>
-                            <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 15px;">
-                                <div class="qrf_settings_block" style="margin-bottom: 0;">
-                                    <label for="${SCRIPT_ID_PREFIX_ACU}-optimization-api-preset" style="font-weight: 500;">API预设</label>
-                                    <select id="${SCRIPT_ID_PREFIX_ACU}-optimization-api-preset" class="text_pole" style="width: 100%; margin-top: 5px;">
+                        <!-- 基础设置 -->
+                        <div class="acu-section">
+                            <h4 class="acu-section-title"><i class="fa-solid fa-cog"></i> 基础设置</h4>
+                            <div class="acu-grid-auto">
+                                <div>
+                                    <label class="acu-label" for="${SCRIPT_ID_PREFIX_ACU}-optimization-api-preset">API预设</label>
+                                    <select id="${SCRIPT_ID_PREFIX_ACU}-optimization-api-preset" class="text_pole">
                                         <option value="">使用当前API配置</option>
                                     </select>
                                     <small class="notes">选择正文替换使用的API配置，留空则使用酒馆当前API</small>
                                 </div>
-                                <div class="qrf_settings_block" style="margin-bottom: 0;">
-                                    <label for="${SCRIPT_ID_PREFIX_ACU}-optimization-min-length" style="font-weight: 500;">最小优化长度</label>
-                                    <input id="${SCRIPT_ID_PREFIX_ACU}-optimization-min-length" type="number" class="text_pole" min="0" step="10" value="100" style="width: 100%; margin-top: 5px;">
+                                <div>
+                                    <label class="acu-label" for="${SCRIPT_ID_PREFIX_ACU}-optimization-min-length">最小优化长度</label>
+                                    <input id="${SCRIPT_ID_PREFIX_ACU}-optimization-min-length" type="number" class="text_pole" min="0" step="10" value="100">
                                     <small class="notes">正文长度小于此值时跳过优化</small>
                                 </div>
-                                <div class="qrf_settings_block" style="margin-bottom: 0;">
-                                    <label for="${SCRIPT_ID_PREFIX_ACU}-optimization-max-items" style="font-weight: 500;">最大优化项数</label>
-                                    <input id="${SCRIPT_ID_PREFIX_ACU}-optimization-max-items" type="number" class="text_pole" min="1" max="100" step="1" value="10" style="width: 100%; margin-top: 5px;">
+                                <div>
+                                    <label class="acu-label" for="${SCRIPT_ID_PREFIX_ACU}-optimization-max-items">最大优化项数</label>
+                                    <input id="${SCRIPT_ID_PREFIX_ACU}-optimization-max-items" type="number" class="text_pole" min="1" max="100" step="1" value="10">
                                     <small class="notes">单次优化的最大修改项数（1-100）</small>
                                 </div>
-                                <div class="qrf_settings_block" style="margin-bottom: 0;">
-                                    <label for="${SCRIPT_ID_PREFIX_ACU}-optimization-loop-count" style="font-weight: 500;">循环优化次数</label>
-                                    <input id="${SCRIPT_ID_PREFIX_ACU}-optimization-loop-count" type="number" class="text_pole" min="1" max="10" step="1" value="1" style="width: 100%; margin-top: 5px;">
+                                <div>
+                                    <label class="acu-label" for="${SCRIPT_ID_PREFIX_ACU}-optimization-loop-count">循环优化次数</label>
+                                    <input id="${SCRIPT_ID_PREFIX_ACU}-optimization-loop-count" type="number" class="text_pole" min="1" max="10" step="1" value="1">
                                     <small class="notes">优化完成后再次优化，达到完整优化效果（1-10次）</small>
                                 </div>
-                                <div class="qrf_settings_block" style="margin-bottom: 0;">
-                                    <label for="${SCRIPT_ID_PREFIX_ACU}-optimization-retry-count" style="font-weight: 500;">自动重试次数</label>
-                                    <input id="${SCRIPT_ID_PREFIX_ACU}-optimization-retry-count" type="number" class="text_pole" min="1" max="10" step="1" value="3" style="width: 100%; margin-top: 5px;">
+                                <div>
+                                    <label class="acu-label" for="${SCRIPT_ID_PREFIX_ACU}-optimization-retry-count">自动重试次数</label>
+                                    <input id="${SCRIPT_ID_PREFIX_ACU}-optimization-retry-count" type="number" class="text_pole" min="1" max="10" step="1" value="3">
                                     <small class="notes">API调用失败时自动重试（1-10次，默认3次）</small>
                                 </div>
                             </div>
                         </div>
 
-                        <!-- 优化模式设置 -->
-                        <div class="settings-section" style="margin-bottom: 25px; padding: 20px; background: var(--background_light); border-radius: 8px; border: 1px solid var(--border_color_light);">
-                            <h4 style="margin: 0 0 15px 0; color: var(--text_primary); display: flex; align-items: center; gap: 8px;">
-                                <i class="fa-solid fa-magic"></i> 优化模式
-                            </h4>
-                            <div style="display: grid; gap: 15px;">
+                        <!-- 优化模式 -->
+                        <div class="acu-section">
+                            <h4 class="acu-section-title"><i class="fa-solid fa-magic"></i> 优化模式</h4>
+                            <div class="acu-col">
                                 <div class="checkbox-group">
                                     <input type="checkbox" id="${SCRIPT_ID_PREFIX_ACU}-optimization-seamless-mode" checked>
                                     <label for="${SCRIPT_ID_PREFIX_ACU}-optimization-seamless-mode">无感替换模式</label>
-                                    <small class="notes" style="display: block; margin-left: 24px; margin-top: 4px;">显示"正在优化"遮罩，优化完成后直接显示结果，无闪烁</small>
                                 </div>
                                 <div class="checkbox-group">
                                     <input type="checkbox" id="${SCRIPT_ID_PREFIX_ACU}-optimization-auto-apply" checked>
                                     <label for="${SCRIPT_ID_PREFIX_ACU}-optimization-auto-apply">自动应用优化结果</label>
-                                    <small class="notes" style="display: block; margin-left: 24px; margin-top: 4px;">关闭时显示对比对话框，让用户选择是否应用</small>
                                 </div>
                                 <div class="checkbox-group">
                                     <input type="checkbox" id="${SCRIPT_ID_PREFIX_ACU}-optimization-show-diff" checked>
                                     <label for="${SCRIPT_ID_PREFIX_ACU}-optimization-show-diff">显示优化对比</label>
-                                    <small class="notes" style="display: block; margin-left: 24px; margin-top: 4px;">优化完成后显示修改摘要（非无感模式下有效）</small>
                                 </div>
                                 <div class="checkbox-group">
                                     <input type="checkbox" id="${SCRIPT_ID_PREFIX_ACU}-optimization-parallel-mode">
                                     <label for="${SCRIPT_ID_PREFIX_ACU}-optimization-parallel-mode">填表与正文替换并行执行</label>
-                                    <small class="notes" style="display: block; margin-left: 24px; margin-top: 4px;">勾选后填表不再等待正文替换完成，双方并行进行（默认关闭）</small>
                                 </div>
-                                <div style="margin-top: 16px; padding-top: 16px; border-top: 1px dashed var(--border_color_light);">
-                                    <label style="font-weight: 500; display: block; margin-bottom: 8px;">快捷操作</label>
-                                    <div style="display: flex; flex-direction: column; gap: 8px; align-items: stretch;">
-                                        <button id="${SCRIPT_ID_PREFIX_ACU}-optimization-reoptimize-latest" class="menu_button" title="对最近一次已执行正文替换的 AI 回复，基于替换前原文重新优化并再次替换" style="width: 100%; min-height: 38px; display: inline-flex; align-items: center; justify-content: center; gap: 8px; white-space: normal; line-height: 1.4; text-align: center; padding: 10px 14px;">
-                                            <i class="fa-solid fa-rotate-right"></i><span>重新优化上一次替换结果</span>
-                                        </button>
-                                    </div>
-                                    <small class="notes" style="display: block; margin-top: 6px; line-height: 1.5;">这里会定位"最近一次已经被正文替换过的 AI 回复"，并使用替换前保留的原文重新优化后再次替换。取消正文优化请使用进行中提示框里的"取消优化"按钮。</small>
+                                <div class="acu-divider-dashed" style="margin: 8px 0;"></div>
+                                <label class="acu-label">快捷操作</label>
+                                <div style="display: flex; flex-wrap: wrap; gap: 8px;">
+                                    <button id="${SCRIPT_ID_PREFIX_ACU}-optimization-reoptimize-latest" title="对最近一次已执行正文替换的 AI 回复，基于替换前原文重新优化并再次替换" style="white-space: nowrap;">
+                                        <i class="fa-solid fa-rotate-right"></i> 重新优化
+                                    </button>
                                 </div>
+                                <small class="notes">定位"最近一次已经被正文替换过的 AI 回复"，使用替换前保留的原文重新优化后再次替换。取消正文优化请使用进行中提示框里的"取消优化"按钮。</small>
                             </div>
                         </div>
- 
-                        <!-- 标签筛选设置 -->
-                        <div class="settings-section" style="margin-bottom: 25px; padding: 20px; background: var(--background_light); border-radius: 8px; border: 1px solid var(--border_color_light);">
-                            <h4 style="margin: 0 0 15px 0; color: var(--text_primary); display: flex; align-items: center; gap: 8px;">
-                                <i class="fa-solid fa-filter"></i> 标签筛选
-                            </h4>
-                            <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 15px;">
-                                <div class="qrf_settings_block" style="margin-bottom: 0;">
-                                    <label for="${SCRIPT_ID_PREFIX_ACU}-optimization-extract-tags" style="font-weight: 500;">标签提取</label>
-                                    <input id="${SCRIPT_ID_PREFIX_ACU}-optimization-extract-tags" type="text" class="text_pole" placeholder="例如: think,plot" style="width: 100%; margin-top: 5px;">
+
+                        <!-- 标签筛选 -->
+                        <div class="acu-section">
+                            <h4 class="acu-section-title"><i class="fa-solid fa-filter"></i> 标签筛选</h4>
+                            <div class="acu-grid-auto" style="grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));">
+                                <div>
+                                    <label class="acu-label" for="${SCRIPT_ID_PREFIX_ACU}-optimization-extract-tags">标签提取</label>
+                                    <input id="${SCRIPT_ID_PREFIX_ACU}-optimization-extract-tags" type="text" class="text_pole" placeholder="例如: think,plot">
                                     <small class="notes">仅提取指定标签内的内容进行优化</small>
                                 </div>
-                                <div class="qrf_settings_block" style="margin-bottom: 0;">
-                                    <label style="font-weight: 500;">正文标签提取规则</label>
+                                <div>
+                                    <label class="acu-label">正文标签提取规则</label>
                                     <div id="${SCRIPT_ID_PREFIX_ACU}-optimization-extract-rules"></div>
-                                    <button type="button" id="${SCRIPT_ID_PREFIX_ACU}-optimization-extract-add-rule" class="button" style="margin-top: 6px;">添加规则</button>
+                                    <button type="button" id="${SCRIPT_ID_PREFIX_ACU}-optimization-extract-add-rule" class="button">添加规则</button>
                                     <small class="notes">每条规则填写开始词和结束词，仅提取最后一组匹配内容</small>
                                 </div>
-                                <div class="qrf_settings_block" style="margin-bottom: 0;">
-                                    <label style="font-weight: 500;">标签排除规则</label>
+                                <div>
+                                    <label class="acu-label">标签排除规则</label>
                                     <div id="${SCRIPT_ID_PREFIX_ACU}-optimization-exclude-rules"></div>
-                                    <button type="button" id="${SCRIPT_ID_PREFIX_ACU}-optimization-exclude-add-rule" class="button" style="margin-top: 6px;">添加规则</button>
+                                    <button type="button" id="${SCRIPT_ID_PREFIX_ACU}-optimization-exclude-add-rule" class="button">添加规则</button>
                                     <small class="notes">每条规则填写开始词和结束词，仅移除最后一组匹配内容</small>
                                 </div>
                             </div>
                         </div>
 
-                        <!-- 预设管理区域 -->
-                        <div class="settings-section" style="margin-bottom: 25px; padding: 20px; background: var(--background_light); border-radius: 8px; border: 1px solid var(--border_color_light);">
-                            <h4 style="margin: 0 0 15px 0; color: var(--text_primary); display: flex; align-items: center; gap: 8px;">
-                                <i class="fa-solid fa-bookmark"></i> 预设管理
-                            </h4>
-                            <div class="qrf_settings_block" style="margin-bottom: 0;">
-                                <label for="${SCRIPT_ID_PREFIX_ACU}-optimization-preset-select" style="font-weight: 500;">选择预设</label>
-                                <div class="qrf_preset_selector_wrapper acu-optimization-preset-wrapper" style="display: flex; gap: 8px; align-items: center; margin-top: 5px;">
-                                    <select id="${SCRIPT_ID_PREFIX_ACU}-optimization-preset-select" class="text_pole" style="flex: 1;">
+                        <!-- 预设管理 -->
+                        <div class="acu-section">
+                            <h4 class="acu-section-title"><i class="fa-solid fa-bookmark"></i> 预设管理</h4>
+                            <div>
+                                <label class="acu-label" for="${SCRIPT_ID_PREFIX_ACU}-optimization-preset-select">选择预设</label>
+                                <div class="acu-row-wrap" style="margin-top: 4px;">
+                                    <select id="${SCRIPT_ID_PREFIX_ACU}-optimization-preset-select" class="text_pole" style="flex: 1; min-width: 160px;">
                                         <option value="">-- 选择一个预设 --</option>
                                     </select>
-                                    <button id="${SCRIPT_ID_PREFIX_ACU}-optimization-save-preset" class="menu_button" title="覆盖保存当前预设" style="padding: 8px 12px;"><i class="fa-solid fa-save"></i></button>
-                                    <button id="${SCRIPT_ID_PREFIX_ACU}-optimization-save-as-new-preset" class="menu_button" title="另存为新预设" style="padding: 8px 12px;"><i class="fa-solid fa-file-export"></i></button>
-                                    <button id="${SCRIPT_ID_PREFIX_ACU}-optimization-import-presets" class="menu_button" title="导入预设" style="padding: 8px 12px;"><i class="fa-solid fa-upload"></i></button>
-                                    <button id="${SCRIPT_ID_PREFIX_ACU}-optimization-export-presets" class="menu_button" title="导出当前预设" style="padding: 8px 12px;"><i class="fa-solid fa-download"></i></button>
-                                    <button id="${SCRIPT_ID_PREFIX_ACU}-optimization-reset-defaults" class="menu_button" title="恢复默认提示词" style="padding: 8px 12px; background-color: var(--orange); color: white;"><i class="fa-solid fa-undo"></i></button>
-                                    <button id="${SCRIPT_ID_PREFIX_ACU}-optimization-delete-preset" class="menu_button" title="删除当前选中的预设" style="display: none; padding: 8px 12px; background-color: var(--red);"><i class="fa-solid fa-trash-alt"></i></button>
+                                    <button id="${SCRIPT_ID_PREFIX_ACU}-optimization-save-preset" class="acu-btn-icon" title="覆盖保存当前预设"><i class="fa-solid fa-save"></i></button>
+                                    <button id="${SCRIPT_ID_PREFIX_ACU}-optimization-save-as-new-preset" class="acu-btn-icon" title="另存为新预设"><i class="fa-solid fa-file-export"></i></button>
+                                    <button id="${SCRIPT_ID_PREFIX_ACU}-optimization-import-presets" class="acu-btn-icon" title="导入预设"><i class="fa-solid fa-upload"></i></button>
+                                    <button id="${SCRIPT_ID_PREFIX_ACU}-optimization-export-presets" class="acu-btn-icon" title="导出当前预设"><i class="fa-solid fa-download"></i></button>
+                                    <button id="${SCRIPT_ID_PREFIX_ACU}-optimization-reset-defaults" class="acu-btn-icon" title="恢复默认提示词" style="color: var(--acu-warning);"><i class="fa-solid fa-undo"></i></button>
+                                    <button id="${SCRIPT_ID_PREFIX_ACU}-optimization-delete-preset" class="acu-btn-icon" title="删除当前选中的预设" style="display: none; color: var(--acu-danger);"><i class="fa-solid fa-trash-alt"></i></button>
                                     <input type="file" id="${SCRIPT_ID_PREFIX_ACU}-optimization-preset-file-input" style="display: none;" accept=".json">
                                 </div>
                                 <small class="notes">选择预设应用提示词组设置，或保存当前配置为新预设</small>
                             </div>
                         </div>
 
-                        <!-- 提示词设置区域 -->
-                        <div class="settings-section" style="margin-bottom: 25px; padding: 20px; background: var(--background_light); border-radius: 8px; border: 1px solid var(--border_color_light);">
-                            <h4 style="margin: 0 0 15px 0; color: var(--text_primary); display: flex; align-items: center; gap: 8px;">
-                                <i class="fa-solid fa-edit"></i> 优化提示词
-                            </h4>
-                            <div style="margin-bottom: 15px; padding: 12px; background: var(--background_default); border-radius: 6px; border-left: 3px solid var(--text_secondary);">
-                                <small class="notes" style="color: var(--text_secondary);">
+                        <!-- 优化提示词 -->
+                        <div class="acu-section">
+                            <h4 class="acu-section-title"><i class="fa-solid fa-edit"></i> 优化提示词</h4>
+                            <div class="acu-info-panel">
+                                <small class="notes">
                                     <strong>占位符说明：</strong><br>
-                                    <code>$CONTENT</code> - 自动替换为需要优化的正文内容<br>
-                                    <code>$1</code> - 世界书内容（剧情推进专用）<br>
-                                    <code>$5</code> - 纪要表/总体大纲表内容<br>
-                                    <code>$6</code> - 上一轮剧情规划数据<br>
-                                    <code>$7</code> - 前文上下文（仅AI输出）<br>
-                                    <code>$8</code> - 本轮用户输入<br>
-                                    <code>$U</code> - 用户设定描述 (persona_description)<br>
-                                    <code>$C</code> - 角色描述 (char_description)<br>
-                                    <strong>输出格式：</strong>AI需返回JSON格式的优化指令，包含 optimizations 数组
+                                    <code>$CONTENT</code> - 需要优化的正文内容<br>
+                                    <code>$1</code> - 世界书内容 &nbsp; <code>$5</code> - 纪要表/大纲 &nbsp; <code>$6</code> - 上一轮规划<br>
+                                    <code>$7</code> - 前文上下文 &nbsp; <code>$8</code> - 本轮用户输入<br>
+                                    <code>$U</code> - 用户设定 &nbsp; <code>$C</code> - 角色描述<br>
+                                    <strong>输出格式：</strong>AI 需返回 JSON 格式的优化指令，包含 optimizations 数组
                                 </small>
                             </div>
                             <div id="${SCRIPT_ID_PREFIX_ACU}-optimization-prompt-constructor-area">
-                                <div class="button-group" style="margin-bottom: 10px; justify-content: center;">
-                                    <button class="${SCRIPT_ID_PREFIX_ACU}-optimization-add-prompt-segment-btn" data-position="top" title="在上方添加对话轮次">+</button>
-                                </div>
-                                <div id="${SCRIPT_ID_PREFIX_ACU}-optimization-prompt-segments-container">
-                                    <!-- 优化提示词段将动态插入这里 -->
-                                </div>
-                                <div class="button-group" style="margin-top: 10px; justify-content: center;">
-                                    <button class="${SCRIPT_ID_PREFIX_ACU}-optimization-add-prompt-segment-btn" data-position="bottom" title="在下方添加对话轮次">+</button>
-                                </div>
+                                <div class="button-group" style="margin-bottom: 10px; justify-content: center;"><button class="${SCRIPT_ID_PREFIX_ACU}-optimization-add-prompt-segment-btn" data-position="top" title="在上方添加对话轮次">+</button></div>
+                                <div id="${SCRIPT_ID_PREFIX_ACU}-optimization-prompt-segments-container"></div>
+                                <div class="button-group" style="margin-top: 10px; justify-content: center;"><button class="${SCRIPT_ID_PREFIX_ACU}-optimization-add-prompt-segment-btn" data-position="bottom" title="在下方添加对话轮次">+</button></div>
                             </div>
                             <div class="button-group">
                                 <button id="${SCRIPT_ID_PREFIX_ACU}-optimization-save-prompt-group" class="primary">保存提示词组</button>
@@ -37829,21 +37793,19 @@ insertRow(1, ["时间2", "大纲事件2...", "关键词"]);
                             </div>
                         </div>
 
-                        <!-- 手动测试区域 -->
-                        <div class="settings-section" style="padding: 20px; background: var(--background_light); border-radius: 8px; border: 1px solid var(--border_color_light);">
-                            <h4 style="margin: 0 0 15px 0; color: var(--text_primary); display: flex; align-items: center; gap: 8px;">
-                                <i class="fa-solid fa-flask"></i> 手动测试
-                            </h4>
-                            <div class="qrf_settings_block" style="margin-bottom: 15px;">
-                                <label for="${SCRIPT_ID_PREFIX_ACU}-optimization-test-input" style="font-weight: 500;">测试文本</label>
-                                <textarea id="${SCRIPT_ID_PREFIX_ACU}-optimization-test-input" class="text_pole" rows="5" placeholder="输入需要优化的文本进行测试..." style="resize: vertical; margin-top: 5px;"></textarea>
+                        <!-- 手动测试 -->
+                        <div class="acu-section">
+                            <h4 class="acu-section-title"><i class="fa-solid fa-flask"></i> 手动测试</h4>
+                            <div>
+                                <label class="acu-label" for="${SCRIPT_ID_PREFIX_ACU}-optimization-test-input">测试文本</label>
+                                <textarea id="${SCRIPT_ID_PREFIX_ACU}-optimization-test-input" class="text_pole" rows="5" placeholder="输入需要优化的文本进行测试..."></textarea>
                             </div>
                             <div class="button-group">
                                 <button id="${SCRIPT_ID_PREFIX_ACU}-optimization-test-btn" class="primary">执行优化测试</button>
                             </div>
-                            <div id="${SCRIPT_ID_PREFIX_ACU}-optimization-test-result" style="margin-top: 15px; display: none;">
-                                <label style="font-weight: 500;">优化结果</label>
-                                <div id="${SCRIPT_ID_PREFIX_ACU}-optimization-test-output" style="margin-top: 8px; padding: 12px; background: var(--background_default); border-radius: 6px; border: 1px solid var(--border_color_light); max-height: 300px; overflow-y: auto; white-space: pre-wrap; font-size: 0.9em;"></div>
+                            <div id="${SCRIPT_ID_PREFIX_ACU}-optimization-test-result" style="display: none; margin-top: 12px;">
+                                <label class="acu-label">优化结果</label>
+                                <div id="${SCRIPT_ID_PREFIX_ACU}-optimization-test-output" class="acu-result-panel"></div>
                             </div>
                         </div>
                     </div>
@@ -37988,14 +37950,14 @@ insertRow(1, ["时间2", "大纲事件2...", "关键词"]);
                     /* 顶部标题条 */
                     #${POPUP_ID_ACU} .acu-header {
                         display: flex;
-                        align-items: flex-start;
+                        align-items: center;
                         justify-content: center;
                         gap: 12px;
-                        padding: 12px 16px;
+                        padding: 14px 18px;
                         border: 1px solid var(--acu-border);
-                        border-radius: var(--acu-radius-lg);
-                        background: var(--acu-bg-1);
-                        box-shadow: var(--acu-shadow);
+                        border-radius: 8px;
+                        background: linear-gradient(135deg, var(--acu-bg-1) 0%, var(--acu-bg-0) 100%);
+                        box-shadow: 0 1px 3px rgba(0, 0, 0, 0.04);
                     }
                     /* 顶部标题块居中（宽屏/窄屏一致） */
                     #${POPUP_ID_ACU} .acu-header > div {
@@ -38007,17 +37969,17 @@ insertRow(1, ["时间2", "大纲事件2...", "关键词"]);
                         margin: 0;
                         padding: 0;
                         border: none;
-                        font-size: 16px;
-                        line-height: 1.35;
-                        font-weight: 650;
-                        letter-spacing: 0.2px;
+                        font-size: 15px;
+                        line-height: 1.4;
+                        font-weight: 600;
+                        letter-spacing: 0.5px;
                         color: var(--acu-text-1);
                         text-align: center;
                         width: 100%;
                     }
                     
                     #${POPUP_ID_ACU} .acu-header-sub {
-                        margin-top: 6px;
+                        margin-top: 4px;
                         font-size: 12px;
                         color: var(--acu-text-3);
                         text-align: center;
@@ -38025,33 +37987,34 @@ insertRow(1, ["时间2", "大纲事件2...", "关键词"]);
 
                     #${POPUP_ID_ACU} .acu-layout {
                         display: grid;
-                        grid-template-columns: 240px minmax(0, 1fr);
+                        grid-template-columns: 200px minmax(0, 1fr);
                         gap: 14px;
                         margin-top: 14px;
-                        min-height: 0; /* 允许在flex布局中收缩 */
+                        min-height: 0;
                     }
 
-                    /* 导航（桌面：侧边栏；移动：顶部横向） */
+                    /* ═══ 导航：精致侧边栏 ═══ */
                     #${POPUP_ID_ACU} .acu-tabs-nav {
                         border: 1px solid var(--acu-border);
-                        border-radius: var(--acu-radius-lg);
+                        border-radius: 8px;
                         background: var(--acu-bg-1);
-                        padding: 10px;
+                        padding: 8px;
                         display: flex;
                         flex-direction: column;
-                        gap: 4px;
+                        gap: 2px;
                         position: sticky;
                         top: 0;
                         align-self: start;
                         max-height: calc(100vh - 180px);
                         overflow: auto;
+                        box-shadow: 0 1px 3px rgba(0, 0, 0, 0.03);
                     }
 
                     #${POPUP_ID_ACU} .acu-nav-section-title {
-                        padding: 10px 10px 4px 10px;
+                        padding: 8px 10px 3px 10px;
                         color: var(--acu-text-3);
-                        font-size: 11px;
-                        letter-spacing: 0.5px;
+                        font-size: 10px;
+                        letter-spacing: 1px;
                         text-transform: uppercase;
                         user-select: none;
                         font-weight: 600;
@@ -38062,16 +38025,16 @@ insertRow(1, ["时间2", "大纲事件2...", "关键词"]);
                         display: flex;
                         align-items: center;
                         justify-content: space-between;
-                        gap: 10px;
-                        padding: 9px 12px;
+                        gap: 8px;
+                        padding: 8px 10px;
                         border: 1px solid transparent;
                         border-radius: 6px;
                         background: transparent;
-                        color: var(--acu-text-2);
-                        font-size: 13px;
+                        color: var(--acu-text-3);
+                        font-size: 12.5px;
                         font-weight: 500;
                         cursor: pointer;
-                        transition: background 0.15s ease, border-color 0.15s ease, color 0.15s ease;
+                        transition: all 0.15s ease;
                     }
                     #${POPUP_ID_ACU} .acu-tab-button:hover {
                         background: var(--acu-bg-2);
@@ -38079,16 +38042,19 @@ insertRow(1, ["时间2", "大纲事件2...", "关键词"]);
                         color: var(--acu-text-1);
                     }
                     #${POPUP_ID_ACU} .acu-tab-button.active {
-                        background: rgba(37, 99, 235, 0.08);
-                        border-color: rgba(37, 99, 235, 0.25);
+                        background: var(--acu-accent-glow);
+                        border-color: var(--acu-accent);
                         color: var(--acu-accent);
                         font-weight: 600;
+                        box-shadow: inset 0 0 0 0.5px var(--acu-accent-glow-2);
                     }
                     #${POPUP_ID_ACU} .acu-tab-button::after {
                         content: "›";
-                        opacity: 0.4;
+                        opacity: 0;
                         font-weight: 700;
+                        transition: opacity 0.15s ease;
                     }
+                    #${POPUP_ID_ACU} .acu-tab-button:hover::after { opacity: 0.4; }
                     #${POPUP_ID_ACU} .acu-tab-button.active::after { opacity: 0.8; color: var(--acu-accent); }
 
                     /* 内容区 */
@@ -38105,20 +38071,20 @@ insertRow(1, ["时间2", "大纲事件2...", "关键词"]);
                         to { opacity: 1; transform: translateY(0); }
                     }
 
-                    /* 卡片（浅色管理台风格） */
+                    /* ═══ 卡片：典雅轻薄 ═══ */
                     #${POPUP_ID_ACU} .acu-card {
                         border: 1px solid var(--acu-border);
-                        border-radius: var(--acu-radius-lg);
+                        border-radius: 8px;
                         background: var(--acu-bg-1);
                         padding: 16px;
                         margin-bottom: 14px;
-                        box-shadow: var(--acu-shadow);
+                        box-shadow: 0 1px 2px rgba(0, 0, 0, 0.03);
                     }
                     #${POPUP_ID_ACU} .acu-card h3 {
                         margin: 0 0 12px 0;
                         padding: 0 0 10px 0;
                         border-bottom: 1px solid var(--acu-border);
-                        font-size: 14px;
+                        font-size: 13px;
                         letter-spacing: 0.3px;
                         font-weight: 600;
                         color: var(--acu-text-1);
@@ -38139,34 +38105,38 @@ insertRow(1, ["时间2", "大纲事件2...", "关键词"]);
                     #${POPUP_ID_ACU} input,
                     #${POPUP_ID_ACU} select,
                     #${POPUP_ID_ACU} textarea {
-                        width: 100%;
-                        padding: 8px 12px;
-                        border-radius: 6px;
-                        border: 1px solid var(--acu-border-2);
+                        width: 100% !important;
+                        padding: 8px 12px !important;
+                        border-radius: 6px !important;
+                        border: 1px solid var(--acu-border-2) !important;
                         background: var(--acu-control-bg, var(--input-background, var(--acu-bg-1))) !important;
-                        color: var(--acu-control-text, var(--input-text-color, var(--acu-text-1)));
-                        font-size: 14px;
-                        outline: none;
-                        transition: border-color 0.15s ease, box-shadow 0.15s ease;
+                        color: var(--acu-control-text, var(--input-text-color, var(--acu-text-1))) !important;
+                        font-size: 14px !important;
+                        font-family: inherit !important;
+                        outline: none !important;
+                        line-height: 1.5 !important;
+                        box-shadow: none !important;
+                        transition: border-color 0.15s ease, box-shadow 0.15s ease !important;
                     }
                     #${POPUP_ID_ACU} select {
-                        appearance: none;
-                        -webkit-appearance: none;
+                        appearance: none !important;
+                        -webkit-appearance: none !important;
                         background-image:
                             linear-gradient(45deg, transparent 50%, var(--acu-select-arrow, var(--acu-text-2)) 50%),
-                            linear-gradient(135deg, var(--acu-select-arrow, var(--acu-text-2)) 50%, transparent 50%);
+                            linear-gradient(135deg, var(--acu-select-arrow, var(--acu-text-2)) 50%, transparent 50%) !important;
                         background-position:
                             calc(100% - 16px) calc(50% - 2px),
-                            calc(100% - 10px) calc(50% - 2px);
-                        background-size: 6px 6px, 6px 6px;
-                        background-repeat: no-repeat;
-                        padding-right: 34px;
+                            calc(100% - 10px) calc(50% - 2px) !important;
+                        background-size: 6px 6px, 6px 6px !important;
+                        background-repeat: no-repeat !important;
+                        padding-right: 34px !important;
                     }
                     #${POPUP_ID_ACU} input:focus, 
                     #${POPUP_ID_ACU} select:focus, 
                     #${POPUP_ID_ACU} textarea:focus {
-                        border-color: var(--acu-accent);
-                        box-shadow: 0 0 0 3px var(--acu-accent-glow);
+                        border-color: var(--acu-accent) !important;
+                        box-shadow: 0 0 0 3px var(--acu-accent-glow) !important;
+                        outline: none !important;
                     }
                     #${POPUP_ID_ACU} textarea { min-height: 92px; resize: vertical; line-height: 1.55; }
                     #${POPUP_ID_ACU} input::placeholder, #${POPUP_ID_ACU} textarea::placeholder { color: var(--acu-text-3); }
@@ -38176,36 +38146,53 @@ insertRow(1, ["时间2", "大纲事件2...", "关键词"]);
                         #${POPUP_ID_ACU} input, #${POPUP_ID_ACU} select, #${POPUP_ID_ACU} textarea { font-size: 16px; }
                     }
 
-                    /* 按钮体系（浅色管理台：简洁、清晰） */
+                    /* ═══ 按钮体系：典雅肃静 ═══ */
                     #${POPUP_ID_ACU} button, #${POPUP_ID_ACU} .button {
-                        padding: 8px 12px;
-                        border-radius: 6px;
-                        border: 1px solid var(--acu-border-2);
-                        background: var(--acu-bg-1);
-                        color: var(--acu-text-2);
-                        cursor: pointer;
-                        font-weight: 500;
-                        line-height: 1.1;
-                        min-height: 34px;
-                        transition: background 0.15s ease, border-color 0.15s ease, color 0.15s ease;
+                        padding: 8px 14px !important;
+                        border-radius: 6px !important;
+                        border: 1px solid var(--acu-border-2) !important;
+                        background: var(--acu-bg-1) !important;
+                        color: var(--acu-text-2) !important;
+                        cursor: pointer !important;
+                        font-weight: 500 !important;
+                        font-family: inherit !important;
+                        font-size: 13px !important;
+                        line-height: 1.3 !important;
+                        min-height: 34px !important;
+                        transition: all 0.18s ease !important;
+                        box-shadow: 0 1px 2px rgba(0, 0, 0, 0.04) !important;
                     }
                     #${POPUP_ID_ACU} button:hover, #${POPUP_ID_ACU} .button:hover {
-                        background: var(--acu-bg-2);
-                        color: var(--acu-text-1);
-                        border-color: var(--acu-border);
+                        background: var(--acu-bg-2) !important;
+                        color: var(--acu-text-1) !important;
+                        border-color: var(--acu-border) !important;
+                        box-shadow: 0 2px 6px rgba(0, 0, 0, 0.07) !important;
+                        transform: translateY(-0.5px) !important;
                     }
-                    #${POPUP_ID_ACU} button:active { transform: none; }
-                    #${POPUP_ID_ACU} button:disabled { opacity: 0.45; cursor: not-allowed; }
+                    #${POPUP_ID_ACU} button:active, #${POPUP_ID_ACU} .button:active {
+                        transform: translateY(0) !important;
+                        box-shadow: 0 1px 2px rgba(0, 0, 0, 0.04) !important;
+                    }
+                    #${POPUP_ID_ACU} button:disabled, #${POPUP_ID_ACU} .button:disabled {
+                        opacity: 0.45 !important;
+                        cursor: not-allowed !important;
+                        transform: none !important;
+                        box-shadow: none !important;
+                    }
 
-                    /* 主按钮：蓝色强调 */
+                    /* 主按钮：强调色填充 */
                     #${POPUP_ID_ACU} button.primary, #${POPUP_ID_ACU} .button.primary {
-                        border-color: rgba(37, 99, 235, 0.30);
-                        background: rgba(37, 99, 235, 0.08);
-                        color: var(--acu-accent);
+                        background: var(--acu-accent) !important;
+                        border-color: var(--acu-accent) !important;
+                        color: var(--acu-checkbox-checked-icon, #ffffff) !important;
+                        font-weight: 600 !important;
+                        box-shadow: 0 1px 3px var(--acu-accent-glow) !important;
                     }
                     #${POPUP_ID_ACU} button.primary:hover, #${POPUP_ID_ACU} .button.primary:hover {
-                        background: rgba(37, 99, 235, 0.14);
-                        border-color: rgba(37, 99, 235, 0.45);
+                        filter: brightness(1.08) !important;
+                        box-shadow: 0 3px 10px var(--acu-accent-glow-2) !important;
+                        border-color: var(--acu-accent) !important;
+                        color: var(--acu-checkbox-checked-icon, #ffffff) !important;
                     }
                     
                     /* 警告/危险 */
@@ -38241,14 +38228,41 @@ insertRow(1, ["时间2", "大纲事件2...", "关键词"]);
                         height: 40px;
                     }
 
-                    /* 数据管理按钮组：2×2 / 3×3 网格，等宽等高（不随文字长度变化） */
+                    /* 数据管理按钮组：flex-wrap 自然宽度，按内容适配 */
                     #${POPUP_ID_ACU} .button-group.acu-data-mgmt-buttons {
-                        display: grid !important; /* 覆盖 .button-group 的 flex，避免变成“一排下来” */
-                        gap: 12px !important;
-                        align-items: stretch;
-                        justify-items: stretch;
+                        display: flex !important;
+                        flex-wrap: wrap !important;
+                        gap: 10px !important;
+                        align-items: center;
+                        justify-content: center;
                         margin-top: 0;
                         min-width: 0;
+                    }
+
+                    #${POPUP_ID_ACU} .button-group.acu-data-mgmt-buttons button,
+                    #${POPUP_ID_ACU} .button-group.acu-data-mgmt-buttons .button {
+                        width: auto !important;
+                        min-width: fit-content !important;
+                        height: auto !important;
+                        min-height: 36px !important;
+                        padding: 8px 16px !important;
+                        border-radius: 6px !important;
+                        font-size: 0.92em !important;
+                        font-weight: 500 !important;
+                        display: inline-flex !important;
+                        align-items: center !important;
+                        justify-content: center !important;
+                        white-space: nowrap !important;
+                        background: var(--acu-bg-1) !important;
+                        border: 1px solid var(--acu-border-2) !important;
+                        color: var(--acu-text-2) !important;
+                        box-shadow: none !important;
+                    }
+                    #${POPUP_ID_ACU} .button-group.acu-data-mgmt-buttons button:hover,
+                    #${POPUP_ID_ACU} .button-group.acu-data-mgmt-buttons .button:hover {
+                        background: var(--acu-bg-2) !important;
+                        border-color: var(--acu-border) !important;
+                        color: var(--acu-text-1) !important;
                     }
                     #${POPUP_ID_ACU} .button-group.acu-data-mgmt-buttons.acu-cols-2 {
                         grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -38284,7 +38298,7 @@ insertRow(1, ["时间2", "大纲事件2...", "关键词"]);
                         border-color: var(--acu-border) !important;
                         color: var(--acu-text-1) !important;
                     }
-                    
+
                     #${POPUP_ID_ACU} .button-group {
                         display: flex;
                         flex-wrap: wrap;
@@ -38296,6 +38310,29 @@ insertRow(1, ["时间2", "大纲事件2...", "关键词"]);
                     #${POPUP_ID_ACU} .acu-card > div:has(> .checkbox-group) + div:has(> .checkbox-group),
                     #${POPUP_ID_ACU} .acu-card > .checkbox-group + .checkbox-group {
                         margin-top: 4px;
+                    }
+                    /* checkbox-group 网格容器：当 card 内有多组 checkbox-group 时自动网格排列 */
+                    #${POPUP_ID_ACU} .acu-card > div[style*="flex-direction: column"]:has(> .checkbox-group:nth-child(2)) {
+                        display: grid !important;
+                        grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+                        gap: 6px !important;
+                    }
+
+                    /* ═══ 勾选条目：轻量化设计 ═══ */
+                    #${POPUP_ID_ACU} .checkbox-group {
+                        display: flex !important;
+                        align-items: center !important;
+                        gap: 8px !important;
+                        padding: 7px 10px !important;
+                        border-radius: 6px !important;
+                        border: 1px solid transparent !important;
+                        background: transparent !important;
+                        margin-bottom: 2px !important;
+                        transition: background 0.15s ease, border-color 0.15s ease !important;
+                    }
+                    #${POPUP_ID_ACU} .checkbox-group:hover {
+                        background: var(--acu-bg-2) !important;
+                        border-color: var(--acu-border) !important;
                     }
 
                     /* 兼容旧类名：保证“只来自插件自身”的统一观感 */
@@ -38326,7 +38363,7 @@ insertRow(1, ["时间2", "大纲事件2...", "关键词"]);
                         margin-bottom: 6px;
                     }
                     
-                    /* ✅ 复选框（浅色管理台风格） */
+                    /* ═══ 复选框：精致典雅风格 ═══ */
                     #${POPUP_ID_ACU} input[type="checkbox"] {
                         -webkit-appearance: none !important;
                         appearance: none !important;
@@ -38335,16 +38372,17 @@ insertRow(1, ["时间2", "大纲事件2...", "关键词"]);
                         height: 18px !important;
                         min-width: 18px !important;
                         min-height: 18px !important;
-                        border-radius: 4px !important;
-                        border: 1px solid var(--acu-border-2) !important;
+                        border-radius: 5px !important;
+                        border: 1.5px solid var(--acu-border-2) !important;
                         background-color: var(--acu-checkbox-bg, var(--acu-control-bg, var(--acu-bg-1))) !important;
                         background-image: none !important;
                         box-shadow: none !important;
                         margin: 0 !important;
                         cursor: pointer !important;
                         vertical-align: middle !important;
-                        transition: background-color 0.15s ease, border-color 0.15s ease !important;
-                        position: relative;
+                        transition: all 0.2s cubic-bezier(0.34, 1.56, 0.64, 1) !important;
+                        position: relative !important;
+                        flex-shrink: 0 !important;
                     }
                     /* 关键：禁用外部/浏览器可能注入的伪元素勾选样式 */
                     #${POPUP_ID_ACU} input[type="checkbox"]::before,
@@ -38355,22 +38393,32 @@ insertRow(1, ["时间2", "大纲事件2...", "关键词"]);
                     #${POPUP_ID_ACU} input[type="checkbox"]:checked::before {
                         content: "" !important;
                         display: block !important;
-                        position: absolute;
-                        inset: 2px;
+                        position: absolute !important;
+                        top: 50% !important;
+                        left: 50% !important;
+                        transform: translate(-50%, -50%) !important;
+                        width: 12px !important;
+                        height: 10px !important;
                         background-color: var(--acu-checkbox-checked-icon, #ffffff) !important;
-                        -webkit-mask-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 12 10'%3E%3Cpath fill='none' stroke='%23000' stroke-width='2' stroke-linecap='round' stroke-linejoin='round' d='M1 5l3 3 7-7'/%3E%3C/svg%3E");
-                        mask-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 12 10'%3E%3Cpath fill='none' stroke='%23000' stroke-width='2' stroke-linecap='round' stroke-linejoin='round' d='M1 5l3 3 7-7'/%3E%3C/svg%3E");
-                        -webkit-mask-repeat: no-repeat;
-                        mask-repeat: no-repeat;
-                        -webkit-mask-position: center;
-                        mask-position: center;
-                        -webkit-mask-size: 12px 10px;
-                        mask-size: 12px 10px;
+                        -webkit-mask-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 12 10'%3E%3Cpath fill='none' stroke='%23000' stroke-width='2.2' stroke-linecap='round' stroke-linejoin='round' d='M1 5l3 3 7-7'/%3E%3C/svg%3E") !important;
+                        mask-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 12 10'%3E%3Cpath fill='none' stroke='%23000' stroke-width='2.2' stroke-linecap='round' stroke-linejoin='round' d='M1 5l3 3 7-7'/%3E%3C/svg%3E") !important;
+                        -webkit-mask-repeat: no-repeat !important;
+                        mask-repeat: no-repeat !important;
+                        -webkit-mask-position: center !important;
+                        mask-position: center !important;
+                        -webkit-mask-size: 12px 10px !important;
+                        mask-size: 12px 10px !important;
+                        transition: transform 0.15s ease !important;
                     }
-                    /* 勾选状态：主题背景 + 主题图标色 */
+                    /* 勾选状态：主题背景 + 微缩放反馈 */
                     #${POPUP_ID_ACU} input[type="checkbox"]:checked {
                         border-color: var(--acu-checkbox-checked-border, var(--acu-accent)) !important;
                         background-color: var(--acu-checkbox-checked-bg, var(--acu-accent)) !important;
+                        transform: scale(1.05) !important;
+                    }
+                    /* 点击瞬间的微缩放 */
+                    #${POPUP_ID_ACU} input[type="checkbox"]:active {
+                        transform: scale(0.92) !important;
                     }
                     #${POPUP_ID_ACU} input[type="checkbox"]:disabled {
                         opacity: 0.45 !important;
@@ -38381,8 +38429,9 @@ insertRow(1, ["时间2", "大纲事件2...", "关键词"]);
                         outline-offset: 2px !important;
                     }
                     /* 位置微调（不改变外观规则） */
-                    #${POPUP_ID_ACU} .checkbox-group input[type="checkbox"] { margin-top: 2px !important; }
-                    #${POPUP_ID_ACU} .checkbox-group label { margin: 0; color: var(--acu-text-1); font-size: 13px; font-weight: 600; }
+                    #${POPUP_ID_ACU} .checkbox-group input[type="checkbox"] { margin-top: 0 !important; }
+                    #${POPUP_ID_ACU} .checkbox-group label { margin: 0 !important; color: var(--acu-text-2) !important; font-size: 13px !important; font-weight: 500 !important; cursor: pointer !important; line-height: 1.4 !important; }
+                    #${POPUP_ID_ACU} .checkbox-group:hover label { color: var(--acu-text-1) !important; }
 
                     /* Toggle switch（剧情推进） */
                     #${POPUP_ID_ACU} .toggle-switch { position: relative; display: inline-block; width: 46px; height: 26px; flex-shrink: 0; }
@@ -38499,9 +38548,10 @@ insertRow(1, ["时间2", "大纲事件2...", "关键词"]);
                     }
                     #${POPUP_ID_ACU} .qrf_radio_group input[type="radio"] {
                         width: auto !important;
-                        margin: 0;
-                        accent-color: var(--acu-radio-accent, var(--acu-accent));
-                        background: var(--acu-radio-bg, var(--acu-control-bg, var(--acu-bg-1)));
+                        margin: 0 !important;
+                        accent-color: var(--acu-radio-accent, var(--acu-accent)) !important;
+                        background: var(--acu-radio-bg, var(--acu-control-bg, var(--acu-bg-1))) !important;
+                        cursor: pointer !important;
                     }
                     #${POPUP_ID_ACU} .qrf_radio_group label { margin: 0 !important; color: var(--acu-text-2); font-weight: 500; }
                     #${POPUP_ID_ACU} .qrf_worldbook_list, #${POPUP_ID_ACU} .qrf_worldbook_entry_list {
@@ -38581,15 +38631,158 @@ insertRow(1, ["时间2", "大纲事件2...", "关键词"]);
                         margin-left: 8px;
                         padding: 4px 10px;
                         border-radius: 999px;
-                        border: 1px solid rgba(255, 107, 107, 0.35);
-                        background: rgba(255, 107, 107, 0.20);
-                        color: #fff;
+                        border: 1px solid rgba(255, 107, 107, 0.35) !important;
+                        background: rgba(255, 107, 107, 0.20) !important;
+                        color: #fff !important;
                         cursor: pointer;
                         font-weight: 650;
                         white-space: nowrap;
+                        box-shadow: none !important;
                     }
 
-                    /* 响应式：移动端优先解决"超窄 + 两侧空白" -> 让内容尽量占满可用宽度 */
+                    /* ═══════════════════════════════════════════════════════════════
+                       工具类系统 — 替代 200+ 处 inline style
+                       ═══════════════════════════════════════════════════════════════ */
+
+                    /* 布局 */
+                    #${POPUP_ID_ACU} .acu-row { display: flex; align-items: center; gap: 10px; }
+                    #${POPUP_ID_ACU} .acu-row-wrap { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+                    #${POPUP_ID_ACU} .acu-row-between { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+                    #${POPUP_ID_ACU} .acu-col { display: flex; flex-direction: column; gap: 8px; }
+                    #${POPUP_ID_ACU} .acu-col-sm { display: flex; flex-direction: column; gap: 6px; }
+                    #${POPUP_ID_ACU} .acu-grid-auto { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 12px; }
+
+                    /* 子区块（替代 settings-section 的 inline style） */
+                    #${POPUP_ID_ACU} .acu-section {
+                        padding: 16px;
+                        border-radius: 8px;
+                        background: var(--acu-bg-2);
+                        border: 1px solid var(--acu-border);
+                        margin-bottom: 16px;
+                    }
+                    #${POPUP_ID_ACU} .acu-section:last-child { margin-bottom: 0; }
+                    #${POPUP_ID_ACU} .acu-section-title {
+                        margin: 0 0 12px 0;
+                        color: var(--acu-text-1);
+                        display: flex;
+                        align-items: center;
+                        gap: 8px;
+                        font-size: 13px;
+                        font-weight: 600;
+                    }
+
+                    /* 分隔线 */
+                    #${POPUP_ID_ACU} .acu-divider {
+                        border: none;
+                        border-top: 1px solid var(--acu-border);
+                        margin: 14px 0;
+                    }
+                    #${POPUP_ID_ACU} .acu-divider-dashed {
+                        border: none;
+                        border-top: 1px dashed var(--acu-border);
+                        margin: 12px 0;
+                    }
+
+                    /* 按钮 */
+                    #${POPUP_ID_ACU} .acu-btn-full { width: 100%; }
+                    #${POPUP_ID_ACU} .acu-btn-icon {
+                        width: 32px; height: 32px; padding: 0;
+                        display: inline-flex; align-items: center; justify-content: center;
+                        border-radius: 6px; border: 1px solid var(--acu-border-2);
+                        background: var(--acu-bg-1); color: var(--acu-text-3);
+                        cursor: pointer; transition: all 0.15s ease;
+                    }
+                    #${POPUP_ID_ACU} .acu-btn-icon:hover {
+                        background: var(--acu-bg-2); color: var(--acu-text-1);
+                        border-color: var(--acu-border);
+                    }
+
+                    /* 徽章 */
+                    #${POPUP_ID_ACU} .acu-badge {
+                        padding: 2px 8px;
+                        border-radius: 999px;
+                        font-size: 0.75em;
+                        font-weight: 600;
+                        white-space: nowrap;
+                    }
+                    #${POPUP_ID_ACU} .acu-badge-accent {
+                        background: var(--acu-accent-glow);
+                        color: var(--acu-accent);
+                        border: 1px solid var(--acu-accent);
+                    }
+
+                    /* 信息面板（占位符说明等） */
+                    #${POPUP_ID_ACU} .acu-info-panel {
+                        padding: 10px 12px;
+                        background: var(--acu-bg-2);
+                        border-radius: 6px;
+                        border-left: 3px solid var(--acu-text-3);
+                        margin-bottom: 12px;
+                    }
+                    #${POPUP_ID_ACU} .acu-info-panel code {
+                        background: var(--acu-bg-3);
+                        padding: 1px 4px;
+                        border-radius: 3px;
+                        font-size: 0.9em;
+                    }
+
+                    /* 结果面板 */
+                    #${POPUP_ID_ACU} .acu-result-panel {
+                        padding: 12px;
+                        background: var(--acu-bg-2);
+                        border-radius: 6px;
+                        border: 1px solid var(--acu-border);
+                        max-height: 300px;
+                        overflow-y: auto;
+                        white-space: pre-wrap;
+                        font-size: 0.9em;
+                    }
+
+                    /* 表格 */
+                    #${POPUP_ID_ACU} .acu-table {
+                        width: 100%;
+                        border-collapse: collapse;
+                        font-size: 0.9em;
+                    }
+                    #${POPUP_ID_ACU} .acu-table th {
+                        text-align: left;
+                        padding: 6px 8px;
+                        border-bottom: 1px solid var(--acu-border);
+                        color: var(--acu-text-3);
+                        font-weight: 600;
+                        font-size: 0.9em;
+                    }
+                    #${POPUP_ID_ACU} .acu-table td {
+                        padding: 6px 8px;
+                        border-bottom: 1px solid var(--acu-bg-3);
+                    }
+                    #${POPUP_ID_ACU} .acu-table th:not(:first-child),
+                    #${POPUP_ID_ACU} .acu-table td:not(:first-child) {
+                        text-align: center;
+                    }
+
+                    /* 标签（inline label） */
+                    #${POPUP_ID_ACU} .acu-label {
+                        font-weight: 500;
+                        font-size: 0.9em;
+                        margin-bottom: 4px;
+                        display: block;
+                        color: var(--acu-text-2);
+                    }
+
+                    /* 顶部标题行（替代 optimization/plot 的 flex+border-bottom） */
+                    #${POPUP_ID_ACU} .acu-card-header {
+                        display: flex;
+                        align-items: center;
+                        justify-content: space-between;
+                        margin-bottom: 16px;
+                        padding-bottom: 12px;
+                        border-bottom: 1px solid var(--acu-border);
+                    }
+                    #${POPUP_ID_ACU} .acu-card-header h3 { margin: 0; color: var(--acu-text-1); }
+                    #${POPUP_ID_ACU} .acu-card-header .notes { margin: 4px 0 0 0; }
+
+                    /* ═══ 响应式 ≤1100px：导航变横向胶囊 ═══ */
                     @media screen and (max-width: 1100px) {
                         #${POPUP_ID_ACU} .acu-layout {
                             grid-template-columns: 1fr;
@@ -38603,17 +38796,36 @@ insertRow(1, ["时间2", "大纲事件2...", "关键词"]);
                             align-items: center;
                             overflow-x: auto;
                             overflow-y: hidden;
-                            gap: 8px;
-                            padding: 10px;
+                            gap: 4px;
+                            padding: 6px;
                             max-height: none;
                             flex-shrink: 0;
                             -webkit-overflow-scrolling: touch;
                             background: var(--acu-bg-1);
                             border-color: var(--acu-border);
+                            border-radius: 8px;
                         }
                         #${POPUP_ID_ACU} .acu-nav-section-title { display: none; }
-                        #${POPUP_ID_ACU} .acu-tab-button { width: auto; white-space: nowrap; }
+                        #${POPUP_ID_ACU} .acu-tab-button {
+                            width: auto !important;
+                            white-space: nowrap !important;
+                            padding: 6px 12px !important;
+                            font-size: 12px !important;
+                            border-radius: 20px !important;
+                        }
+                        #${POPUP_ID_ACU} .acu-tab-button::after { display: none !important; }
+                        #${POPUP_ID_ACU} .acu-tab-button.active {
+                            background: var(--acu-accent) !important;
+                            border-color: var(--acu-accent) !important;
+                            color: var(--acu-checkbox-checked-icon, #ffffff) !important;
+                            box-shadow: none !important;
+                        }
                         #${POPUP_ID_ACU} .acu-main { min-height: 0; }
+                        /* 窄屏下 checkbox-group 容器使用2列网格 */
+                        #${POPUP_ID_ACU} .acu-card > div[style*="flex-direction: column"]:has(> .checkbox-group:nth-child(2)) {
+                            grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)) !important;
+                            gap: 2px !important;
+                        }
                         #${POPUP_ID_ACU} #acu-tab-table .acu-data-template-grid {
                             grid-template-columns: 1fr !important;
                             gap: 12px !important;
@@ -38639,24 +38851,21 @@ insertRow(1, ["时间2", "大纲事件2...", "关键词"]);
                         #${POPUP_ID_ACU} #acu-tab-datamgmt .acu-data-isolation-row > button {
                             width: 100%;
                         }
-                        #${POPUP_ID_ACU} .button-group.acu-data-mgmt-buttons.acu-cols-3 {
-                            grid-template-columns: repeat(2, minmax(0, 1fr));
-                        }
                         #${POPUP_ID_ACU} .button-group.acu-data-mgmt-buttons button,
                         #${POPUP_ID_ACU} .button-group.acu-data-mgmt-buttons .button {
                             height: auto !important;
-                            min-height: 40px !important;
-                            padding: 8px 10px !important;
+                            min-height: 34px !important;
+                            padding: 6px 10px !important;
                             white-space: normal !important;
                             line-height: 1.35 !important;
                         }
                     }
                     
-                    /* 手机横屏/小平板 (≤768px) */
+                    /* ═══ 手机横屏/小平板 (≤768px) ═══ */
                     @media screen and (max-width: 768px) {
                         #${POPUP_ID_ACU} {
-                            padding: 10px;
-                            padding-bottom: calc(10px + env(safe-area-inset-bottom, 0px));
+                            padding: 8px;
+                            padding-bottom: calc(8px + env(safe-area-inset-bottom, 0px));
                             max-width: 100vw;
                             overflow-x: hidden;
                             overflow-y: auto;
@@ -38664,26 +38873,41 @@ insertRow(1, ["时间2", "大纲事件2...", "关键词"]);
                             max-height: 100%;
                         }
                         #${POPUP_ID_ACU} .acu-layout {
-                            gap: 10px;
-                            margin-top: 10px;
+                            gap: 8px;
+                            margin-top: 8px;
                             min-height: 0;
                         }
-                        #${POPUP_ID_ACU} .acu-header { padding: 10px; gap: 8px; flex-shrink: 0; }
-                        #${POPUP_ID_ACU} h2#updater-main-title-acu { font-size: 14px; }
-                        #${POPUP_ID_ACU} .acu-card { padding: 12px; margin-bottom: 10px; }
-                        #${POPUP_ID_ACU} .acu-card h3 { font-size: 13px; margin-bottom: 10px; padding-bottom: 8px; }
+                        #${POPUP_ID_ACU} .acu-header { padding: 8px 10px; gap: 6px; flex-shrink: 0; border-radius: 6px; }
+                        #${POPUP_ID_ACU} h2#updater-main-title-acu { font-size: 13px; }
+                        #${POPUP_ID_ACU} .acu-card { padding: 10px; margin-bottom: 8px; border-radius: 6px; }
+                        #${POPUP_ID_ACU} .acu-card h3 { font-size: 12px; margin-bottom: 8px; padding-bottom: 6px; }
                         #${POPUP_ID_ACU} .acu-tabs-nav {
-                            padding: 8px;
-                            gap: 6px;
+                            padding: 4px;
+                            gap: 3px;
                             flex-shrink: 0;
                             max-height: none;
                             background: var(--acu-bg-1);
                             border-color: var(--acu-border);
+                            border-radius: 20px;
+                        }
+                        #${POPUP_ID_ACU} .acu-tab-button {
+                            padding: 5px 10px !important;
+                            font-size: 11px !important;
+                        }
+                        /* 768px以下 checkbox-group 更紧凑 */
+                        #${POPUP_ID_ACU} .checkbox-group {
+                            padding: 5px 8px !important;
+                            gap: 6px !important;
+                        }
+                        #${POPUP_ID_ACU} .checkbox-group label { font-size: 12px !important; }
+                        /* checkbox 网格更窄 */
+                        #${POPUP_ID_ACU} .acu-card > div[style*="flex-direction: column"]:has(> .checkbox-group:nth-child(2)) {
+                            grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)) !important;
                         }
                         #${POPUP_ID_ACU} #acu-tab-corefunc .acu-plot-header-row {
                             flex-wrap: wrap;
                             align-items: flex-start !important;
-                            gap: 10px !important;
+                            gap: 8px !important;
                         }
                         #${POPUP_ID_ACU} #acu-tab-corefunc .acu-plot-header-row > div:last-child {
                             width: 100%;
@@ -38691,22 +38915,32 @@ insertRow(1, ["时间2", "大纲事件2...", "关键词"]);
                         }
                     }
                     
+                    /* ═══ 手机竖屏 (≤520px) ═══ */
                     @media screen and (max-width: 520px) {
                         #${POPUP_ID_ACU} {
-                            padding: 8px;
-                            padding-bottom: calc(8px + env(safe-area-inset-bottom, 0px));
+                            padding: 6px;
+                            padding-bottom: calc(6px + env(safe-area-inset-bottom, 0px));
                         }
-                        #${POPUP_ID_ACU} .acu-layout { gap: 8px; margin-top: 8px; min-height: 0; }
+                        #${POPUP_ID_ACU} .acu-layout { gap: 6px; margin-top: 6px; min-height: 0; }
                         #${POPUP_ID_ACU} .acu-main { min-height: 0; }
-                        #${POPUP_ID_ACU} .acu-grid, #${POPUP_ID_ACU} .acu-grid-2x2 { grid-template-columns: 1fr; gap: 8px; }
+                        #${POPUP_ID_ACU} .acu-grid, #${POPUP_ID_ACU} .acu-grid-2x2 { grid-template-columns: 1fr; gap: 6px; }
                         #${POPUP_ID_ACU} .acu-card[style*="grid-column: span 2"] { grid-column: auto !important; }
-                        #${POPUP_ID_ACU} .input-group { flex-direction: column; align-items: stretch; gap: 6px; }
+                        #${POPUP_ID_ACU} .input-group { flex-direction: column; align-items: stretch; gap: 4px; }
                         #${POPUP_ID_ACU} .input-group button { width: 100%; }
-                        #${POPUP_ID_ACU} .button-group { flex-direction: column; gap: 6px; }
-                        #${POPUP_ID_ACU} .button-group button { width: 100%; min-height: 32px; padding: 8px 12px; }
+                        #${POPUP_ID_ACU} .button-group { flex-wrap: wrap; gap: 4px; }
+                        #${POPUP_ID_ACU} .button-group button { flex: 1 1 auto; min-height: 32px; padding: 6px 8px; }
                         #${POPUP_ID_ACU} table { display: block; overflow-x: auto; white-space: nowrap; -webkit-overflow-scrolling: touch; font-size: 12px; }
-                        #${POPUP_ID_ACU} table th, #${POPUP_ID_ACU} table td { padding: 4px 6px !important; }
-                        #${POPUP_ID_ACU} .checkbox-group { padding: 10px; gap: 8px; }
+                        #${POPUP_ID_ACU} table th, #${POPUP_ID_ACU} table td { padding: 3px 5px !important; }
+                        /* 极窄 checkbox：2列网格 + 紧凑行高 */
+                        #${POPUP_ID_ACU} .checkbox-group {
+                            padding: 4px 6px !important;
+                            gap: 5px !important;
+                        }
+                        #${POPUP_ID_ACU} .checkbox-group label { font-size: 11px !important; line-height: 1.3 !important; }
+                        #${POPUP_ID_ACU} .acu-card > div[style*="flex-direction: column"]:has(> .checkbox-group:nth-child(2)) {
+                            grid-template-columns: 1fr 1fr !important;
+                            gap: 1px !important;
+                        }
                         #${POPUP_ID_ACU} #acu-tab-corefunc .acu-plot-scope-grid,
                         #${POPUP_ID_ACU} #acu-tab-corefunc .acu-plot-task-layout {
                             grid-template-columns: 1fr !important;
@@ -38759,105 +38993,106 @@ insertRow(1, ["时间2", "大纲事件2...", "关键词"]);
                             height: 36px;
                         }
                         
-                        /* 移动端：仍保持网格（2列更好用），避免变回单列长列表 */
-                        #${POPUP_ID_ACU} .button-group.acu-data-mgmt-buttons.acu-cols-3 { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-                        #${POPUP_ID_ACU} .button-group.acu-data-mgmt-buttons.acu-cols-2 { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+                        /* 移动端：按钮自然宽度flex-wrap */
                         #${POPUP_ID_ACU} .button-group.acu-data-mgmt-buttons button,
                         #${POPUP_ID_ACU} .button-group.acu-data-mgmt-buttons .button {
-                            height: 40px !important;
+                            min-height: 36px !important;
                             font-size: 0.9em !important;
-                            padding: 0 12px !important;
+                            padding: 6px 12px !important;
                         }
                     }
                     
-                    /* 极窄屏模式 (≤420px) */
+                    /* ═══ 极窄屏 (≤420px) ═══ */
                     @media screen and (max-width: 420px) {
-                        #${POPUP_ID_ACU} { 
-                            padding: 6px; 
-                            padding-bottom: calc(6px + env(safe-area-inset-bottom, 0px));
-                        }
-                        #${POPUP_ID_ACU} .acu-layout { gap: 6px; margin-top: 6px; min-height: 0; }
-                        #${POPUP_ID_ACU} .acu-main { min-height: 0; }
-                        #${POPUP_ID_ACU} .acu-header { padding: 8px; flex-shrink: 0; }
-                        #${POPUP_ID_ACU} h2#updater-main-title-acu { font-size: 13px; line-height: 1.3; }
-                        #${POPUP_ID_ACU} .acu-card { padding: 10px; margin-bottom: 8px; border-radius: 10px; }
-                        #${POPUP_ID_ACU} .acu-card h3 { font-size: 12px; margin-bottom: 8px; padding-bottom: 6px; }
-                        #${POPUP_ID_ACU} .acu-tabs-nav { padding: 6px; gap: 4px; flex-shrink: 0; }
-                        #${POPUP_ID_ACU} .acu-tab-button { padding: 8px 10px; font-size: 12px; }
-                        #${POPUP_ID_ACU} label { font-size: 11px; margin-bottom: 4px; }
-                        #${POPUP_ID_ACU} input, #${POPUP_ID_ACU} select, #${POPUP_ID_ACU} textarea { 
-                            padding: 8px 10px; 
-                            border-radius: 8px;
-                        }
-                        #${POPUP_ID_ACU} button, #${POPUP_ID_ACU} .button { 
-                            padding: 6px 10px; 
-                            min-height: 32px;
-                            border-radius: 8px;
-                        }
-                        #${POPUP_ID_ACU} .checkbox-group { padding: 8px; gap: 6px; border-radius: 8px; }
-                        #${POPUP_ID_ACU} .checkbox-group label { font-size: 12px; }
-                        #${POPUP_ID_ACU} .button-group.acu-data-mgmt-buttons button,
-                        #${POPUP_ID_ACU} .button-group.acu-data-mgmt-buttons .button {
-                            height: 36px !important;
-                            font-size: 0.85em !important;
-                            padding: 0 10px !important;
-                            border-radius: 8px !important;
-                        }
-                    }
-                    
-                    /* 超小屏幕 (≤360px) */
-                    @media screen and (max-width: 360px) {
                         #${POPUP_ID_ACU} { 
                             padding: 4px; 
                             padding-bottom: calc(4px + env(safe-area-inset-bottom, 0px));
                         }
                         #${POPUP_ID_ACU} .acu-layout { gap: 4px; margin-top: 4px; min-height: 0; }
                         #${POPUP_ID_ACU} .acu-main { min-height: 0; }
-                        #${POPUP_ID_ACU} .acu-header { padding: 6px; border-radius: 8px; flex-shrink: 0; }
-                        #${POPUP_ID_ACU} h2#updater-main-title-acu { font-size: 12px; }
-                        #${POPUP_ID_ACU} .acu-header-sub { font-size: 10px; margin-top: 4px; }
-                        #${POPUP_ID_ACU} .acu-card { padding: 8px; margin-bottom: 6px; border-radius: 8px; }
+                        #${POPUP_ID_ACU} .acu-header { padding: 6px 8px; flex-shrink: 0; border-radius: 6px; }
+                        #${POPUP_ID_ACU} h2#updater-main-title-acu { font-size: 12px; line-height: 1.3; }
+                        #${POPUP_ID_ACU} .acu-card { padding: 8px; margin-bottom: 6px; border-radius: 6px; }
                         #${POPUP_ID_ACU} .acu-card h3 { font-size: 11px; margin-bottom: 6px; padding-bottom: 4px; }
-                        #${POPUP_ID_ACU} .acu-tabs-nav { padding: 4px; gap: 3px; border-radius: 8px; flex-shrink: 0; }
-                        #${POPUP_ID_ACU} .acu-tab-button { padding: 6px 8px; font-size: 11px; border-radius: 6px; }
-                        #${POPUP_ID_ACU} .acu-tab-button::after { display: none; }
-                        #${POPUP_ID_ACU} label { font-size: 10px; }
+                        #${POPUP_ID_ACU} .acu-tabs-nav { padding: 3px; gap: 2px; flex-shrink: 0; border-radius: 16px; }
+                        #${POPUP_ID_ACU} .acu-tab-button { padding: 4px 8px !important; font-size: 10px !important; }
+                        #${POPUP_ID_ACU} label { font-size: 10px; margin-bottom: 3px; }
                         #${POPUP_ID_ACU} input, #${POPUP_ID_ACU} select, #${POPUP_ID_ACU} textarea { 
-                            padding: 6px 8px; 
-                            font-size: 14px; /* 保持16px防止iOS缩放 */
-                            border-radius: 6px;
-                        }
-                        #${POPUP_ID_ACU} button, #${POPUP_ID_ACU} .button { 
-                            padding: 5px 8px; 
-                            min-height: 28px;
-                            font-size: 11px;
-                            border-radius: 6px;
-                        }
-                        #${POPUP_ID_ACU} .checkbox-group { padding: 6px; gap: 4px; border-radius: 6px; }
-                        #${POPUP_ID_ACU} .checkbox-group label { font-size: 11px; line-height: 1.3; }
-                        #${POPUP_ID_ACU} input[type="checkbox"] { 
-                            width: 16px !important; 
-                            height: 16px !important;
-                            min-width: 16px !important;
-                            min-height: 16px !important;
-                        }
-                        #${POPUP_ID_ACU} table { font-size: 11px; }
-                        #${POPUP_ID_ACU} table th, #${POPUP_ID_ACU} table td { padding: 3px 4px !important; }
-                        #${POPUP_ID_ACU} .button-group { gap: 4px; }
-                        #${POPUP_ID_ACU} .button-group.acu-data-mgmt-buttons { gap: 6px !important; }
-                        #${POPUP_ID_ACU} .button-group.acu-data-mgmt-buttons.acu-cols-3,
-                        #${POPUP_ID_ACU} .button-group.acu-data-mgmt-buttons.acu-cols-2 { 
-                            grid-template-columns: repeat(2, minmax(0, 1fr)); 
-                        }
-                        #${POPUP_ID_ACU} .button-group.acu-data-mgmt-buttons button,
-                        #${POPUP_ID_ACU} .button-group.acu-data-mgmt-buttons .button {
-                            height: 32px !important;
-                            font-size: 0.8em !important;
-                            padding: 0 6px !important;
+                            padding: 6px 8px !important; 
                             border-radius: 6px !important;
                         }
-                        #${POPUP_ID_ACU} hr { margin: 8px 0; }
-                        #${POPUP_ID_ACU} .notes { font-size: 10px !important; line-height: 1.4; }
+                        #${POPUP_ID_ACU} button, #${POPUP_ID_ACU} .button { 
+                            padding: 5px 8px !important; 
+                            min-height: 28px !important;
+                            font-size: 11px !important;
+                            border-radius: 6px !important;
+                        }
+                        #${POPUP_ID_ACU} .checkbox-group {
+                            padding: 3px 5px !important;
+                            gap: 4px !important;
+                        }
+                        #${POPUP_ID_ACU} .checkbox-group label { font-size: 10px !important; line-height: 1.25 !important; }
+                        #${POPUP_ID_ACU} .button-group.acu-data-mgmt-buttons button,
+                        #${POPUP_ID_ACU} .button-group.acu-data-mgmt-buttons .button {
+                            min-height: 30px !important;
+                            font-size: 0.8em !important;
+                            padding: 4px 8px !important;
+                            border-radius: 6px !important;
+                        }
+                    }
+                    
+                    /* ═══ 超小屏 (≤360px) ═══ */
+                    @media screen and (max-width: 360px) {
+                        #${POPUP_ID_ACU} { 
+                            padding: 3px; 
+                            padding-bottom: calc(3px + env(safe-area-inset-bottom, 0px));
+                        }
+                        #${POPUP_ID_ACU} .acu-layout { gap: 3px; margin-top: 3px; min-height: 0; }
+                        #${POPUP_ID_ACU} .acu-main { min-height: 0; }
+                        #${POPUP_ID_ACU} .acu-header { padding: 5px 6px; border-radius: 6px; flex-shrink: 0; }
+                        #${POPUP_ID_ACU} h2#updater-main-title-acu { font-size: 11px; }
+                        #${POPUP_ID_ACU} .acu-header-sub { font-size: 9px; margin-top: 2px; }
+                        #${POPUP_ID_ACU} .acu-card { padding: 6px; margin-bottom: 4px; border-radius: 6px; }
+                        #${POPUP_ID_ACU} .acu-card h3 { font-size: 10px; margin-bottom: 4px; padding-bottom: 3px; }
+                        #${POPUP_ID_ACU} .acu-tabs-nav { padding: 3px; gap: 2px; border-radius: 14px; flex-shrink: 0; }
+                        #${POPUP_ID_ACU} .acu-tab-button { padding: 3px 6px !important; font-size: 10px !important; border-radius: 12px !important; }
+                        #${POPUP_ID_ACU} .acu-tab-button::after { display: none !important; }
+                        #${POPUP_ID_ACU} label { font-size: 9px; }
+                        #${POPUP_ID_ACU} input, #${POPUP_ID_ACU} select, #${POPUP_ID_ACU} textarea { 
+                            padding: 5px 6px !important; 
+                            font-size: 14px !important;
+                            border-radius: 5px !important;
+                        }
+                        #${POPUP_ID_ACU} button, #${POPUP_ID_ACU} .button { 
+                            padding: 4px 6px !important; 
+                            min-height: 26px !important;
+                            font-size: 10px !important;
+                            border-radius: 5px !important;
+                        }
+                        #${POPUP_ID_ACU} .checkbox-group {
+                            padding: 2px 4px !important;
+                            gap: 3px !important;
+                        }
+                        #${POPUP_ID_ACU} .checkbox-group label { font-size: 9px !important; line-height: 1.2 !important; }
+                        #${POPUP_ID_ACU} input[type="checkbox"] { 
+                            width: 15px !important; 
+                            height: 15px !important;
+                            min-width: 15px !important;
+                            min-height: 15px !important;
+                        }
+                        #${POPUP_ID_ACU} table { font-size: 10px; }
+                        #${POPUP_ID_ACU} table th, #${POPUP_ID_ACU} table td { padding: 2px 3px !important; }
+                        #${POPUP_ID_ACU} .button-group { gap: 3px; }
+                        #${POPUP_ID_ACU} .button-group.acu-data-mgmt-buttons { gap: 4px !important; }
+                        #${POPUP_ID_ACU} .button-group.acu-data-mgmt-buttons button,
+                        #${POPUP_ID_ACU} .button-group.acu-data-mgmt-buttons .button {
+                            min-height: 28px !important;
+                            font-size: 0.75em !important;
+                            padding: 3px 6px !important;
+                            border-radius: 5px !important;
+                        }
+                        #${POPUP_ID_ACU} hr { margin: 6px 0; }
+                        #${POPUP_ID_ACU} .notes { font-size: 9px !important; line-height: 1.3; }
                     }
 
                     /* 表格模板预设 */
@@ -38938,7 +39173,7 @@ insertRow(1, ["时间2", "大纲事件2...", "关键词"]);
                         #${POPUP_ID_ACU} .checkbox-group label { font-size: 10px; }
                         #${POPUP_ID_ACU} .button-group.acu-data-mgmt-buttons button,
                         #${POPUP_ID_ACU} .button-group.acu-data-mgmt-buttons .button {
-                            height: 28px !important;
+                            min-height: 26px !important;
                             font-size: 0.75em !important;
                         }
                     }
@@ -39488,53 +39723,19 @@ insertRow(1, ["时间2", "大纲事件2...", "关键词"]);
         logDebug_ACU(`[ThemeRegistry] Applied theme: ${theme.name} (${theme.id})`);
     }
     /**
-     * 实际将主题变量写入 DOM
-     * 如果 popup 元素不存在，将样式直接注入到 <head> 用 #popup ID 选择器
+     * 根据主题对象生成完整的 CSS 字符串。
+     * 包含 popup 变量、window chrome 变量、toast、confirm、visualizer、customCSS。
+     * 此函数不操作 DOM，仅返回 CSS 文本。
+     * 用于：① 预注入到 popupHtml 消除 FOUC  ② applyThemeToDOM 中复用
      */
-    function applyThemeToDOM(theme) {
-        // 关键：注入到 topLevelWindow 的 document，而非 iframe 的 document
-        // 因为弹窗 DOM 挂载在 topLevelWindow 中
-        const targetDoc = (topLevelWindow_ACU || window).document;
-        // 1. 注入 CSS 变量覆盖
-        // 关键：注入到 popup 内部第一个 <style> 标签之后（DOM 顺序靠后，层叠优先级更高）
-        // 如果 popup 还未挂载，则注入到 head 中作为 fallback
-        const popupEl = targetDoc.getElementById(POPUP_ID_ACU);
-        let existingStyle = targetDoc.getElementById(THEME_STYLE_ID);
-        // 找到 popup 内部的第一个 <style> 标签（MAIN_POPUP_CSS_ACU 注入的位置）
-        const innerStyle = popupEl?.querySelector('style') ?? null;
-        if (!existingStyle) {
-            existingStyle = targetDoc.createElement('style');
-            existingStyle.id = THEME_STYLE_ID;
-        }
-        // 每次都确保位置正确：注入到 popup 内部 <style> 之后
-        // 如果 existingStyle 已存在但位置不对（比如在 head 中），迁移到正确位置
-        if (innerStyle) {
-            // popup 存在且内部有 style → 插入到内部 style 之后
-            if (existingStyle !== innerStyle.nextElementSibling) {
-                innerStyle.after(existingStyle);
-            }
-        }
-        else if (popupEl) {
-            // popup 存在但内部没有 style → 插入到 popup 最前面
-            if (existingStyle.parentNode !== popupEl) {
-                popupEl.prepend(existingStyle);
-            }
-        }
-        else {
-            // popup 不存在 → fallback 到 head
-            if (existingStyle.parentNode !== targetDoc.head) {
-                targetDoc.head.appendChild(existingStyle);
-            }
-        }
+    function buildThemeCSS_ACU(theme) {
         const varDeclarations = Object.entries(theme.variables)
             .map(([key, value]) => `    ${key}: ${value};`)
             .join('\n');
         let css = `#${POPUP_ID_ACU} {\n${varDeclarations}\n}`;
-        // 2. 窗口 chrome 也需要注入核心主题变量。
-        //    .acu-window 位于 #popup_acu 外部，无法继承 popup 根上的变量；
-        //    如果这里只注入 windowChromeVariables，未显式配置的主题会退回写死 fallback。
+        // 窗口 chrome 核心主题变量
         css += `\n.acu-window {\n${varDeclarations}\n}`;
-        // 3. color-scheme 和 font-family 直接注入（ID选择器优先级够高）
+        // color-scheme 和 font-family
         css += `\n#${POPUP_ID_ACU} { color-scheme: ${theme.colorScheme};`;
         if (theme.fontFamily) {
             css += ` font-family: ${theme.fontFamily};`;
@@ -39545,20 +39746,19 @@ insertRow(1, ["时间2", "大纲事件2...", "关键词"]);
             css += ` font-family: ${theme.fontFamily};`;
         }
         css += ` }`;
-        // 4. 追加自定义 CSS
+        // 追加自定义 CSS
         if (theme.customCSS) {
             const customCSS = theme.customCSS.replace(/#popup\b/g, `#${POPUP_ID_ACU}`);
             css += '\n' + customCSS;
         }
-        // 5. 窗口chrome变量覆盖（高于核心变量自动注入）
+        // 窗口chrome变量覆盖
         if (theme.windowChromeVariables) {
             const chromeVars = Object.entries(theme.windowChromeVariables)
                 .map(([key, value]) => `    ${key}: ${value};`)
                 .join('\n');
             css += `\n.acu-window {\n${chromeVars}\n}`;
         }
-        // 6. Toast变量覆盖 — 将主题核心颜色变量注入到 toast 容器作用域
-        //    确保 toast 通知跟随主题变化（toast 元素在 #popup_acu 外部，无法继承 CSS 变量）
+        // Toast 变量覆盖
         {
             const toastVarNames = [
                 '--acu-accent', '--acu-bg-1', '--acu-text-1', '--acu-border',
@@ -39569,7 +39769,6 @@ insertRow(1, ["时间2", "大纲事件2...", "关键词"]);
                 .filter(key => theme.variables[key])
                 .map(key => `    ${key}: ${theme.variables[key]};`)
                 .join('\n');
-            // 主题自定义 toast 变量优先级高于自动注入
             const customToastVars = theme.toastVariables
                 ? Object.entries(theme.toastVariables)
                     .map(([key, value]) => `    ${key}: ${value};`)
@@ -39579,8 +39778,7 @@ insertRow(1, ["时间2", "大纲事件2...", "关键词"]);
                 css += `\n#toast-container .acu-toast.toast {\n${toastBaseVars}${customToastVars ? '\n' + customToastVars : ''}\n}`;
             }
         }
-        // 7. 确认弹窗变量注入 — 弹窗挂载在 body 级别，不在 #popup_acu 内
-        //    将主题变量注入到确认弹窗容器选择器，使其跟随主题变化
+        // 确认弹窗变量注入
         {
             const confirmVarNames = [
                 '--acu-accent', '--acu-bg-1', '--acu-bg-0', '--acu-text-1',
@@ -39601,8 +39799,7 @@ insertRow(1, ["时间2", "大纲事件2...", "关键词"]);
                 css += `\n#${SCRIPT_ID_PREFIX_ACU}-custom-confirm-overlay,\n#${SCRIPT_ID_PREFIX_ACU}-custom-confirm {\n${confirmVars}\n}`;
             }
         }
-        // 8. Visualizer变量覆盖
-        //    可视化编辑器挂载在 #acu-visualizer-content，而不是不存在的 #acu-visualizer-root
+        // Visualizer 变量覆盖
         {
             const visualizerBaseVarNames = [
                 '--acu-bg-0', '--acu-bg-1', '--acu-bg-2', '--acu-bg-3',
@@ -39625,7 +39822,49 @@ insertRow(1, ["时间2", "大纲事件2...", "关键词"]);
                 css += `\n#acu-visualizer-content {\n${visualizerBaseVars}${vizVars ? '\n' + vizVars : ''}\n}`;
             }
         }
-        existingStyle.textContent = css;
+        return css;
+    }
+    /**
+     * 获取当前主题的完整 CSS 字符串（用于预注入消除 FOUC）。
+     * 在 popup 创建之前调用，确保首帧即包含正确的主题样式。
+     */
+    function getThemeCSS_ACU(themeId) {
+        const id = themeId || getActiveThemeId();
+        const theme = getThemeById(id);
+        if (!theme) {
+            return buildThemeCSS_ACU(THEME_DEFAULT_LIGHT);
+        }
+        return buildThemeCSS_ACU(theme);
+    }
+    /**
+     * 实际将主题变量写入 DOM
+     * 复用 buildThemeCSS_ACU 生成 CSS，注入到正确位置
+     */
+    function applyThemeToDOM(theme) {
+        const targetDoc = (topLevelWindow_ACU || window).document;
+        const popupEl = targetDoc.getElementById(POPUP_ID_ACU);
+        let existingStyle = targetDoc.getElementById(THEME_STYLE_ID);
+        const innerStyle = popupEl?.querySelector('style') ?? null;
+        if (!existingStyle) {
+            existingStyle = targetDoc.createElement('style');
+            existingStyle.id = THEME_STYLE_ID;
+        }
+        if (innerStyle) {
+            if (existingStyle !== innerStyle.nextElementSibling) {
+                innerStyle.after(existingStyle);
+            }
+        }
+        else if (popupEl) {
+            if (existingStyle.parentNode !== popupEl) {
+                popupEl.prepend(existingStyle);
+            }
+        }
+        else {
+            if (existingStyle.parentNode !== targetDoc.head) {
+                targetDoc.head.appendChild(existingStyle);
+            }
+        }
+        existingStyle.textContent = buildThemeCSS_ACU(theme);
     }
     // ═══════════════════════════════════════════════════════════════
     // 自定义主题管理
@@ -40077,18 +40316,18 @@ insertRow(1, ["时间2", "大纲事件2...", "关键词"]);
         return `
         <div class="acu-theme-selector" style="display: flex; align-items: center; gap: 8px; margin-left: auto;">
             <select id="${SCRIPT_ID_PREFIX_ACU}-theme-select" 
-                    style="padding: 4px 8px; border-radius: 4px; border: 1px solid var(--border-normal); background: var(--input-background); color: var(--input-text-color); font-size: 12px; cursor: pointer; max-width: 140px;"
+                    style="padding: 4px 8px !important; border-radius: 6px !important; border: 1px solid var(--acu-border-2, #c8cdd5) !important; background: var(--acu-control-bg, #ffffff) !important; color: var(--acu-text-1, #1a2332) !important; font-size: 12px !important; cursor: pointer !important; max-width: 140px !important; font-family: inherit !important;"
                     title="切换界面主题">
                 ${options}
             </select>
             <div class="acu-theme-actions" style="display: flex; gap: 4px;">
                 <button id="${SCRIPT_ID_PREFIX_ACU}-theme-import" 
-                        style="padding: 4px 6px; border-radius: 4px; border: 1px solid var(--border-normal); background: var(--button-background); color: var(--text_secondary); font-size: 11px; cursor: pointer;"
+                        style="padding: 4px 6px !important; border-radius: 6px !important; border: 1px solid var(--acu-border-2, #c8cdd5) !important; background: var(--acu-bg-1, #ffffff) !important; color: var(--acu-text-3, #8896a8) !important; font-size: 11px !important; cursor: pointer !important; font-family: inherit !important;"
                         title="导入自定义主题">
                     <i class="fa-solid fa-upload" style="font-size: 11px;"></i>
                 </button>
                 <button id="${SCRIPT_ID_PREFIX_ACU}-theme-export" 
-                        style="padding: 4px 6px; border-radius: 4px; border: 1px solid var(--border-normal); background: var(--button-background); color: var(--text_secondary); font-size: 11px; cursor: pointer;"
+                        style="padding: 4px 6px !important; border-radius: 6px !important; border: 1px solid var(--acu-border-2, #c8cdd5) !important; background: var(--acu-bg-1, #ffffff) !important; color: var(--acu-text-3, #8896a8) !important; font-size: 11px !important; cursor: pointer !important; font-family: inherit !important;"
                         title="导出当前主题模板（完整可编辑版）">
                     <i class="fa-solid fa-download" style="font-size: 11px;"></i>
                 </button>
@@ -40241,16 +40480,16 @@ insertRow(1, ["时间2", "大纲事件2...", "关键词"]);
             return `<option value="${t.id}" ${selected}>${t.name}${builtin}</option>`;
         }).join('');
         return `<div class="acu-chrome-theme-selector" style="display: flex; align-items: center; gap: 4px;">
-        <select id="${SCRIPT_ID_PREFIX_ACU}-chrome-theme-select" style="padding: 2px 6px; border-radius: 4px; border: 1px solid var(--acu-panel-border, #e0e4ea); background: var(--acu-panel-bg, #f5f7fa); color: var(--acu-panel-text, #1a2332); font-size: 11px; cursor: pointer; max-width: 120px; height: 26px;">
+        <select id="${SCRIPT_ID_PREFIX_ACU}-chrome-theme-select" style="padding: 2px 6px !important; border-radius: 6px !important; border: 1px solid var(--acu-panel-border, #e0e4ea) !important; background: var(--acu-panel-bg, #f5f7fa) !important; color: var(--acu-panel-text, #1a2332) !important; font-size: 11px !important; cursor: pointer !important; max-width: 120px !important; height: 26px !important; font-family: inherit !important;">
             ${options}
         </select>
-        <button id="${SCRIPT_ID_PREFIX_ACU}-chrome-theme-delete" style="width: 26px; height: 26px; padding: 0; border-radius: 4px; border: 1px solid transparent; background: transparent; color: var(--acu-panel-text-mute, #8896a8); cursor: pointer; display: flex; align-items: center; justify-content: center; font-size: 11px;${BUILTIN_THEME_IDS.has(currentId) ? ' opacity: 0.3; pointer-events: none;' : ''}" title="${BUILTIN_THEME_IDS.has(currentId) ? '内置主题不可删除' : '删除当前自定义主题'}">
+        <button id="${SCRIPT_ID_PREFIX_ACU}-chrome-theme-delete" style="width: 26px; height: 26px; padding: 0; border-radius: 6px; border: 1px solid transparent; background: transparent; color: var(--acu-panel-text-mute, #8896a8); cursor: pointer; display: flex; align-items: center; justify-content: center; font-size: 11px;${BUILTIN_THEME_IDS.has(currentId) ? ' opacity: 0.3; pointer-events: none;' : ''}" title="${BUILTIN_THEME_IDS.has(currentId) ? '内置主题不可删除' : '删除当前自定义主题'}">
             <i class="fa-solid fa-trash" style="font-size: 10px;"></i>
         </button>
-        <button id="${SCRIPT_ID_PREFIX_ACU}-chrome-theme-import" style="width: 26px; height: 26px; padding: 0; border-radius: 4px; border: 1px solid transparent; background: transparent; color: var(--acu-panel-text-mute, #8896a8); cursor: pointer; display: flex; align-items: center; justify-content: center; font-size: 11px;" title="导入自定义主题">
+        <button id="${SCRIPT_ID_PREFIX_ACU}-chrome-theme-import" style="width: 26px; height: 26px; padding: 0; border-radius: 6px; border: 1px solid transparent; background: transparent; color: var(--acu-panel-text-mute, #8896a8); cursor: pointer; display: flex; align-items: center; justify-content: center; font-size: 11px;" title="导入自定义主题">
             <i class="fa-solid fa-upload" style="font-size: 11px;"></i>
         </button>
-        <button id="${SCRIPT_ID_PREFIX_ACU}-chrome-theme-export" style="width: 26px; height: 26px; padding: 0; border-radius: 4px; border: 1px solid transparent; background: transparent; color: var(--acu-panel-text-mute, #8896a8); cursor: pointer; display: flex; align-items: center; justify-content: center; font-size: 11px;" title="导出当前主题模板（完整可编辑版）">
+        <button id="${SCRIPT_ID_PREFIX_ACU}-chrome-theme-export" style="width: 26px; height: 26px; padding: 0; border-radius: 6px; border: 1px solid transparent; background: transparent; color: var(--acu-panel-text-mute, #8896a8); cursor: pointer; display: flex; align-items: center; justify-content: center; font-size: 11px;" title="导出当前主题模板（完整可编辑版）">
             <i class="fa-solid fa-download" style="font-size: 11px;"></i>
         </button>
     </div>`;
@@ -40264,9 +40503,14 @@ insertRow(1, ["时间2", "大纲事件2...", "关键词"]);
         // The state is managed by background event listeners. The popup should only display the current state.
         // Calling reset here could cause race conditions or incorrect state wipes.
         loadSettingsAndRefreshUI_ACU(); // Load latest settings into UI
+        // ═══ 关键：在创建窗口前预加载自定义主题并生成主题CSS ═══
+        // 这样主题CSS可以嵌入popupHtml，消除首帧闪变（FOUC）
+        loadCustomThemes();
+        const prebuiltThemeCSS = getThemeCSS_ACU();
         const popupHtml = `
             <div id="${POPUP_ID_ACU}" class="auto-card-updater-popup">
                 <style>${MAIN_POPUP_CSS_ACU}</style>
+                <style id="acu-theme-override">${prebuiltThemeCSS}</style>
 
                 <div class="acu-header">
                     <h2 id="updater-main-title-acu">当前聊天：${escapeHtml_ACU$1(currentChatFileIdentifier_ACU || '未知')}</h2>
@@ -40336,8 +40580,8 @@ insertRow(1, ["时间2", "大纲事件2...", "关键词"]);
                 if ($oldThemeBtn.length) {
                     $oldThemeBtn.replaceWith(generateThemeSelectorHTMLForChrome());
                 }
-                // 加载自定义主题并应用当前主题
-                loadCustomThemes();
+                // 主题已在创建窗口前预加载（loadCustomThemes + getThemeCSS_ACU），
+                // 此处仅调用 applyTheme 确保 DOM 中 <style> 元素位置正确（用于后续动态切换）
                 applyTheme();
                 bindThemeSelectorEvents();
                 $popupInstance_ACU.off('acu_plot_settings_refresh').on('acu_plot_settings_refresh', function (_event, plotSettingsOverride = null) {

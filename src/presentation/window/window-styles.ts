@@ -99,7 +99,7 @@ import { topLevelWindow_ACU } from '../../shared/env';
         --acu-panel-text-mute: var(--acu-text-3, #8896a8);
         --acu-panel-accent: var(--acu-accent, #2563eb);
         --acu-panel-hover: var(--acu-bg-2, rgba(0, 0, 0, 0.03));
-        --acu-panel-shadow: var(--acu-shadow, 0 4px 16px rgba(0, 0, 0, 0.10));
+        --acu-panel-shadow: var(--acu-shadow, 0 1px 3px rgba(0, 0, 0, 0.06));
         --acu-panel-close-hover-bg: var(--acu-danger-soft-bg, rgba(239, 68, 68, 0.08));
         --acu-panel-close-hover-border: var(--acu-danger-soft-border, rgba(239, 68, 68, 0.25));
         --acu-panel-close-hover-text: var(--acu-danger, #ef4444);
@@ -108,12 +108,12 @@ import { topLevelWindow_ACU } from '../../shared/env';
         flex-direction: column;
         background-color: var(--acu-panel-bg);
         border: 1px solid var(--acu-panel-border);
-        border-radius: 8px;
-        box-shadow: var(--acu-panel-shadow);
+        border-radius: 10px;
+        box-shadow: 0 4px 20px rgba(0, 0, 0, 0.08);
         overflow: hidden;
         min-width: 400px;
         min-height: 300px;
-        animation: acuWindowSlideIn 0.25s ease-out;
+        animation: acuWindowSlideIn 0.22s ease-out;
         color-scheme: light;
         font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
         font-weight: 500;
@@ -258,7 +258,7 @@ import { topLevelWindow_ACU } from '../../shared/env';
         display: flex;
         align-items: center;
         justify-content: space-between;
-        padding: 12px 16px;
+        padding: 10px 14px;
         background: transparent;
         border-bottom: 1px solid var(--acu-panel-border);
         cursor: move;
@@ -267,13 +267,13 @@ import { topLevelWindow_ACU } from '../../shared/env';
       }
       
       .acu-window-title {
-        font-size: 14px;
+        font-size: 13px;
         font-weight: 600;
-        letter-spacing: 1px;
+        letter-spacing: 0.5px;
         color: var(--acu-panel-text);
         display: flex;
         align-items: center;
-        gap: 10px;
+        gap: 8px;
         flex: 1;
         min-width: 0;
         overflow: hidden;
@@ -296,11 +296,11 @@ import { topLevelWindow_ACU } from '../../shared/env';
       }
       
       .acu-window-btn {
-        width: 30px;
-        height: 30px;
-        border: 1px solid transparent;
+        width: 28px;
+        height: 28px;
+        border: 1px solid transparent !important;
         border-radius: 6px;
-        background: transparent;
+        background: transparent !important;
         color: var(--acu-panel-text-mute);
         cursor: pointer;
         display: flex;
@@ -308,19 +308,22 @@ import { topLevelWindow_ACU } from '../../shared/env';
         justify-content: center;
         transition: all 0.15s ease;
         font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
+        box-shadow: none !important;
       }
       .acu-window-btn:hover {
-        background: var(--acu-panel-hover);
-        border-color: var(--acu-panel-border);
+        background: var(--acu-panel-hover) !important;
+        border-color: var(--acu-panel-border) !important;
         color: var(--acu-panel-text);
+        box-shadow: none !important;
       }
       .acu-window-btn.maximize:hover {
         color: var(--acu-panel-accent);
       }
       .acu-window-btn.close:hover {
-        background: var(--acu-panel-close-hover-bg);
-        border-color: var(--acu-panel-close-hover-border);
+        background: var(--acu-panel-close-hover-bg) !important;
+        border-color: var(--acu-panel-close-hover-border) !important;
         color: var(--acu-panel-close-hover-text);
+        box-shadow: none !important;
       }
       .acu-window-btn.theme-toggle {
         width: auto;

@@ -98,29 +98,31 @@ export function showCustomConfirm_ACU(
         ">
           <button id="${confirmId}-cancel" style="
             padding: 8px 18px;
-            border: 1px solid var(--acu-confirm-cancel-border, var(--acu-border-2, #c8cdd5));
+            border: 1px solid var(--acu-confirm-cancel-border, var(--acu-border-2, #c8cdd5)) !important;
             border-radius: 6px;
-            background: var(--acu-confirm-cancel-bg, transparent);
-            color: var(--acu-confirm-cancel-text, var(--acu-text-2, #4a5568));
+            background: var(--acu-confirm-cancel-bg, transparent) !important;
+            color: var(--acu-confirm-cancel-text, var(--acu-text-2, #4a5568)) !important;
             cursor: pointer;
             font-family: inherit;
             font-size: 13px;
             font-weight: 500;
             letter-spacing: 0.3px;
             transition: background 0.15s ease, border-color 0.15s ease, color 0.15s ease;
+            box-shadow: none !important;
           ">${escapeHtml_ACU(cancelLabel)}</button>
           <button id="${confirmId}-ok" style="
             padding: 8px 18px;
-            border: 1px solid var(--acu-confirm-ok-border, rgba(37, 99, 235, 0.30));
+            border: 1px solid var(--acu-confirm-ok-border, rgba(37, 99, 235, 0.30)) !important;
             border-radius: 6px;
-            background: var(--acu-confirm-ok-bg, rgba(37, 99, 235, 0.08));
-            color: var(--acu-confirm-ok-text, var(--acu-accent, #2563eb));
+            background: var(--acu-confirm-ok-bg, rgba(37, 99, 235, 0.08)) !important;
+            color: var(--acu-confirm-ok-text, var(--acu-accent, #2563eb)) !important;
             cursor: pointer;
             font-family: inherit;
             font-size: 13px;
             font-weight: 600;
             letter-spacing: 0.3px;
             transition: background 0.15s ease, border-color 0.15s ease;
+            box-shadow: none !important;
           ">${escapeHtml_ACU(confirmLabel)}</button>
         </div>
       </div>

@@ -25,7 +25,7 @@ import { isSqliteMode } from '../../service/table/storage-mode';
 
 import { MAIN_POPUP_CSS_ACU } from './main-popup-styles';
 import { generateThemeSelectorHTML, bindThemeSelectorEvents } from '../theme/theme-selector';
-import { applyTheme, loadCustomThemes, getAllThemes, getActiveThemeId } from '../theme/theme-registry';
+import { applyTheme, loadCustomThemes, getAllThemes, getActiveThemeId, getThemeCSS_ACU } from '../theme/theme-registry';
 import { BUILTIN_THEME_IDS } from '../theme/theme-registry';
 
 /**
@@ -41,16 +41,16 @@ function generateThemeSelectorHTMLForChrome(): string {
         return `<option value="${t.id}" ${selected}>${t.name}${builtin}</option>`;
     }).join('');
     return `<div class="acu-chrome-theme-selector" style="display: flex; align-items: center; gap: 4px;">
-        <select id="${SCRIPT_ID_PREFIX_ACU}-chrome-theme-select" style="padding: 2px 6px; border-radius: 4px; border: 1px solid var(--acu-panel-border, #e0e4ea); background: var(--acu-panel-bg, #f5f7fa); color: var(--acu-panel-text, #1a2332); font-size: 11px; cursor: pointer; max-width: 120px; height: 26px;">
+        <select id="${SCRIPT_ID_PREFIX_ACU}-chrome-theme-select" style="padding: 2px 6px !important; border-radius: 6px !important; border: 1px solid var(--acu-panel-border, #e0e4ea) !important; background: var(--acu-panel-bg, #f5f7fa) !important; color: var(--acu-panel-text, #1a2332) !important; font-size: 11px !important; cursor: pointer !important; max-width: 120px !important; height: 26px !important; font-family: inherit !important;">
             ${options}
         </select>
-        <button id="${SCRIPT_ID_PREFIX_ACU}-chrome-theme-delete" style="width: 26px; height: 26px; padding: 0; border-radius: 4px; border: 1px solid transparent; background: transparent; color: var(--acu-panel-text-mute, #8896a8); cursor: pointer; display: flex; align-items: center; justify-content: center; font-size: 11px;${BUILTIN_THEME_IDS.has(currentId) ? ' opacity: 0.3; pointer-events: none;' : ''}" title="${BUILTIN_THEME_IDS.has(currentId) ? '内置主题不可删除' : '删除当前自定义主题'}">
+        <button id="${SCRIPT_ID_PREFIX_ACU}-chrome-theme-delete" style="width: 26px; height: 26px; padding: 0; border-radius: 6px; border: 1px solid transparent; background: transparent; color: var(--acu-panel-text-mute, #8896a8); cursor: pointer; display: flex; align-items: center; justify-content: center; font-size: 11px;${BUILTIN_THEME_IDS.has(currentId) ? ' opacity: 0.3; pointer-events: none;' : ''}" title="${BUILTIN_THEME_IDS.has(currentId) ? '内置主题不可删除' : '删除当前自定义主题'}">
             <i class="fa-solid fa-trash" style="font-size: 10px;"></i>
         </button>
-        <button id="${SCRIPT_ID_PREFIX_ACU}-chrome-theme-import" style="width: 26px; height: 26px; padding: 0; border-radius: 4px; border: 1px solid transparent; background: transparent; color: var(--acu-panel-text-mute, #8896a8); cursor: pointer; display: flex; align-items: center; justify-content: center; font-size: 11px;" title="导入自定义主题">
+        <button id="${SCRIPT_ID_PREFIX_ACU}-chrome-theme-import" style="width: 26px; height: 26px; padding: 0; border-radius: 6px; border: 1px solid transparent; background: transparent; color: var(--acu-panel-text-mute, #8896a8); cursor: pointer; display: flex; align-items: center; justify-content: center; font-size: 11px;" title="导入自定义主题">
             <i class="fa-solid fa-upload" style="font-size: 11px;"></i>
         </button>
-        <button id="${SCRIPT_ID_PREFIX_ACU}-chrome-theme-export" style="width: 26px; height: 26px; padding: 0; border-radius: 4px; border: 1px solid transparent; background: transparent; color: var(--acu-panel-text-mute, #8896a8); cursor: pointer; display: flex; align-items: center; justify-content: center; font-size: 11px;" title="导出当前主题模板（完整可编辑版）">
+        <button id="${SCRIPT_ID_PREFIX_ACU}-chrome-theme-export" style="width: 26px; height: 26px; padding: 0; border-radius: 6px; border: 1px solid transparent; background: transparent; color: var(--acu-panel-text-mute, #8896a8); cursor: pointer; display: flex; align-items: center; justify-content: center; font-size: 11px;" title="导出当前主题模板（完整可编辑版）">
             <i class="fa-solid fa-download" style="font-size: 11px;"></i>
         </button>
     </div>`;
@@ -66,9 +66,15 @@ function generateThemeSelectorHTMLForChrome(): string {
     // Calling reset here could cause race conditions or incorrect state wipes.
     loadSettingsAndRefreshUI_ACU(); // Load latest settings into UI
 
+    // ═══ 关键：在创建窗口前预加载自定义主题并生成主题CSS ═══
+    // 这样主题CSS可以嵌入popupHtml，消除首帧闪变（FOUC）
+    loadCustomThemes();
+    const prebuiltThemeCSS = getThemeCSS_ACU();
+
     const popupHtml = `
             <div id="${POPUP_ID_ACU}" class="auto-card-updater-popup">
                 <style>${MAIN_POPUP_CSS_ACU}</style>
+                <style id="acu-theme-override">${prebuiltThemeCSS}</style>
 
                 <div class="acu-header">
                     <h2 id="updater-main-title-acu">当前聊天：${escapeHtml_ACU(
@@ -145,8 +151,8 @@ function generateThemeSelectorHTMLForChrome(): string {
           $oldThemeBtn.replaceWith(generateThemeSelectorHTMLForChrome());
         }
 
-        // 加载自定义主题并应用当前主题
-        loadCustomThemes();
+        // 主题已在创建窗口前预加载（loadCustomThemes + getThemeCSS_ACU），
+        // 此处仅调用 applyTheme 确保 DOM 中 <style> 元素位置正确（用于后续动态切换）
         applyTheme();
         bindThemeSelectorEvents();
 

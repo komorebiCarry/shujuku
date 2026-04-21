@@ -5,7 +5,6 @@ import { SCRIPT_ID_PREFIX_ACU } from '../../shared/constants';
 
 /**
  * 生成 API 标签页的 HTML 片段
- * 包含：API模式选择、自定义API设置、API预设管理
  */
 export function generateApiTabHTML(): string {
     return `
@@ -22,7 +21,7 @@ export function generateApiTabHTML(): string {
                             </div>
                         </div>
 
-                        <div id="${SCRIPT_ID_PREFIX_ACU}-tavern-api-profile-block" style="display: none; margin-top: 15px;">
+                        <div id="${SCRIPT_ID_PREFIX_ACU}-tavern-api-profile-block" style="display: none; margin-top: 12px;">
                             <label for="${SCRIPT_ID_PREFIX_ACU}-tavern-api-profile-select">酒馆连接预设:</label>
                              <div class="input-group">
                                 <select id="${SCRIPT_ID_PREFIX_ACU}-tavern-api-profile-select"></select>
@@ -31,20 +30,22 @@ export function generateApiTabHTML(): string {
                             <small class="notes">选择一个你在酒馆主设置中已经配置好的连接预设。</small>
                         </div>
 
-                        <div id="${SCRIPT_ID_PREFIX_ACU}-custom-api-settings-block" style="margin-top: 15px;">
+                        <div id="${SCRIPT_ID_PREFIX_ACU}-custom-api-settings-block" style="margin-top: 12px;">
                              <div class="checkbox-group">
                                 <input type="checkbox" id="${SCRIPT_ID_PREFIX_ACU}-use-main-api-checkbox">
                                 <label for="${SCRIPT_ID_PREFIX_ACU}-use-main-api-checkbox">使用主API (直接使用酒馆当前API和模型)</label>
                             </div>
-                             <div class="checkbox-group" style="margin-top: 10px;">
+                             <div class="checkbox-group">
                                 <input type="checkbox" id="${SCRIPT_ID_PREFIX_ACU}-streaming-enabled-checkbox">
                                 <label for="${SCRIPT_ID_PREFIX_ACU}-streaming-enabled-checkbox">启用流式传输 (Streaming)</label>
                             </div>
-                            <small class="notes" style="display: block; margin-left: 0; margin-bottom: 10px;">开启后，所有AI调用将使用流式传输，可减少首字节响应时间。默认关闭。</small>
+                            <small class="notes">开启后，所有AI调用将使用流式传输，可减少首字节响应时间。默认关闭。</small>
                             <div id="${SCRIPT_ID_PREFIX_ACU}-custom-api-fields">
-                                <p class="notes" style="color:var(--warning-color);"><b>安全提示:</b>API密钥将保存在浏览器本地存储中。</p>
-                                <label for="${SCRIPT_ID_PREFIX_ACU}-api-url">API基础URL:</label><input type="text" id="${SCRIPT_ID_PREFIX_ACU}-api-url">
-                                <label for="${SCRIPT_ID_PREFIX_ACU}-api-key">API密钥(可选):</label><input type="password" id="${SCRIPT_ID_PREFIX_ACU}-api-key">
+                                <p class="notes" style="color: var(--acu-warning);"><b>安全提示:</b> API密钥将保存在浏览器本地存储中。</p>
+                                <label for="${SCRIPT_ID_PREFIX_ACU}-api-url">API基础URL:</label>
+                                <input type="text" id="${SCRIPT_ID_PREFIX_ACU}-api-url">
+                                <label for="${SCRIPT_ID_PREFIX_ACU}-api-key">API密钥(可选):</label>
+                                <input type="password" id="${SCRIPT_ID_PREFIX_ACU}-api-key">
                                 <div class="acu-grid" style="margin-top: 10px;">
                                     <div>
                                         <label for="${SCRIPT_ID_PREFIX_ACU}-max-tokens">最大Tokens:</label>
@@ -55,37 +56,38 @@ export function generateApiTabHTML(): string {
                                         <input type="number" id="${SCRIPT_ID_PREFIX_ACU}-temperature" min="0" max="2" step="0.05" placeholder="0.9">
                                     </div>
                                 </div>
-                                <button id="${SCRIPT_ID_PREFIX_ACU}-load-models" style="margin-top: 15px; width: 100%;">加载模型列表</button>
+                                <div class="button-group" style="margin-top: 10px;">
+                                    <button id="${SCRIPT_ID_PREFIX_ACU}-load-models">加载模型列表</button>
+                                </div>
                                 <label for="${SCRIPT_ID_PREFIX_ACU}-api-model-input" style="margin-top: 10px;">模型名称 (手动输入):</label>
-                                <input type="text" id="${SCRIPT_ID_PREFIX_ACU}-api-model-input" class="text_pole" placeholder="输入模型名称或从下方选择" style="width: 100%;">
+                                <input type="text" id="${SCRIPT_ID_PREFIX_ACU}-api-model-input" class="text_pole" placeholder="输入模型名称或从下方选择">
                                 <label for="${SCRIPT_ID_PREFIX_ACU}-api-model-select" style="margin-top: 8px;">或从列表选择:</label>
-                                <select id="${SCRIPT_ID_PREFIX_ACU}-api-model-select" class="text_pole" style="width: 100%;">
+                                <select id="${SCRIPT_ID_PREFIX_ACU}-api-model-select" class="text_pole">
                                     <option value="">-- 请先加载模型列表 --</option>
                                 </select>
                             </div>
-                            <div id="${SCRIPT_ID_PREFIX_ACU}-api-status" class="notes" style="margin-top:15px;">状态: 未配置</div>
+                            <div id="${SCRIPT_ID_PREFIX_ACU}-api-status" class="notes" style="margin-top:12px;">状态: 未配置</div>
                             <div class="button-group">
                                 <button id="${SCRIPT_ID_PREFIX_ACU}-save-config" class="primary">保存API</button>
                                 <button id="${SCRIPT_ID_PREFIX_ACU}-clear-config">清除API</button>
                             </div>
                             
                             <!-- API预设管理 -->
-                            <div style="margin-top: 20px; padding-top: 15px; border-top: 1px dashed var(--border-normal);">
-                                <h4 style="margin-bottom: 10px; font-size: 0.95em; color: var(--text-muted);">API预设管理</h4>
-                                <div style="display: flex; gap: 8px; margin-bottom: 10px;">
-                                    <input type="text" id="${SCRIPT_ID_PREFIX_ACU}-api-preset-name" placeholder="预设名称" style="flex: 1; padding: 6px 10px; border-radius: 4px; border: 1px solid var(--border-normal);">
-                                    <button id="${SCRIPT_ID_PREFIX_ACU}-save-api-preset" class="primary" style="padding: 6px 12px;">保存为预设</button>
-                        </div>
-                                <div style="display: flex; gap: 8px; align-items: center;">
-                                    <select id="${SCRIPT_ID_PREFIX_ACU}-api-preset-select" style="flex: 1; padding: 6px 10px; border-radius: 4px; border: 1px solid var(--border-normal);">
-                                        <option value="">-- 选择预设 --</option>
-                                    </select>
-                                    <button id="${SCRIPT_ID_PREFIX_ACU}-load-api-preset" style="padding: 6px 12px;">加载</button>
-                                    <button id="${SCRIPT_ID_PREFIX_ACU}-delete-api-preset" style="padding: 6px 12px; background: var(--error-color); color: white;">删除</button>
-                                </div>
-                                <small class="notes" style="display: block; margin-top: 8px;">保存当前API配置为预设，可在填表和剧情推进中分别选用。</small>
+                            <div class="acu-divider-dashed" style="margin: 16px 0 12px 0;"></div>
+                            <label class="acu-label">API预设管理</label>
+                            <div class="acu-row" style="margin-bottom: 8px;">
+                                <input type="text" id="${SCRIPT_ID_PREFIX_ACU}-api-preset-name" placeholder="预设名称" style="flex: 1;">
+                                <button id="${SCRIPT_ID_PREFIX_ACU}-save-api-preset" class="primary">保存为预设</button>
                             </div>
+                            <div class="acu-row">
+                                <select id="${SCRIPT_ID_PREFIX_ACU}-api-preset-select" style="flex: 1;">
+                                    <option value="">-- 选择预设 --</option>
+                                </select>
+                                <button id="${SCRIPT_ID_PREFIX_ACU}-load-api-preset">加载</button>
+                                <button id="${SCRIPT_ID_PREFIX_ACU}-delete-api-preset" style="background: var(--acu-danger); color: white; border-color: var(--acu-danger);">删除</button>
+                            </div>
+                            <small class="notes">保存当前API配置为预设，可在填表和剧情推进中分别选用。</small>
                         </div>
                      </div>
-                </div>`;
+                 </div>`;
 }

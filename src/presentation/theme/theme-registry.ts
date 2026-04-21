@@ -111,59 +111,22 @@ export function applyTheme(themeId?: string): void {
 }
 
 /**
- * 实际将主题变量写入 DOM
- * 如果 popup 元素不存在，将样式直接注入到 <head> 用 #popup ID 选择器
+ * 根据主题对象生成完整的 CSS 字符串。
+ * 包含 popup 变量、window chrome 变量、toast、confirm、visualizer、customCSS。
+ * 此函数不操作 DOM，仅返回 CSS 文本。
+ * 用于：① 预注入到 popupHtml 消除 FOUC  ② applyThemeToDOM 中复用
  */
-function applyThemeToDOM(theme: ACUTheme): void {
-    // 关键：注入到 topLevelWindow 的 document，而非 iframe 的 document
-    // 因为弹窗 DOM 挂载在 topLevelWindow 中
-    const targetDoc = (topLevelWindow_ACU || window).document;
-
-    // 1. 注入 CSS 变量覆盖
-    // 关键：注入到 popup 内部第一个 <style> 标签之后（DOM 顺序靠后，层叠优先级更高）
-    // 如果 popup 还未挂载，则注入到 head 中作为 fallback
-    const popupEl = targetDoc.getElementById(POPUP_ID_ACU);
-    let existingStyle = targetDoc.getElementById(THEME_STYLE_ID) as HTMLStyleElement | null;
-
-    // 找到 popup 内部的第一个 <style> 标签（MAIN_POPUP_CSS_ACU 注入的位置）
-    const innerStyle = popupEl?.querySelector('style') ?? null;
-
-    if (!existingStyle) {
-        existingStyle = targetDoc.createElement('style');
-        existingStyle.id = THEME_STYLE_ID;
-    }
-
-    // 每次都确保位置正确：注入到 popup 内部 <style> 之后
-    // 如果 existingStyle 已存在但位置不对（比如在 head 中），迁移到正确位置
-    if (innerStyle) {
-        // popup 存在且内部有 style → 插入到内部 style 之后
-        if (existingStyle !== innerStyle.nextElementSibling) {
-            innerStyle.after(existingStyle);
-        }
-    } else if (popupEl) {
-        // popup 存在但内部没有 style → 插入到 popup 最前面
-        if (existingStyle.parentNode !== popupEl) {
-            popupEl.prepend(existingStyle);
-        }
-    } else {
-        // popup 不存在 → fallback 到 head
-        if (existingStyle.parentNode !== targetDoc.head) {
-            targetDoc.head.appendChild(existingStyle);
-        }
-    }
-
+export function buildThemeCSS_ACU(theme: ACUTheme): string {
     const varDeclarations = Object.entries(theme.variables)
         .map(([key, value]) => `    ${key}: ${value};`)
         .join('\n');
 
     let css = `#${POPUP_ID_ACU} {\n${varDeclarations}\n}`;
 
-    // 2. 窗口 chrome 也需要注入核心主题变量。
-    //    .acu-window 位于 #popup_acu 外部，无法继承 popup 根上的变量；
-    //    如果这里只注入 windowChromeVariables，未显式配置的主题会退回写死 fallback。
+    // 窗口 chrome 核心主题变量
     css += `\n.acu-window {\n${varDeclarations}\n}`;
 
-    // 3. color-scheme 和 font-family 直接注入（ID选择器优先级够高）
+    // color-scheme 和 font-family
     css += `\n#${POPUP_ID_ACU} { color-scheme: ${theme.colorScheme};`;
     if (theme.fontFamily) {
         css += ` font-family: ${theme.fontFamily};`;
@@ -176,13 +139,13 @@ function applyThemeToDOM(theme: ACUTheme): void {
     }
     css += ` }`;
 
-    // 4. 追加自定义 CSS
+    // 追加自定义 CSS
     if (theme.customCSS) {
         const customCSS = theme.customCSS.replace(/#popup\b/g, `#${POPUP_ID_ACU}`);
         css += '\n' + customCSS;
     }
 
-    // 5. 窗口chrome变量覆盖（高于核心变量自动注入）
+    // 窗口chrome变量覆盖
     if (theme.windowChromeVariables) {
         const chromeVars = Object.entries(theme.windowChromeVariables)
             .map(([key, value]) => `    ${key}: ${value};`)
@@ -190,8 +153,7 @@ function applyThemeToDOM(theme: ACUTheme): void {
         css += `\n.acu-window {\n${chromeVars}\n}`;
     }
 
-    // 6. Toast变量覆盖 — 将主题核心颜色变量注入到 toast 容器作用域
-    //    确保 toast 通知跟随主题变化（toast 元素在 #popup_acu 外部，无法继承 CSS 变量）
+    // Toast 变量覆盖
     {
         const toastVarNames = [
             '--acu-accent', '--acu-bg-1', '--acu-text-1', '--acu-border',
@@ -202,7 +164,6 @@ function applyThemeToDOM(theme: ACUTheme): void {
             .filter(key => theme.variables[key])
             .map(key => `    ${key}: ${theme.variables[key]};`)
             .join('\n');
-        // 主题自定义 toast 变量优先级高于自动注入
         const customToastVars = theme.toastVariables
             ? Object.entries(theme.toastVariables)
                 .map(([key, value]) => `    ${key}: ${value};`)
@@ -213,8 +174,7 @@ function applyThemeToDOM(theme: ACUTheme): void {
         }
     }
 
-    // 7. 确认弹窗变量注入 — 弹窗挂载在 body 级别，不在 #popup_acu 内
-    //    将主题变量注入到确认弹窗容器选择器，使其跟随主题变化
+    // 确认弹窗变量注入
     {
         const confirmVarNames = [
             '--acu-accent', '--acu-bg-1', '--acu-bg-0', '--acu-text-1',
@@ -236,8 +196,7 @@ function applyThemeToDOM(theme: ACUTheme): void {
         }
     }
 
-    // 8. Visualizer变量覆盖
-    //    可视化编辑器挂载在 #acu-visualizer-content，而不是不存在的 #acu-visualizer-root
+    // Visualizer 变量覆盖
     {
         const visualizerBaseVarNames = [
             '--acu-bg-0', '--acu-bg-1', '--acu-bg-2', '--acu-bg-3',
@@ -261,7 +220,52 @@ function applyThemeToDOM(theme: ACUTheme): void {
         }
     }
 
-    existingStyle.textContent = css;
+    return css;
+}
+
+/**
+ * 获取当前主题的完整 CSS 字符串（用于预注入消除 FOUC）。
+ * 在 popup 创建之前调用，确保首帧即包含正确的主题样式。
+ */
+export function getThemeCSS_ACU(themeId?: string): string {
+    const id = themeId || getActiveThemeId();
+    const theme = getThemeById(id);
+    if (!theme) {
+        return buildThemeCSS_ACU(THEME_DEFAULT_LIGHT);
+    }
+    return buildThemeCSS_ACU(theme);
+}
+
+/**
+ * 实际将主题变量写入 DOM
+ * 复用 buildThemeCSS_ACU 生成 CSS，注入到正确位置
+ */
+function applyThemeToDOM(theme: ACUTheme): void {
+    const targetDoc = (topLevelWindow_ACU || window).document;
+    const popupEl = targetDoc.getElementById(POPUP_ID_ACU);
+    let existingStyle = targetDoc.getElementById(THEME_STYLE_ID) as HTMLStyleElement | null;
+    const innerStyle = popupEl?.querySelector('style') ?? null;
+
+    if (!existingStyle) {
+        existingStyle = targetDoc.createElement('style');
+        existingStyle.id = THEME_STYLE_ID;
+    }
+
+    if (innerStyle) {
+        if (existingStyle !== innerStyle.nextElementSibling) {
+            innerStyle.after(existingStyle);
+        }
+    } else if (popupEl) {
+        if (existingStyle.parentNode !== popupEl) {
+            popupEl.prepend(existingStyle);
+        }
+    } else {
+        if (existingStyle.parentNode !== targetDoc.head) {
+            targetDoc.head.appendChild(existingStyle);
+        }
+    }
+
+    existingStyle.textContent = buildThemeCSS_ACU(theme);
 }
 
 // ═══════════════════════════════════════════════════════════════

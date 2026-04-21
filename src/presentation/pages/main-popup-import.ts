@@ -1,4 +1,4 @@
-// main-popup-import.ts
+﻿// main-popup-import.ts
 // Import标签页（外部导入）HTML生成
 
 import { SCRIPT_ID_PREFIX_ACU } from '../../shared/constants';
@@ -14,11 +14,11 @@ export function generateImportTabHTML(): string {
                         <h3>从TXT文件导入</h3>
                         <p class="notes">从外部TXT文件导入内容，按指定字符数分割，并作为独立条目注入指定的世界书。这些条目独立于聊天记录，不会被自动清除。</p>
                         
-                        <hr style="border-color: var(--border-normal); margin: 15px 0;">
+                        <hr style="border-color: var(--acu-border-2); margin: 15px 0;">
                         
                         <div>
                             <label for="${SCRIPT_ID_PREFIX_ACU}-import-worldbook-injection-target">导入数据注入目标世界书:</label>
-                            <input type="text" id="${SCRIPT_ID_PREFIX_ACU}-import-worldbook-injection-target-filter" placeholder="筛选世界书..." style="width: 100%; margin: 6px 0 8px 0; padding: 6px 10px; border-radius: 6px; border: 1px solid var(--border-normal); background: var(--input-background); color: var(--input-text-color);">
+                            <input type="text" id="${SCRIPT_ID_PREFIX_ACU}-import-worldbook-injection-target-filter" placeholder="筛选世界书..." style="width: 100%; margin: 6px 0 8px 0; padding: 6px 10px; border-radius: 6px; border: 1px solid var(--acu-border-2); background: var(--acu-control-bg, var(--acu-bg-1)); color: var(--acu-control-text, var(--acu-text-1));">
                             <div class="input-group">
                                 <select id="${SCRIPT_ID_PREFIX_ACU}-import-worldbook-injection-target" style="width: 100%;"></select>
                                 <button id="${SCRIPT_ID_PREFIX_ACU}-refresh-import-worldbooks" title="刷新世界书列表">刷新</button>

@@ -8,7 +8,7 @@ import { logDebug_ACU } from '../../shared/utils';
 import { settings_ACU } from '../../service/runtime/state-manager';
 
 // toast 相关状态
-export const ACU_TOAST_TITLE_ACU = '星·数据库';
+export const ACU_TOAST_TITLE_ACU = 'SP·数据库';
 export const _acuToastDedup_ACU = new Map<string, number>(); // key -> ts
 export let _acuToastStyleInjected_ACU = false;
 export function _set__acuToastStyleInjected_ACU(v: any) { _acuToastStyleInjected_ACU = v; }
@@ -146,6 +146,7 @@ function ensureAcuToastStylesInjected_ACU() {
         font-family: var(--toast-font) !important;
         cursor: pointer !important;
         font-size: 0.85em;
+        box-shadow: none !important;
       }
       .acu-toast .qrf-abort-btn:hover {
         background: var(--toast-accent) !important;
