@@ -124,6 +124,7 @@ import { jQuery_API_ACU } from '../dom-utils';
       resizable = true,
       maximizable = true,
       startMaximized = false,
+      forcePhoneFullscreen = false,
       rememberState = true, // 默认记住窗口状态
       onClose,
       onReady
@@ -172,19 +173,22 @@ import { jQuery_API_ACU } from '../dom-utils';
       // 使用保存的窗口尺寸（确保不超过当前视口）
       initialW = Math.max(400, Math.min(savedState.width, viewW - 40));
       initialH = Math.max(300, Math.min(savedState.height, viewH - 40));
-    } else if (isPhoneScreen) {
+    } else if (isPhoneScreen && !forcePhoneFullscreen) {
       const phoneHorizontalMargin = 12;
       const phoneVerticalMargin = 12;
       const phoneMinWidth = Math.min(320, Math.max(280, viewW - phoneHorizontalMargin));
       const phoneMinHeight = Math.min(360, Math.max(280, viewH - phoneVerticalMargin));
       initialW = Math.max(phoneMinWidth, Math.min(460, viewW - phoneHorizontalMargin));
       initialH = Math.max(phoneMinHeight, Math.min(Math.round(viewH * 0.82), viewH - phoneVerticalMargin));
+    } else if (isPhoneScreen && forcePhoneFullscreen) {
+      initialW = viewW;
+      initialH = viewH;
     } else {
       initialW = Math.max(400, Math.min(width, viewW - 40));
       initialH = Math.max(300, Math.min(height, viewH - 40));
     }
     // 居中并确保不跑出屏幕
-    const screenEdgePadding = isPhoneScreen ? 6 : 20;
+    const screenEdgePadding = isPhoneScreen && !forcePhoneFullscreen ? 6 : 20;
     const initialX = Math.max(screenEdgePadding, Math.min((viewW - initialW) / 2, viewW - initialW - screenEdgePadding));
     const initialY = Math.max(screenEdgePadding, Math.min((viewH - initialH) / 2, viewH - initialH - screenEdgePadding));
     
@@ -192,7 +196,7 @@ import { jQuery_API_ACU } from '../dom-utils';
     // ═══ 窄屏模式下不显示全屏按钮，只显示关闭按钮 ═══
     const showMaximizeBtn = maximizable && !isNarrowScreen;
     const windowHtml = `
-      <div class="acu-window" id="${id}" style="left:${initialX}px; top:${initialY}px; width:${initialW}px; height:${initialH}px;">
+      <div class="acu-window${forcePhoneFullscreen ? ' acu-window-phone-fullscreen' : ''}" id="${id}" data-phone-fullscreen="${forcePhoneFullscreen ? 'true' : 'false'}" style="left:${forcePhoneFullscreen && isPhoneScreen ? 0 : initialX}px; top:${forcePhoneFullscreen && isPhoneScreen ? 0 : initialY}px; width:${initialW}px; height:${initialH}px;">
         <div class="acu-window-header">
           <div class="acu-window-title">
             <i class="fa-solid fa-database"></i>
@@ -230,6 +234,18 @@ import { jQuery_API_ACU } from '../dom-utils';
     $(targetDoc.body).append($window);
     applyACUThemeToDocument_ACU(targetDoc);
     syncACUThemeButtons_ACU(targetDoc);
+    
+    // ═══ 动画完成后移除 animation 属性 ═══
+    // .acu-window 的 slide-in 动画引用了 transform，在 Chromium 内核中会为
+    // position:fixed 后代创建 containing block，导致子元素无法相对于视口定位。
+    // 动画结束后（0.22s）移除 animation 属性，消除 containing block。
+    // 使用 { once: true } 避免内存泄漏，同时用 setTimeout 作为兜底。
+    const winEl = $window[0] as HTMLElement | undefined;
+    if (winEl) {
+      const removeAnimation = () => { winEl.style.animation = 'none'; };
+      winEl.addEventListener('animationend', removeAnimation, { once: true });
+      setTimeout(removeAnimation, 400); // 兜底：略长于动画时长 0.22s
+    }
     
     // 注册到窗口管理器
     ACU_WindowManager.register(id, $window);
@@ -313,7 +329,9 @@ import { jQuery_API_ACU } from '../dom-utils';
     
     // ═══ 启动时全屏逻辑（优先级：窄屏强制全屏 > 保存的状态 > startMaximized参数）═══
     // 平板窄屏默认全屏；手机模式保留边距式浮层，避免遮挡过多内容
-    if (isNarrowScreen && !isPhoneScreen && maximizable) {
+    if (isPhoneScreen && forcePhoneFullscreen && maximizable) {
+      doMaximize();
+    } else if (isNarrowScreen && !isPhoneScreen && maximizable) {
       doMaximize();
     } else if (useSavedState && savedState.isMaximized && maximizable) {
       // 恢复上次的全屏状态

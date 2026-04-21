@@ -33,6 +33,7 @@ import { $popupInstance_ACU } from '../state/ui-refs';
 import { closeACUWindow } from '../window/window-system';
 import { isSqliteMode } from '../../service/table/storage-mode';
 import { reloadStorageProvider } from '../../service/table/table-storage-strategy';
+import { resolveTableHistoryStateFromChat_ACU, getLatestAiMessageIndexFromChat_ACU } from '../../service/table/table-history';
 
 
   export async function saveVisualizerChanges_ACU(saveToTemplate = false) {
@@ -259,71 +260,19 @@ import { reloadStorageProvider } from '../../service/table/table-storage-strateg
           const allSheetKeys = getSortedSheetKeys_ACU(currentJsonTableData_ACU);
           
           // 2.2 计算最新一条 AI 楼层索引，作为兜底
-          const latestAiIndex = (() => {
-              for (let i = chat.length - 1; i >= 0; i--) {
-                  if (!chat[i].is_user) return i;
-              }
-              return -1;
-          })();
+          const latestAiIndex = getLatestAiMessageIndexFromChat_ACU(chat);
           
           // 2.3 查找每张表当前最新数据所在的原楼层
           const bucketByIndex: Record<number, string[]> = {};
           const resolveTargetIndexForSheet = (sheetKey: string) => {
               const table = currentJsonTableData_ACU[sheetKey];
-              const isSummaryTable = table ? isSummaryOrOutlineTable_ACU(table.name) : false;
-              
-              for (let i = chat.length - 1; i >= 0; i--) {
-                  const msg = chat[i];
-                  if (msg.is_user) continue;
-                  
-                  let wasUpdated = false;
-                  
-                  // 优先：新格式（按标签分组）
-                  if (msg.TavernDB_ACU_IsolatedData && msg.TavernDB_ACU_IsolatedData[isolationKey]) {
-                      const tagData = msg.TavernDB_ACU_IsolatedData[isolationKey];
-                      const modifiedKeys = tagData.modifiedKeys || [];
-                      const updateGroupKeys = tagData.updateGroupKeys || [];
-                      const independentData = tagData.independentData || {};
-                      
-                      if (updateGroupKeys.length > 0 && modifiedKeys.length > 0) {
-                          wasUpdated = updateGroupKeys.includes(sheetKey);
-                      } else if (modifiedKeys.length > 0) {
-                          wasUpdated = modifiedKeys.includes(sheetKey);
-                      } else if (independentData[sheetKey]) {
-                          wasUpdated = true;
-                      }
-                  }
-                  
-                  // 兼容：旧格式（同样遵循隔离标签）
-                  if (!wasUpdated) {
-                      const msgIdentity = msg.TavernDB_ACU_Identity;
-                      const isLegacyMatch = settings_ACU.dataIsolationEnabled
-                          ? msgIdentity === settings_ACU.dataIsolationCode
-                          : !msgIdentity;
-                      
-                      if (isLegacyMatch) {
-                          const modifiedKeys = msg.TavernDB_ACU_ModifiedKeys || [];
-                          const updateGroupKeys = msg.TavernDB_ACU_UpdateGroupKeys || [];
-                          
-                          if (updateGroupKeys.length > 0 && modifiedKeys.length > 0) {
-                              wasUpdated = updateGroupKeys.includes(sheetKey);
-                          } else if (modifiedKeys.length > 0) {
-                              wasUpdated = modifiedKeys.includes(sheetKey);
-                          } else {
-                              const hasLegacyData =
-                                  (msg.TavernDB_ACU_IndependentData && msg.TavernDB_ACU_IndependentData[sheetKey]) ||
-                                  (isSummaryTable
-                                      ? (msg.TavernDB_ACU_SummaryData && msg.TavernDB_ACU_SummaryData[sheetKey])
-                                      : (msg.TavernDB_ACU_Data && msg.TavernDB_ACU_Data[sheetKey]));
-                              wasUpdated = !!hasLegacyData;
-                          }
-                      }
-                  }
-                  
-                  if (wasUpdated) return i; // 找到最新的原始楼层
-              }
-              
-              return latestAiIndex; // 未找到时回退到最新楼层
+              const history = resolveTableHistoryStateFromChat_ACU(chat, {
+                  sheetKey,
+                  isSummaryTable: table ? isSummaryOrOutlineTable_ACU(table.name) : false,
+                  isolationKey,
+                  settings: settings_ACU,
+              });
+              return history.latestDataMessageIndex !== -1 ? history.latestDataMessageIndex : latestAiIndex;
           };
           
           allSheetKeys.forEach(key => {
@@ -346,7 +295,7 @@ import { reloadStorageProvider } from '../../service/table/table-storage-strateg
               for (const [indexStr, keys] of Object.entries(bucketByIndex)) {
                   const idx = parseInt(indexStr, 10);
                   if (Number.isNaN(idx)) continue;
-                  await saveIndependentTableToChatHistory_ACU(idx, keys as string[], keys as string[], true);
+                  await saveIndependentTableToChatHistory_ACU(idx, keys as string[], null, true);
               }
 
               // 2.4.5 [关键] 如果本次在可视化编辑器删除了表格，则此处追溯整个聊天记录做“硬删除”
@@ -398,4 +347,3 @@ import { reloadStorageProvider } from '../../service/table/table-storage-strateg
   }
 
   // --- [Inheritance Logic (Legacy Removed)] ---
-

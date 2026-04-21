@@ -100,6 +100,34 @@
     
     .acu-vis-actions { display: flex; gap: 10px; }
     .acu-vis-content { flex: 1; display: flex; overflow: hidden; min-width: 0; }
+    #acu-visualizer-content[data-assistant-layout="expanded"] .acu-vis-sidebar {
+        flex: 0 0 160px;
+        min-width: 140px;
+        max-width: 180px;
+    }
+    #acu-visualizer-content[data-assistant-layout="expanded"] .acu-vis-main {
+        flex: 0 1 18%;
+        min-width: 0;
+    }
+    #acu-visualizer-content[data-assistant-layout="expanded"] #acu-vis-assistant-host {
+        flex: 1 1 82%;
+        min-width: 0;
+        pointer-events: auto;
+    }
+    #acu-visualizer-content[data-assistant-layout="fullscreen-overlay"] .acu-vis-sidebar,
+    #acu-visualizer-content[data-assistant-layout="fullscreen-overlay"] .acu-vis-main {
+        visibility: hidden;
+        pointer-events: none;
+    }
+    #acu-visualizer-content[data-assistant-layout="fullscreen-overlay"] #acu-vis-assistant-host {
+        position: fixed;
+        inset: 0;
+        width: 100vw;
+        height: 100dvh;
+        z-index: 100001;
+        flex: none;
+        pointer-events: auto;
+    }
     
     /* ═══ 侧边栏 ═══ */
     .acu-vis-sidebar {
@@ -140,9 +168,12 @@
     
     /* ═══ AI 改表助手面板宿主 ═══ */
     #acu-vis-assistant-host {
+        position: relative;
+        display: block;
         flex: 0 0 auto;
         min-width: 0;
-        overflow: hidden;
+        min-height: 0;
+        z-index: 1;
     }
     
     /* ═══ 表格导航项 ═══ */
@@ -890,18 +921,6 @@
             font-size: 12px;
         }
         
-        /* AI 改表助手面板 - 移动端适配 */
-        #acu-vis-assistant-host {
-            flex: 0 0 auto;
-            width: 100%;
-            max-height: 50%;
-            order: 3;
-        }
-        
-        #acu-vis-assistant-host .acu-vis-assistant-panel {
-            width: 100% !important;
-            max-height: 100%;
-        }
     }
     
     /* 手机 (≤480px) */
@@ -1305,9 +1324,31 @@
        使用 flex containment 模式确保内部滚动
        ═══════════════════════════════════════════════════════════════ */
     #acu-vis-assistant-host {
-        display: flex;
-        flex-direction: column;
+        display: block;
         min-height: 0;
+        min-width: 0;
+        pointer-events: none;
+    }
+    #acu-vis-assistant-host[data-assistant-mode="fullscreen-overlay"][data-open="true"] {
+        position: fixed;
+        inset: 0;
+        width: 100vw;
+        height: 100dvh;
+        z-index: 100001;
+        pointer-events: auto;
+        touch-action: auto;
+    }
+    #acu-vis-assistant-host[data-assistant-mode="fullscreen-overlay"][data-open="true"][data-minimized="true"] {
+        z-index: 100002;
+        pointer-events: none;
+    }
+    #acu-vis-assistant-host[data-assistant-mode="desktop"][data-open="true"] {
+        position: relative;
+        inset: auto;
+        width: auto;
+        height: auto;
+        pointer-events: auto;
+        z-index: 1;
     }
     .acu-vis-assistant-panel {
         display: flex;
@@ -1315,6 +1356,38 @@
         min-height: 0;
         height: 100%;
         flex-shrink: 0;
+    }
+    #acu-vis-assistant-host[data-assistant-mode="fullscreen-overlay"] .acu-vis-assistant-panel,
+    #acu-vis-assistant-host[data-assistant-mode="desktop"] .acu-vis-assistant-panel {
+        width: 100%;
+        max-width: 100%;
+    }
+    #acu-vis-assistant-host[data-open="false"] .acu-vis-assistant-panel {
+        pointer-events: none;
+    }
+    #acu-vis-assistant-host[data-assistant-mode="fullscreen-overlay"] .acu-vis-assistant-panel {
+        pointer-events: auto;
+        touch-action: auto;
+    }
+    #acu-vis-assistant-host[data-assistant-mode="fullscreen-overlay"][data-minimized="true"] .acu-vis-assistant-panel {
+        pointer-events: none;
+    }
+    .acu-vis-assistant-floating-restore {
+        display: none;
+    }
+    #acu-vis-assistant-host[data-assistant-mode="fullscreen-overlay"][data-open="true"][data-minimized="true"] .acu-vis-assistant-floating-restore {
+        display: inline-flex;
+        align-items: center;
+        gap: 8px;
+        position: fixed;
+        right: max(12px, calc(env(safe-area-inset-right, 0px) + 12px));
+        bottom: max(12px, calc(env(safe-area-inset-bottom, 0px) + 12px));
+        z-index: 100003;
+        pointer-events: auto;
+        border-radius: 999px;
+        box-shadow: 0 12px 32px color-mix(in srgb, var(--vis-text-main) 18%, transparent);
+        padding: 10px 14px;
+        max-width: min(calc(100vw - 24px), 320px);
     }
     .acu-vis-assistant-header {
         flex-shrink: 0;
@@ -1382,6 +1455,8 @@
     .acu-assistant-risk-item span {
         font-size: 13px;
         color: var(--vis-text-main);
+        word-break: break-word;
+        overflow-wrap: anywhere;
     }
     .acu-assistant-actions-row {
         padding-top: 12px;
@@ -1404,6 +1479,40 @@
     }
     .acu-assistant-error-text {
         color: var(--acu-danger, #c55);
+    }
+    @media (max-width: 1279px) {
+        #acu-visualizer-content[data-assistant-layout="expanded"] .acu-vis-sidebar {
+            flex: 0 0 136px;
+            min-width: 120px;
+            max-width: 150px;
+        }
+        #acu-visualizer-content[data-assistant-layout="expanded"] .acu-vis-main {
+            flex: 0 1 16%;
+        }
+        #acu-visualizer-content[data-assistant-layout="expanded"] #acu-vis-assistant-host {
+            flex: 1 1 84%;
+        }
+    }
+    @media (max-width: 899px) {
+        #acu-vis-assistant-host {
+            min-height: 0;
+        }
+        #acu-vis-assistant-host[data-assistant-mode="fullscreen-overlay"][data-open="true"] .acu-vis-assistant-panel {
+            max-width: 100vw;
+            max-height: 100dvh;
+        }
+        #acu-vis-assistant-host[data-assistant-mode="fullscreen-overlay"] .acu-assistant-actions-row {
+            padding-top: 10px;
+        }
+        #acu-vis-assistant-host[data-assistant-mode="fullscreen-overlay"] .acu-assistant-risk-item {
+            align-items: flex-start;
+        }
+        #acu-vis-assistant-host[data-assistant-mode="fullscreen-overlay"][data-open="true"][data-minimized="true"] .acu-vis-assistant-floating-restore {
+            left: 12px;
+            right: 12px;
+            width: auto;
+            justify-content: center;
+        }
     }
     /* assistant round history */
     .acu-assistant-round-item {

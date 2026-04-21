@@ -20,17 +20,29 @@ import { deleteAllGeneratedEntries_ACU } from '../worldbook/pipeline';
 import { mergeAllIndependentTables_ACU } from '../runtime/helpers-remaining';
 import { cloneIsolatedData_ACU, writeIsolatedTagData_ACU, writeMessageIdentity_ACU, writeLegacyCompatData_ACU, writeLegacyStandardAndSummary_ACU, readIsolatedTagData_ACU, readLegacyIndependentData_ACU, isLegacyMatchForIsolation_ACU } from '../../data/repositories/chat-message-data-repo';
 
+export interface TableChatPersistOptions_ACU {
+  targetMessageIndex?: number;
+  targetSheetKeys?: string[] | null;
+  updateGroupKeys?: string[] | null;
+  trackAsUpdate?: boolean;
+}
+
+export async function persistTablesToChatMessage_ACU(
+  options: TableChatPersistOptions_ACU = {},
+): Promise<{ saved: boolean; messageIndex?: number; error?: string }> {
+  const {
+    targetMessageIndex = -1,
+    targetSheetKeys = null,
+    updateGroupKeys = null,
+    trackAsUpdate = true,
+  } = options;
+
 /**
  * 保存独立表格数据到聊天记录。
  * 返回 { saved: boolean, messageIndex?: number, error?: string }
  * 注意：不再内部调用 refreshMergedDataAndNotify，调用方按需自行刷新。
  */
-export async function saveIndependentTableToChatHistory_ACU(
-  targetMessageIndex = -1,
-  targetSheetKeys: string[] | null = null,
-  updateGroupKeys: string[] | null = null,
-  _skipPostRefresh = false,
-): Promise<{ saved: boolean; messageIndex?: number; error?: string }> {
+  const _skipPostRefresh = false;
   if (!currentJsonTableData_ACU) {
     logError_ACU('Save aborted: currentJsonTableData_ACU is null.');
     return { saved: false, error: 'currentJsonTableData is null' };
@@ -112,17 +124,17 @@ export async function saveIndependentTableToChatHistory_ACU(
 
   currentTagData.independentData = independentData;
 
-  if (actuallyModifiedKeys.length > 0) {
+  if (trackAsUpdate && actuallyModifiedKeys.length > 0) {
     const existingModifiedKeys = currentTagData.modifiedKeys || [];
     currentTagData.modifiedKeys = [...new Set([...existingModifiedKeys, ...actuallyModifiedKeys])];
     logDebug_ACU(`[Tracking] Recorded modified keys for tag [${currentIsolationKey || '无标签'}] at index ${finalIndex}: ${currentTagData.modifiedKeys.join(', ')}`);
   }
 
-  if (updateGroupKeys && updateGroupKeys.length > 0 && actuallyModifiedKeys.length > 0) {
+  if (trackAsUpdate && updateGroupKeys && updateGroupKeys.length > 0 && actuallyModifiedKeys.length > 0) {
     const existingGroupKeys = currentTagData.updateGroupKeys || [];
     currentTagData.updateGroupKeys = [...new Set([...existingGroupKeys, ...updateGroupKeys])];
     logDebug_ACU(`[Merge Update Success] Group keys for tag [${currentIsolationKey || '无标签'}] recorded at index ${finalIndex}: ${currentTagData.updateGroupKeys.join(', ')}`);
-  } else if (updateGroupKeys && updateGroupKeys.length > 0 && actuallyModifiedKeys.length === 0) {
+  } else if (trackAsUpdate && updateGroupKeys && updateGroupKeys.length > 0 && actuallyModifiedKeys.length === 0) {
     logDebug_ACU(`[Merge Update Failed] No tables were modified for tag [${currentIsolationKey || '无标签'}]. Group keys NOT recorded: ${updateGroupKeys.join(', ')}`);
   }
 
@@ -158,6 +170,25 @@ export async function saveIndependentTableToChatHistory_ACU(
   await new Promise(resolve => setTimeout(resolve, 500));
 
   return { saved: true, messageIndex: finalIndex };
+}
+
+/**
+ * 保存独立表格数据到聊天记录。
+ * 返回 { saved: boolean, messageIndex?: number, error?: string }
+ * 注意：不再内部调用 refreshMergedDataAndNotify，调用方按需自行刷新。
+ */
+export async function saveIndependentTableToChatHistory_ACU(
+  targetMessageIndex = -1,
+  targetSheetKeys: string[] | null = null,
+  updateGroupKeys: string[] | null = null,
+  _skipPostRefresh = false,
+): Promise<{ saved: boolean; messageIndex?: number; error?: string }> {
+  return persistTablesToChatMessage_ACU({
+    targetMessageIndex,
+    targetSheetKeys,
+    updateGroupKeys,
+    trackAsUpdate: true,
+  });
 }
 
 /**

@@ -48,6 +48,9 @@ export function showCustomConfirm_ACU(
   } = options;
 
   const targetDoc = getTargetDoc();
+  const targetWindow = targetDoc.defaultView || topLevelWindow_ACU || window;
+  const viewportWidth = Number(targetWindow?.innerWidth || window.innerWidth || 0);
+  const isNarrowScreen = viewportWidth > 0 && viewportWidth <= 899;
 
   // 移除可能残留的旧确认框（防止重复）
   removeExistingConfirm();
@@ -61,11 +64,13 @@ export function showCustomConfirm_ACU(
     <div class="acu-window-overlay" id="${confirmId}-overlay" style="z-index: 100000;">
       <div id="${confirmId}" style="
         position: fixed;
-        top: 50%;
+        top: ${isNarrowScreen ? 'max(calc(env(safe-area-inset-top, 0px) + 72px), 12svh)' : '50%'};
         left: 50%;
-        transform: translate(-50%, -50%);
-        min-width: 320px;
-        max-width: min(420px, calc(100vw - 40px));
+        transform: translate(-50%, ${isNarrowScreen ? '0' : '-50%' });
+        min-width: ${isNarrowScreen ? 'min(280px, calc(100vw - 24px))' : '320px'};
+        width: min(420px, calc(100vw - ${isNarrowScreen ? '24px' : '40px'}));
+        max-width: min(420px, calc(100vw - ${isNarrowScreen ? '24px' : '40px'}));
+        max-height: calc(${isNarrowScreen ? '100dvh' : '100vh'} - env(safe-area-inset-top, 0px) - env(safe-area-inset-bottom, 0px) - ${isNarrowScreen ? '88px' : '40px'});
         background-color: var(--acu-confirm-bg, var(--acu-bg-1, #ffffff));
         border: 1px solid var(--acu-confirm-border, var(--acu-border, #e0e4ea));
         border-radius: 10px;
@@ -75,6 +80,8 @@ export function showCustomConfirm_ACU(
         color: var(--acu-confirm-title, var(--acu-text-1, #1a2332));
         padding: 0;
         overflow: hidden;
+        display: flex;
+        flex-direction: column;
       ">
         <div style="
           padding: 16px 20px 12px 20px;
@@ -89,15 +96,18 @@ export function showCustomConfirm_ACU(
           font-size: 13px;
           line-height: 1.7;
           color: var(--acu-confirm-text, var(--acu-text-2, #4a5568));
+          overflow-y: auto;
+          max-height: ${isNarrowScreen ? 'min(50dvh, calc(100dvh - env(safe-area-inset-top, 0px) - env(safe-area-inset-bottom, 0px) - 180px))' : 'none'};
         ">${safeMessage}</div>
         <div style="
-          padding: 12px 20px 16px 20px;
+          padding: 12px 20px calc(16px + env(safe-area-inset-bottom, 0px)) 20px;
           display: flex;
-          justify-content: flex-end;
+          justify-content: ${isNarrowScreen ? 'stretch' : 'flex-end'};
+          flex-direction: ${isNarrowScreen ? 'column-reverse' : 'row'};
           gap: 10px;
         ">
           <button id="${confirmId}-cancel" style="
-            padding: 8px 18px;
+            padding: 10px 18px;
             border: 1px solid var(--acu-confirm-cancel-border, var(--acu-border-2, #c8cdd5)) !important;
             border-radius: 6px;
             background: var(--acu-confirm-cancel-bg, transparent) !important;
@@ -109,9 +119,10 @@ export function showCustomConfirm_ACU(
             letter-spacing: 0.3px;
             transition: background 0.15s ease, border-color 0.15s ease, color 0.15s ease;
             box-shadow: none !important;
+            width: ${isNarrowScreen ? '100%' : 'auto'};
           ">${escapeHtml_ACU(cancelLabel)}</button>
           <button id="${confirmId}-ok" style="
-            padding: 8px 18px;
+            padding: 10px 18px;
             border: 1px solid var(--acu-confirm-ok-border, rgba(37, 99, 235, 0.30)) !important;
             border-radius: 6px;
             background: var(--acu-confirm-ok-bg, rgba(37, 99, 235, 0.08)) !important;
@@ -123,6 +134,7 @@ export function showCustomConfirm_ACU(
             letter-spacing: 0.3px;
             transition: background 0.15s ease, border-color 0.15s ease;
             box-shadow: none !important;
+            width: ${isNarrowScreen ? '100%' : 'auto'};
           ">${escapeHtml_ACU(confirmLabel)}</button>
         </div>
       </div>

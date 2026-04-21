@@ -133,6 +133,7 @@ import { VISUALIZER_CSS_ACU } from './visualizer-styles';
           resizable: true,
           maximizable: true,
           startMaximized: false, // 由 rememberState 自动管理，首次打开时不全屏
+          forcePhoneFullscreen: true,
           onClose: () => {
               if (!confirm('确定要关闭吗？未保存的修改将丢失。')) {
                   return false; // 阻止关闭（注意：当前实现会立即关闭，后续可优化）

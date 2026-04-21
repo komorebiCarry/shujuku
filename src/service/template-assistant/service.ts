@@ -200,6 +200,7 @@ export interface TemplateAssistantGenerateInput_ACU {
     sheetOrder?: string[] | null;
     userRequest: string;
     priorTurns?: TemplateAssistantPriorTurn_ACU[] | null;
+    tableApiPreset?: string;
 }
 
 export interface TemplateAssistantGenerateResult_ACU {
@@ -1032,13 +1033,17 @@ export async function generateTemplateAssistantDraft_ACU(input: TemplateAssistan
     const baseFingerprint = buildTemplateAssistantFingerprint_ACU(tempData);
     const messages = buildTemplateAssistantMessages_ACU({ ...input, tempData }, baseFingerprint);
 
-    let effectivePreset = settings_ACU.tableApiPreset || '';
-    const currentSheet = input.currentSheetKey ? tempData[input.currentSheetKey] : null;
-    const currentTableName = String(currentSheet?.name || '').trim();
-    if (currentTableName) {
-        const overrides = settings_ACU.tableApiPresetOverridesByName;
-        if (overrides && typeof overrides === 'object' && typeof overrides[currentTableName] === 'string' && overrides[currentTableName].trim()) {
-            effectivePreset = overrides[currentTableName].trim();
+    const overridePreset = String(input?.tableApiPreset || '').trim();
+    let effectivePreset = overridePreset;
+    if (!effectivePreset) {
+        effectivePreset = settings_ACU.tableApiPreset || '';
+        const currentSheet = input.currentSheetKey ? tempData[input.currentSheetKey] : null;
+        const currentTableName = String(currentSheet?.name || '').trim();
+        if (currentTableName) {
+            const overrides = settings_ACU.tableApiPresetOverridesByName;
+            if (overrides && typeof overrides === 'object' && typeof overrides[currentTableName] === 'string' && overrides[currentTableName].trim()) {
+                effectivePreset = overrides[currentTableName].trim();
+            }
         }
     }
 
@@ -1139,6 +1144,7 @@ export async function runTemplateAssistantSession_ACU(input: TemplateAssistantSe
                     sheetOrder: workingSheetOrder,
                     userRequest: roundUserRequest,
                     priorTurns: historyForRound,
+                    tableApiPreset: input.tableApiPreset,
                 });
                 assertTemplateAssistantSessionActive_ACU(input.guard);
                 lastResult = result;

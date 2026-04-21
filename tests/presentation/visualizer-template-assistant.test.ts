@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-const { mockShowToastr, mockRunSession, mockApply, state } = vi.hoisted(() => ({
+const { mockShowToastr, mockRunSession, mockApply, state, mockSettings_ACU, viewportState_ACU } = vi.hoisted(() => ({
   mockShowToastr: vi.fn(),
   mockRunSession: vi.fn(),
   mockApply: vi.fn(() => true),
@@ -11,6 +11,14 @@ const { mockShowToastr, mockRunSession, mockApply, state } = vi.hoisted(() => ({
     currentSheetKey: 'sheet_a',
     sheetOrder: ['sheet_a'],
     deletedSheetKeys: [],
+  },
+  mockSettings_ACU: {
+    apiPresets: [{ name: 'preset-alpha' }, { name: 'preset-beta' }],
+    tableApiPreset: 'preset-alpha',
+    tableApiPresetOverridesByName: {} as Record<string, string>,
+  },
+  viewportState_ACU: {
+    width: 1440,
   },
 }));
 
@@ -85,6 +93,7 @@ function jqueryStub_ACU(selectorOrElement: any) {
     elements = (selectorOrElement as any).__elements;
     api.length = elements.length;
   }
+  api[0] = elements[0];
   if ((selectorOrElement as any)?.__turnId) {
     api.data = (name: string) => {
       if (name === 'turn-id') return (selectorOrElement as any).__turnId;
@@ -107,6 +116,7 @@ class FakeHTMLElement_ACU {
   clientHeight = 0;
   listeners: ListenerMap_ACU = {};
   attributes: Record<string, string> = {};
+  parentElement: FakeHTMLElement_ACU | null = null;
 
   constructor(private readonly selector: string, private readonly owner: FakeDocument_ACU) {}
 
@@ -138,20 +148,42 @@ class FakeHTMLElement_ACU {
     return Object.prototype.hasOwnProperty.call(this.attributes, name) ? this.attributes[name] : null;
   }
 
+  setAttribute(name: string, value: string) {
+    this.attributes[name] = String(value);
+  }
+
   querySelectorAll(selector: string) {
     return this.owner.querySelectorAll(selector);
+  }
+
+  private syncStyleMap(styleText: string) {
+    this.style = {};
+    String(styleText || '').split(';').forEach((part) => {
+      const [rawKey, rawValue] = part.split(':');
+      const key = String(rawKey || '').trim();
+      const value = String(rawValue || '').trim();
+      if (key) this.style[key] = value;
+    });
   }
 
   syncFromHtml(html: string) {
     if (this.selector === '#acu-vis-assistant-host') {
       this._innerHTML = html;
+      this.attributes['data-assistant-mode'] = /data-assistant-mode="([^"]+)"/i.test(html)
+        ? String(html.match(/data-assistant-mode="([^"]+)"/i)?.[1] || '')
+        : this.attributes['data-assistant-mode'] || '';
+      this.attributes['data-open'] = /data-open="([^"]+)"/i.test(html)
+        ? String(html.match(/data-open="([^"]+)"/i)?.[1] || '')
+        : this.attributes['data-open'] || '';
+      this.parentElement = /id="acu-visualizer-content"/i.test(html)
+        ? this.owner.querySelector('#acu-visualizer-content') as FakeHTMLElement_ACU | null
+        : null;
       return;
     }
 
     if (this.selector === '.acu-vis-assistant-panel') {
       const styleMatch = html.match(/class="acu-vis-assistant-panel"[^>]*style="([^"]*)"/);
-      const displayMatch = styleMatch?.[1]?.match(/display\s*:\s*([^;]+)/);
-      this.style.display = displayMatch ? displayMatch[1].trim() : '';
+      this.syncStyleMap(styleMatch?.[1] || '');
       return;
     }
 
@@ -167,8 +199,15 @@ class FakeHTMLElement_ACU {
       this.attributes = {};
       if (dataRiskKeyMatch) this.attributes['data-risk-key'] = dataRiskKeyMatch[1];
       if (dataTurnIdMatch) this.attributes['data-turn-id'] = dataTurnIdMatch[1];
-      if (tag.toLowerCase() === 'input' && valueMatch) {
+      const styleAttrMatch = attrs.match(/style="([^"]*)"/i);
+      this.syncStyleMap(styleAttrMatch?.[1] || '');
+      if ((tag.toLowerCase() === 'input' || tag.toLowerCase() === 'textarea') && valueMatch) {
         this.value = valueMatch[1];
+      }
+      if (tag.toLowerCase() === 'select') {
+        const selectMatch = html.match(new RegExp(`<select[^>]*id="${id}"[^>]*>([\s\S]*?)<\/select>`, 'i'));
+        const selectedValueMatch = selectMatch?.[1]?.match(/<option[^>]*value="([^"]*)"[^>]*selected[^>]*>/i);
+        this.value = selectedValueMatch ? selectedValueMatch[1] : '';
       }
       return;
     }
@@ -210,6 +249,17 @@ class FakeDocument_ACU {
 
   private buildElements(selector: string) {
     const html = this.body.innerHTML;
+    if (selector === '#acu-visualizer-content') {
+      if (!html.includes('id="acu-visualizer-content"')) return [];
+      const el = new FakeHTMLElement_ACU(selector, this);
+      return [el];
+    }
+    if (selector === '.acu-vis-content') {
+      if (!html.includes('class="acu-vis-content"')) return [];
+      const el = new FakeHTMLElement_ACU(selector, this);
+      el.parentElement = this.querySelector('#acu-visualizer-content') as FakeHTMLElement_ACU | null;
+      return [el];
+    }
     if (selector === '#acu-vis-assistant-host') {
       this.body.syncFromHtml(html);
       return [this.body];
@@ -305,6 +355,13 @@ class FakeDocument_ACU {
         return el;
       });
     }
+    if (selector === '.acu-assistant-action-row') {
+      if (!html.includes('acu-assistant-action-row')) return [];
+      const el = new FakeHTMLElement_ACU(selector, this);
+      const styleMatch = html.match(/class="[^"]*acu-assistant-action-row[^"]*"[^>]*style="([^"]*)"/i);
+      (el as any).syncStyleMap?.(styleMatch?.[1] || '');
+      return [el];
+    }
     if (selector === '.acu-message-bubble') {
       if (!html.includes('acu-message-bubble')) return [];
       const matches = Array.from(html.matchAll(/class="[^"]*acu-message-bubble[^"]*"/g));
@@ -335,7 +392,15 @@ class FakeEvent_ACU {
 const fakeDocument_ACU = new FakeDocument_ACU();
 
 (globalThis as any).document = fakeDocument_ACU;
-(globalThis as any).window = { Event: FakeEvent_ACU };
+(globalThis as any).window = {
+  Event: FakeEvent_ACU,
+  get innerWidth() {
+    return viewportState_ACU.width;
+  },
+  set innerWidth(value: number) {
+    viewportState_ACU.width = Number(value) || 1440;
+  },
+};
 (globalThis as any).HTMLElement = FakeHTMLElement_ACU;
 (globalThis as any).Event = FakeEvent_ACU;
 
@@ -370,6 +435,10 @@ vi.mock('../../src/presentation/pages/visualizer', () => ({
   _acuVisState: state,
 }));
 
+vi.mock('../../src/service/runtime/state-manager', () => ({
+  settings_ACU: mockSettings_ACU,
+}));
+
 vi.mock('../../src/presentation/dom-utils', () => ({
   jQuery_API_ACU: jqueryStub_ACU,
 }));
@@ -385,10 +454,14 @@ import {
   setVisualizerTemplateAssistantOpen_ACU,
 } from '../../src/presentation/pages/visualizer-template-assistant';
 
+function buildVisualizerAssistantTestDom_ACU() {
+  return '<div id="acu-visualizer-content"><div class="acu-vis-content"></div><div id="acu-vis-assistant-host"></div></div>';
+}
+
 describe('visualizer template assistant panel', () => {
   beforeEach(() => {
     resetVisualizerTemplateAssistantState_ACU();
-    document.body.innerHTML = '<div id="acu-vis-assistant-host"></div>';
+    document.body.innerHTML = buildVisualizerAssistantTestDom_ACU();
     fakeDocument_ACU.resetChatContainerState();
     fakeDocument_ACU.invalidateCache();
     mockShowToastr.mockReset();
@@ -399,6 +472,130 @@ describe('visualizer template assistant panel', () => {
     state.currentSheetKey = 'sheet_a';
     state.sheetOrder = ['sheet_a'];
     state.deletedSheetKeys = [];
+    viewportState_ACU.width = 1440;
+    mockSettings_ACU.apiPresets = [{ name: 'preset-alpha' }, { name: 'preset-beta' }];
+    mockSettings_ACU.tableApiPreset = 'preset-alpha';
+    mockSettings_ACU.tableApiPresetOverridesByName = {};
+  });
+
+  it('assistant 面板显示 API 预设下拉并使用当前有效 preset 作为默认值', () => {
+    mockSettings_ACU.tableApiPresetOverridesByName = { 'A表': 'preset-beta' };
+    resetVisualizerTemplateAssistantState_ACU();
+    document.body.innerHTML = buildVisualizerAssistantTestDom_ACU();
+    setVisualizerTemplateAssistantOpen_ACU(true);
+    renderVisualizerTemplateAssistantPanel_ACU();
+
+    const select = document.querySelector('#acu-vis-assistant-api-preset') as HTMLSelectElement;
+    expect(select).toBeTruthy();
+    expect(document.body.innerHTML).toContain('API预设');
+    expect(document.body.innerHTML).toContain('preset-alpha');
+    expect(document.body.innerHTML).toContain('preset-beta');
+    expect(document.body.innerHTML).toContain('<option value="preset-beta" selected>preset-beta</option>');
+  });
+
+  it('中屏模式下 assistant 面板切换为全屏 overlay 布局', () => {
+    viewportState_ACU.width = 1100;
+    setVisualizerTemplateAssistantOpen_ACU(true);
+    renderVisualizerTemplateAssistantPanel_ACU();
+
+    const host = document.querySelector('#acu-vis-assistant-host') as HTMLElement;
+    const panel = document.querySelector('.acu-vis-assistant-panel') as HTMLElement;
+    expect(host).toBeTruthy();
+    expect(panel).toBeTruthy();
+    expect(host.getAttribute('data-assistant-mode')).toBe('fullscreen-overlay');
+    expect(host.getAttribute('data-open')).toBe('true');
+    expect(panel.style.position).toBe('fixed');
+    expect(panel.style.inset).toBe('0');
+    expect(panel.style.width).toBe('100vw');
+    expect(panel.style.height).toBe('100dvh');
+    expect(panel.style.background).toContain('var(--vis-assistant-window-bg, var(--vis-bg-color))');
+  });
+
+  it('窄屏模式下 assistant 面板切换为全屏 overlay 且按钮纵向堆叠', () => {
+    viewportState_ACU.width = 768;
+    setVisualizerTemplateAssistantOpen_ACU(true);
+    renderVisualizerTemplateAssistantPanel_ACU();
+
+    const host = document.querySelector('#acu-vis-assistant-host') as HTMLElement;
+    const panel = document.querySelector('.acu-vis-assistant-panel') as HTMLElement;
+    const actionRow = document.querySelector('.acu-assistant-action-row') as HTMLElement;
+    expect(host).toBeTruthy();
+    expect(panel).toBeTruthy();
+    expect(host.getAttribute('data-assistant-mode')).toBe('fullscreen-overlay');
+    expect(host.getAttribute('data-open')).toBe('true');
+    expect(host.getAttribute('data-minimized')).toBe('false');
+    expect(panel.style.position).toBe('fixed');
+    expect(panel.style.width).toBe('100vw');
+    expect(panel.style.inset).toBe('0');
+    expect(panel.style.height).toBe('100dvh');
+    expect(actionRow.style['flex-direction']).toBe('column');
+  });
+
+  it('手机窄屏 visualizer 窗口应使用全页面窗口样式信号', async () => {
+    const source = await import('../../src/presentation/window/window-system');
+    expect(String(source.createACUWindow_ACU || source.createACUWindow || '')).toContain('forcePhoneFullscreen');
+  });
+
+  it('窄屏模式下 assistant 可以最小化为悬浮恢复按钮并保留打开状态', () => {
+    viewportState_ACU.width = 768;
+    setVisualizerTemplateAssistantOpen_ACU(true);
+    renderVisualizerTemplateAssistantPanel_ACU();
+
+    const minimizeBtn = document.querySelector('#acu-vis-assistant-minimize') as HTMLButtonElement;
+    expect(minimizeBtn).toBeTruthy();
+
+    minimizeBtn.click();
+
+    const host = document.querySelector('#acu-vis-assistant-host') as HTMLElement;
+    const panel = document.querySelector('.acu-vis-assistant-panel') as HTMLElement;
+    const restoreBtn = document.querySelector('#acu-vis-assistant-restore') as HTMLButtonElement;
+    expect(host.getAttribute('data-open')).toBe('true');
+    expect(host.getAttribute('data-minimized')).toBe('true');
+    expect(panel.style.display).toBe('none');
+    expect(restoreBtn).toBeTruthy();
+    expect(document.body.innerHTML).toContain('恢复 AI 改表助手');
+  });
+
+  it('窄屏模式下 assistant 从最小化恢复后继续显示全屏窗口', () => {
+    viewportState_ACU.width = 768;
+    setVisualizerTemplateAssistantOpen_ACU(true);
+    renderVisualizerTemplateAssistantPanel_ACU();
+
+    (document.querySelector('#acu-vis-assistant-minimize') as HTMLButtonElement).click();
+    (document.querySelector('#acu-vis-assistant-restore') as HTMLButtonElement).click();
+
+    const host = document.querySelector('#acu-vis-assistant-host') as HTMLElement;
+    const panel = document.querySelector('.acu-vis-assistant-panel') as HTMLElement;
+    expect(host.getAttribute('data-open')).toBe('true');
+    expect(host.getAttribute('data-minimized')).toBe('false');
+    expect(panel.style.display).toBe('flex');
+    expect(document.querySelector('#acu-vis-assistant-input')).toBeTruthy();
+  });
+
+  it('切换 assistant API 预设后发送请求会把 tableApiPreset 传给 runSession', async () => {
+    setVisualizerTemplateAssistantOpen_ACU(true);
+    renderVisualizerTemplateAssistantPanel_ACU();
+    mockRunSession.mockResolvedValue({
+      draft: { protocolVersion: 2, requestId: 'req-preset-ui', atomic: true, summary: '新增战利品表', warnings: [] },
+      compileResult: {
+        diff: { addedSheets: [], deletedSheets: [], renamedSheets: [], movedSheets: [], patchedSourceDataSheets: [], patchedUpdateConfigSheets: [], patchedExportConfigSheets: [], patchedContentSheets: [], patchedSchemaSheets: [], patchedLockSheets: [], globalInjectionChanged: false },
+        highRiskItems: [],
+        lockChanges: [],
+      },
+    });
+
+    const select = document.querySelector('#acu-vis-assistant-api-preset') as HTMLSelectElement;
+    select.value = 'preset-beta';
+    select.dispatchEvent(new Event('change'));
+
+    const textarea = document.querySelector('#acu-vis-assistant-input') as HTMLTextAreaElement;
+    textarea.value = '新增战利品表';
+    textarea.dispatchEvent(new Event('input'));
+    (document.querySelector('#acu-vis-assistant-generate') as HTMLButtonElement).click();
+    await Promise.resolve();
+    await Promise.resolve();
+
+    expect(mockRunSession).toHaveBeenCalledWith(expect.objectContaining({ tableApiPreset: 'preset-beta' }));
   });
 
   it('panel 能打开和关闭', () => {
@@ -534,6 +731,12 @@ describe('visualizer template assistant panel', () => {
     const beforeHtml = document.body.innerHTML;
     const checkbox = document.querySelector('.acu-assistant-risk-confirm') as HTMLInputElement;
     const applyBtn = document.querySelector('#acu-vis-assistant-apply') as HTMLButtonElement;
+    expect(checkbox.checked).toBe(true);
+    expect(applyBtn.disabled).toBe(false);
+
+    checkbox.checked = false;
+    checkbox.dispatchEvent(new Event('change'));
+
     expect(applyBtn.disabled).toBe(true);
 
     checkbox.checked = true;
@@ -543,7 +746,7 @@ describe('visualizer template assistant panel', () => {
     expect(document.body.innerHTML).toBe(beforeHtml);
   });
 
-  it('高风险项确认后点击应用按钮会真正触发 apply', async () => {
+  it('DDL 高风险项默认通过时点击应用按钮会真正触发 apply', async () => {
     setVisualizerTemplateAssistantOpen_ACU(true);
     renderVisualizerTemplateAssistantPanel_ACU();
     mockRunSession.mockResolvedValue({
@@ -574,43 +777,39 @@ describe('visualizer template assistant panel', () => {
     await Promise.resolve();
     await Promise.resolve();
 
-    const checkbox = document.querySelector('.acu-assistant-risk-confirm') as HTMLInputElement;
     const applyBtn = document.querySelector('#acu-vis-assistant-apply') as HTMLButtonElement;
-    checkbox.checked = true;
-    checkbox.dispatchEvent(new Event('change'));
-
     expect(applyBtn.disabled).toBe(false);
     applyBtn.click();
 
     expect(mockApply).toHaveBeenCalledTimes(1);
   });
 
-  it('高风险项未确认时即使触发 apply click 也不会执行应用', async () => {
+  it('非 DDL 高风险项未确认时即使触发 apply click 也不会执行应用', async () => {
     setVisualizerTemplateAssistantOpen_ACU(true);
     renderVisualizerTemplateAssistantPanel_ACU();
     mockRunSession.mockResolvedValue({
-      draft: { protocolVersion: 2, requestId: 'req-3d', atomic: true, summary: '更新 DDL', warnings: [] },
+      draft: { protocolVersion: 2, requestId: 'req-3d', atomic: true, summary: '删除 A表', warnings: [] },
       compileResult: {
         diff: {
           addedSheets: [],
-          deletedSheets: [],
+          deletedSheets: [{ sheetKey: 'sheet_a', name: 'A表' }],
           renamedSheets: [],
           movedSheets: [],
           patchedSourceDataSheets: [],
           patchedUpdateConfigSheets: [],
           patchedExportConfigSheets: [],
           patchedContentSheets: [],
-          patchedSchemaSheets: [{ sheetKey: 'sheet_a', name: 'A表', changes: ['更新 DDL: 战利品表'] }],
+          patchedSchemaSheets: [],
           patchedLockSheets: [],
           globalInjectionChanged: false,
         },
-        highRiskItems: [{ type: 'patch_sheet_schema', label: '更新 DDL: 战利品表' }],
+        highRiskItems: [{ type: 'delete_sheet', label: '删除表: A表' }],
         lockChanges: [],
       },
     });
 
     const textarea = document.querySelector('#acu-vis-assistant-input') as HTMLTextAreaElement;
-    textarea.value = '更新 DDL';
+    textarea.value = '删除 A表';
     textarea.dispatchEvent(new Event('input'));
     (document.querySelector('#acu-vis-assistant-generate') as HTMLButtonElement).click();
     await Promise.resolve();
@@ -622,6 +821,53 @@ describe('visualizer template assistant panel', () => {
 
     expect(mockApply).not.toHaveBeenCalled();
     expect(mockShowToastr).toHaveBeenCalledWith('warning', '请先确认所有高风险项后再应用。');
+  });
+
+  it('混合高风险时只对 DDL 项默认通过，其他项仍需确认', async () => {
+    setVisualizerTemplateAssistantOpen_ACU(true);
+    renderVisualizerTemplateAssistantPanel_ACU();
+    mockRunSession.mockResolvedValue({
+      draft: { protocolVersion: 2, requestId: 'req-3e', atomic: true, summary: '更新 DDL 并删除旧表', warnings: [] },
+      compileResult: {
+        diff: {
+          addedSheets: [],
+          deletedSheets: [{ sheetKey: 'sheet_b', name: 'B表' }],
+          renamedSheets: [],
+          movedSheets: [],
+          patchedSourceDataSheets: [],
+          patchedUpdateConfigSheets: [],
+          patchedExportConfigSheets: [],
+          patchedContentSheets: [],
+          patchedSchemaSheets: [{ sheetKey: 'sheet_a', name: 'A表', changes: ['更新 DDL: 战利品表'] }],
+          patchedLockSheets: [],
+          globalInjectionChanged: false,
+        },
+        highRiskItems: [
+          { type: 'patch_sheet_schema', label: '更新 DDL: 战利品表' },
+          { type: 'delete_sheet', label: '删除表: B表' },
+        ],
+        lockChanges: [],
+      },
+    });
+
+    const textarea = document.querySelector('#acu-vis-assistant-input') as HTMLTextAreaElement;
+    textarea.value = '更新 DDL 并删除旧表';
+    textarea.dispatchEvent(new Event('input'));
+    (document.querySelector('#acu-vis-assistant-generate') as HTMLButtonElement).click();
+    await Promise.resolve();
+    await Promise.resolve();
+
+    const checkboxes = document.querySelectorAll('.acu-assistant-risk-confirm') as unknown as HTMLInputElement[];
+    const applyBtn = document.querySelector('#acu-vis-assistant-apply') as HTMLButtonElement;
+    expect(checkboxes).toHaveLength(2);
+    expect(checkboxes[0].checked).toBe(true);
+    expect(checkboxes[1].checked).toBe(false);
+    expect(applyBtn.disabled).toBe(true);
+
+    checkboxes[1].checked = true;
+    checkboxes[1].dispatchEvent(new Event('change'));
+
+    expect(applyBtn.disabled).toBe(false);
   });
 
   it('v1 草稿在切换当前表时会刷新标题并清空旧草稿', async () => {
@@ -766,7 +1012,7 @@ describe('visualizer template assistant panel', () => {
       expect(html).toContain('acu-chat-scroll-frame');
       expect(html).toContain('border-radius:12px');
       expect(html).toContain('overflow:hidden');
-      expect(html).toContain('box-shadow:inset 0 1px 0 rgba(255,255,255,0.04)');
+      expect(html).toContain('background:var(--vis-assistant-surface-bg, var(--vis-bg-light))');
       const chatContainer = document.querySelector('.acu-chat-container');
       expect(chatContainer).toBeTruthy();
       expect(html).toContain('overflow-y:auto');

@@ -5,6 +5,7 @@ import { SCRIPT_ID_PREFIX_ACU } from '../../shared/constants';
 import { escapeHtml_ACU } from '../../shared/html-helpers';
 import { isSummaryOrOutlineTable_ACU, logDebug_ACU, logError_ACU } from '../../shared/utils';
 import { getActiveTemplatePresetMeta_ACU } from '../../service/template/template-preset-service';
+import { resolveTableHistoryStateFromChat_ACU } from '../../service/table/table-history';
 import { $popupInstance_ACU, $cardUpdateStatusDisplay_ACU } from '../state/ui-refs';
 /**
  * presentation/components/update-status-display.ts — 运行时状态/更新显示 UI
@@ -77,75 +78,15 @@ import { $popupInstance_ACU, $cardUpdateStatusDisplay_ACU } from '../state/ui-re
         // [重构] 上次更新楼层计算：扫描聊天记录
         // 寻找该表格在历史记录中最后一次被更新的楼层
         // 支持合并更新逻辑：只要合并更新组内有任意表被修改，整组表都视为已更新
-        let lastUpdatedAiFloor = 0;
-        let foundInHistory = false;
-        
-        // [数据隔离核心] 获取当前隔离标签键名
         const currentIsolationKey = getCurrentIsolationKey_ACU();
-
-        for (let i = chatHistory.length - 1; i >= 0; i--) {
-             const msg = chatHistory[i];
-             if (msg.is_user) continue;
-
-             let wasUpdated = false;
-             
-             // [优先级1] 检查新版按标签分组存储 TavernDB_ACU_IsolatedData
-             if (msg.TavernDB_ACU_IsolatedData && msg.TavernDB_ACU_IsolatedData[currentIsolationKey]) {
-                 const tagData = msg.TavernDB_ACU_IsolatedData[currentIsolationKey];
-                 const modifiedKeys = tagData.modifiedKeys || [];
-                 const updateGroupKeys = tagData.updateGroupKeys || [];
-                 const independentData = tagData.independentData || {};
-                 
-                 if (updateGroupKeys.length > 0 && modifiedKeys.length > 0) {
-                     wasUpdated = updateGroupKeys.includes(key);
-                 } else if (modifiedKeys.length > 0) {
-                     wasUpdated = modifiedKeys.includes(key);
-                 } else if (independentData[key]) {
-                     wasUpdated = true;
-                 }
-             }
-             
-             // [优先级2] 兼容旧版存储格式 - 严格匹配隔离标签
-             if (!wasUpdated) {
-                 const msgIdentity = msg.TavernDB_ACU_Identity;
-                 let isLegacyMatch = false;
-                 if (settings_ACU.dataIsolationEnabled) {
-                     isLegacyMatch = (msgIdentity === settings_ACU.dataIsolationCode);
-                 } else {
-                     // 关闭隔离（无标签模式）：只匹配无标识数据
-                     isLegacyMatch = !msgIdentity;
-                 }
-                 
-                 if (isLegacyMatch) {
-                     const modifiedKeys = msg.TavernDB_ACU_ModifiedKeys || [];
-                     const updateGroupKeys = msg.TavernDB_ACU_UpdateGroupKeys || [];
-                     
-                     if (updateGroupKeys.length > 0 && modifiedKeys.length > 0) {
-                         wasUpdated = updateGroupKeys.includes(key);
-                     } else if (modifiedKeys.length > 0) {
-                         wasUpdated = modifiedKeys.includes(key);
-                     } else {
-                         // 旧版兼容：没有 ModifiedKeys 字段时，回退到检查数据是否存在
-                         if (msg.TavernDB_ACU_IndependentData && msg.TavernDB_ACU_IndependentData[key]) {
-                             wasUpdated = true;
-                         }
-                         else if (isSummary && msg.TavernDB_ACU_SummaryData && msg.TavernDB_ACU_SummaryData[key]) {
-                             wasUpdated = true;
-                         }
-                         else if (!isSummary && msg.TavernDB_ACU_Data && msg.TavernDB_ACU_Data[key]) {
-                             wasUpdated = true;
-                         }
-                     }
-                 }
-             }
-
-             if (wasUpdated) {
-                 // 计算这是第几个 AI 回复
-                 lastUpdatedAiFloor = chatHistory.slice(0, i + 1).filter(m => !m.is_user).length;
-                 foundInHistory = true;
-                 break;
-             }
-        }
+        const history = resolveTableHistoryStateFromChat_ACU(chatHistory, {
+            sheetKey: key,
+            isSummaryTable: isSummary,
+            isolationKey: currentIsolationKey,
+            settings: settings_ACU,
+        });
+        const lastUpdatedAiFloor = history.lastTrackedUpdateAiFloor;
+        const foundInHistory = history.hasTrackedUpdate;
         
         const skipFloors = Math.max(0, (rawSkip === -1) ? globalSkip : rawSkip);
 

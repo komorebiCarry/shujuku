@@ -7,7 +7,9 @@ import {
     type TemplateAssistantSessionResult_ACU,
     type TemplateAssistantSessionRound_ACU,
 } from '../../service/template-assistant/service';
+import { settings_ACU } from '../../service/runtime/state-manager';
 import { escapeHtml_ACU } from '../../shared/html-helpers';
+import { topLevelWindow_ACU } from '../../shared/env';
 import { jQuery_API_ACU } from '../dom-utils';
 import { showToastr_ACU } from '../theme/toast';
 import { applyTemplateAssistantDraftToVisualizer_ACU } from './visualizer-template-assistant-apply';
@@ -54,24 +56,28 @@ type ChatTurn = ChatTurnUser | ChatTurnAssistant | ChatTurnError;
 
 type AssistantUiState = {
     isOpen: boolean;
+    isMinimized: boolean;
     userRequest: string;
     isGenerating: boolean;
     transcript: ChatTurn[];
     pendingScrollTop: number;
     pendingScrollMode: 'preserve' | 'stick-bottom';
     maxRoundsInput: string;
+    tableApiPreset: string;
     guardController: TemplateAssistantSessionGuardController_ACU | null;
     runningSessionId: number;
 };
 
 const assistantUiState_ACU: AssistantUiState = {
     isOpen: false,
+    isMinimized: false,
     userRequest: '',
     isGenerating: false,
     transcript: [],
     pendingScrollTop: 0,
     pendingScrollMode: 'preserve',
     maxRoundsInput: '3',
+    tableApiPreset: '',
     guardController: null,
     runningSessionId: 0,
 };
@@ -83,6 +89,186 @@ function generateTurnId_ACU() {
 const NEAR_BOTTOM_THRESHOLD_ACU = 50;
 
 const DEFAULT_MAX_ROUNDS_ACU = 3;
+const MOBILE_VIEWPORT_MAX_ACU = 899;
+const COMPACT_VIEWPORT_MAX_ACU = 1279;
+
+type AssistantViewportMode_ACU = 'desktop' | 'fullscreen-overlay';
+
+function getAssistantViewportWidth_ACU() {
+    const width = Number((globalThis as any)?.window?.innerWidth);
+    if (Number.isFinite(width) && width > 0) return width;
+    return 1440;
+}
+
+function getAssistantViewportMode_ACU(): AssistantViewportMode_ACU {
+    const width = getAssistantViewportWidth_ACU();
+    if (width <= COMPACT_VIEWPORT_MAX_ACU) return 'fullscreen-overlay';
+    return 'desktop';
+}
+
+function getAssistantPanelWidth_ACU(mode: AssistantViewportMode_ACU) {
+    if (mode === 'fullscreen-overlay') return '100vw';
+    return '420px';
+}
+
+/**
+ * Portal 模式：将 #acu-vis-assistant-host 从 #acu-visualizer-content 移到 document.body，
+ * 以绕过 .acu-window 的 overflow:hidden + animation(transform) 创建的 containing block，
+ * 使 position:fixed 能正确相对于视口定位。
+ *
+ * 移出后在宿主元素上注入 --vis-* CSS 变量，保持样式与编辑器一致。
+ */
+const ASSISTANT_HOST_ID_ACU = 'acu-vis-assistant-host';
+const VISUALIZER_ROOT_SELECTOR_ACU = '#acu-visualizer-content';
+
+/** --vis-* CSS 变量声明，与 visualizer-styles.ts 中 #acu-visualizer-content 的定义保持同步 */
+const VIS_PORTAL_VARIABLES_ACU = [
+    '--vis-bg-color:var(--acu-viz-bg, var(--acu-bg-0))',
+    '--vis-border-color:var(--acu-viz-border, var(--acu-border))',
+    '--vis-text-main:var(--acu-viz-text, var(--acu-text-1))',
+    '--vis-text-dim:var(--acu-viz-text-dim, var(--acu-text-2))',
+    '--vis-text-mute:var(--acu-viz-text-mute, var(--acu-text-3))',
+    '--vis-accent:var(--acu-viz-accent, var(--acu-accent))',
+    '--vis-accent-dim:var(--acu-viz-accent-dim, var(--acu-accent-2))',
+    '--vis-accent-glow:var(--acu-viz-accent-glow, var(--acu-accent-glow))',
+    '--vis-bg-hover:var(--acu-viz-hover, var(--acu-bg-2))',
+    '--vis-bg-stats:var(--acu-viz-sidebar-bg, var(--acu-bg-1))',
+    '--vis-bg-light:var(--acu-viz-card-bg, var(--acu-bg-1))',
+    '--vis-font-serif:"Noto Serif SC", "Source Han Serif CN", "Songti SC", "STSong", "SimSun", serif',
+].join(';');
+
+function getPortalDocument_ACU(): Document | null {
+    return topLevelWindow_ACU?.document ?? (typeof document !== 'undefined' ? document : null);
+}
+
+/**
+ * 管理宿主元素的 portal 状态。
+ * - fullscreen-overlay + open → 移到 body，注入 CSS 变量
+ * - 其他情况 → 移回 #acu-visualizer-content，清除变量
+ */
+function ensureAssistantHostPortal_ACU(mode: AssistantViewportMode_ACU, isOpen: boolean): void {
+    const doc = getPortalDocument_ACU();
+    if (!doc) return;
+
+    const host = doc.getElementById(ASSISTANT_HOST_ID_ACU);
+    if (!host) return;
+
+    const shouldPortal = mode === 'fullscreen-overlay' && isOpen;
+    const isInBody = host.parentElement === doc.body;
+
+    if (shouldPortal && !isInBody) {
+        // 进入 portal：移到 body，注入 CSS 变量
+        host.style.cssText += `;${VIS_PORTAL_VARIABLES_ACU}`;
+        doc.body.appendChild(host);
+    } else if (!shouldPortal && isInBody) {
+        // 退出 portal：移回 visualizer content，清除变量
+        const root = doc.querySelector(VISUALIZER_ROOT_SELECTOR_ACU);
+        if (root) {
+            root.appendChild(host);
+        } else {
+            // visualizer 已关闭，直接从 body 移除
+            host.remove();
+        }
+        // 清除注入的 CSS 变量（移除内联 style 中的 --vis-* 声明）
+        clearPortalVariables_ACU(host);
+    }
+    // shouldPortal && isInBody → 已在正确位置，无需操作
+    // !shouldPortal && !isInBody → 已在正确位置，无需操作
+}
+
+/** 从宿主元素的 inline style 中移除 portal 注入的 CSS 变量 */
+function clearPortalVariables_ACU(host: HTMLElement): void {
+    const style = host.getAttribute('style') || '';
+    const cleaned = style.split(';').filter((s: string) => {
+        const prop = s.trim().startsWith('--vis-');
+        return !prop;
+    }).join(';');
+    host.setAttribute('style', cleaned);
+}
+
+function buildAssistantPanelStyle_ACU(mode: AssistantViewportMode_ACU, display: string) {
+    const common = `display:${display}; flex-direction:column; min-height:0; overflow:hidden; background:var(--vis-assistant-window-bg, var(--vis-bg-color)); color:var(--vis-text-main); box-shadow:0 20px 48px color-mix(in srgb, var(--vis-text-main) 18%, transparent);`;
+    if (mode === 'fullscreen-overlay') {
+        return `${common} position:fixed; inset:0; width:100vw; min-height:100vh; height:100dvh; border-left:none; z-index:100002; background:var(--vis-assistant-window-bg, var(--vis-bg-color)); padding:env(safe-area-inset-top, 0px) 0 env(safe-area-inset-bottom, 0px);`;
+    }
+    return `${common} width:${getAssistantPanelWidth_ACU(mode)}; height:100%; border-left:1px solid var(--vis-border-color); flex-shrink:0;`;
+}
+
+function buildAssistantHeaderStyle_ACU(mode: AssistantViewportMode_ACU) {
+    const compactPadding = mode === 'fullscreen-overlay' ? '12px 12px 10px' : '14px 16px';
+    const sticky = mode === 'fullscreen-overlay' ? 'position:sticky; top:0; z-index:2; background:var(--vis-assistant-window-bg, var(--vis-bg-color));' : '';
+    return `padding:${compactPadding}; border-bottom:1px solid var(--vis-border-color); display:flex; justify-content:space-between; align-items:center; gap:12px; ${sticky}`;
+}
+
+function buildAssistantScrollFrameStyle_ACU(mode: AssistantViewportMode_ACU) {
+    const margin = mode === 'fullscreen-overlay' ? '8px 12px 8px' : '16px 16px 12px';
+    return `flex:1; min-height:0; margin:${margin}; border:1px solid var(--vis-border-color); border-radius:12px; background:var(--vis-assistant-surface-bg, var(--vis-bg-light)); overflow:hidden; display:flex; flex-direction:column;`;
+}
+
+function buildAssistantChatContainerStyle_ACU(mode: AssistantViewportMode_ACU) {
+    const padding = mode === 'fullscreen-overlay' ? '12px' : '14px';
+    return `flex:1; min-height:0; overflow-y:auto; padding:${padding}; display:flex; flex-direction:column; gap:12px;`;
+}
+
+function buildAssistantFooterStyle_ACU(mode: AssistantViewportMode_ACU) {
+    const padding = mode === 'fullscreen-overlay' ? '12px 12px calc(12px + env(safe-area-inset-bottom, 0px))' : '16px';
+    return `padding:${padding}; border-top:1px solid var(--vis-border-color); flex-shrink:0;`;
+}
+
+function shouldShowFloatingRestore_ACU(mode: AssistantViewportMode_ACU) {
+    return mode === 'fullscreen-overlay' && assistantUiState_ACU.isOpen && assistantUiState_ACU.isMinimized;
+}
+
+function isPanelVisible_ACU(mode: AssistantViewportMode_ACU) {
+    if (!assistantUiState_ACU.isOpen) return false;
+    if (mode !== 'fullscreen-overlay') return true;
+    return !assistantUiState_ACU.isMinimized;
+}
+
+function minimizeVisualizerTemplateAssistant_ACU() {
+    if (getAssistantViewportMode_ACU() !== 'fullscreen-overlay') {
+        assistantUiState_ACU.isOpen = false;
+        assistantUiState_ACU.isMinimized = false;
+        renderVisualizerTemplateAssistantPanel_ACU();
+        return;
+    }
+    assistantUiState_ACU.isOpen = true;
+    assistantUiState_ACU.isMinimized = true;
+    renderVisualizerTemplateAssistantPanel_ACU();
+}
+
+function restoreVisualizerTemplateAssistant_ACU() {
+    assistantUiState_ACU.isOpen = true;
+    assistantUiState_ACU.isMinimized = false;
+    renderVisualizerTemplateAssistantPanel_ACU();
+}
+
+function buildAssistantControlRowStyle_ACU(mode: AssistantViewportMode_ACU) {
+    if (mode === 'fullscreen-overlay') {
+        return 'display:flex; flex-direction:column; align-items:stretch; gap:6px; margin-bottom:8px;';
+    }
+    return 'display:flex; align-items:center; gap:8px; margin-bottom:8px;';
+}
+
+function buildAssistantActionRowStyle_ACU(mode: AssistantViewportMode_ACU) {
+    if (mode === 'fullscreen-overlay') {
+        return 'display:flex; flex-direction:column; gap:8px; margin-top:8px;';
+    }
+    return 'display:flex; gap:8px; margin-top:8px;';
+}
+
+function buildAssistantBubbleStyle_ACU(role: 'user' | 'assistant' | 'error', mode: AssistantViewportMode_ACU) {
+    const maxWidth = mode === 'fullscreen-overlay' ? '100%' : '82%';
+    const minWidth = mode === 'fullscreen-overlay' ? '0' : role === 'assistant' ? '240px' : role === 'error' ? '220px' : '180px';
+    const base = `max-width:${maxWidth}; width:fit-content; min-width:${minWidth}; padding:${mode === 'fullscreen-overlay' ? '10px 12px' : '12px 14px'}; box-shadow:0 10px 24px color-mix(in srgb, var(--vis-text-main) 12%, transparent); color:var(--vis-text-main); word-break:break-word; overflow-wrap:anywhere;`;
+    if (role === 'assistant') {
+        return `${base} border-radius:16px 16px 16px 4px; background:var(--vis-assistant-bubble-bg, var(--vis-bg-light)); border:1px solid var(--vis-border-color);`;
+    }
+    if (role === 'error') {
+        return `${base} border-radius:16px 16px 16px 4px; background:color-mix(in srgb, var(--acu-danger, #c55) 12%, var(--vis-bg-light)); border:1px solid color-mix(in srgb, var(--acu-danger, #c55) 36%, var(--vis-border-color));`;
+    }
+    return `${base} border-radius:16px 16px 4px 16px; background:color-mix(in srgb, var(--vis-accent) 12%, var(--vis-bg-light)); border:1px solid color-mix(in srgb, var(--vis-accent) 38%, var(--vis-border-color));`;
+}
 
 function normalizeMaxRounds_ACU(input: string): number {
     const normalized = Number(input);
@@ -132,6 +318,37 @@ function restoreScrollState_ACU(container: HTMLElement | null | undefined) {
 
 function clearAssistantDraftState_ACU() {
     assistantUiState_ACU.transcript = [];
+}
+
+function resolveEffectiveTableApiPreset_ACU() {
+    const currentSheetKey = _acuVisState.currentSheetKey || null;
+    const currentSheet = currentSheetKey ? _acuVisState.tempData?.[currentSheetKey] : null;
+    const currentTableName = String(currentSheet?.name || '').trim();
+    if (currentTableName) {
+        const overrides = settings_ACU.tableApiPresetOverridesByName;
+        if (overrides && typeof overrides === 'object' && typeof overrides[currentTableName] === 'string' && overrides[currentTableName].trim()) {
+            return overrides[currentTableName].trim();
+        }
+    }
+    return String(settings_ACU.tableApiPreset || '').trim();
+}
+
+function syncAssistantTableApiPreset_ACU() {
+    assistantUiState_ACU.tableApiPreset = resolveEffectiveTableApiPreset_ACU();
+}
+
+function buildAssistantTableApiPresetOptionsHtml_ACU() {
+    const apiPresets = Array.isArray(settings_ACU.apiPresets) ? settings_ACU.apiPresets : [];
+    const currentValue = String(assistantUiState_ACU.tableApiPreset || '').trim();
+    const presetOptions = apiPresets
+        .map((preset: any) => {
+            const name = String(preset?.name || '').trim();
+            if (!name) return '';
+            return `<option value="${escapeHtml_ACU(name)}" ${currentValue === name ? 'selected' : ''}>${escapeHtml_ACU(name)}</option>`;
+        })
+        .filter(Boolean)
+        .join('');
+    return `<option value="" ${!currentValue ? 'selected' : ''}>当前配置</option>${presetOptions}`;
 }
 
 function createNewGuardController_ACU() {
@@ -216,8 +433,27 @@ function getRiskConfirmationKey_ACU(index: number) {
     return String(index);
 }
 
+function isHighRiskItemAutoConfirmed_ACU(item: TemplateAssistantDiff_ACU extends never ? never : ReturnType<typeof getAssistantCompileResult_ACU>['highRiskItems'][number]) {
+    return item?.type === 'patch_sheet_schema';
+}
+
+function isHighRiskItemConfirmed_ACU(turn: ChatTurnAssistant, index: number) {
+    const item = getAssistantCompileResult_ACU(turn).highRiskItems[index];
+    if (!item) return true;
+    if (isHighRiskItemAutoConfirmed_ACU(item)) {
+        return turn.riskConfirmations[getRiskConfirmationKey_ACU(index)] !== false;
+    }
+    return !!turn.riskConfirmations[getRiskConfirmationKey_ACU(index)];
+}
+
 function getHost_ACU() {
     return jQuery_API_ACU('#acu-vis-assistant-host');
+}
+
+function getHostElement_ACU(): HTMLElement | null {
+    const doc = topLevelWindow_ACU?.document ?? (typeof document !== 'undefined' ? document : null);
+    if (!doc) return null;
+    return doc.querySelector('#acu-vis-assistant-host') as HTMLElement | null;
 }
 
 function readDataAttrFromElement_ACU(node: unknown, name: string) {
@@ -310,7 +546,7 @@ function buildDiffHtml_ACU(diff: TemplateAssistantDiff_ACU) {
 }
 
 function areHighRiskItemsConfirmed_ACU(turn: ChatTurnAssistant) {
-    return getAssistantCompileResult_ACU(turn).highRiskItems.every((_, index) => turn.riskConfirmations[getRiskConfirmationKey_ACU(index)]);
+    return getAssistantCompileResult_ACU(turn).highRiskItems.every((_, index) => isHighRiskItemConfirmed_ACU(turn, index));
 }
 
 function syncLatestApplyButtonDisabledState_ACU(turn: ChatTurnAssistant) {
@@ -387,7 +623,7 @@ function buildAssistantDetailContent_ACU(turn: ChatTurnAssistant): string {
             }
             return `
                 <label class="acu-assistant-risk-item">
-                    <input type="checkbox" class="acu-assistant-risk-confirm" data-turn-id="${escapeHtml_ACU(turn.id)}" data-risk-key="${escapeHtml_ACU(riskKey)}" ${turn.riskConfirmations[riskKey] ? 'checked' : ''}>
+                    <input type="checkbox" class="acu-assistant-risk-confirm" data-turn-id="${escapeHtml_ACU(turn.id)}" data-risk-key="${escapeHtml_ACU(riskKey)}" ${isHighRiskItemConfirmed_ACU(turn, index) ? 'checked' : ''}>
                     <span>${escapeHtml_ACU(item.label)}</span>
                 </label>
             `;
@@ -398,7 +634,7 @@ function buildAssistantDetailContent_ACU(turn: ChatTurnAssistant): string {
     return sections.join('');
 }
 
-function renderAssistantTurn_ACU(turn: ChatTurnAssistant, isLatest: boolean) {
+function renderAssistantTurn_ACU(turn: ChatTurnAssistant, isLatest: boolean, mode: AssistantViewportMode_ACU) {
     const draft = getAssistantDraft_ACU(turn);
     const compileResult = getAssistantCompileResult_ACU(turn);
     const detailSummary = buildAssistantDetailSummary_ACU(turn);
@@ -413,7 +649,7 @@ function renderAssistantTurn_ACU(turn: ChatTurnAssistant, isLatest: boolean) {
 
     return `
         <div class="acu-chat-turn acu-chat-turn-assistant" data-turn-id="${escapeHtml_ACU(turn.id)}" style="display:flex; justify-content:flex-start;">
-            <div class="acu-message-bubble acu-message-bubble-assistant" style="max-width:82%; width:fit-content; min-width:240px; padding:12px 14px; border-radius:16px 16px 16px 4px; background:rgba(255,255,255,0.08); border:1px solid rgba(255,255,255,0.12); box-shadow:0 10px 24px rgba(0,0,0,0.18); backdrop-filter:blur(10px);">
+            <div class="acu-message-bubble acu-message-bubble-assistant" style="${buildAssistantBubbleStyle_ACU('assistant', mode)}">
                 <div class="acu-chat-turn-label" style="font-size:12px; font-weight:600; opacity:0.78; margin-bottom:6px;">${escapeHtml_ACU(turnLabel)}</div>
                 <div class="acu-chat-turn-content">
                     <div class="acu-assistant-summary" style="line-height:1.6; white-space:pre-wrap; word-break:break-word;">${escapeHtml_ACU(draft.summary || '（无摘要）')}</div>
@@ -425,10 +661,10 @@ function renderAssistantTurn_ACU(turn: ChatTurnAssistant, isLatest: boolean) {
     `;
 }
 
-function renderErrorTurn_ACU(turn: ChatTurnError) {
+function renderErrorTurn_ACU(turn: ChatTurnError, mode: AssistantViewportMode_ACU) {
     return `
         <div class="acu-chat-turn acu-chat-turn-error" data-turn-id="${escapeHtml_ACU(turn.id)}" style="display:flex; justify-content:flex-start;">
-            <div class="acu-message-bubble acu-message-bubble-error" style="max-width:82%; width:fit-content; min-width:220px; padding:12px 14px; border-radius:16px 16px 16px 4px; background:rgba(255,120,120,0.1); border:1px solid rgba(255,120,120,0.28); box-shadow:0 10px 24px rgba(0,0,0,0.14);">
+            <div class="acu-message-bubble acu-message-bubble-error" style="${buildAssistantBubbleStyle_ACU('error', mode)}">
                 <div class="acu-chat-turn-label" style="font-size:12px; font-weight:600; color:#ffb2b2; margin-bottom:6px;">执行错误</div>
                 <div class="acu-chat-turn-content">
                     <div class="acu-error-message" style="line-height:1.6; white-space:pre-wrap; word-break:break-word;">${escapeHtml_ACU(turn.errorMessage)}</div>
@@ -438,10 +674,10 @@ function renderErrorTurn_ACU(turn: ChatTurnError) {
     `;
 }
 
-function renderUserTurn_ACU(turn: ChatTurnUser) {
+function renderUserTurn_ACU(turn: ChatTurnUser, mode: AssistantViewportMode_ACU) {
     return `
         <div class="acu-chat-turn acu-chat-turn-user" data-turn-id="${escapeHtml_ACU(turn.id)}" style="display:flex; justify-content:flex-end;">
-            <div class="acu-message-bubble acu-message-bubble-user" style="max-width:82%; width:fit-content; min-width:180px; padding:12px 14px; border-radius:16px 16px 4px 16px; background:linear-gradient(135deg, rgba(78,164,255,0.28), rgba(71,116,255,0.2)); border:1px solid rgba(122,180,255,0.35); box-shadow:0 10px 24px rgba(0,0,0,0.16);">
+            <div class="acu-message-bubble acu-message-bubble-user" style="${buildAssistantBubbleStyle_ACU('user', mode)}">
                 <div class="acu-chat-turn-label" style="font-size:12px; font-weight:600; opacity:0.72; margin-bottom:6px; text-align:right;">你</div>
                 <div class="acu-chat-turn-content" style="line-height:1.6; white-space:pre-wrap; word-break:break-word; text-align:left;">
                     ${escapeHtml_ACU(turn.content)}
@@ -454,16 +690,17 @@ function renderUserTurn_ACU(turn: ChatTurnUser) {
 function renderTranscript_ACU() {
     const transcript = assistantUiState_ACU.transcript;
     if (transcript.length === 0) return '';
+    const mode = getAssistantViewportMode_ACU();
 
     const html = transcript.map((turn, index) => {
         const isLatest = index === transcript.length - 1;
         switch (turn.type) {
             case 'user':
-                return renderUserTurn_ACU(turn);
+                return renderUserTurn_ACU(turn, mode);
             case 'assistant':
-                return renderAssistantTurn_ACU(turn, isLatest);
+                return renderAssistantTurn_ACU(turn, isLatest, mode);
             case 'error':
-                return renderErrorTurn_ACU(turn);
+                return renderErrorTurn_ACU(turn, mode);
             default:
                 return '';
         }
@@ -488,6 +725,10 @@ function bindEvents_ACU() {
 
     $host.find('#acu-vis-assistant-max-rounds').on('input', function() {
         assistantUiState_ACU.maxRoundsInput = String(jQuery_API_ACU(this).val() || '');
+    });
+
+    $host.find('#acu-vis-assistant-api-preset').on('change', function() {
+        assistantUiState_ACU.tableApiPreset = String(jQuery_API_ACU(this).val() || '').trim();
     });
 
     $host.find('#acu-vis-assistant-generate').on('click', async () => {
@@ -522,6 +763,7 @@ function bindEvents_ACU() {
                 sheetOrder: Array.isArray(_acuVisState.sheetOrder) ? [..._acuVisState.sheetOrder] : null,
                 userRequest: userRequest,
                 priorTurns: priorTurns,
+                tableApiPreset: assistantUiState_ACU.tableApiPreset,
                 maxRounds: normalizeMaxRounds_ACU(assistantUiState_ACU.maxRoundsInput),
                 guard: assistantUiState_ACU.guardController?.createRunGuard() || null,
                 onRoundComplete: (progress: TemplateAssistantSessionProgress_ACU) => {
@@ -653,20 +895,25 @@ function bindEvents_ACU() {
 
 export function resetVisualizerTemplateAssistantState_ACU() {
     assistantUiState_ACU.isOpen = false;
+    assistantUiState_ACU.isMinimized = false;
     assistantUiState_ACU.userRequest = '';
     assistantUiState_ACU.isGenerating = false;
     assistantUiState_ACU.pendingScrollTop = 0;
     assistantUiState_ACU.pendingScrollMode = 'preserve';
     assistantUiState_ACU.maxRoundsInput = '3';
+    syncAssistantTableApiPreset_ACU();
     invalidateActiveSession_ACU();
     assistantUiState_ACU.guardController = null;
     clearAssistantDraftState_ACU();
+    // ═══ 安全清理 portal：确保宿主从 body 移回或移除 ═══
+    ensureAssistantHostPortal_ACU('desktop', false);
     renderVisualizerTemplateAssistantPanel_ACU();
 }
 
 export function handleVisualizerTemplateAssistantSheetChange_ACU() {
     captureScrollState_ACU('preserve');
     invalidateActiveSession_ACU();
+    syncAssistantTableApiPreset_ACU();
     const currentSheetKey = _acuVisState.currentSheetKey || null;
     // 检查最新的assistant轮次是否是v1且需要清除
     const lastAssistantTurn = [...assistantUiState_ACU.transcript].reverse().find((t): t is ChatTurnAssistantFinal => t.type === 'assistant' && isFinalAssistantTurn_ACU(t));
@@ -688,11 +935,20 @@ export function invalidateVisualizerTemplateAssistantSession_ACU() {
 
 export function setVisualizerTemplateAssistantOpen_ACU(nextOpen: boolean) {
     assistantUiState_ACU.isOpen = !!nextOpen;
+    assistantUiState_ACU.isMinimized = false;
     renderVisualizerTemplateAssistantPanel_ACU();
 }
 
 export function toggleVisualizerTemplateAssistant_ACU() {
-    assistantUiState_ACU.isOpen = !assistantUiState_ACU.isOpen;
+    const mode = getAssistantViewportMode_ACU();
+    if (mode === 'fullscreen-overlay' && assistantUiState_ACU.isOpen && assistantUiState_ACU.isMinimized) {
+        assistantUiState_ACU.isMinimized = false;
+    } else {
+        assistantUiState_ACU.isOpen = !assistantUiState_ACU.isOpen;
+        if (!assistantUiState_ACU.isOpen) {
+            assistantUiState_ACU.isMinimized = false;
+        }
+    }
     renderVisualizerTemplateAssistantPanel_ACU();
 }
 
@@ -700,43 +956,94 @@ export function renderVisualizerTemplateAssistantPanel_ACU() {
     const $host = getHost_ACU();
     if (!$host.length) return;
 
-    const display = assistantUiState_ACU.isOpen ? 'flex' : 'none';
+    const mode = getAssistantViewportMode_ACU();
+    // ═══ Portal：fullscreen-overlay 模式下将宿主移到 body，绕过窗口 containing block ═══
+    ensureAssistantHostPortal_ACU(mode, assistantUiState_ACU.isOpen);
+
+    const display = isPanelVisible_ACU(mode) ? 'flex' : 'none';
+    const showFloatingRestore = shouldShowFloatingRestore_ACU(mode);
     const generateDisabled = assistantUiState_ACU.isGenerating || !String(assistantUiState_ACU.userRequest || '').trim();
     const stopDisabled = !assistantUiState_ACU.isGenerating;
 
+    const hostElement = getHostElement_ACU();
+    if (hostElement) {
+        hostElement.setAttribute('data-assistant-mode', mode);
+        hostElement.setAttribute('data-open', assistantUiState_ACU.isOpen ? 'true' : 'false');
+        hostElement.setAttribute('data-minimized', showFloatingRestore ? 'true' : 'false');
+    }
+    const layoutRoot = document.querySelector('#acu-visualizer-content') as HTMLElement | null;
+    if (layoutRoot) {
+        if (mode === 'fullscreen-overlay' && assistantUiState_ACU.isOpen) {
+            layoutRoot.setAttribute('data-assistant-layout', 'fullscreen-overlay');
+        } else {
+            const expanded = assistantUiState_ACU.isOpen;
+            layoutRoot.setAttribute('data-assistant-layout', expanded ? 'expanded' : 'default');
+        }
+    }
+
     $host.html(`
-        <div class="acu-vis-assistant-panel" style="display:${display}; flex-direction:column; width:420px; height:100%; min-height:0; border-left:1px solid var(--vis-border-color); background:var(--vis-bg-secondary, rgba(0,0,0,0.02)); overflow:hidden;">
-            <div style="padding:14px 16px; border-bottom:1px solid var(--vis-border-color); display:flex; justify-content:space-between; align-items:center; gap:12px;">
+        ${showFloatingRestore ? `
+            <button id="acu-vis-assistant-restore" class="acu-btn-primary acu-vis-assistant-floating-restore" type="button">
+                <i class="fa-solid fa-wand-magic-sparkles"></i>
+                <span>恢复 AI 改表助手</span>
+            </button>
+        ` : ''}
+        <div class="acu-vis-assistant-panel" data-assistant-mode="${escapeHtml_ACU(mode)}" style="${buildAssistantPanelStyle_ACU(mode, display)}">
+            <div class="acu-vis-assistant-header" style="${buildAssistantHeaderStyle_ACU(mode)}">
                 <div>
                     <div style="font-weight:600;">AI 改表助手</div>
                     <div class="acu-hint" style="font-size:12px; margin-top:4px;">当前表：${escapeHtml_ACU(getSelectedSheetLabel_ACU())}</div>
                 </div>
-                <button id="acu-vis-assistant-close" class="acu-btn-secondary">关闭</button>
+                <div style="display:flex; align-items:center; gap:8px; flex-shrink:0;">
+                    ${mode === 'fullscreen-overlay' ? '<button id="acu-vis-assistant-minimize" class="acu-btn-secondary" type="button">最小化</button>' : ''}
+                    <button id="acu-vis-assistant-close" class="acu-btn-secondary" type="button">关闭</button>
+                </div>
             </div>
-            <div class="acu-chat-scroll-frame" style="flex:1; min-height:0; margin:16px 16px 12px; border:1px solid rgba(255,255,255,0.16); border-radius:12px; background:rgba(0,0,0,0.14); box-shadow:inset 0 1px 0 rgba(255,255,255,0.04); overflow:hidden; display:flex; flex-direction:column;">
-                <div class="acu-chat-container" style="flex:1; min-height:0; overflow-y:auto; padding:14px; display:flex; flex-direction:column; gap:12px;">
+            <div class="acu-chat-scroll-frame" style="${buildAssistantScrollFrameStyle_ACU(mode)}">
+                <div class="acu-chat-container" style="${buildAssistantChatContainerStyle_ACU(mode)}">
                     ${renderTranscript_ACU()}
                 </div>
             </div>
-            <div style="padding:16px; border-top:1px solid var(--vis-border-color);">
-                <div style="display:flex; align-items:center; gap:8px; margin-bottom:8px;">
+            <div class="acu-vis-assistant-footer" style="${buildAssistantFooterStyle_ACU(mode)}">
+                <div class="acu-assistant-control-row acu-assistant-max-rounds-row" style="${buildAssistantControlRowStyle_ACU(mode)}">
                     <label for="acu-vis-assistant-max-rounds" style="font-size:12px; opacity:0.78; white-space:nowrap;">最大轮次</label>
-                    <input id="acu-vis-assistant-max-rounds" type="number" min="1" class="acu-form-input" style="width:60px; text-align:center;" value="${escapeHtml_ACU(assistantUiState_ACU.maxRoundsInput)}">
+                    <input id="acu-vis-assistant-max-rounds" type="number" min="1" class="acu-form-input" style="${mode === 'fullscreen-overlay' ? 'width:100%; text-align:left;' : 'width:60px; text-align:center;'}" value="${escapeHtml_ACU(assistantUiState_ACU.maxRoundsInput)}">
                 </div>
-                <textarea id="acu-vis-assistant-input" class="acu-form-textarea" style="min-height:80px;" placeholder="例如：新增一张战利品表，并关闭旧表独立导出。">${escapeHtml_ACU(assistantUiState_ACU.userRequest)}</textarea>
-                <div style="display:flex; gap:8px; margin-top:8px;">
-                    <button id="acu-vis-assistant-generate" class="acu-btn-primary" style="flex:1;" ${generateDisabled ? 'disabled' : ''}>${assistantUiState_ACU.isGenerating ? '生成中...' : '发送'}</button>
-                    <button id="acu-vis-assistant-stop" class="acu-btn-secondary" style="width:88px;" ${stopDisabled ? 'disabled' : ''}>停止</button>
+                <div class="acu-assistant-control-row acu-assistant-api-preset-row" style="${buildAssistantControlRowStyle_ACU(mode)}">
+                    <label for="acu-vis-assistant-api-preset" style="font-size:12px; opacity:0.78; white-space:nowrap;">API预设</label>
+                    <select id="acu-vis-assistant-api-preset" class="acu-form-input" style="flex:1; min-width:0; ${mode === 'fullscreen-overlay' ? 'width:100%;' : ''}">
+                        ${buildAssistantTableApiPresetOptionsHtml_ACU()}
+                    </select>
+                </div>
+                <textarea id="acu-vis-assistant-input" class="acu-form-textarea" style="min-height:${mode === 'fullscreen-overlay' ? '96px' : '80px'};" placeholder="例如：新增一张战利品表，并关闭旧表独立导出。">${escapeHtml_ACU(assistantUiState_ACU.userRequest)}</textarea>
+                <div class="acu-assistant-action-row" style="${buildAssistantActionRowStyle_ACU(mode)}">
+                    <button id="acu-vis-assistant-generate" class="acu-btn-primary" style="flex:1; ${mode === 'fullscreen-overlay' ? 'width:100%;' : ''}" ${generateDisabled ? 'disabled' : ''}>${assistantUiState_ACU.isGenerating ? '生成中...' : '发送'}</button>
+                    <button id="acu-vis-assistant-stop" class="acu-btn-secondary" style="${mode === 'fullscreen-overlay' ? 'width:100%;' : 'width:88px;'}" ${stopDisabled ? 'disabled' : ''}>停止</button>
                 </div>
             </div>
         </div>
     `);
 
+    if (hostElement) {
+        hostElement.setAttribute('data-assistant-mode', mode);
+        hostElement.setAttribute('data-open', assistantUiState_ACU.isOpen ? 'true' : 'false');
+        hostElement.setAttribute('data-minimized', showFloatingRestore ? 'true' : 'false');
+    }
+
     restoreScrollState_ACU(getChatContainerElement_ACU());
 
     $host.find('#acu-vis-assistant-close').on('click', () => {
         assistantUiState_ACU.isOpen = false;
+        assistantUiState_ACU.isMinimized = false;
         renderVisualizerTemplateAssistantPanel_ACU();
+    });
+
+    $host.find('#acu-vis-assistant-minimize').on('click', () => {
+        minimizeVisualizerTemplateAssistant_ACU();
+    });
+
+    $host.find('#acu-vis-assistant-restore').on('click', () => {
+        restoreVisualizerTemplateAssistant_ACU();
     });
 
     bindEvents_ACU();

@@ -10,7 +10,6 @@ import {
 
 const VISUALIZER_ROOT_SELECTOR_ACU = '#acu-visualizer-content';
 const VISUALIZER_ACTIONS_SELECTOR_ACU = '.acu-vis-actions';
-const VISUALIZER_CONTENT_SELECTOR_ACU = '.acu-vis-content';
 const ASSISTANT_BUTTON_ID_ACU = 'acu-vis-assistant-btn';
 const ASSISTANT_HOST_ID_ACU = 'acu-vis-assistant-host';
 const LIFECYCLE_POLL_MS_ACU = 200;
@@ -67,9 +66,8 @@ export function ensureVisualizerTemplateAssistantAddonDom_ACU(): boolean {
         domChanged = true;
     }
 
-    const content = root.querySelector(VISUALIZER_CONTENT_SELECTOR_ACU);
-    if (content && !root.querySelector(`#${ASSISTANT_HOST_ID_ACU}`)) {
-        content.appendChild(createAssistantHost_ACU(doc));
+    if (!root.querySelector(`#${ASSISTANT_HOST_ID_ACU}`) && !doc.querySelector(`#${ASSISTANT_HOST_ID_ACU}`)) {
+        root.appendChild(createAssistantHost_ACU(doc));
         domChanged = true;
     }
 

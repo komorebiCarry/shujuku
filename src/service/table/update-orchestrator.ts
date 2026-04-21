@@ -599,12 +599,16 @@ export async function orchestrateManualUpdate_ACU(
         }
 
         const templateData = parseTableTemplateJson_ACU({ stripSeedRows: true }) || {};
-        const updateGroups: Record<string, any> = {};
-        targetKeys.forEach((sheetKey: string) => {
-            const tableGroupId = Number.isFinite(templateData?.[sheetKey]?.updateConfig?.groupId)
-                ? Math.trunc(templateData[sheetKey].updateConfig.groupId)
+            const updateGroups: Record<string, any> = {};
+            targetKeys.forEach((sheetKey: string) => {
+            const tableConfig = templateData?.[sheetKey]?.updateConfig || {};
+            const tableGroupId = Number.isFinite(tableConfig?.groupId)
+                ? Math.trunc(tableConfig.groupId)
                 : -1;
-            const groupKey = `${tableGroupId}|${contextScopeIndices.join(',')}|${uiBatchSize}`;
+            const tableFrequency = Number.isFinite(tableConfig?.updateFrequency) ? tableConfig.updateFrequency : -1;
+            const tableContextDepth = Number.isFinite(tableConfig?.contextDepth) ? tableConfig.contextDepth : -1;
+            const tableSkipFloors = Number.isFinite(tableConfig?.skipFloors) ? tableConfig.skipFloors : -1;
+            const groupKey = `${tableGroupId}|${tableFrequency}|${tableContextDepth}|${tableSkipFloors}|${contextScopeIndices.join(',')}|${uiBatchSize}`;
             if (!updateGroups[groupKey]) {
                 updateGroups[groupKey] = {
                     indices: contextScopeIndices,
@@ -624,8 +628,10 @@ export async function orchestrateManualUpdate_ACU(
         // 这样可以防止 SQL 严格填表逻辑因目标楼层上的旧数据残留导致写入失败。
         if (options.clearBeforeUpdate) {
             const targetFloorSet = new Set<number>();
+            const targetSheetKeySet = new Set<string>();
             for (const gKey of groupKeys) {
                 const group = updateGroups[gKey];
+                (group.sheetKeys || []).forEach((sheetKey: string) => targetSheetKeySet.add(sheetKey));
                 // 每个 group 的 indices 按 batchSize 分批，每批的最后一条就是该批的 finalSaveTargetIndex。
                 // 这里简化处理：取该 group 的 indices 列表中最后一个 index 作为最终保存目标。
                 // （同一个 group 内所有 batch 的 contextScopeIndices 是相同的，
@@ -641,9 +647,10 @@ export async function orchestrateManualUpdate_ACU(
             }
 
             const targetFloors = Array.from(targetFloorSet);
+            const targetSheetKeysForClear = Array.from(targetSheetKeySet);
             if (targetFloors.length > 0) {
                 logDebug_ACU(`[Manual Update] 预清空目标楼层: ${targetFloors.join(', ')} (共 ${targetFloors.length} 层)`);
-                const clearedCount = await clearTableDataAtFloors_ACU(targetFloors);
+                const clearedCount = await clearTableDataAtFloors_ACU(targetFloors, targetSheetKeysForClear);
                 logDebug_ACU(`[Manual Update] 预清空完成: ${clearedCount} 层已清空`);
 
                 // 清空后必须刷新内存数据，确保后续填表基于干净状态

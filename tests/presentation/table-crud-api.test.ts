@@ -50,6 +50,18 @@ vi.mock('../../src/service/table/table-service', () => ({
   saveIndependentTableToChatHistory_ACU: vi.fn().mockResolvedValue({ saved: true }),
 }));
 
+vi.mock('../../src/service/table/table-history', () => ({
+  resolveTableHistoryStateFromChat_ACU: vi.fn(() => ({
+    latestAiMessageIndex: 0,
+    latestDataMessageIndex: -1,
+    lastTrackedUpdateMessageIndex: -1,
+    latestDataAiFloor: 0,
+    lastTrackedUpdateAiFloor: 0,
+    hasAnyData: false,
+    hasTrackedUpdate: false,
+  })),
+}));
+
 vi.mock('../../src/presentation/triggers/update-process', () => ({
   saveCurrentDataForTable_ACU: vi.fn().mockResolvedValue(undefined),
 }));
@@ -63,6 +75,7 @@ import {
   findTargetSheet,
   createTableCrudApi,
 } from '../../src/presentation/bootstrap/api-groups/table-crud-api';
+import { resolveTableHistoryStateFromChat_ACU } from '../../src/service/table/table-history';
 
 // ═══════════════════════════════════════════════════════════════
 // quoteIdentifier
@@ -217,6 +230,21 @@ describe('createTableCrudApi — SQLite 模式', () => {
       mockCurrentJsonTableData = null;
       const result = await api.updateCell('背包物品表', 1, '数量', '10');
       expect(result).toBe(false);
+    });
+
+    it('已有历史数据时不把编辑器保存记为最新更新', async () => {
+      vi.mocked(resolveTableHistoryStateFromChat_ACU).mockReturnValueOnce({
+        latestAiMessageIndex: 1,
+        latestDataMessageIndex: 0,
+        lastTrackedUpdateMessageIndex: 0,
+        latestDataAiFloor: 1,
+        lastTrackedUpdateAiFloor: 1,
+        hasAnyData: true,
+        hasTrackedUpdate: true,
+      });
+      await api.updateCell('背包物品表', 1, '数量', '10');
+      const { saveCurrentDataForTable_ACU } = await import('../../src/presentation/triggers/update-process');
+      expect(vi.mocked(saveCurrentDataForTable_ACU)).toHaveBeenCalledWith('sheet_0');
     });
   });
 

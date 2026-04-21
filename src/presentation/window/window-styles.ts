@@ -161,6 +161,19 @@ import { topLevelWindow_ACU } from '../../shared/env';
       
       /* 超窄屏模式下全屏时进一步优化 */
       @media screen and (max-width: 768px) {
+        .acu-window.acu-window-phone-fullscreen,
+        .acu-window.acu-window-phone-fullscreen.maximized {
+          top: 0 !important;
+          left: 0 !important;
+          width: 100vw !important;
+          height: 100dvh !important;
+          min-width: 100vw !important;
+          min-height: 100dvh !important;
+          max-width: 100vw !important;
+          max-height: 100dvh !important;
+          border-radius: 0 !important;
+          border: none !important;
+        }
         .acu-window {
           min-width: min(320px, calc(100vw - 12px)) !important; /* 手机端保留边距，避免遮挡底层界面 */
           min-height: min(360px, calc(100dvh - 12px)) !important;
@@ -203,6 +216,10 @@ import { topLevelWindow_ACU } from '../../shared/env';
           /* 确保body能正确滚动，使用flex布局撑满剩余空间 */
           flex: 1 1 0;
           min-height: 0; /* 关键：允许flex子元素收缩 */
+        }
+        .acu-window.acu-window-phone-fullscreen .acu-window-body {
+          height: calc(100dvh - 44px);
+          max-height: calc(100dvh - 44px);
         }
       }
       

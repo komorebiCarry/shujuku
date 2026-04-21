@@ -23,6 +23,8 @@ import { getLastOptimizationBase_ACU, setLastOptimizationBase_ACU } from '../opt
 import { settings_ACU, currentJsonTableData_ACU, getCurrentIsolationKey_ACU } from '../runtime/state-manager';
 import { sanitizeSheetForStorage_ACU } from '../template/chat-scope';
 import { clearTableFieldsForIsolation_ACU } from '../../data/repositories/chat-message-data-repo';
+import { persistTablesToChatMessage_ACU } from '../table/table-service';
+import { getLatestAiMessageIndexFromChat_ACU, resolveTableHistoryStateFromChat_ACU } from '../table/table-history';
 
 // ─── 业务逻辑函数（从 presentation 层搬迁） ───
 
@@ -134,38 +136,29 @@ export async function saveCurrentDataForTable_ACU(sheetKey: string) {
             return;
         }
 
-        // 查找最新的AI消息
-        for (let i = chat.length - 1; i >= 0; i--) {
-            if (!chat[i].is_user) {
-                const targetMessage = chat[i];
-                const sheet = currentJsonTableData_ACU[sheetKey];
+        const sheet = currentJsonTableData_ACU[sheetKey];
+        const history = resolveTableHistoryStateFromChat_ACU(chat, {
+            sheetKey,
+            isSummaryTable: isSummaryOrOutlineTable_ACU(sheet.name),
+            isolationKey: getCurrentIsolationKey_ACU(),
+            settings: settings_ACU,
+        });
+        const fallbackLatestAiIndex = getLatestAiMessageIndexFromChat_ACU(chat);
+        const targetMessageIndex = history.latestDataMessageIndex !== -1
+            ? history.latestDataMessageIndex
+            : fallbackLatestAiIndex;
 
-                const isSummaryTable = isSummaryOrOutlineTable_ACU(sheet.name);
-
-                const cleanSheet = sanitizeSheetForStorage_ACU(sheet);
-
-                if (isSummaryTable) {
-                    let summaryData = targetMessage.TavernDB_ACU_SummaryData;
-                    if (typeof summaryData === 'string') {
-                        try { summaryData = JSON.parse(summaryData); } catch (e) { summaryData = {}; }
-                    }
-                    if (!summaryData) summaryData = {};
-                    summaryData[sheetKey] = cleanSheet;
-                    targetMessage.TavernDB_ACU_SummaryData = summaryData;
-                } else {
-                    let standardData = targetMessage.TavernDB_ACU_Data;
-                    if (typeof standardData === 'string') {
-                        try { standardData = JSON.parse(standardData); } catch (e) { standardData = {}; }
-                    }
-                    if (!standardData) standardData = {};
-                    standardData[sheetKey] = cleanSheet;
-                    targetMessage.TavernDB_ACU_Data = standardData;
-                }
-
-                await saveChatToHost_ACU();
-                break;
-            }
+        if (targetMessageIndex === -1) {
+            logWarn_ACU('saveCurrentDataForTable_ACU: No AI message available for persistence.');
+            return;
         }
+
+        await persistTablesToChatMessage_ACU({
+            targetMessageIndex,
+            targetSheetKeys: [sheetKey],
+            updateGroupKeys: null,
+            trackAsUpdate: history.latestDataMessageIndex === -1,
+        });
     } catch (e) {
         logError_ACU('saveCurrentDataForTable_ACU failed:', e);
     }
@@ -460,7 +453,7 @@ export async function overrideLatestLayerWithTemplateCore_ACU(templateData: any)
  * @param targetMessageIndices 需要清空的目标 AI 消息物理索引列表（已去重）
  * @returns 实际被清空的消息数量
  */
-export async function clearTableDataAtFloors_ACU(targetMessageIndices: number[]): Promise<number> {
+export async function clearTableDataAtFloors_ACU(targetMessageIndices: number[], targetSheetKeys: string[] | null = null): Promise<number> {
     if (!targetMessageIndices || targetMessageIndices.length === 0) return 0;
 
     const chat = getChatArray_ACU();
@@ -480,7 +473,9 @@ export async function clearTableDataAtFloors_ACU(targetMessageIndices: number[])
         // 只处理 AI 消息（跳过用户消息）
         if (!msg || msg.is_user) continue;
 
-        const changed = clearTableFieldsForIsolation_ACU(msg, isolationKey, isolationConfig);
+        const changed = Array.isArray(targetSheetKeys) && targetSheetKeys.length > 0
+            ? purgeTargetSheetKeysFromMessage_ACU(msg, targetSheetKeys)
+            : clearTableFieldsForIsolation_ACU(msg, isolationKey, isolationConfig);
         if (changed) {
             clearedCount++;
             logDebug_ACU(`[清空楼层] 已清空消息索引 ${idx} 上的表格数据 (标签: ${isolationKey || '无'})`);
@@ -493,4 +488,64 @@ export async function clearTableDataAtFloors_ACU(targetMessageIndices: number[])
     }
 
     return clearedCount;
+}
+
+function purgeTargetSheetKeysFromMessage_ACU(msg: any, targetSheetKeys: string[]): boolean {
+    if (!msg || !Array.isArray(targetSheetKeys) || targetSheetKeys.length === 0) return false;
+
+    let changed = false;
+    const isolationKey = getCurrentIsolationKey_ACU();
+    const tagData = msg?.TavernDB_ACU_IsolatedData?.[isolationKey];
+    if (tagData && typeof tagData === 'object') {
+        if (tagData.independentData && typeof tagData.independentData === 'object') {
+            targetSheetKeys.forEach(sheetKey => {
+                if (tagData.independentData[sheetKey]) {
+                    delete tagData.independentData[sheetKey];
+                    changed = true;
+                }
+            });
+        }
+        if (Array.isArray(tagData.modifiedKeys)) {
+            tagData.modifiedKeys = tagData.modifiedKeys.filter((key: string) => !targetSheetKeys.includes(key));
+        }
+        if (Array.isArray(tagData.updateGroupKeys)) {
+            tagData.updateGroupKeys = tagData.updateGroupKeys.filter((key: string) => !targetSheetKeys.includes(key));
+        }
+    }
+
+    if (msg?.TavernDB_ACU_IndependentData && typeof msg.TavernDB_ACU_IndependentData === 'object') {
+        targetSheetKeys.forEach(sheetKey => {
+            if (msg.TavernDB_ACU_IndependentData[sheetKey]) {
+                delete msg.TavernDB_ACU_IndependentData[sheetKey];
+                changed = true;
+            }
+        });
+    }
+
+    if (msg?.TavernDB_ACU_Data && typeof msg.TavernDB_ACU_Data === 'object') {
+        targetSheetKeys.forEach(sheetKey => {
+            if (msg.TavernDB_ACU_Data[sheetKey]) {
+                delete msg.TavernDB_ACU_Data[sheetKey];
+                changed = true;
+            }
+        });
+    }
+
+    if (msg?.TavernDB_ACU_SummaryData && typeof msg.TavernDB_ACU_SummaryData === 'object') {
+        targetSheetKeys.forEach(sheetKey => {
+            if (msg.TavernDB_ACU_SummaryData[sheetKey]) {
+                delete msg.TavernDB_ACU_SummaryData[sheetKey];
+                changed = true;
+            }
+        });
+    }
+
+    if (Array.isArray(msg?.TavernDB_ACU_ModifiedKeys)) {
+        msg.TavernDB_ACU_ModifiedKeys = msg.TavernDB_ACU_ModifiedKeys.filter((key: string) => !targetSheetKeys.includes(key));
+    }
+    if (Array.isArray(msg?.TavernDB_ACU_UpdateGroupKeys)) {
+        msg.TavernDB_ACU_UpdateGroupKeys = msg.TavernDB_ACU_UpdateGroupKeys.filter((key: string) => !targetSheetKeys.includes(key));
+    }
+
+    return changed;
 }

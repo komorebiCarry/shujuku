@@ -229,6 +229,22 @@ describe('buildAutoUpdatePlan_ACU', () => {
     }
   });
 
+  it('同组但不同频率的表不会被强制合组', () => {
+    const liveChat = [
+      { is_user: true },
+      { is_user: false },
+      { is_user: true },
+      { is_user: false },
+    ];
+    const tableData = {
+      sheet_0: { name: '表A', updateConfig: { groupId: 1, updateFrequency: 1 } },
+      sheet_1: { name: '表B', updateConfig: { groupId: 1, updateFrequency: 2 } },
+    };
+    const plan = buildAutoUpdatePlan_ACU(liveChat, tableData, baseSettings, '');
+    const groupKeys = Object.keys(plan.updateGroups);
+    expect(groupKeys.length).toBeGreaterThanOrEqual(2);
+  });
+
   it('旧版存储格式的更新检测', () => {
     const liveChat = [
       { is_user: true },

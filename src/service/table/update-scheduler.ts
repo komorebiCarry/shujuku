@@ -7,6 +7,7 @@
 
 import { isSummaryOrOutlineTable_ACU, logDebug_ACU, logWarn_ACU } from '../../shared/utils';
 import { getSortedSheetKeys_ACU } from '../template/chat-scope';
+import { resolveTableHistoryStateFromChat_ACU } from './table-history';
 
 export interface TableUpdateItem {
     sheetKey: string;
@@ -14,12 +15,14 @@ export interface TableUpdateItem {
     indices: number[];
     groupId: number;
     batchSize: number;
+    scheduleSignature: string;
 }
 
 export interface UpdateGroup {
     indices: number[];
     batchSize: number;
     groupId: number;
+    scheduleSignature: string;
     sheetKeys: string[];
     sheetNames: string[];
 }
@@ -77,68 +80,13 @@ export function buildAutoUpdatePlan_ACU(
         const skipFloors = Math.max(0, (rawSkip === -1) ? globalSkip : rawSkip);
         const groupId = rawGroupId;
 
-        // 扫描聊天记录，查找该表上次更新的 AI 楼层数
-        let lastUpdatedAiFloor = 0;
-
-        for (let i = liveChat.length - 1; i >= 0; i--) {
-            const msg = liveChat[i];
-            if (msg.is_user) continue;
-
-            let wasUpdated = false;
-
-            // [优先级1] 检查新版按标签分组存储 TavernDB_ACU_IsolatedData
-            if (msg.TavernDB_ACU_IsolatedData && msg.TavernDB_ACU_IsolatedData[isolationKey]) {
-                const tagData = msg.TavernDB_ACU_IsolatedData[isolationKey];
-                const modifiedKeys = tagData.modifiedKeys || [];
-                const updateGroupKeys = tagData.updateGroupKeys || [];
-                const independentData = tagData.independentData || {};
-
-                if (updateGroupKeys.length > 0 && modifiedKeys.length > 0) {
-                    wasUpdated = updateGroupKeys.includes(sheetKey);
-                } else if (modifiedKeys.length > 0) {
-                    wasUpdated = modifiedKeys.includes(sheetKey);
-                } else if (independentData[sheetKey]) {
-                    wasUpdated = true;
-                }
-            }
-
-            // [优先级2] 兼容旧版存储格式 - 严格匹配隔离标签
-            if (!wasUpdated) {
-                const msgIdentity = msg.TavernDB_ACU_Identity;
-                let isLegacyMatch = false;
-                if (settings.dataIsolationEnabled) {
-                    isLegacyMatch = (msgIdentity === settings.dataIsolationCode);
-                } else {
-                    isLegacyMatch = !msgIdentity;
-                }
-
-                if (isLegacyMatch) {
-                    const modifiedKeys = msg.TavernDB_ACU_ModifiedKeys || [];
-                    const updateGroupKeys = msg.TavernDB_ACU_UpdateGroupKeys || [];
-
-                    if (updateGroupKeys.length > 0 && modifiedKeys.length > 0) {
-                        wasUpdated = updateGroupKeys.includes(sheetKey);
-                    } else if (modifiedKeys.length > 0) {
-                        wasUpdated = modifiedKeys.includes(sheetKey);
-                    } else {
-                        if (msg.TavernDB_ACU_IndependentData && msg.TavernDB_ACU_IndependentData[sheetKey]) {
-                            wasUpdated = true;
-                        }
-                        else if (isSummary && msg.TavernDB_ACU_SummaryData && msg.TavernDB_ACU_SummaryData[sheetKey]) {
-                            wasUpdated = true;
-                        }
-                        else if (!isSummary && msg.TavernDB_ACU_Data && msg.TavernDB_ACU_Data[sheetKey]) {
-                            wasUpdated = true;
-                        }
-                    }
-                }
-            }
-
-            if (wasUpdated) {
-                lastUpdatedAiFloor = liveChat.slice(0, i + 1).filter((m: any) => !m.is_user).length;
-                break;
-            }
-        }
+        const history = resolveTableHistoryStateFromChat_ACU(liveChat, {
+            sheetKey,
+            isSummaryTable: isSummary,
+            isolationKey,
+            settings,
+        });
+        const lastUpdatedAiFloor = history.lastTrackedUpdateAiFloor;
 
         // 计算未记录楼层数
         const effectiveUnrecordedFloors = Math.max(0, (totalAiMessages - skipFloors) - lastUpdatedAiFloor);
@@ -170,7 +118,8 @@ export function buildAutoUpdatePlan_ACU(
                         sheetName: table.name,
                         indices: indicesToUpdate,
                         groupId,
-                        batchSize: (rawBatch === -1) ? (settings.updateBatchSize || 3) : ((rawBatch > 0) ? rawBatch : (settings.updateBatchSize || 3))
+                        batchSize: (rawBatch === -1) ? (settings.updateBatchSize || 3) : ((rawBatch > 0) ? rawBatch : (settings.updateBatchSize || 3)),
+                        scheduleSignature: [groupId, threshold, frequency, skipFloors, rawBatch].join('|'),
                     });
                 }
             }
@@ -181,12 +130,13 @@ export function buildAutoUpdatePlan_ACU(
     const updateGroups: Record<string, UpdateGroup> = {};
 
     tablesToUpdate.forEach(item => {
-        const key = item.groupId + '|' + item.indices.join(',') + '|' + item.batchSize;
+        const key = item.scheduleSignature + '|' + item.indices.join(',') + '|' + item.batchSize;
         if (!updateGroups[key]) {
             updateGroups[key] = {
                 indices: item.indices,
                 batchSize: item.batchSize,
                 groupId: item.groupId,
+                scheduleSignature: item.scheduleSignature,
                 sheetKeys: [],
                 sheetNames: []
             };

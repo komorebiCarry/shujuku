@@ -74,6 +74,7 @@ vi.mock('../../../src/service/ai/prompt-builder', () => ({
 
 vi.mock('../../../src/service/chat/chat-service', () => ({
   getChatArray_ACU: vi.fn(() => []),
+  clearTableDataAtFloors_ACU: vi.fn().mockResolvedValue(0),
 }));
 
 vi.mock('../../../src/service/summary/merge-logic', () => ({
@@ -728,6 +729,26 @@ describe('orchestrateManualUpdate_ACU', () => {
     const result = await orchestrateManualUpdate_ACU(['sheet_0'], mockProcessBatch, mockRefreshData);
     expect(result.success).toBe(true);
     expect(mockProcessBatch).toHaveBeenCalled();
+  });
+
+  it('预清空时只按选中表调用清理', async () => {
+    const { getChatArray_ACU, clearTableDataAtFloors_ACU } = await import('../../../src/service/chat/chat-service');
+    vi.mocked(getChatArray_ACU).mockReturnValue([
+      { is_user: true },
+      { is_user: false, mes: 'AI回复1' },
+      { is_user: true },
+      { is_user: false, mes: 'AI回复2' },
+    ]);
+    mockCurrentJsonTableData = {
+      sheet_0: { name: '测试表A', updateConfig: {} },
+      sheet_1: { name: '测试表B', updateConfig: {} },
+    };
+    mockProcessBatch.mockResolvedValue({ success: true });
+
+    const result = await orchestrateManualUpdate_ACU(['sheet_0'], mockProcessBatch, mockRefreshData, { clearBeforeUpdate: true });
+    expect(result.success).toBe(true);
+    expect(clearTableDataAtFloors_ACU).toHaveBeenCalled();
+    expect(vi.mocked(clearTableDataAtFloors_ACU).mock.calls[0][1]).toEqual(['sheet_0']);
   });
 
   it('processBatch 失败时返回错误', async () => {

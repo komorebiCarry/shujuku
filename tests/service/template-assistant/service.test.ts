@@ -28,7 +28,7 @@ vi.mock('../../../src/service/ai/api-call', () => ({
 }));
 
 vi.mock('../../../src/service/runtime/state-manager', () => ({
-  settings_ACU: { tableApiPreset: 'preset-1' },
+  settings_ACU: { tableApiPreset: 'preset-1', apiPresets: [], tableApiPresetOverridesByName: {} },
 }));
 
 vi.mock('../../../src/shared/utils', async () => {
@@ -100,6 +100,26 @@ describe('template assistant service', () => {
       highRiskItems: [],
       lockChanges: [],
     }));
+  });
+
+  it('显式 tableApiPreset override 会覆盖默认 preset', async () => {
+    const tempData = buildTempData_ACU();
+    const fp = buildTemplateAssistantFingerprint_ACU(tempData);
+    mockCallAIWithPreset.mockResolvedValue(`<templateAssistantDraft>{"protocolVersion":2,"mode":"modify_current_template_incremental","requestId":"req-override","baseFingerprint":"${fp}","atomic":true,"selectedSheetKey":"sheet_a","summary":"x","warnings":[],"operations":[]}</templateAssistantDraft>`);
+
+    await generateTemplateAssistantDraft_ACU({ tempData, currentSheetKey: 'sheet_a', sheetOrder: ['sheet_a'], userRequest: '修改当前表', tableApiPreset: 'assistant-preset' });
+
+    expect(mockCallAIWithPreset).toHaveBeenCalledWith(expect.any(Array), 'assistant-preset');
+  });
+
+  it('空 tableApiPreset override 时回退到既有 settings preset', async () => {
+    const tempData = buildTempData_ACU();
+    const fp = buildTemplateAssistantFingerprint_ACU(tempData);
+    mockCallAIWithPreset.mockResolvedValue(`<templateAssistantDraft>{"protocolVersion":2,"mode":"modify_current_template_incremental","requestId":"req-fallback","baseFingerprint":"${fp}","atomic":true,"selectedSheetKey":"sheet_a","summary":"x","warnings":[],"operations":[]}</templateAssistantDraft>`);
+
+    await generateTemplateAssistantDraft_ACU({ tempData, currentSheetKey: 'sheet_a', sheetOrder: ['sheet_a'], userRequest: '修改当前表', tableApiPreset: '   ' });
+
+    expect(mockCallAIWithPreset).toHaveBeenCalledWith(expect.any(Array), 'preset-1');
   });
 
   it('提取最后一个合法标签块', () => {

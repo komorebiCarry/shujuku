@@ -19,6 +19,7 @@ import { isSqliteMode } from '../../../service/table/storage-mode';
 import { getStorageProvider } from '../../../service/table/table-storage-strategy';
 import { getNameMapper } from '../../../service/runtime/template-vars/name-mapper';
 import { parseDDLTableName } from '../../../shared/ddl-utils';
+import { resolveTableHistoryStateFromChat_ACU } from '../../../service/table/table-history';
 
 /**
  * 从 sheet 解析英文物理表名
@@ -114,52 +115,14 @@ function resolveColumnForSheet(
 function findTableLatestFloor(targetSheetKey: string, tableName: string): number {
     const chat = SillyTavern_API_ACU.chat;
     if (!chat || chat.length === 0) return -1;
-
-    const isSummaryTable = isSummaryOrOutlineTable_ACU(tableName);
-    const isolationKey = getCurrentIsolationKey_ACU();
-
-    // 从最新消息向前遍历，找到第一个包含该表数据的楼层
-    for (let i = chat.length - 1; i >= 0; i--) {
-        const msg = chat[i] as ACUMessage;
-        if (msg.is_user) continue;
-
-        let hasTableData = false;
-
-        // 优先：新格式（按标签分组）
-        if (msg.TavernDB_ACU_IsolatedData && msg.TavernDB_ACU_IsolatedData[isolationKey]) {
-            const tagData = msg.TavernDB_ACU_IsolatedData[isolationKey];
-            const independentData = tagData.independentData || {};
-            if (independentData[targetSheetKey]) {
-                hasTableData = true;
-            }
-        }
-
-        // 兼容：旧格式
-        if (!hasTableData) {
-            const msgIdentity = msg.TavernDB_ACU_Identity;
-            const isLegacyMatch = settings_ACU.dataIsolationEnabled
-                ? msgIdentity === settings_ACU.dataIsolationCode
-                : !msgIdentity;
-
-            if (isLegacyMatch) {
-                const hasLegacyData =
-                    (msg.TavernDB_ACU_IndependentData && msg.TavernDB_ACU_IndependentData[targetSheetKey]) ||
-                    (isSummaryTable
-                        ? (msg.TavernDB_ACU_SummaryData && msg.TavernDB_ACU_SummaryData[targetSheetKey])
-                        : (msg.TavernDB_ACU_Data && msg.TavernDB_ACU_Data[targetSheetKey]));
-                hasTableData = !!hasLegacyData;
-            }
-        }
-
-        if (hasTableData) return i;
-    }
-
-    // 找不到该表的楼层，回退到最新 AI 楼层
-    for (let i = chat.length - 1; i >= 0; i--) {
-        if (!chat[i].is_user) return i;
-    }
-
-    return -1;
+    const history = resolveTableHistoryStateFromChat_ACU(chat as ACUMessage[], {
+        sheetKey: targetSheetKey,
+        isSummaryTable: isSummaryOrOutlineTable_ACU(tableName),
+        isolationKey: getCurrentIsolationKey_ACU(),
+        settings: settings_ACU,
+    });
+    if (history.latestDataMessageIndex !== -1) return history.latestDataMessageIndex;
+    return history.latestAiMessageIndex;
 }
 
 /**
@@ -174,11 +137,24 @@ async function saveToLatestFloorAndRefresh(
 ): Promise<void> {
     const tableLatestFloorIndex = findTableLatestFloor(targetSheetKey, tableName);
 
-    if (tableLatestFloorIndex !== -1) {
-        if (!skipChatSave) {
-            logDebug_ACU(`${methodName}: Saving [${tableName}] to its latest floor ${tableLatestFloorIndex}`);
-            await saveIndependentTableToChatHistory_ACU(tableLatestFloorIndex, [targetSheetKey], [targetSheetKey], true);
-        }
+        if (tableLatestFloorIndex !== -1) {
+            if (!skipChatSave) {
+                logDebug_ACU(`${methodName}: Saving [${tableName}] to its latest floor ${tableLatestFloorIndex}`);
+                const chat = SillyTavern_API_ACU.chat as ACUMessage[];
+                const history = resolveTableHistoryStateFromChat_ACU(chat, {
+                    sheetKey: targetSheetKey,
+                    isSummaryTable: isSummaryOrOutlineTable_ACU(tableName),
+                    isolationKey: getCurrentIsolationKey_ACU(),
+                    settings: settings_ACU,
+                });
+                const shouldTrackAsUpdate = history.latestDataMessageIndex === -1;
+                await saveIndependentTableToChatHistory_ACU(
+                    tableLatestFloorIndex,
+                    [targetSheetKey],
+                    shouldTrackAsUpdate ? [targetSheetKey] : null,
+                    true,
+                );
+            }
         await refreshMergedDataAndNotifyWithUI_ACU();
         logDebug_ACU(`${methodName}: Worldbook refreshed after saving [${tableName}]`);
     } else {
