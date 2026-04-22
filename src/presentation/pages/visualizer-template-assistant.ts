@@ -214,11 +214,13 @@ function buildAssistantHeaderStyle_ACU(mode: AssistantViewportMode_ACU) {
 
 function buildAssistantScrollFrameStyle_ACU(mode: AssistantViewportMode_ACU) {
     const isMobileViewport = isAssistantMobileViewport_ACU();
+    const isDesktopInternalScroll = mode !== 'fullscreen-overlay';
+    const isFullscreenInternalScroll = mode === 'fullscreen-overlay' && !isMobileViewport;
     const margin = mode === 'fullscreen-overlay' ? '8px 12px 8px' : '12px 14px 8px';
     const minHeight = mode === 'fullscreen-overlay' ? '180px' : '240px';
-    const flexValue = mode === 'fullscreen-overlay' && !isMobileViewport ? '1 1 auto' : '0 0 auto';
+    const flexValue = isDesktopInternalScroll || isFullscreenInternalScroll ? '1 1 auto' : '0 0 auto';
     const desktopMaxHeight = 'max-height:min(56vh, 640px);';
-    const overflow = mode === 'fullscreen-overlay' && !isMobileViewport ? 'overflow:hidden;' : 'overflow:visible;';
+    const overflow = isFullscreenInternalScroll ? 'overflow:hidden;' : 'overflow:visible;';
     const extra = mode === 'fullscreen-overlay'
         ? (isMobileViewport ? 'max-height:none;' : '')
         : desktopMaxHeight;
@@ -228,7 +230,8 @@ function buildAssistantScrollFrameStyle_ACU(mode: AssistantViewportMode_ACU) {
 function buildAssistantChatContainerStyle_ACU(mode: AssistantViewportMode_ACU) {
     const isMobileViewport = isAssistantMobileViewport_ACU();
     const padding = mode === 'fullscreen-overlay' ? '12px' : '16px';
-    const overflow = mode === 'fullscreen-overlay' && !isMobileViewport
+    const usesInternalChatScroll = mode !== 'fullscreen-overlay' || !isMobileViewport;
+    const overflow = usesInternalChatScroll
         ? 'overflow-y:auto; min-height:0; height:100%;'
         : 'overflow-y:visible; min-height:auto; height:auto;';
     return `flex:1 1 auto; ${overflow} overscroll-behavior:contain; -webkit-overflow-scrolling:touch; touch-action:pan-y; pointer-events:auto; padding:${padding}; display:flex; flex-direction:column; gap:12px; align-items:stretch; background:transparent; justify-content:flex-start;`;
