@@ -3,6 +3,7 @@
 
 import { getConfigStorage_ACU, persistTavernSettings_ACU } from '../../service/settings/settings-service';
 import { applyACUThemeToDocument_ACU, injectACUWindowStyles, syncACUThemeButtons_ACU, toggleACUTheme_ACU } from './window-styles';
+import { applyTheme, loadCustomThemes } from '../theme/theme-registry';
 import { SCRIPT_ID_PREFIX_ACU } from '../../shared/constants';
 import { topLevelWindow_ACU } from '../../shared/env';
 import { safeJsonParse_ACU, safeJsonStringify_ACU } from '../../shared/json-helpers';
@@ -130,8 +131,12 @@ import { jQuery_API_ACU } from '../dom-utils';
       onReady
     } = options;
     
-    // 确保样式已注入
+    // 确保窗口基础样式和当前主题变量都已提前注入到主文档。
+    // 不能等窗口 DOM 插入后再补主题，否则在 [`createACUWindow()`](src/presentation/window/window-system.ts:116)
+    // 生命周期早期出现的遮罩、确认框、首帧窗口 chrome 会回退到默认基础 UI。
     injectACUWindowStyles();
+    loadCustomThemes();
+    applyTheme();
     
     // 如果窗口已存在，直接显示并置顶
     if (ACU_WindowManager.isOpen(id)) {

@@ -242,27 +242,18 @@ export function getThemeCSS_ACU(themeId?: string): string {
  */
 function applyThemeToDOM(theme: ACUTheme): void {
     const targetDoc = (topLevelWindow_ACU || window).document;
-    const popupEl = targetDoc.getElementById(POPUP_ID_ACU);
     let existingStyle = targetDoc.getElementById(THEME_STYLE_ID) as HTMLStyleElement | null;
-    const innerStyle = popupEl?.querySelector('style') ?? null;
 
     if (!existingStyle) {
         existingStyle = targetDoc.createElement('style');
         existingStyle.id = THEME_STYLE_ID;
     }
 
-    if (innerStyle) {
-        if (existingStyle !== innerStyle.nextElementSibling) {
-            innerStyle.after(existingStyle);
-        }
-    } else if (popupEl) {
-        if (existingStyle.parentNode !== popupEl) {
-            popupEl.prepend(existingStyle);
-        }
-    } else {
-        if (existingStyle.parentNode !== targetDoc.head) {
-            targetDoc.head.appendChild(existingStyle);
-        }
+    // 主题覆盖样式必须常驻主文档，而不是挂在 [`#popup`](src/presentation/pages/main-popup.ts:75)
+    // 内部。否则主界面一关闭，整个 style 节点会跟着被移除，随后出现的 toast / confirm /
+    // visualizer 首帧就会退回基础 UI。这个问题不是视觉细节，而是主题注入作用域设计错了。
+    if (existingStyle.parentNode !== targetDoc.head) {
+        targetDoc.head.appendChild(existingStyle);
     }
 
     existingStyle.textContent = buildThemeCSS_ACU(theme);

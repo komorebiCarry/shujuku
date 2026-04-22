@@ -114,12 +114,14 @@
         border-left: 1px solid var(--vis-border-color);
         background: var(--vis-bg-color);
         min-height: 0;
-        overflow: hidden;
+        overflow-x: hidden;
+        overflow-y: auto;
     }
     #acu-visualizer-content[data-assistant-layout="desktop-dock"] .acu-vis-assistant-dock {
         display: flex;
         flex-direction: column;
         min-height: 0;
+        align-self: stretch;
     }
     #acu-visualizer-content[data-assistant-layout="fullscreen-overlay"] .acu-vis-assistant-dock {
         display: none;
@@ -132,6 +134,9 @@
         z-index: 100001;
         flex: none;
         pointer-events: auto;
+    }
+    #acu-visualizer-content[data-assistant-layout="default"] .acu-vis-assistant-dock {
+        display: none;
     }
     
     /* ═══ 侧边栏 ═══ */
@@ -1364,16 +1369,21 @@
         z-index: 100001;
         pointer-events: auto;
         touch-action: auto;
+        overflow-y: auto;
+        overflow-x: hidden;
+        -webkit-overflow-scrolling: touch;
     }
     #acu-vis-assistant-host[data-assistant-mode="fullscreen-overlay"][data-open="true"][data-minimized="true"] {
         z-index: 100002;
         pointer-events: none;
+        overflow: visible;
     }
     #acu-vis-assistant-host[data-assistant-mode="desktop"][data-open="true"] {
         position: relative;
         inset: auto;
         width: auto;
-        height: auto;
+        height: 100%;
+        min-height: 100%;
         pointer-events: auto;
         z-index: 1;
     }
@@ -1389,11 +1399,19 @@
         width: 100%;
         max-width: 100%;
     }
+    #acu-vis-assistant-host[data-assistant-mode="desktop"] .acu-vis-assistant-panel {
+        min-height: 100%;
+        height: auto;
+        overflow-y: auto;
+        overflow-x: hidden;
+    }
     #acu-vis-assistant-host[data-open="false"] .acu-vis-assistant-panel {
         pointer-events: none;
     }
     #acu-vis-assistant-host[data-assistant-mode="fullscreen-overlay"] .acu-vis-assistant-panel {
         pointer-events: auto;
+        max-width: 100vw;
+        box-sizing: border-box;
         touch-action: auto;
     }
     #acu-vis-assistant-host[data-assistant-mode="fullscreen-overlay"][data-minimized="true"] .acu-vis-assistant-panel {

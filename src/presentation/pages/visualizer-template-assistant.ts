@@ -112,6 +112,10 @@ function getAssistantViewportMode_ACU(): AssistantViewportMode_ACU {
     return 'desktop';
 }
 
+function isAssistantMobileViewport_ACU() {
+    return getAssistantViewportWidth_ACU() <= MOBILE_VIEWPORT_MAX_ACU;
+}
+
 function getAssistantPanelWidth_ACU(mode: AssistantViewportMode_ACU) {
     if (mode === 'fullscreen-overlay') return '100vw';
     return '420px';
@@ -193,11 +197,13 @@ function clearPortalVariables_ACU(host: HTMLElement): void {
 }
 
 function buildAssistantPanelStyle_ACU(mode: AssistantViewportMode_ACU, display: string) {
-    const common = `display:${display}; flex-direction:column; min-height:0; overflow:hidden; background:var(--vis-assistant-window-bg, var(--vis-bg-color, #111827)); color:var(--vis-text-main, #f3f4f6); box-shadow:0 20px 48px color-mix(in srgb, var(--vis-text-main, #f3f4f6) 18%, transparent); pointer-events:auto; overscroll-behavior:contain; opacity:1;`;
+    const isMobileViewport = isAssistantMobileViewport_ACU();
+    const common = `display:${display}; flex-direction:column; min-height:0; background:var(--vis-assistant-window-bg, var(--vis-bg-color, #111827)); color:var(--vis-text-main, #f3f4f6); box-shadow:0 20px 48px color-mix(in srgb, var(--vis-text-main, #f3f4f6) 18%, transparent); pointer-events:auto; overscroll-behavior:contain; opacity:1;`;
     if (mode === 'fullscreen-overlay') {
-        return `${common} position:fixed; inset:0; width:100vw; min-height:100vh; height:100dvh; border-left:none; z-index:100002; background:var(--vis-assistant-window-bg, var(--vis-bg-color, #111827)); padding:env(safe-area-inset-top, 0px) 0 env(safe-area-inset-bottom, 0px);`;
+        const mobileOverflow = isMobileViewport ? 'overflow-y:auto; overflow-x:hidden;' : 'overflow:hidden;';
+        return `${common} ${mobileOverflow} position:fixed; inset:0; width:100vw; min-height:100vh; height:100dvh; border-left:none; z-index:100002; background:var(--vis-assistant-window-bg, var(--vis-bg-color, #111827)); padding:env(safe-area-inset-top, 0px) 0 env(safe-area-inset-bottom, 0px); -webkit-overflow-scrolling:touch;`;
     }
-    return `${common} width:${getAssistantPanelWidth_ACU(mode)}; height:100%; max-height:100%; align-self:stretch; border-left:1px solid var(--vis-border-color); flex:1 1 auto;`;
+    return `${common} overflow-y:auto; overflow-x:hidden; width:${getAssistantPanelWidth_ACU(mode)}; min-height:100%; height:auto; align-self:stretch; border-left:1px solid var(--vis-border-color); flex:1 1 auto;`;
 }
 
 function buildAssistantHeaderStyle_ACU(mode: AssistantViewportMode_ACU) {
@@ -207,15 +213,25 @@ function buildAssistantHeaderStyle_ACU(mode: AssistantViewportMode_ACU) {
 }
 
 function buildAssistantScrollFrameStyle_ACU(mode: AssistantViewportMode_ACU) {
+    const isMobileViewport = isAssistantMobileViewport_ACU();
     const margin = mode === 'fullscreen-overlay' ? '8px 12px 8px' : '12px 14px 8px';
-    const minHeight = mode === 'fullscreen-overlay' ? '180px' : '420px';
-    const flexValue = mode === 'fullscreen-overlay' ? '1 1 auto' : '1 1 420px';
-    return `flex:${flexValue}; min-height:${minHeight}; margin:${margin}; border:1px solid var(--vis-border-color); border-radius:12px; background:var(--vis-assistant-surface-bg, var(--vis-bg-light, rgba(255,255,255,0.08))); overflow:hidden; display:flex; flex-direction:column; pointer-events:auto; overscroll-behavior:contain;`;
+    const minHeight = mode === 'fullscreen-overlay' ? '180px' : '240px';
+    const flexValue = mode === 'fullscreen-overlay' && !isMobileViewport ? '1 1 auto' : '0 0 auto';
+    const desktopMaxHeight = 'max-height:min(56vh, 640px);';
+    const overflow = mode === 'fullscreen-overlay' && !isMobileViewport ? 'overflow:hidden;' : 'overflow:visible;';
+    const extra = mode === 'fullscreen-overlay'
+        ? (isMobileViewport ? 'max-height:none;' : '')
+        : desktopMaxHeight;
+    return `flex:${flexValue}; min-height:${minHeight}; margin:${margin}; border:1px solid var(--vis-border-color); border-radius:12px; background:var(--vis-assistant-surface-bg, var(--vis-bg-light, rgba(255,255,255,0.08))); ${overflow} display:flex; flex-direction:column; pointer-events:auto; overscroll-behavior:contain; ${extra}`;
 }
 
 function buildAssistantChatContainerStyle_ACU(mode: AssistantViewportMode_ACU) {
+    const isMobileViewport = isAssistantMobileViewport_ACU();
     const padding = mode === 'fullscreen-overlay' ? '12px' : '16px';
-    return `flex:1 1 auto; min-height:0; height:100%; overflow-y:auto; overscroll-behavior:contain; -webkit-overflow-scrolling:touch; touch-action:pan-y; pointer-events:auto; padding:${padding}; display:flex; flex-direction:column; gap:12px; align-items:stretch; background:transparent; justify-content:flex-start;`;
+    const overflow = mode === 'fullscreen-overlay' && !isMobileViewport
+        ? 'overflow-y:auto; min-height:0; height:100%;'
+        : 'overflow-y:visible; min-height:auto; height:auto;';
+    return `flex:1 1 auto; ${overflow} overscroll-behavior:contain; -webkit-overflow-scrolling:touch; touch-action:pan-y; pointer-events:auto; padding:${padding}; display:flex; flex-direction:column; gap:12px; align-items:stretch; background:transparent; justify-content:flex-start;`;
 }
 
 function buildAssistantFooterStyle_ACU(mode: AssistantViewportMode_ACU) {
@@ -223,32 +239,14 @@ function buildAssistantFooterStyle_ACU(mode: AssistantViewportMode_ACU) {
     return `padding:${padding}; border-top:1px solid var(--vis-border-color); flex:0 0 auto;`;
 }
 
-function shouldShowFloatingRestore_ACU(mode: AssistantViewportMode_ACU) {
-    return mode === 'fullscreen-overlay' && assistantUiState_ACU.isOpen && assistantUiState_ACU.isMinimized;
+function shouldShowFloatingRestore_ACU(_mode: AssistantViewportMode_ACU) {
+    return false;
 }
 
 function isPanelVisible_ACU(mode: AssistantViewportMode_ACU) {
     if (!assistantUiState_ACU.isOpen) return false;
     if (mode !== 'fullscreen-overlay') return true;
-    return !assistantUiState_ACU.isMinimized;
-}
-
-function minimizeVisualizerTemplateAssistant_ACU() {
-    if (getAssistantViewportMode_ACU() !== 'fullscreen-overlay') {
-        assistantUiState_ACU.isOpen = false;
-        assistantUiState_ACU.isMinimized = false;
-        renderVisualizerTemplateAssistantPanel_ACU();
-        return;
-    }
-    assistantUiState_ACU.isOpen = true;
-    assistantUiState_ACU.isMinimized = true;
-    renderVisualizerTemplateAssistantPanel_ACU();
-}
-
-function restoreVisualizerTemplateAssistant_ACU() {
-    assistantUiState_ACU.isOpen = true;
-    assistantUiState_ACU.isMinimized = false;
-    renderVisualizerTemplateAssistantPanel_ACU();
+    return true;
 }
 
 function buildAssistantControlRowStyle_ACU(mode: AssistantViewportMode_ACU) {
@@ -962,15 +960,8 @@ export function setVisualizerTemplateAssistantOpen_ACU(nextOpen: boolean) {
 }
 
 export function toggleVisualizerTemplateAssistant_ACU() {
-    const mode = getAssistantViewportMode_ACU();
-    if (mode === 'fullscreen-overlay' && assistantUiState_ACU.isOpen && assistantUiState_ACU.isMinimized) {
-        assistantUiState_ACU.isMinimized = false;
-    } else {
-        assistantUiState_ACU.isOpen = !assistantUiState_ACU.isOpen;
-        if (!assistantUiState_ACU.isOpen) {
-            assistantUiState_ACU.isMinimized = false;
-        }
-    }
+    assistantUiState_ACU.isOpen = !assistantUiState_ACU.isOpen;
+    assistantUiState_ACU.isMinimized = false;
     renderVisualizerTemplateAssistantPanel_ACU();
 }
 
@@ -1000,7 +991,7 @@ export function renderVisualizerTemplateAssistantPanel_ACU() {
     if (layoutRoot) {
         if (mode === 'fullscreen-overlay' && isPanelVisible_ACU(mode)) {
             layoutRoot.setAttribute('data-assistant-layout', 'fullscreen-overlay');
-        } else if (assistantUiState_ACU.isOpen) {
+        } else if (mode === 'desktop' && assistantUiState_ACU.isOpen) {
             layoutRoot.setAttribute('data-assistant-layout', 'desktop-dock');
         } else {
             layoutRoot.setAttribute('data-assistant-layout', 'default');
@@ -1021,7 +1012,6 @@ export function renderVisualizerTemplateAssistantPanel_ACU() {
                     <div class="acu-hint" style="font-size:12px; margin-top:4px;">当前表：${escapeHtml_ACU(getSelectedSheetLabel_ACU())}</div>
                 </div>
                 <div style="display:flex; align-items:center; gap:8px; flex-shrink:0;">
-                    ${mode === 'fullscreen-overlay' ? '<button id="acu-vis-assistant-minimize" class="acu-btn-secondary" type="button">最小化</button>' : ''}
                     <button id="acu-vis-assistant-close" class="acu-btn-secondary" type="button">关闭</button>
                 </div>
             </div>
@@ -1064,14 +1054,6 @@ export function renderVisualizerTemplateAssistantPanel_ACU() {
         assistantUiState_ACU.isOpen = false;
         assistantUiState_ACU.isMinimized = false;
         renderVisualizerTemplateAssistantPanel_ACU();
-    });
-
-    $host.find('#acu-vis-assistant-minimize').on('click', () => {
-        minimizeVisualizerTemplateAssistant_ACU();
-    });
-
-    $host.find('#acu-vis-assistant-restore').on('click', () => {
-        restoreVisualizerTemplateAssistant_ACU();
     });
 
     bindEvents_ACU();
