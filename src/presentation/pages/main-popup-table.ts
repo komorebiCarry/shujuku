@@ -144,7 +144,7 @@ export function generateTableTabHTML(): string {
                             </div>
                             <div id="${SCRIPT_ID_PREFIX_ACU}-worldbook-vector-memory-config-block" style="display: none; margin-top: 12px;">
                                 <div class="acu-section" style="margin-bottom: 12px;">
-                                    <div class="acu-section-title">召回参数</div>
+                                    <div class="acu-section-title">召回与筛选参数</div>
                                     <div class="acu-grid-auto">
                                         <div class="acu-col-sm">
                                             <label for="${SCRIPT_ID_PREFIX_ACU}-worldbook-vector-memory-threshold">近记忆保留阈值</label>
@@ -157,19 +157,19 @@ export function generateTableTabHTML(): string {
                                             <small class="notes">超过保留阈值后，还需额外累计这么多条旧纪要，才会触发一次远记忆归档。</small>
                                         </div>
                                         <div class="acu-col-sm">
-                                            <label for="${SCRIPT_ID_PREFIX_ACU}-worldbook-vector-memory-topk">召回 TopK</label>
+                                            <label for="${SCRIPT_ID_PREFIX_ACU}-worldbook-vector-memory-topk">最终注入 TopK</label>
                                             <input type="number" id="${SCRIPT_ID_PREFIX_ACU}-worldbook-vector-memory-topk" min="1" step="1" placeholder="20">
-                                            <small class="notes">每次召回最多返回的候选记忆数量。</small>
+                                            <small class="notes">每次召回后最终写入世界书的记忆数量上限；启用 Rerank 后这里仍然控制最终保留数量。</small>
                                         </div>
                                         <div class="acu-col-sm">
-                                            <label for="${SCRIPT_ID_PREFIX_ACU}-worldbook-vector-memory-min-score">最小分数</label>
+                                            <label for="${SCRIPT_ID_PREFIX_ACU}-worldbook-vector-memory-min-score">Embedding 预筛最小分数</label>
                                             <input type="number" id="${SCRIPT_ID_PREFIX_ACU}-worldbook-vector-memory-min-score" min="0" max="1" step="0.01" placeholder="0.75">
-                                            <small class="notes">低于该相似度分数的结果将被忽略。</small>
+                                            <small class="notes">先用 embedding 相似度筛掉过低候选；启用 Rerank 后，这里仍只控制预筛阶段。</small>
                                         </div>
                                         <div class="acu-col-sm">
-                                            <label for="${SCRIPT_ID_PREFIX_ACU}-worldbook-vector-memory-recall-candidate-limit">候选召回上限</label>
+                                            <label for="${SCRIPT_ID_PREFIX_ACU}-worldbook-vector-memory-recall-candidate-limit">预筛候选上限</label>
                                             <input type="number" id="${SCRIPT_ID_PREFIX_ACU}-worldbook-vector-memory-recall-candidate-limit" min="1" step="1" placeholder="100">
-                                            <small class="notes">本地相似度计算后保留的候选数量，不能小于 TopK。</small>
+                                            <small class="notes">embedding 本地预筛后保留的候选数量，也是 Rerank 的最大输入数；不能小于 TopK。</small>
                                         </div>
                                         <div class="acu-col-sm">
                                             <label for="${SCRIPT_ID_PREFIX_ACU}-worldbook-vector-memory-namespace">命名空间前缀</label>
@@ -197,6 +197,27 @@ export function generateTableTabHTML(): string {
                                             <small class="notes">敏感信息不写入默认值；需要时再单独配置。</small>
                                         </div>
                                     </div>
+                                </div>
+                                <div class="acu-section" style="margin-bottom: 12px;">
+                                    <div class="acu-section-title">Rerank 设置（可选）</div>
+                                    <div class="acu-grid-auto">
+                                        <div class="acu-col-sm">
+                                            <label for="${SCRIPT_ID_PREFIX_ACU}-worldbook-vector-memory-rerank-endpoint">Rerank Endpoint</label>
+                                            <input type="text" id="${SCRIPT_ID_PREFIX_ACU}-worldbook-vector-memory-rerank-endpoint" placeholder="https://example.com/rerank">
+                                            <small class="notes">留空则不启用真实 Rerank；仅使用 embedding 预筛 + 本地启发式排序。</small>
+                                        </div>
+                                        <div class="acu-col-sm">
+                                            <label for="${SCRIPT_ID_PREFIX_ACU}-worldbook-vector-memory-rerank-model">Rerank Model</label>
+                                            <input type="text" id="${SCRIPT_ID_PREFIX_ACU}-worldbook-vector-memory-rerank-model" placeholder="bge-reranker-v2-m3">
+                                            <small class="notes">必须与 Endpoint 同时填写；填写后会对预筛候选做真实重排。</small>
+                                        </div>
+                                        <div class="acu-col-sm">
+                                            <label for="${SCRIPT_ID_PREFIX_ACU}-worldbook-vector-memory-rerank-api-key">Rerank API Key</label>
+                                            <input type="password" id="${SCRIPT_ID_PREFIX_ACU}-worldbook-vector-memory-rerank-api-key" placeholder="留空表示不附带 Authorization">
+                                            <small class="notes">可与 Embedding 使用不同鉴权；若服务不需要鉴权可留空。</small>
+                                        </div>
+                                    </div>
+                                    <small class="notes" style="display: block; margin-top: 8px;">启用真实 Rerank 后，Embedding 仍负责召回预筛，TopK 仍控制最终注入数量；这三者不是互相替代关系。</small>
                                 </div>
                                 <div class="acu-section" style="margin-bottom: 12px;">
                                     <div class="acu-section-title">归档参数</div>
@@ -276,7 +297,7 @@ export function generateTableTabHTML(): string {
                                 </div>
                                 <div style="margin-top: 12px; display: flex; flex-direction: column; gap: 6px;">
                                     <small class="notes">大总结查看入口：当前在“数据管理”页的“远记忆总结管理”面板中。这里直接写明，避免入口藏得像根本没做。</small>
-                                    <small class="notes">本方案只依赖 Embedding 接口，不再要求独立 Vector Store。命中的是远记忆 chunk，但注入世界书时会回卷整条远记忆大总结。</small>
+                                    <small class="notes">本方案以 Embedding 预筛为基础；若额外配置 Rerank，则会先预筛再重排，仍不要求独立 Vector Store。命中的是远记忆 chunk，但注入世界书时会回卷整条远记忆大总结。</small>
                                 </div>
                             </div>
                         </div>

@@ -20,6 +20,9 @@ export interface VectorMemoryConfig_ACU {
     embeddingEndpoint: string;
     embeddingApiKey: string;
     embeddingModel: string;
+    rerankEndpoint: string;
+    rerankApiKey: string;
+    rerankModel: string;
     vectorNamespace: string;
     entryComment: string;
     entryKey: string;
@@ -120,6 +123,9 @@ export function normalizeVectorMemoryConfig_ACU(rawConfig: any): VectorMemoryCon
         embeddingEndpoint: normalizeTextField_ACU(source.embeddingEndpoint, defaults.embeddingEndpoint),
         embeddingApiKey: normalizeTextField_ACU(source.embeddingApiKey, defaults.embeddingApiKey),
         embeddingModel: normalizeTextField_ACU(source.embeddingModel, defaults.embeddingModel),
+        rerankEndpoint: normalizeTextField_ACU((source as any).rerankEndpoint, (defaults as any).rerankEndpoint),
+        rerankApiKey: normalizeTextField_ACU((source as any).rerankApiKey, (defaults as any).rerankApiKey),
+        rerankModel: normalizeTextField_ACU((source as any).rerankModel, (defaults as any).rerankModel),
         vectorNamespace: normalizeTextField_ACU(source.vectorNamespace, defaults.vectorNamespace) || defaults.vectorNamespace,
         entryComment: normalizeTextField_ACU(source.entryComment, defaults.entryComment) || defaults.entryComment,
         entryKey: normalizeTextField_ACU(source.entryKey, defaults.entryKey) || defaults.entryKey,
@@ -170,6 +176,34 @@ export function getVectorMemoryNamespace_ACU(chatFileIdentifier?: string | null)
     const config = getCurrentVectorMemoryConfig_ACU();
     const chatKey = cleanChatName_ACU(chatFileIdentifier || currentChatFileIdentifier_ACU || 'default');
     return `${config.vectorNamespace}:${chatKey}`;
+}
+
+export function hasVectorMemoryRerankConfig_ACU(configInput?: any): boolean {
+    const config = normalizeVectorMemoryConfig_ACU(configInput ?? getCurrentVectorMemoryConfig_ACU());
+    return !!(config.rerankEndpoint && config.rerankModel);
+}
+
+export function validateVectorMemoryRerankConfig_ACU(configInput?: any): VectorMemoryConfigValidation_ACU {
+    const config = normalizeVectorMemoryConfig_ACU(configInput ?? getCurrentVectorMemoryConfig_ACU());
+    const errors: string[] = [];
+    const hasRerankEndpoint = !!config.rerankEndpoint;
+    const hasRerankModel = !!config.rerankModel;
+
+    if (!hasRerankEndpoint && !hasRerankModel) {
+        return {
+            valid: false,
+            errors: [],
+        };
+    }
+
+    if (hasRerankEndpoint !== hasRerankModel) {
+        errors.push('rerankEndpoint 和 rerankModel 必须同时填写或同时留空');
+    }
+
+    return {
+        valid: errors.length === 0,
+        errors,
+    };
 }
 
 function collectVectorMemoryCommonErrors_ACU(config: VectorMemoryConfig_ACU): string[] {

@@ -39,6 +39,7 @@ export interface VectorRecallOrchestrationResult_ACU {
     /** 关键词生成是否回退到原始输入（AI 调用失败） */
     usedKeywordFallback: boolean;
     errors: string[];
+    warnings: string[];
 }
 
 export function buildVectorRecallSignature_ACU(userInput: any): string {
@@ -137,8 +138,18 @@ function buildVectorRecallOrchestrationResult_ACU(
         recallQuery: '',
         usedKeywordFallback: false,
         errors: [],
+        warnings: [],
         ...partial,
     };
+}
+
+function buildCombinedRecallQuery_ACU(userInput: string, generatedKeywords: string): string {
+    const normalizedUserInput = typeof userInput === 'string' ? userInput.trim() : '';
+    const normalizedKeywords = typeof generatedKeywords === 'string' ? generatedKeywords.trim() : '';
+    const segments = [normalizedUserInput, normalizedKeywords]
+        .filter((segment) => !!segment)
+        .filter((segment, index, array) => array.indexOf(segment) === index);
+    return segments.join('，');
 }
 
 export async function orchestrateVectorRecallBeforeSend_ACU(
@@ -241,13 +252,30 @@ export async function orchestrateVectorRecallBeforeSend_ACU(
             });
         }
 
+        const combinedRecallQuery = buildCombinedRecallQuery_ACU(signature, recallQuery);
+        if (!combinedRecallQuery) {
+            return buildVectorRecallOrchestrationResult_ACU({
+                intercepted: true,
+                signature,
+                blocking: true,
+                blockStage: 'keyword_generation',
+                blockReason: '联合召回查询为空。',
+                recallQuery,
+                usedKeywordFallback,
+                errors: ['联合召回查询为空'],
+                shouldProceed: false,
+            });
+        }
+
         // ── 阶段2：向量召回 + 世界书同步 ──
-        const recallResult = await recallVectorMemory_ACU(recallQuery, activeSnapshot.vectorState, config);
+        const recallResult = await recallVectorMemory_ACU(combinedRecallQuery, activeSnapshot.vectorState, config);
         const syncResult = await syncVectorMemoryLorebookEntry_ACU(recallResult.matches, config);
         const recallErrors = Array.isArray(recallResult?.errors) ? [...recallResult.errors] : [];
+        const recallWarnings = Array.isArray(recallResult?.warnings) ? [...recallResult.warnings] : [];
         const syncErrors = Array.isArray(syncResult?.errors) ? [...syncResult.errors] : [];
         const worldbookReady = !!syncResult && syncResult.skipped !== true && syncErrors.length === 0;
         const errors = [...keywordErrors, ...recallErrors, ...syncErrors];
+        const warnings = [...recallWarnings];
         if (recallErrors.length > 0 || !worldbookReady) {
             return buildVectorRecallOrchestrationResult_ACU({
                 intercepted: true,
@@ -257,9 +285,10 @@ export async function orchestrateVectorRecallBeforeSend_ACU(
                 blocking: true,
                 blockStage: recallErrors.length > 0 ? 'recall' : 'worldbook_sync',
                 blockReason: recallErrors[0] || syncErrors[0] || '向量记忆发送前预处理未完成。',
-                recallQuery,
+                recallQuery: combinedRecallQuery,
                 usedKeywordFallback,
                 errors,
+                warnings,
                 shouldProceed: false,
             });
         }
@@ -273,9 +302,10 @@ export async function orchestrateVectorRecallBeforeSend_ACU(
             syncResult,
             completedBeforeContinuation: true,
             worldbookReady: true,
-            recallQuery,
+            recallQuery: combinedRecallQuery,
             usedKeywordFallback,
             errors,
+            warnings,
         });
     } catch (error) {
         logWarn_ACU('[向量记忆] 发送前召回编排失败，已转为严格失败:', error);

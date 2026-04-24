@@ -1,11 +1,13 @@
 import type { ChatVectorRemoteMemoryBatch_ACU, ChatVectorRemoteMemoryChunk_ACU, ChatVectorState_ACU } from '../../data/models/chat-message-data';
 import { createEmbeddings_ACU } from '../../data/gateways/vector-embedding-gateway';
+import { createRerankScores_ACU } from '../../data/gateways/vector-rerank-gateway';
 import { logWarn_ACU } from '../../shared/utils';
 import {
     getCurrentVectorMemoryConfig_ACU,
     getVectorMemoryNamespace_ACU,
     normalizeVectorMemoryConfig_ACU,
     validateVectorMemoryConfig_ACU,
+    validateVectorMemoryRerankConfig_ACU,
     VectorMemoryConfig_ACU,
 } from './vector-memory-config';
 
@@ -25,6 +27,7 @@ export interface VectorRecallResult_ACU {
     queryText: string;
     matches: VectorRecallMatch_ACU[];
     errors: string[];
+    warnings: string[];
 }
 
 interface ScoredChunkCandidate_ACU {
@@ -270,6 +273,50 @@ function rerankBatchCandidates_ACU(
         .sort((a, b) => b.finalScore - a.finalScore);
 }
 
+function rerankBatchCandidatesWithModel_ACU(
+    candidates: RerankedBatchCandidate_ACU[],
+    rerankResults: { index: number; relevanceScore: number }[],
+): RerankedBatchCandidate_ACU[] {
+    if (!Array.isArray(rerankResults) || rerankResults.length === 0) {
+        return candidates;
+    }
+
+    const rerankMap = new Map<number, number>();
+    rerankResults.forEach((item, index) => {
+        const candidateIndex = Number(item?.index);
+        const relevanceScore = Number(item?.relevanceScore);
+        if (!Number.isFinite(candidateIndex) || candidateIndex < 0 || !Number.isFinite(relevanceScore)) {
+            return;
+        }
+        rerankMap.set(Math.floor(candidateIndex), relevanceScore);
+    });
+
+    return candidates
+        .map((candidate, index) => ({
+            candidate,
+            originalIndex: index,
+            rerankScore: rerankMap.get(index),
+        }))
+        .sort((left, right) => {
+            const leftHasRerank = Number.isFinite(left.rerankScore);
+            const rightHasRerank = Number.isFinite(right.rerankScore);
+            if (leftHasRerank && rightHasRerank) {
+                return Number(right.rerankScore) - Number(left.rerankScore);
+            }
+            if (leftHasRerank) {
+                return -1;
+            }
+            if (rightHasRerank) {
+                return 1;
+            }
+            return left.originalIndex - right.originalIndex;
+        })
+        .map(({ candidate, rerankScore }) => ({
+            ...candidate,
+            finalScore: Number.isFinite(rerankScore) ? Number(rerankScore) : candidate.finalScore,
+        }));
+}
+
 function buildRecallMatchesFromCandidates_ACU(candidates: RerankedBatchCandidate_ACU[], config: VectorMemoryConfig_ACU): VectorRecallMatch_ACU[] {
     return candidates
         .filter((candidate) => {
@@ -328,6 +375,7 @@ export async function recallVectorMemory_ACU(
             queryText,
             matches: [],
             errors: [],
+            warnings: [],
         };
     }
 
@@ -339,6 +387,7 @@ export async function recallVectorMemory_ACU(
             queryText,
             matches: [],
             errors: [],
+            warnings: [],
         };
     }
 
@@ -350,6 +399,7 @@ export async function recallVectorMemory_ACU(
             queryText,
             matches: [],
             errors: [...validation.errors],
+            warnings: [],
         };
     }
 
@@ -361,6 +411,7 @@ export async function recallVectorMemory_ACU(
             queryText,
             matches: [],
             errors: [],
+            warnings: [],
         };
     }
 
@@ -380,14 +431,44 @@ export async function recallVectorMemory_ACU(
                 queryText,
                 matches: [],
                 errors: ['召回 embedding 结果为空'],
+                warnings: [],
             };
         }
 
         const chunkCandidates = collectScoredCandidates_ACU(state, queryEmbedding, config);
         const ruleMatchedBatches = collectRuleMatchedBatches_ACU(state, queryText);
-        const rerankedCandidates = rerankBatchCandidates_ACU(chunkCandidates, ruleMatchedBatches)
+        const heuristicCandidates = rerankBatchCandidates_ACU(chunkCandidates, ruleMatchedBatches)
             .slice(0, normalizeCandidateLimit_ACU(config));
-        const matches = buildRecallMatchesFromCandidates_ACU(rerankedCandidates, config);
+        const warnings: string[] = [];
+        let finalCandidates = heuristicCandidates;
+        const rerankValidation = validateVectorMemoryRerankConfig_ACU(config);
+        const hasRerankConfigInput = !!(config.rerankEndpoint || config.rerankModel || config.rerankApiKey);
+
+        if (heuristicCandidates.length > 1) {
+            if (rerankValidation.valid) {
+                try {
+                    const rerankResults = await createRerankScores_ACU({
+                        endpoint: config.rerankEndpoint,
+                        apiKey: config.rerankApiKey,
+                        model: config.rerankModel,
+                        query: queryText,
+                        documents: heuristicCandidates.map((candidate) => String(candidate.batch.summaryText || '').trim()),
+                    });
+                    if (rerankResults.length > 0) {
+                        finalCandidates = rerankBatchCandidatesWithModel_ACU(heuristicCandidates, rerankResults);
+                    } else {
+                        warnings.push('Rerank 结果为空，已回退本地启发式排序');
+                    }
+                } catch (error) {
+                    logWarn_ACU('[向量记忆] Rerank 失败，已回退本地启发式排序:', error);
+                    warnings.push(`Rerank 失败，已回退本地启发式排序: ${error instanceof Error ? error.message : String(error)}`);
+                }
+            } else if (hasRerankConfigInput && rerankValidation.errors.length > 0) {
+                warnings.push(...rerankValidation.errors.map((item) => `${item}；已回退本地启发式排序`));
+            }
+        }
+
+        const matches = buildRecallMatchesFromCandidates_ACU(finalCandidates, config);
         return {
             enabled: true,
             skipped: false,
@@ -395,6 +476,7 @@ export async function recallVectorMemory_ACU(
             queryText,
             matches,
             errors: [],
+            warnings,
         };
     } catch (error) {
         logWarn_ACU('[向量记忆] 召回失败，已降级跳过:', error);
@@ -405,6 +487,7 @@ export async function recallVectorMemory_ACU(
             queryText,
             matches: [],
             errors: [error instanceof Error ? error.message : String(error)],
+            warnings: [],
         };
     }
 }
