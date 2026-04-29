@@ -645,17 +645,13 @@ export async function orchestrateManualUpdate_ACU(
             const tableGroupId = Number.isFinite(tableConfig?.groupId)
                 ? Math.trunc(tableConfig.groupId)
                 : -1;
-            const tableFrequency = Number.isFinite(tableConfig?.updateFrequency) ? tableConfig.updateFrequency : -1;
-            const tableContextDepth = Number.isFinite(tableConfig?.contextDepth) ? tableConfig.contextDepth : -1;
-            const tableSkipFloors = Number.isFinite(tableConfig?.skipFloors) ? tableConfig.skipFloors : -1;
-            const tableBatchSize = Number.isFinite(tableConfig?.batchSize) && tableConfig.batchSize > 0
-                ? Math.trunc(tableConfig.batchSize)
-                : uiBatchSize;
-            const groupKey = `${tableGroupId}|${tableFrequency}|${tableContextDepth}|${tableSkipFloors}|${contextScopeIndices.join(',')}|${tableBatchSize}`;
+            // 手动更新只允许受分组参数与手动 UI/全局参数影响。
+            // 模板中的 updateFrequency/contextDepth/skipFloors/batchSize 属于自动更新策略，不能参与手动批次拆分。
+            const groupKey = `${tableGroupId}|${contextScopeIndices.join(',')}|${uiBatchSize}`;
             if (!updateGroups[groupKey]) {
                 updateGroups[groupKey] = {
                     indices: contextScopeIndices,
-                    batchSize: tableBatchSize,
+                    batchSize: uiBatchSize,
                     groupId: tableGroupId,
                     sheetKeys: [],
                 };

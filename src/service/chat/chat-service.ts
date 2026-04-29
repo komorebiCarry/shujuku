@@ -184,15 +184,25 @@ export async function purgeOldLayerData_ACU() {
         return;
     }
 
-    // 收集所有包含本地数据的消息索引（排除 chat[0]，保护指导表）
+    const localDataKeys = [
+        'TavernDB_ACU_Data',
+        'TavernDB_ACU_SummaryData',
+        'TavernDB_ACU_IndependentData',
+        'TavernDB_ACU_ModifiedKeys',
+        'TavernDB_ACU_UpdateGroupKeys',
+        'TavernDB_ACU_IsolatedData',
+        'TavernDB_ACU_Identity',
+        'TavernDB_ACU_LocalMessageAnchor',
+        'qrf_plot',
+        'qrf_plot_preset',
+        'qrf_plot_tasks'
+    ];
+
+    // 收集所有包含本地数据的消息索引（排除 chat[0]，保护指导表）。候选判断必须与删除字段集合一致。
     const dataMessageIndices = [];
     for (let i = 1; i < chat.length; i++) {
         const msg = chat[i];
-        if (msg && (
-            msg.TavernDB_ACU_Data ||
-            msg.TavernDB_ACU_SummaryData ||
-            msg.qrf_plot
-        )) {
+        if (msg && localDataKeys.some(key => Object.prototype.hasOwnProperty.call(msg, key))) {
             dataMessageIndices.push(i);
         }
     }
@@ -213,27 +223,14 @@ export async function purgeOldLayerData_ACU() {
     logDebug_ACU(`[数据清理] 将清理 ${indicesToPurge.length} 层消息的本地数据（保留最近 ${retainCount} 层）...`);
 
     let purgedCount = 0;
-    const keysToDelete = [
-        'TavernDB_ACU_Data',
-        'TavernDB_ACU_SummaryData',
-        'TavernDB_ACU_IndependentData',
-        'TavernDB_ACU_ModifiedKeys',
-        'TavernDB_ACU_UpdateGroupKeys',
-        'TavernDB_ACU_IsolatedData',
-        'TavernDB_ACU_Identity',
-        'TavernDB_ACU_LocalMessageAnchor',
-        'qrf_plot',
-        'qrf_plot_preset',
-        'qrf_plot_tasks'
-    ];
 
     for (const idx of indicesToPurge) {
         const msg = chat[idx];
         if (!msg) continue;
 
         let modified = false;
-        for (const key of keysToDelete) {
-            if (msg.hasOwnProperty(key)) {
+        for (const key of localDataKeys) {
+            if (Object.prototype.hasOwnProperty.call(msg, key)) {
                 delete msg[key];
                 modified = true;
             }

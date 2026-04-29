@@ -4,7 +4,7 @@
 import { DEFAULT_CHAR_CARD_PROMPT_ACU } from '../../../shared/defaults-json.js';
 import { AUTO_UPDATE_FLOOR_INCREASE_DELAY_ACU } from '../../../shared/defaults';
 import { updateCardUpdateStatusDisplay_ACU } from '../../components/update-status-display';
-import { getCharCardPromptFromUI_ACU, isAutoUpdatingCard_ACU, manualExtraHint_ACU, newMessageDebounceTimer_ACU, renderPromptSegments_ACU, wasStoppedByUser_ACU , _set_isAutoUpdatingCard_ACU, _set_manualExtraHint_ACU, _set_newMessageDebounceTimer_ACU} from '../../components/plot-editors';
+import { getCharCardPromptFromUI_ACU, getCurrentPlotTaskEditorState_ACU, isAutoUpdatingCard_ACU, manualExtraHint_ACU, newMessageDebounceTimer_ACU, renderPromptSegments_ACU, wasStoppedByUser_ACU , _set_isAutoUpdatingCard_ACU, _set_manualExtraHint_ACU, _set_newMessageDebounceTimer_ACU} from '../../components/plot-editors';
 import { showToastr_ACU } from '../../theme/toast';
 import { ACU_TOAST_CATEGORY_ACU } from '../../../shared/constants';
 import { SillyTavern_API_ACU, TavernHelper_API_ACU, toastr_API_ACU, _set_SillyTavern_API_ACU, _set_TavernHelper_API_ACU, _set_jQuery_API_ACU, _set_toastr_API_ACU } from '../../../shared/host-api';
@@ -294,14 +294,21 @@ $plotApiPresetSelect.append(renderOption_ACU(p.name, p.name));
       $plotApiPresetSelect.val(settings_ACU.plotApiPreset || '');
     }
 
-    // 刷新任务级数据库API预设选择器
+    // 刷新任务级剧情推进API预设选择器。优先使用当前编辑任务的持久化值，避免新开对话/刷新预设列表时被 DOM 空值覆盖。
     const $plotTaskApiPresetSelect = $popupInstance_ACU.find(`#${SCRIPT_ID_PREFIX_ACU}-plot-task-api-preset`);
     if ($plotTaskApiPresetSelect.length) {
-      const currentTaskApiPreset = $plotTaskApiPresetSelect.val() || '';
+      const { selectedTask } = getCurrentPlotTaskEditorState_ACU(settings_ACU.plotSettings, { autoSelect: false });
+      const currentTaskApiPreset = String(selectedTask?.taskApiPreset || $plotTaskApiPresetSelect.val() || '');
+      const hasCurrentPreset = currentTaskApiPreset
+        ? presets.some((p: any) => p && p.name === currentTaskApiPreset)
+        : true;
       $plotTaskApiPresetSelect.empty().append('<option value="">继承全局剧情推进API预设</option>');
       presets.forEach((p: any) => {
 $plotTaskApiPresetSelect.append(renderOption_ACU(p.name, p.name));
       });
+      if (currentTaskApiPreset && !hasCurrentPreset) {
+        $plotTaskApiPresetSelect.append(renderOption_ACU(currentTaskApiPreset, `已保存但当前不可用：${currentTaskApiPreset}`));
+      }
       $plotTaskApiPresetSelect.val(currentTaskApiPreset);
     }
 

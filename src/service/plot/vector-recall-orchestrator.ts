@@ -152,6 +152,19 @@ function buildCombinedRecallQuery_ACU(userInput: string, generatedKeywords: stri
     return segments.join('，');
 }
 
+function hasRecallableRemoteMemoryBatches_ACU(batches: any[]): boolean {
+    return Array.isArray(batches) && batches.some((batch) => {
+        const batchId = String(batch?.batchId || '').trim();
+        const summaryText = String(batch?.summaryText || '').trim();
+        const chunks = Array.isArray(batch?.chunks) ? batch.chunks : [];
+        return !!batchId && !!summaryText && chunks.some((chunk: any) => {
+            const text = String(chunk?.text || '').trim();
+            const vector = Array.isArray(chunk?.vector) ? chunk.vector : [];
+            return !!text && vector.some((value: any) => Number.isFinite(Number(value)));
+        });
+    });
+}
+
 export async function orchestrateVectorRecallBeforeSend_ACU(
     userInput: any,
     options: {
@@ -210,11 +223,12 @@ export async function orchestrateVectorRecallBeforeSend_ACU(
             ? activeSnapshot.vectorState.remoteMemoryBatches
             : [];
 
-        if (!activeSnapshot || remoteMemoryBatches.length === 0) {
+        if (!activeSnapshot || !hasRecallableRemoteMemoryBatches_ACU(remoteMemoryBatches)) {
             return buildVectorRecallOrchestrationResult_ACU({
                 skipped: true,
                 shouldProceed: true,
                 signature,
+                warnings: ['当前聊天没有可召回的向量归档数据，已跳过关键词生成。'],
             });
         }
 

@@ -118,6 +118,8 @@ export   function mainInitialize_ACU() {
 
       const vectorPreprocessResult = await orchestrateVectorRecallBeforeSend_ACU(normalizedInput, {
         previousSignature: generationGate_ACU.lastVectorRecallSignature,
+        // 每次用户主动发送都必须重新计算向量并覆盖世界书条目；previousSignature 仅保留作诊断，不参与 fresh send 去重。
+        force: true,
       });
 
       // ── 缓存 gate 结果到全局状态 ──
@@ -401,6 +403,10 @@ export   function mainInitialize_ACU() {
                 logDebug_ACU('[向量记忆] 召回完成，无匹配的远记忆');
               }
             }
+
+            // 向量召回可能耗时超过 USER_SEND_TRIGGER_TTL_MS_ACU；本事件在召回前已通过 fresh gate，
+            // 因此必须延续本次发送资格给剧情推进，不能让 TTL 过期导致直接正文生成。
+            generationGate_ACU.lastUserSendIntentAt = Date.now();
 
             } // end if (vectorInputText && isRecentUserSendIntent_ACU)
 
