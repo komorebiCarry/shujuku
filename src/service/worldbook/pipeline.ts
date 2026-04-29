@@ -428,6 +428,24 @@ export   async function updateReadableLorebookEntry_ACU(createIfNeeded = false, 
   }
 
 
+function buildVectorMemoryEntryCommentsForCleanup_ACU() {
+    const vectorMemoryConfig = getCurrentVectorMemoryConfig_ACU();
+    const isolationPrefix = getIsolationPrefix_ACU();
+    const comments = new Set<string>();
+    const addRawComment_ACU = (value: any) => {
+        const rawComment = String(value || '').trim();
+        if (!rawComment) return;
+        comments.add(rawComment);
+        if (isolationPrefix) {
+            comments.add(`${isolationPrefix}${rawComment}`);
+        }
+    };
+
+    addRawComment_ACU(vectorMemoryConfig.entryComment);
+    addRawComment_ACU(defaultVectorMemoryConfig_ACU.entryComment);
+    return comments;
+}
+
 export   async function deleteAllGeneratedEntries_ACU(targetLorebook: string | null = null) {
     const primaryLorebookName = targetLorebook || (await getInjectionTargetLorebook_ACU());
     if (!primaryLorebookName) return;
@@ -471,22 +489,8 @@ export   async function deleteAllGeneratedEntries_ACU(targetLorebook: string | n
              });
         }
 
-        const vectorMemoryConfig = getCurrentVectorMemoryConfig_ACU();
-        const vectorEntryComments = new Set<string>();
-        const addVectorEntryComment_ACU = (value: any) => {
-            const comment = String(value || '').trim();
-            if (comment) vectorEntryComments.add(comment);
-        };
-        addVectorEntryComment_ACU(vectorMemoryConfig.entryComment);
-        addVectorEntryComment_ACU(defaultVectorMemoryConfig_ACU.entryComment);
-        const isVectorMemoryEntryComment_ACU = (comment: string) => {
-            if (settings_ACU.dataIsolationEnabled) {
-                if (!isolationPrefix) return false;
-                return Array.from(vectorEntryComments).some(vectorComment => comment === isolationPrefix + vectorComment);
-            }
-            if (comment.startsWith('ACU-[')) return false;
-            return Array.from(vectorEntryComments).some(vectorComment => comment === vectorComment);
-        };
+        const vectorEntryCommentsForCleanup = buildVectorMemoryEntryCommentsForCleanup_ACU();
+        const isVectorMemoryEntryComment_ACU = (comment: string) => vectorEntryCommentsForCleanup.has(comment);
 
         const uidsToDelete = allEntries
             .filter(entry => {

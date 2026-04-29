@@ -61,6 +61,13 @@ import { defaultVectorMemoryConfig_ACU } from '../../shared/defaults';
     // MUST be called AFTER setting currentChatFileIdentifier_ACU so it loads the correct character settings.
     loadSettings_ACU();
 
+    try {
+        await deleteAllGeneratedEntries_ACU();
+        logDebug_ACU('[Worldbook] New chat reset: cleaned generated entries including vector memory slot.');
+    } catch (e) {
+        logWarn_ACU('[Worldbook] New chat reset cleanup failed:', e);
+    }
+
     _set_allChatMessages_ACU([]);
     _set_lastTotalAiMessages_ACU(0); // 重置 AI 消息计数
 
@@ -138,6 +145,24 @@ import { defaultVectorMemoryConfig_ACU } from '../../shared/defaults';
       return '';
   }
 
+  function buildVectorMemoryEntryCommentsForCleanup_ACU() {
+    const vectorMemoryConfig = getCurrentVectorMemoryConfig_ACU();
+    const isolationPrefix = getIsolationPrefix_ACU();
+    const comments = new Set<string>();
+    const addRawComment_ACU = (value: any) => {
+        const rawComment = String(value || '').trim();
+        if (!rawComment) return;
+        comments.add(rawComment);
+        if (isolationPrefix) {
+            comments.add(`${isolationPrefix}${rawComment}`);
+        }
+    };
+
+    addRawComment_ACU(vectorMemoryConfig.entryComment);
+    addRawComment_ACU(defaultVectorMemoryConfig_ACU.entryComment);
+    return comments;
+  }
+
   async function deleteAllGeneratedEntries_ACU(targetLorebook: string | null = null) {
     const primaryLorebookName = targetLorebook || (await getInjectionTargetLorebook_ACU());
     if (!primaryLorebookName) return;
@@ -181,22 +206,8 @@ import { defaultVectorMemoryConfig_ACU } from '../../shared/defaults';
              });
         }
 
-        const vectorMemoryConfig = getCurrentVectorMemoryConfig_ACU();
-        const vectorEntryComments = new Set<string>();
-        const addVectorEntryComment_ACU = (value: any) => {
-            const comment = String(value || '').trim();
-            if (comment) vectorEntryComments.add(comment);
-        };
-        addVectorEntryComment_ACU(vectorMemoryConfig.entryComment);
-        addVectorEntryComment_ACU(defaultVectorMemoryConfig_ACU.entryComment);
-        const isVectorMemoryEntryComment_ACU = (comment: string) => {
-            if (settings_ACU.dataIsolationEnabled) {
-                if (!isolationPrefix) return false;
-                return Array.from(vectorEntryComments).some(vectorComment => comment === isolationPrefix + vectorComment);
-            }
-            if (comment.startsWith('ACU-[')) return false;
-            return Array.from(vectorEntryComments).some(vectorComment => comment === vectorComment);
-        };
+        const vectorEntryCommentsForCleanup = buildVectorMemoryEntryCommentsForCleanup_ACU();
+        const isVectorMemoryEntryComment_ACU = (comment: string) => vectorEntryCommentsForCleanup.has(comment);
 
         const uidsToDelete = allEntries
             .filter(entry => {
