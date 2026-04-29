@@ -16552,9 +16552,15 @@ $CONTENT
             throw new Error('TaskAbortedByUser');
         }
     }
+    function resolvePlotTaskApiPreset_ACU(task) {
+        const taskPreset = String(task?.taskApiPreset || '').trim();
+        if (taskPreset)
+            return taskPreset;
+        return String(settings_ACU.plotApiPreset || '').trim();
+    }
     function willPlotUseMainApiGenerateRaw_ACU(taskApiPreset = '') {
         try {
-            const effectivePreset = taskApiPreset || settings_ACU.plotApiPreset || '';
+            const effectivePreset = String(taskApiPreset || '').trim() || String(settings_ACU.plotApiPreset || '').trim();
             const apiPresetConfig = getApiConfigByPreset_ACU(effectivePreset) || {};
             const effectiveApiMode = apiPresetConfig.apiMode ?? settings_ACU.apiMode;
             const effectiveApiConfig = apiPresetConfig.apiConfig || settings_ACU.apiConfig || {};
@@ -16868,16 +16874,14 @@ $CONTENT
             let lastErrorMessage = '';
             for (let attemptIndex = 0; attemptIndex < maxRetries; attemptIndex++) {
                 checkPlotAbortRequested_ACU();
-                if (runtimeOptions.willUseMainApiGenerateRaw) {
+                const effectivePlotApiPreset = resolvePlotTaskApiPreset_ACU(normalizedTask);
+                if (willPlotUseMainApiGenerateRaw_ACU(effectivePlotApiPreset)) {
                     planningGuard_ACU.ignoreNextGenerationEndedCount++;
                 }
                 let tempMessage = null;
                 let apiError = null;
                 try {
-                    // [同组统一] API 预设覆盖：优先使用 stage 级决议的 effective preset
-                    const effectivePlotApiPreset = runtimeOptions.stageEffectivePreset !== undefined
-                        ? String(runtimeOptions.stageEffectivePreset)
-                        : (normalizedTask.taskApiPreset || settings_ACU.plotApiPreset || '');
+                    logDebug_ACU(`[剧情推进] [阶段:${taskStage}] [任务:${taskLabel}] 使用任务级API预设: ${effectivePlotApiPreset || '当前配置'}`);
                     tempMessage = await callApiWithPlotPreset_ACU(messages, effectivePlotApiPreset, abortController_ACU?.signal || null);
                 }
                 catch (apiCallError) {
@@ -16981,34 +16985,17 @@ $CONTENT
                 beforeUserInputText: historyAnchorText,
             }
             : {};
-        const willUseMainApiGenerateRaw = willPlotUseMainApiGenerateRaw_ACU();
         const successfulResults = [];
         const failedResults = [];
         let aggregatedTags = new Map();
         let aggregatedInjectOnlyTagNames = new Set();
         for (let stageIndex = 0; stageIndex < stageGroups.length; stageIndex++) {
             const stageGroup = stageGroups[stageIndex];
-            // [同组统一] 决议本 stage 的 groupEffectivePreset：
-            // 取 stage 内第一个有显式 taskApiPreset 的任务作为组级 preset；
-            // 若均无显式 preset，则回退到全局 plotApiPreset
-            let stageEffectivePreset = '';
-            for (const t of stageGroup.tasks) {
-                const taskPreset = String(t?.taskApiPreset || '').trim();
-                if (taskPreset) {
-                    stageEffectivePreset = taskPreset;
-                    break;
-                }
-            }
-            if (!stageEffectivePreset) {
-                stageEffectivePreset = settings_ACU.plotApiPreset || '';
-            }
-            logDebug_ACU(`[剧情推进] 阶段 ${stageGroup.stage} 统一 effective preset: ${stageEffectivePreset || '(当前配置)'}`);
+            logDebug_ACU(`[剧情推进] 阶段 ${stageGroup.stage} 开始执行，任务级API预设将按各任务独立决议。`);
             const stageResults = await Promise.all(stageGroup.tasks.map((task) => executeSinglePlotTask_ACU(task, sharedContext, {
-                willUseMainApiGenerateRaw,
                 relayTagMap: aggregatedTags,
                 useHistoryRelay: stageIndex === 0,
                 historyLookupOptions,
-                stageEffectivePreset,
             })));
             checkPlotAbortRequested_ACU();
             const stageSuccessfulResults = stageResults.filter((result) => result?.success);
@@ -17897,6 +17884,23 @@ $CONTENT
             }
         }
     }
+    function buildVectorMemoryEntryCommentsForCleanup_ACU$1() {
+        const vectorMemoryConfig = getCurrentVectorMemoryConfig_ACU();
+        const isolationPrefix = getIsolationPrefix_ACU();
+        const comments = new Set();
+        const addRawComment_ACU = (value) => {
+            const rawComment = String(value || '').trim();
+            if (!rawComment)
+                return;
+            comments.add(rawComment);
+            if (isolationPrefix) {
+                comments.add(`${isolationPrefix}${rawComment}`);
+            }
+        };
+        addRawComment_ACU(vectorMemoryConfig.entryComment);
+        addRawComment_ACU(defaultVectorMemoryConfig_ACU.entryComment);
+        return comments;
+    }
     async function deleteAllGeneratedEntries_ACU$1(targetLorebook = null) {
         const primaryLorebookName = targetLorebook || (await getInjectionTargetLorebook_ACU());
         if (!primaryLorebookName)
@@ -17935,25 +17939,8 @@ $CONTENT
                     }
                 });
             }
-            const vectorMemoryConfig = getCurrentVectorMemoryConfig_ACU();
-            const vectorEntryComments = new Set();
-            const addVectorEntryComment_ACU = (value) => {
-                const comment = String(value || '').trim();
-                if (comment)
-                    vectorEntryComments.add(comment);
-            };
-            addVectorEntryComment_ACU(vectorMemoryConfig.entryComment);
-            addVectorEntryComment_ACU(defaultVectorMemoryConfig_ACU.entryComment);
-            const isVectorMemoryEntryComment_ACU = (comment) => {
-                if (settings_ACU.dataIsolationEnabled) {
-                    if (!isolationPrefix)
-                        return false;
-                    return Array.from(vectorEntryComments).some(vectorComment => comment === isolationPrefix + vectorComment);
-                }
-                if (comment.startsWith('ACU-['))
-                    return false;
-                return Array.from(vectorEntryComments).some(vectorComment => comment === vectorComment);
-            };
+            const vectorEntryCommentsForCleanup = buildVectorMemoryEntryCommentsForCleanup_ACU$1();
+            const isVectorMemoryEntryComment_ACU = (comment) => vectorEntryCommentsForCleanup.has(comment);
             const uidsToDelete = allEntries
                 .filter(entry => {
                 if (!entry.comment)
@@ -18479,6 +18466,13 @@ $CONTENT
         // [FIX] Reload all settings to ensure template is not stale for new chats.
         // MUST be called AFTER setting currentChatFileIdentifier_ACU so it loads the correct character settings.
         loadSettings_ACU();
+        try {
+            await deleteAllGeneratedEntries_ACU();
+            logDebug_ACU('[Worldbook] New chat reset: cleaned generated entries including vector memory slot.');
+        }
+        catch (e) {
+            logWarn_ACU('[Worldbook] New chat reset cleanup failed:', e);
+        }
         _set_allChatMessages_ACU([]);
         _set_lastTotalAiMessages_ACU(0); // 重置 AI 消息计数
         // [重构] 切换聊天时重置触发门控状态（从 init.ts CHAT_CHANGED 回调搬入 service 层）
@@ -18543,6 +18537,23 @@ $CONTENT
         }
         return '';
     }
+    function buildVectorMemoryEntryCommentsForCleanup_ACU() {
+        const vectorMemoryConfig = getCurrentVectorMemoryConfig_ACU();
+        const isolationPrefix = getIsolationPrefix_ACU();
+        const comments = new Set();
+        const addRawComment_ACU = (value) => {
+            const rawComment = String(value || '').trim();
+            if (!rawComment)
+                return;
+            comments.add(rawComment);
+            if (isolationPrefix) {
+                comments.add(`${isolationPrefix}${rawComment}`);
+            }
+        };
+        addRawComment_ACU(vectorMemoryConfig.entryComment);
+        addRawComment_ACU(defaultVectorMemoryConfig_ACU.entryComment);
+        return comments;
+    }
     async function deleteAllGeneratedEntries_ACU(targetLorebook = null) {
         const primaryLorebookName = targetLorebook || (await getInjectionTargetLorebook_ACU());
         if (!primaryLorebookName)
@@ -18581,25 +18592,8 @@ $CONTENT
                     }
                 });
             }
-            const vectorMemoryConfig = getCurrentVectorMemoryConfig_ACU();
-            const vectorEntryComments = new Set();
-            const addVectorEntryComment_ACU = (value) => {
-                const comment = String(value || '').trim();
-                if (comment)
-                    vectorEntryComments.add(comment);
-            };
-            addVectorEntryComment_ACU(vectorMemoryConfig.entryComment);
-            addVectorEntryComment_ACU(defaultVectorMemoryConfig_ACU.entryComment);
-            const isVectorMemoryEntryComment_ACU = (comment) => {
-                if (settings_ACU.dataIsolationEnabled) {
-                    if (!isolationPrefix)
-                        return false;
-                    return Array.from(vectorEntryComments).some(vectorComment => comment === isolationPrefix + vectorComment);
-                }
-                if (comment.startsWith('ACU-['))
-                    return false;
-                return Array.from(vectorEntryComments).some(vectorComment => comment === vectorComment);
-            };
+            const vectorEntryCommentsForCleanup = buildVectorMemoryEntryCommentsForCleanup_ACU();
+            const isVectorMemoryEntryComment_ACU = (comment) => vectorEntryCommentsForCleanup.has(comment);
             const uidsToDelete = allEntries
                 .filter(entry => {
                 if (!entry.comment)
