@@ -13,7 +13,7 @@ import { toastr_API_ACU } from '../../shared/host-api';
 import { $statusMessageSpan_ACU } from '../state/ui-refs';
 import { topLevelWindow_ACU } from '../../shared/env';
 import { renderStopButton_ACU } from '../../shared/html-helpers';
-import { bindTableFillStopButton_ACU, resetManualUpdateButton_ACU } from '../components/status-display';
+import { bindTableFillStopButton_ACU, isVectorMemoryManualUpdateBlocked_ACU, resetManualUpdateButton_ACU, syncManualUpdateButtonAvailability_ACU } from '../components/status-display';
 import { updateCardUpdateStatusDisplay_ACU } from '../components/update-status-display';
 import { collectManualExtraHint_ACU } from './settings-ui-sync';
 import { refreshMergedDataAndNotifyWithUI_ACU } from '../components/pipeline-ui-helpers';
@@ -223,6 +223,14 @@ export async function processUpdates_ACU(indicesToUpdate: number[], mode = 'auto
 export async function handleManualUpdate_ACU() {
     logDebug_ACU('[更新流程] handleManualUpdate: 开始手动更新');
     try {
+        if (isVectorMemoryManualUpdateBlocked_ACU()) {
+            syncManualUpdateButtonAvailability_ACU();
+            showToastr_ACU('warning', '请先关闭向量功能。', {
+                acuToastCategory: ACU_TOAST_CATEGORY_ACU.MANUAL_TABLE,
+            });
+            return;
+        }
+
         // UI：收集手动额外提示
         collectManualExtraHint_ACU();
 

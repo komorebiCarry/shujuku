@@ -13,6 +13,8 @@ import { loadAllChatMessages_ACU } from './pipeline';
 import { cleanChatName_ACU, getChatFirstLayerMessage_ACU, logDebug_ACU, logError_ACU, logWarn_ACU } from '../../shared/utils';
 import { loadOrCreateJsonTableFromChatHistory_ACU } from '../table/table-service';
 import { purgeSheetKeysFromMessage_ACU } from '../../data/repositories/chat-message-data-repo';
+import { getCurrentVectorMemoryConfig_ACU } from '../vector/vector-memory-config';
+import { defaultVectorMemoryConfig_ACU } from '../../shared/defaults';
 
   async function enforceCleanupOfCharacterWorldbook_ACU() {
       // 延迟一段时间，确保其他操作完成
@@ -179,6 +181,23 @@ import { purgeSheetKeysFromMessage_ACU } from '../../data/repositories/chat-mess
              });
         }
 
+        const vectorMemoryConfig = getCurrentVectorMemoryConfig_ACU();
+        const vectorEntryComments = new Set<string>();
+        const addVectorEntryComment_ACU = (value: any) => {
+            const comment = String(value || '').trim();
+            if (comment) vectorEntryComments.add(comment);
+        };
+        addVectorEntryComment_ACU(vectorMemoryConfig.entryComment);
+        addVectorEntryComment_ACU(defaultVectorMemoryConfig_ACU.entryComment);
+        const isVectorMemoryEntryComment_ACU = (comment: string) => {
+            if (settings_ACU.dataIsolationEnabled) {
+                if (!isolationPrefix) return false;
+                return Array.from(vectorEntryComments).some(vectorComment => comment === isolationPrefix + vectorComment);
+            }
+            if (comment.startsWith('ACU-[')) return false;
+            return Array.from(vectorEntryComments).some(vectorComment => comment === vectorComment);
+        };
+
         const uidsToDelete = allEntries
             .filter(entry => {
                 if (!entry.comment) return false;
@@ -192,6 +211,9 @@ import { purgeSheetKeysFromMessage_ACU } from '../../data/repositories/chat-mess
                     if (entry.comment.startsWith('外部导入-')) return false;
                 }
                 
+                // [向量记忆] 向量召回条目属于脚本生成的世界书注入槽，新开对话时必须随数据库生成条目一起清理。
+                if (isVectorMemoryEntryComment_ACU(entry.comment)) return true;
+
                 if (settings_ACU.dataIsolationEnabled) {
                     // 隔离模式：只删除匹配当前标识前缀的
                     if (!isolationPrefix) return false;

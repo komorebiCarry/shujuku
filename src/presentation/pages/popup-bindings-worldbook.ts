@@ -18,6 +18,7 @@ import { setZeroTkOccupyMode_ACU } from '../../service/settings/settings-service
 import { formatJsonToReadable_ACU } from '../../service/runtime/helpers-remaining';
 import { getCurrentVectorMemoryConfig_ACU, getDefaultVectorMemoryConfig_ACU } from '../../service/vector/vector-memory-config';
 import { defaultVectorMemoryConfig_ACU } from '../../shared/defaults';
+import { syncManualUpdateButtonAvailability_ACU } from '../components/status-display';
 
 const KEYWORD_PROMPT_SEGMENT_CLASS = 'acu-keyword-prompt-segment';
 
@@ -172,6 +173,7 @@ export async function bindWorldbookEvents_ACU(): Promise<void> {
       bindVectorMemoryInput_ACU(`#${SCRIPT_ID_PREFIX_ACU}-worldbook-vector-memory-enabled`, 'change', ($input) => {
           updateVectorMemoryField_ACU('enabled', $input.is(':checked'));
           toggleVectorMemoryConfigBlock_ACU();
+          syncManualUpdateButtonAvailability_ACU();
       });
       bindVectorMemoryInput_ACU(`#${SCRIPT_ID_PREFIX_ACU}-worldbook-vector-memory-threshold`, 'change', ($input) => {
           const defaults = getDefaultVectorMemoryConfig_ACU();

@@ -10,6 +10,8 @@ import { logDebug_ACU, logError_ACU, logWarn_ACU, parseTableTemplateJson_ACU } f
 import { isEntryBlocked_ACU } from '../../shared/utils';
 import { formatJsonToReadable_ACU, maybeLiftWorldbookSuppression_ACU, mergeAllIndependentTables_ACU, shouldSuppressWorldbookInjection_ACU } from '../runtime/helpers-remaining';
 import { allocConsecutiveOrderBlock_ACU, applyPlacementToEntry_ACU, buildDefaultGlobalInjectionConfig_ACU, buildUsedOrderSet_ACU, ensureExportConfigDefaults_ACU, ensureGlobalInjectionConfigDefaults_ACU, getEntryOrderNumber_ACU, getFixedPlacementDefaultsForTable_ACU, getInjectionTargetLorebook_ACU, getIsolationPrefix_ACU, isEntryPlacementMatched_ACU, normalizeLorebookPosition_ACU, normalizePlacementConfig_ACU, updateCustomTableExports_ACU, updateImportantPersonsRelatedEntries_ACU, updateOutlineTableEntry_ACU, updateSummaryTableEntries_ACU } from './injection-engine';
+import { getCurrentVectorMemoryConfig_ACU } from '../vector/vector-memory-config';
+import { defaultVectorMemoryConfig_ACU } from '../../shared/defaults';
 // pipeline.ts
 // 从 05_core_tail.js 迁入
 
@@ -469,6 +471,23 @@ export   async function deleteAllGeneratedEntries_ACU(targetLorebook: string | n
              });
         }
 
+        const vectorMemoryConfig = getCurrentVectorMemoryConfig_ACU();
+        const vectorEntryComments = new Set<string>();
+        const addVectorEntryComment_ACU = (value: any) => {
+            const comment = String(value || '').trim();
+            if (comment) vectorEntryComments.add(comment);
+        };
+        addVectorEntryComment_ACU(vectorMemoryConfig.entryComment);
+        addVectorEntryComment_ACU(defaultVectorMemoryConfig_ACU.entryComment);
+        const isVectorMemoryEntryComment_ACU = (comment: string) => {
+            if (settings_ACU.dataIsolationEnabled) {
+                if (!isolationPrefix) return false;
+                return Array.from(vectorEntryComments).some(vectorComment => comment === isolationPrefix + vectorComment);
+            }
+            if (comment.startsWith('ACU-[')) return false;
+            return Array.from(vectorEntryComments).some(vectorComment => comment === vectorComment);
+        };
+
         const uidsToDelete = allEntries
             .filter(entry => {
                 if (!entry.comment) return false;
@@ -482,6 +501,9 @@ export   async function deleteAllGeneratedEntries_ACU(targetLorebook: string | n
                     if (entry.comment.startsWith('外部导入-')) return false;
                 }
                 
+                // [向量记忆] 向量召回条目属于脚本生成的世界书注入槽，新开对话时必须随数据库生成条目一起清理。
+                if (isVectorMemoryEntryComment_ACU(entry.comment)) return true;
+
                 if (settings_ACU.dataIsolationEnabled) {
                     // 隔离模式：只删除匹配当前标识前缀的
                     if (!isolationPrefix) return false;

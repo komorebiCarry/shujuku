@@ -27,6 +27,31 @@ import { $popupInstance_ACU, $statusMessageSpan_ACU, $manualUpdateCardButton_ACU
     if ($statusMessageSpan_ACU) $statusMessageSpan_ACU.text(text);
   }
 
+  export function isVectorMemoryManualUpdateBlocked_ACU() {
+    try {
+        return getCurrentVectorMemoryConfig_ACU().enabled === true;
+    } catch (e) {
+        return false;
+    }
+  }
+
+  export function syncManualUpdateButtonAvailability_ACU() {
+    if (!$manualUpdateCardButton_ACU) return;
+
+    if (isVectorMemoryManualUpdateBlocked_ACU()) {
+        $manualUpdateCardButton_ACU
+            .prop('disabled', true)
+            .text('请先关闭向量功能')
+            .attr('title', '向量功能启用时不可手动更新表格，请先关闭向量功能。');
+        return;
+    }
+
+    $manualUpdateCardButton_ACU
+        .prop('disabled', false)
+        .text('立即手动更新')
+        .removeAttr('title');
+  }
+
   // [T173] 填表停止按钮绑定
   export function bindTableFillStopButton_ACU(buttonId: string, onStop: any) {
     const $stopButton = jQuery_API_ACU(`#${buttonId}`);
@@ -34,9 +59,7 @@ import { $popupInstance_ACU, $statusMessageSpan_ACU, $manualUpdateCardButton_ACU
         $stopButton.off('click.acu_stop').on('click.acu_stop', function(e) {
             e.stopPropagation();
             e.preventDefault();
-            if ($manualUpdateCardButton_ACU) {
-                $manualUpdateCardButton_ACU.prop('disabled', false).text('立即手动更新');
-            }
+            syncManualUpdateButtonAvailability_ACU();
             jQuery_API_ACU(this).closest('.toast').remove();
             if (typeof onStop === 'function') onStop();
         });
@@ -45,9 +68,7 @@ import { $popupInstance_ACU, $statusMessageSpan_ACU, $manualUpdateCardButton_ACU
 
   // [T173] 重置手动更新按钮状态
   export function resetManualUpdateButton_ACU() {
-    if ($manualUpdateCardButton_ACU) {
-        $manualUpdateCardButton_ACU.prop('disabled', false).text('立即手动更新');
-    }
+    syncManualUpdateButtonAvailability_ACU();
   }
 
   // [T174] 更新聊天标题显示
@@ -163,6 +184,7 @@ setVal('merge-prompt-template', s.mergeSummaryPrompt || (isSqliteMode() ? DEFAUL
       renderSummaryPromptGroupToUI_ACU((vectorMemoryConfig as any).summaryPromptGroup || []);
       const $vectorMemoryBlock = find('worldbook-vector-memory-config-block');
       if ($vectorMemoryBlock.length) $vectorMemoryBlock.toggle(vectorMemoryConfig.enabled === true);
+      syncManualUpdateButtonAvailability_ACU();
       const $outlineToggle = find('worldbook-outline-entry-enabled');
       if ($outlineToggle.length) {
           let mode = worldbookConfig.zeroTkOccupyMode;
