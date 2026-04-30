@@ -109,8 +109,10 @@ export async function bindWorldbookEvents_ACU(): Promise<void> {
           return getCurrentVectorMemoryConfig_ACU();
       };
       const toggleVectorMemoryConfigBlock_ACU = () => {
-          const vectorMemoryConfig = ensureVectorMemoryConfig_ACU();
-          $popupInstance_ACU.find(`#${SCRIPT_ID_PREFIX_ACU}-worldbook-vector-memory-config-block`).toggle(vectorMemoryConfig.enabled === true);
+          const worldbookConfig = getCurrentWorldbookConfig_ACU();
+          const summaryVectorIndexEnabled = worldbookConfig.summaryVectorIndexModeEnabled === true;
+          $popupInstance_ACU.find(`#${SCRIPT_ID_PREFIX_ACU}-worldbook-vector-memory-enabled`).prop('checked', summaryVectorIndexEnabled);
+          $popupInstance_ACU.find(`#${SCRIPT_ID_PREFIX_ACU}-worldbook-vector-memory-config-block`).toggle(summaryVectorIndexEnabled);
       };
       const updateVectorMemoryField_ACU = (field: string, value: any) => {
           const vectorMemoryConfig = ensureVectorMemoryConfig_ACU();
@@ -172,7 +174,8 @@ export async function bindWorldbookEvents_ACU(): Promise<void> {
           $refreshWorldbooksButton.on('click', populateWorldbookList_ACU);
       }
       bindVectorMemoryInput_ACU(`#${SCRIPT_ID_PREFIX_ACU}-worldbook-vector-memory-enabled`, 'change', ($input) => {
-          updateVectorMemoryField_ACU('enabled', $input.is(':checked'));
+          const worldbookConfig = getCurrentWorldbookConfig_ACU();
+          $input.prop('checked', worldbookConfig.summaryVectorIndexModeEnabled === true);
           toggleVectorMemoryConfigBlock_ACU();
           syncManualUpdateButtonAvailability_ACU();
       });
@@ -483,6 +486,9 @@ export async function bindWorldbookEvents_ACU(): Promise<void> {
           $summaryVectorIndexModeToggle.off('change.acu_summary_vector_index_mode').on('change.acu_summary_vector_index_mode', function() {
               const modeEnabled = jQuery_API_ACU(this).is(':checked');
               setSummaryVectorIndexMode_ACU(modeEnabled);
+              $popupInstance_ACU.find(`#${SCRIPT_ID_PREFIX_ACU}-worldbook-vector-memory-enabled`).prop('checked', modeEnabled);
+              $popupInstance_ACU.find(`#${SCRIPT_ID_PREFIX_ACU}-worldbook-vector-memory-config-block`).toggle(modeEnabled);
+              syncManualUpdateButtonAvailability_ACU();
               if (modeEnabled) {
                   $popupInstance_ACU.find(`#${SCRIPT_ID_PREFIX_ACU}-worldbook-outline-entry-enabled`).prop('checked', false);
               }

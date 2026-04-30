@@ -134,10 +134,10 @@ export function generateTableTabHTML(): string {
                         <div style="margin-top: 15px; padding: 12px; border: 1px solid var(--acu-border-2); border-radius: 8px; background: var(--acu-bg-2);">
                             <div style="display: flex; justify-content: space-between; align-items: center; gap: 12px; flex-wrap: wrap;">
                                 <div>
-                                    <label for="${SCRIPT_ID_PREFIX_ACU}-worldbook-vector-memory-enabled" style="font-weight: 600; margin-bottom: 4px; display: block;">向量远记忆召回</label>
-                                    <small class="notes">发送前基于远记忆大总结的向量 chunk 召回相关长期记忆，并同步到专用世界书条目。</small>
+                                    <label for="${SCRIPT_ID_PREFIX_ACU}-worldbook-summary-vector-index-mode-enabled" style="font-weight: 600; margin-bottom: 4px; display: block;">向量模型与召回配置</label>
+                                    <small class="notes">这里仅配置向量混合交火增强方案复用的 Embedding、Rerank 与召回参数；启停由上方“向量混合交火增强方案”控制。</small>
                                 </div>
-                                <label style="display: inline-flex; align-items: center; gap: 8px; margin: 0; white-space: nowrap;">
+                                <label id="${SCRIPT_ID_PREFIX_ACU}-worldbook-vector-memory-enabled-toggle-row" style="display: none; align-items: center; gap: 8px; margin: 0; white-space: nowrap;">
                                     <input type="checkbox" id="${SCRIPT_ID_PREFIX_ACU}-worldbook-vector-memory-enabled">
                                     <span>启用向量记忆</span>
                                 </label>
