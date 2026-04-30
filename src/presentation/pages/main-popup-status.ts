@@ -92,6 +92,11 @@ export function generateDashboardTabHTML(): string {
                                 <label for="${SCRIPT_ID_PREFIX_ACU}-worldbook-outline-entry-enabled">0TK占用模式</label>
                             </div>
                             <small class="notes">0TK占用模式仍然作用于世界书注入链路，仅迁移到此处以提高可见性。</small>
+                            <div class="checkbox-group" style="margin-top: 6px;">
+                                <input type="checkbox" id="${SCRIPT_ID_PREFIX_ACU}-worldbook-summary-vector-index-mode-enabled">
+                                <label for="${SCRIPT_ID_PREFIX_ACU}-worldbook-summary-vector-index-mode-enabled">向量混合交火增强方案</label>
+                            </div>
+                            <small class="notes" id="${SCRIPT_ID_PREFIX_ACU}-summary-vector-index-archive-hint">使用前请先配置好向量模型以及 rerank 模型；开启后会自动使用向量能力筛选概要索引，并跳过普通远记忆召回流程；旧对话需要点击“立即执行远记忆归档”按钮完成纪要向量索引归档。</small>
 
                             <div class="acu-divider-dashed" style="margin: 4px 0;"></div>
                             <label class="acu-label">表格存储模式:</label>

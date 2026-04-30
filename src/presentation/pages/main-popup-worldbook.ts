@@ -24,6 +24,11 @@ export function generateWorldbookTabHTML(): string {
                             <input type="checkbox" id="${SCRIPT_ID_PREFIX_ACU}-worldbook-outline-entry-enabled">
                             <label for="${SCRIPT_ID_PREFIX_ACU}-worldbook-outline-entry-enabled"><strong>0TK占用模式</strong></label>
                         </div>
+                        <div class="qrf_settings_block checkbox-group" style="margin-top: 6px; margin-bottom: 6px;">
+                            <input type="checkbox" id="${SCRIPT_ID_PREFIX_ACU}-worldbook-summary-vector-index-mode-enabled">
+                            <label for="${SCRIPT_ID_PREFIX_ACU}-worldbook-summary-vector-index-mode-enabled"><strong>向量混合交火增强方案</strong></label>
+                        </div>
+                        <small class="notes" id="${SCRIPT_ID_PREFIX_ACU}-summary-vector-index-archive-hint">使用前请先配置好向量模型以及 rerank 模型；开启后会自动使用向量能力筛选概要索引，并跳过普通远记忆召回流程；旧对话需要点击“立即执行远记忆归档”按钮完成纪要向量索引归档。</small>
                         <hr style="border-color: var(--acu-border-2); margin: 15px 0;">
                          <div class="qrf_settings_block_radio">
                             <label>世界书来源 (用于AI读取上下文):</label>

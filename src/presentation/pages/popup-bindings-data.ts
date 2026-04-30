@@ -34,8 +34,10 @@ import { populateImportWorldbookTargetSelector_ACU } from '../components/worldbo
 import { saveApiConfig_ACU, clearApiConfig_ACU, fetchModelsAndConnect_ACU, loadApiPreset_ACU, saveApiPreset_ACU, deleteApiPreset_ACU, saveCustomCharCardPrompt_ACU, saveImportSplitSize_ACU, resetDefaultCharCardPrompt_ACU, updateCustomApiInputsState_ACU, refreshApiPresetSelectors_ACU } from '../triggers/settings-ui-sync';
 import { handleImportSelectAll_ACU, handleImportSelectNone_ACU } from '../components/table-selector';
 import { buildSummaryVectorIndexIfNeeded_ACU } from '../../service/vector/vector-index-orchestrator';
+import { archiveSummaryVectorIndexNow_ACU } from '../../service/vector/summary-vector-index-archive-service';
 import { deleteRemoteMemoryBatch_ACU, getLatestRemoteMemorySnapshotView_ACU, saveEditedRemoteMemoryBatch_ACU } from '../../service/vector/remote-memory-management-service';
 import { showRemoteMemoryArchiveProgressOverlay_ACU, updateRemoteMemoryArchiveProgressOverlay_ACU, markRemoteMemoryArchiveCancelling_ACU, hideRemoteMemoryArchiveProgressOverlay_ACU } from '../components/remote-memory-archive-progress';
+import { getCurrentWorldbookConfig_ACU } from '../../service/settings/settings-readers';
 
 /**
  * 绑定数据管理标签页的所有事件（数据隔离 + 外部导入 + 模板预设 + 数据管理按钮）
@@ -212,6 +214,44 @@ export async function bindDataEvents_ACU(): Promise<void> {
               }
               if (archiveAbortController.signal.aborted) {
                   showToastr_ACU('info', '已终止远记忆归档，未提交新的归档结果。');
+                  return;
+              }
+
+              const summaryVectorIndexModeEnabled = getCurrentWorldbookConfig_ACU()?.summaryVectorIndexModeEnabled === true;
+              if (summaryVectorIndexModeEnabled) {
+                  updateRemoteMemoryArchiveProgressOverlay_ACU('保存完成，正在构建纪要向量索引归档（不会删除纪要表条目）...');
+                  const archiveResult = await archiveSummaryVectorIndexNow_ACU({
+                      targetMessageIndex: persistResult.messageIndex,
+                  });
+                  logWarn_ACU('[纪要向量索引] 手动归档返回结果:', archiveResult);
+
+                  if (archiveResult.success && !archiveResult.skipped && archiveResult.indexedRowCount > 0) {
+                      const successMessage = `纪要向量索引归档完成：索引 ${archiveResult.indexedRowCount} 条纪要，chunks=${archiveResult.chunkCount}，已保留纪要表原条目`;
+                      if (archiveResult.skippedRowCount > 0) {
+                          showToastr_ACU('warning', `${successMessage}；跳过 ${archiveResult.skippedRowCount} 条缺少概要、编码索引或可向量化内容的纪要。`);
+                          return;
+                      }
+                      showToastr_ACU('success', successMessage);
+                      return;
+                  }
+
+                  if (archiveResult.success && archiveResult.skipped) {
+                      const skipReasonText = archiveResult.reason === 'no_effective_rows'
+                          ? '纪要表暂无可构建纪要向量索引的有效条目。'
+                          : archiveResult.reason === 'summary_table_not_found'
+                              ? '未找到纪要表，无法构建纪要向量索引。'
+                              : '当前没有可归档的纪要向量索引条目。';
+                      showToastr_ACU('info', skipReasonText);
+                      return;
+                  }
+
+                  const archiveReasonText = String(archiveResult.reason || '').trim();
+                  const archiveDetailsText = archiveResult.errors.length > 0
+                      ? archiveResult.errors.join(' | ')
+                      : archiveReasonText
+                          ? `reason=${archiveReasonText}`
+                          : `返回结果=${JSON.stringify(archiveResult)}`;
+                  showToastr_ACU('error', `执行纪要向量索引归档失败：${archiveDetailsText}`);
                   return;
               }
 

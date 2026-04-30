@@ -26,6 +26,7 @@ export function getCurrentCharSettings_ACU() {
             : (settings_ACU?.zeroTkOccupyModeDefault === true);
     if (!settings_ACU.characterSettings[charId]) {
         const worldbookConfigForNewChat = JSON.parse(JSON.stringify(defaultWorldbookConfig_ACU));
+        worldbookConfigForNewChat.summaryVectorIndexModeEnabled = false;
         worldbookConfigForNewChat.zeroTkOccupyMode = globalZeroTkDefault;
         worldbookConfigForNewChat.outlineEntryEnabled = !globalZeroTkDefault;
         settings_ACU.characterSettings[charId] = {
@@ -39,8 +40,10 @@ export function getCurrentCharSettings_ACU() {
             JSON.parse(JSON.stringify(defaultWorldbookConfig_ACU)),
             existingCfg,
         );
-        mergedCfg.zeroTkOccupyMode = globalZeroTkDefault;
-        mergedCfg.outlineEntryEnabled = !globalZeroTkDefault;
+        const summaryVectorIndexModeEnabled = existingCfg?.summaryVectorIndexModeEnabled === true;
+        mergedCfg.summaryVectorIndexModeEnabled = summaryVectorIndexModeEnabled;
+        mergedCfg.zeroTkOccupyMode = summaryVectorIndexModeEnabled ? false : globalZeroTkDefault;
+        mergedCfg.outlineEntryEnabled = !mergedCfg.zeroTkOccupyMode;
         // [向量记忆] vectorMemory 不再跟随世界书配置规范化，
         // 已迁移到 settings_ACU.vectorMemoryConfig（全局数据库级）。
         // 保留 mergedCfg.vectorMemory 的旧数据引用以兼容迁移读取。

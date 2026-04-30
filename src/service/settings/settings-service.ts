@@ -280,8 +280,9 @@ export   function loadSettings_ACU() {
               vectorConfig.topK = defaultVectorMemoryConfig_ACU.topK;
               vectorConfig.minScore = defaultVectorMemoryConfig_ACU.minScore;
               vectorConfig.summaryPromptGroup = JSON.parse(JSON.stringify(defaultVectorMemoryConfig_ACU.summaryPromptGroup || []));
+              vectorConfig.keywordPromptGroup = JSON.parse(JSON.stringify(defaultVectorMemoryConfig_ACU.keywordPromptGroup || []));
               vectorConfig.defaultsRefreshVersion = VECTOR_MEMORY_DEFAULTS_REFRESH_VERSION_ACU;
-              logDebug_ACU(`[向量记忆] 已刷新默认归档/召回参数: ${VECTOR_MEMORY_DEFAULTS_REFRESH_VERSION_ACU}`);
+              logDebug_ACU(`[向量记忆] 已刷新默认归档/召回/关键词参数: ${VECTOR_MEMORY_DEFAULTS_REFRESH_VERSION_ACU}`);
           }
       }
 
@@ -600,10 +601,25 @@ export function persistCurrentTemplatePresetName_ACU(settingsObj: any, presetNam
 export function setZeroTkOccupyMode_ACU(modeEnabled: boolean) {
     const cfg = getCurrentWorldbookConfig_ACU();
     cfg.zeroTkOccupyMode = !!modeEnabled;
+    if (cfg.zeroTkOccupyMode) {
+        cfg.summaryVectorIndexModeEnabled = false;
+    }
     cfg.outlineEntryEnabled = !cfg.zeroTkOccupyMode;
     settings_ACU.zeroTkOccupyModeDefault = !!modeEnabled;
     globalMeta_ACU.zeroTkOccupyModeGlobal = !!modeEnabled;
     saveGlobalMeta_ACU();
+    saveSettings_ACU();
+}
+
+export function setSummaryVectorIndexMode_ACU(modeEnabled: boolean) {
+    const cfg = getCurrentWorldbookConfig_ACU();
+    cfg.summaryVectorIndexModeEnabled = !!modeEnabled;
+    if (cfg.summaryVectorIndexModeEnabled) {
+        cfg.zeroTkOccupyMode = false;
+        cfg.outlineEntryEnabled = true;
+    } else {
+        cfg.outlineEntryEnabled = !cfg.zeroTkOccupyMode;
+    }
     saveSettings_ACU();
 }
 

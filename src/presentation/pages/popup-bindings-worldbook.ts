@@ -14,9 +14,10 @@ import { getLorebookEntriesByNames_ACU, getWorldBooks_ACU, updateReadableLoreboo
 import { getInjectionTargetLorebook_ACU, getIsolationPrefix_ACU, updateOutlineTableEntry_ACU } from '../../service/worldbook/injection-engine';
 import { refreshMergedDataAndNotifyWithUI_ACU } from '../components/pipeline-ui-helpers';
 import { getCurrentWorldbookConfig_ACU } from '../../service/settings/settings-readers';
-import { setZeroTkOccupyMode_ACU } from '../../service/settings/settings-service';
+import { setSummaryVectorIndexMode_ACU, setZeroTkOccupyMode_ACU } from '../../service/settings/settings-service';
 import { formatJsonToReadable_ACU } from '../../service/runtime/helpers-remaining';
 import { getCurrentVectorMemoryConfig_ACU, getDefaultVectorMemoryConfig_ACU } from '../../service/vector/vector-memory-config';
+import { getActiveSummaryVectorIndexSnapshot_ACU } from '../../service/vector/summary-vector-index-state-service';
 import { defaultVectorMemoryConfig_ACU } from '../../shared/defaults';
 import { syncManualUpdateButtonAvailability_ACU } from '../components/status-display';
 
@@ -438,6 +439,9 @@ export async function bindWorldbookEvents_ACU(): Promise<void> {
               // UI 是"0TK占用模式"
               const modeEnabled = jQuery_API_ACU(this).is(':checked');
               setZeroTkOccupyMode_ACU(modeEnabled);
+              if (modeEnabled) {
+                  $popupInstance_ACU.find(`#${SCRIPT_ID_PREFIX_ACU}-worldbook-summary-vector-index-mode-enabled`).prop('checked', false);
+              }
               showToastr_ACU(
                   'info',
                   `0TK占用模式已${modeEnabled ? '启用' : '禁用'}（世界书中该条目显示为 ${modeEnabled ? '禁用' : '启用'}）。`,
@@ -471,6 +475,27 @@ export async function bindWorldbookEvents_ACU(): Promise<void> {
               } catch (e) {
                   logWarn_ACU('Failed to sync outline entry enabled state immediately:', e);
               }
+          });
+      }
+
+      const $summaryVectorIndexModeToggle = $popupInstance_ACU.find(`#${SCRIPT_ID_PREFIX_ACU}-worldbook-summary-vector-index-mode-enabled`);
+      if ($summaryVectorIndexModeToggle.length) {
+          $summaryVectorIndexModeToggle.off('change.acu_summary_vector_index_mode').on('change.acu_summary_vector_index_mode', function() {
+              const modeEnabled = jQuery_API_ACU(this).is(':checked');
+              setSummaryVectorIndexMode_ACU(modeEnabled);
+              if (modeEnabled) {
+                  $popupInstance_ACU.find(`#${SCRIPT_ID_PREFIX_ACU}-worldbook-outline-entry-enabled`).prop('checked', false);
+              }
+              const activeSnapshot = getActiveSummaryVectorIndexSnapshot_ACU();
+              const hasArchive = !!activeSnapshot?.summaryVectorIndexState;
+              showToastr_ACU(
+                  hasArchive || !modeEnabled ? 'info' : 'warning',
+                  modeEnabled
+                      ? hasArchive
+                          ? '向量混合交火增强方案已启用。请确认已配置好向量模型以及 rerank 模型；发送前将跳过普通远记忆召回，并使用已归档纪要索引筛选概要索引。'
+                          : '向量混合交火增强方案已启用。请确认已配置好向量模型以及 rerank 模型；当前聊天尚无纪要向量索引归档，旧对话请先点击“立即执行远记忆归档”。'
+                      : '向量混合交火增强方案已禁用，概要索引将回到原本的全量纪要表流程。',
+              );
           });
       }
 

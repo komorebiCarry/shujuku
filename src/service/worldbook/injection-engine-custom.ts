@@ -13,6 +13,7 @@ import { DEFAULT_ENTRY_PLACEMENT_ACU, DEFAULT_EXTRA_INDEX_PLACEMENT_ACU, ensureE
 import { buildUsedOrderSet_ACU, allocOrder_ACU, allocConsecutiveOrderBlock_ACU } from './injection-engine-order';
 import { getInjectionTargetLorebook_ACU, getIsolationPrefix_ACU } from './injection-engine-state';
 import { splitKeywordsByComma_ACU } from './injection-engine-entries';
+import { formatSummaryVectorIndexRecallOverride_ACU } from '../runtime/plot-runtime/plot-data-format';
 
   // [新增] 处理自定义表格导出逻辑
   // [修复] 当 mergedData 为空/null 时，仍需执行"清理旧自定义导出条目"逻辑，
@@ -218,7 +219,10 @@ import { splitKeywordsByComma_ACU } from './injection-engine-entries';
               const names = [];
               const plans = [];
               const entries = [];
-              const fullTable = buildMarkdownTableFromRows_ACU(extraIndexSpec.indexCols, extraIndexSpec.indexRows);
+              const summaryVectorIndexOverride = worldbookConfig?.summaryVectorIndexModeEnabled === true && extraIndexSpec.entryName === '纪要索引'
+                  ? formatSummaryVectorIndexRecallOverride_ACU()
+                  : null;
+              const fullTable = summaryVectorIndexOverride?.content || buildMarkdownTableFromRows_ACU(extraIndexSpec.indexCols, extraIndexSpec.indexRows);
               const fallbackTemplate = `# ${extraIndexSpec.entryName}\n\n$1`;
               // 自定义表格导出的附加索引条目：在注释名中加入统一标记，便于在世界书 UI 中识别为"数据库生成条目"并默认隐藏
               // [修复] 外部导入时只使用"外部导入-"前缀

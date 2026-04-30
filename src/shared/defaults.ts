@@ -25,7 +25,7 @@ export const DEFAULT_AUTO_UPDATE_TOKEN_THRESHOLD_ACU = 500;
 export const AUTO_UPDATE_FLOOR_INCREASE_DELAY_ACU = 2000;
 
 // --- 一次性默认值刷新版本标记 ---
-export const VECTOR_MEMORY_DEFAULTS_REFRESH_VERSION_ACU = 'spv2.1.2-vector-defaults-500tk';
+export const VECTOR_MEMORY_DEFAULTS_REFRESH_VERSION_ACU = 'spv2.1.3-vector-keywords-12';
 export const TABLE_TEMPLATE_DEFAULTS_REFRESH_VERSION_ACU = 'spv2.1.2-table-template-defaults';
 
 // --- 向量记忆全局默认配置（独立于世界书配置，跟随数据库全局设置） ---
@@ -72,15 +72,15 @@ export const defaultVectorMemoryConfig_ACU = {
       role: 'system',
       content: '你负责为向量记忆召回生成检索关键词。\n'
         + '你会看到最近对话上下文和当前用户输入。\n'
-        + '请输出 3 到 8 个简洁关键词或短语，优先保留人物、地点、时间、事件、目标、道具、组织等检索价值高的信息。\n'
+        + '请输出最相关的 12 个简洁关键词或短语，优先保留人物、地点、时间、事件、目标、道具、组织等检索价值高的信息。\n'
         + '禁止输出解释、句子、编号、前后缀说明。\n'
         + '多个关键词请使用中文逗号分隔。\n'
-        + '如果当前输入信息很少，也必须尽量提炼可检索的核心词。',
+        + '如果当前输入信息很少，也必须尽量提炼可检索的核心词；不足 12 个时用最接近当前语境的检索词补足。',
       deletable: false,
     },
     {
       role: 'user',
-      content: '最近上下文：\n$RECENT_CONTEXT\n\n当前用户输入：\n$USER_INPUT\n\n请仅输出关键词。',
+      content: '最近上下文：\n$RECENT_CONTEXT\n\n当前用户输入：\n$USER_INPUT\n\n请仅输出最相关的 12 个关键词。',
       deletable: true,
     },
   ],
@@ -95,6 +95,7 @@ export const defaultWorldbookConfig_ACU = {
   injectionTarget: 'character',
   outlineEntryEnabled: true,
   zeroTkOccupyMode: false,
+  summaryVectorIndexModeEnabled: false,
   // vectorMemory 保留引用以兼容旧数据迁移读取，但新数据写入 settings_ACU.vectorMemoryConfig
   vectorMemory: defaultVectorMemoryConfig_ACU,
 };

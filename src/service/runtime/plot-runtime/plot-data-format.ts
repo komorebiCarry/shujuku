@@ -7,6 +7,7 @@ import { logDebug_ACU, logError_ACU, logWarn_ACU } from '../../../shared/utils';
 import { getCharLorebooks_ACU } from '../../../data/gateways/character-gateway';
 import { getLorebookEntries_ACU } from '../../../data/gateways/worldbook-gateway';
 import { getIsolationPrefix_ACU } from '../../worldbook/injection-engine';
+import { currentSummaryVectorIndexRecall_ACU } from '../state-manager';
 
   export function formatTableDataForLLM_ACU(jsonData: any) {
     if (!jsonData || typeof jsonData !== 'object' || Object.keys(jsonData).length === 0) {
@@ -127,9 +128,39 @@ import { getIsolationPrefix_ACU } from '../../worldbook/injection-engine';
     }
   }
 
+  export function formatSummaryVectorIndexRecallOverride_ACU() {
+    const override = currentSummaryVectorIndexRecall_ACU;
+    if (!override || typeof override !== 'object' || override.mode !== 'summary_vector_index') {
+      return null;
+    }
+
+    let out = `## 表格: 纪要索引\n`;
+    out += `Columns: 概要, 编码索引\n`;
+    const rows = Array.isArray(override.rows) ? override.rows : [];
+    if (rows.length === 0 || override.isEmpty === true) {
+      out += '(未召回相关纪要)\n';
+      return { success: true, content: out };
+    }
+
+    rows.forEach((row: any, idx: number) => {
+      const summary = String(row?.summary || '').trim();
+      const indexCode = String(row?.indexCode || '').trim();
+      if (summary || indexCode) {
+        out += `- [${idx}] 概要: ${summary} | 编码索引: ${indexCode}\n`;
+      }
+    });
+    return { success: true, content: out };
+  }
+
   /** [剧情推进专用] $5 从纪要表本地数据读取概要和编码索引两列 */
   export function formatSummaryIndexForPlot_ACU(allTablesJson: any) {
     try {
+      const override = formatSummaryVectorIndexRecallOverride_ACU();
+      if (override) {
+        logDebug_ACU('[剧情推进] formatSummaryIndexForPlot_ACU: 使用纪要向量索引召回覆盖结果');
+        return override;
+      }
+
       if (!allTablesJson || typeof allTablesJson !== 'object') {
         logDebug_ACU('[剧情推进] formatSummaryIndexForPlot_ACU: 未获取到表格数据');
         return { success: false, content: '纪要索引：未获取到表格数据。' };

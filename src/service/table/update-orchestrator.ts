@@ -13,6 +13,7 @@ import { getChatSheetGuideDataForIsolationKey_ACU } from '../template/chat-scope
 import { loadAllChatMessages_ACU, updateReadableLorebookEntry_ACU } from '../worldbook/pipeline';
 
 import { isSummaryOrOutlineTable_ACU, logDebug_ACU, logError_ACU, logWarn_ACU, parseTableTemplateJson_ACU } from '../../shared/utils';
+import { applySpecialIndexSequenceToSummaryTables_ACU } from '../runtime/helpers-table-lock';
 
 /**
  * 表名标准化：trim 后空串视为无效键
@@ -263,6 +264,12 @@ export function resolveUpdateMode_ACU(mode: string): string {
     }
 }
 
+function shouldPersistSequenceAdjustedSheet_ACU(targetSheetKeys: string[] | null, sheetKey: string): boolean {
+    if (!Array.isArray(targetSheetKeys)) return true;
+    if (targetSheetKeys.length === 0) return false;
+    return targetSheetKeys.includes(sheetKey);
+}
+
 /**
  * 执行单次卡片更新的核心逻辑（AI调用 + 重试 + 解析 + 保存）
  * 纯业务逻辑，不驱动 UI。通过可选的 onProgress 回调传递纯数据进度事件。
@@ -350,6 +357,12 @@ export async function executeCardUpdateCore_ACU(
                     throw new Error('解析或应用AI更新时出错');
                 }
 
+                applySpecialIndexSequenceToSummaryTables_ACU(currentJsonTableData_ACU);
+                const sequenceAdjustedKeys = getSortedSheetKeys_ACU(currentJsonTableData_ACU).filter((sheetKey: string) => {
+                    const table = currentJsonTableData_ACU?.[sheetKey];
+                    return table && isSummaryOrOutlineTable_ACU(table.name) && shouldPersistSequenceAdjustedSheet_ACU(targetSheetKeys, sheetKey);
+                });
+                modifiedKeys = [...new Set([...(modifiedKeys || []), ...sequenceAdjustedKeys])];
                 success = true;
                 break;
 

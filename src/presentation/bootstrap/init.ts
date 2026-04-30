@@ -11,7 +11,9 @@ import { SillyTavern_API_ACU, toastr_API_ACU } from '../../shared/host-api';
 import { ACU_TOAST_CATEGORY_ACU } from '../../shared/constants';
 import { currentChatFileIdentifier_ACU, generationGate_ACU, getFreshUserSendGate_ACU, markUserSendIntent_ACU, isProcessing_Plot_ACU, isQuietLikeGeneration_ACU, loopState_ACU, recordGenerationContext_ACU, recordLastUserSend_ACU, settings_ACU, shouldProcessAutoTableUpdateForGenerationEnded_ACU, shouldProcessPlotForGeneration_ACU, _set_isProcessing_Plot_ACU} from '../../service/runtime/state-manager';
 import { orchestrateVectorRecallBeforeSend_ACU } from '../../service/plot/vector-recall-orchestrator';
+import { orchestrateSummaryVectorIndexBeforeSend_ACU } from '../../service/plot/summary-vector-index-orchestrator';
 import { applyTemplateScopeForCurrentChat_ACU, loadSettings_ACU } from '../../service/settings/settings-service';
+import { getCurrentWorldbookConfig_ACU } from '../../service/settings/settings-readers';
 import { resetScriptStateForNewChat_ACU } from '../../service/worldbook/injection-engine';
 import { reloadStorageProvider, disposeStorageProvider } from '../../service/table/table-storage-strategy';
 import { isSqliteMode } from '../../service/table/storage-mode';
@@ -116,11 +118,18 @@ export   function mainInitialize_ACU() {
         return null;
       }
 
-      const vectorPreprocessResult = await orchestrateVectorRecallBeforeSend_ACU(normalizedInput, {
-        previousSignature: generationGate_ACU.lastVectorRecallSignature,
-        // 每次用户主动发送都必须重新计算向量并覆盖世界书条目；previousSignature 仅保留作诊断，不参与 fresh send 去重。
-        force: true,
-      });
+      const summaryVectorIndexModeEnabled = getCurrentWorldbookConfig_ACU()?.summaryVectorIndexModeEnabled === true;
+      const vectorPreprocessResult = summaryVectorIndexModeEnabled
+        ? await orchestrateSummaryVectorIndexBeforeSend_ACU(normalizedInput, {
+            previousSignature: generationGate_ACU.lastVectorRecallSignature,
+            // 每次用户主动发送都必须重新计算纪要索引覆盖；previousSignature 仅保留作诊断，不参与 fresh send 去重。
+            force: true,
+          })
+        : await orchestrateVectorRecallBeforeSend_ACU(normalizedInput, {
+            previousSignature: generationGate_ACU.lastVectorRecallSignature,
+            // 每次用户主动发送都必须重新计算向量并覆盖世界书条目；previousSignature 仅保留作诊断，不参与 fresh send 去重。
+            force: true,
+          });
 
       // ── 缓存 gate 结果到全局状态 ──
       generationGate_ACU.lastVectorRecallResult = vectorPreprocessResult;

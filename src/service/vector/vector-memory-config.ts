@@ -267,6 +267,44 @@ export function validateVectorMemoryConfig_ACU(configInput?: any): VectorMemoryC
     };
 }
 
+export interface SummaryVectorIndexEffectiveConfig_ACU extends VectorMemoryConfig_ACU {
+    summaryIndexMinScore: number;
+    summaryIndexCandidateLimit: number;
+    summaryIndexChunkSentenceCount: number;
+}
+
+export function getEffectiveSummaryVectorIndexConfig_ACU(configInput?: any): SummaryVectorIndexEffectiveConfig_ACU {
+    const config = normalizeVectorMemoryConfig_ACU(configInput ?? getCurrentVectorMemoryConfig_ACU());
+    return {
+        ...config,
+        enabled: true,
+        minScore: 0.4,
+        topK: 100,
+        recallCandidateLimit: 100,
+        summaryChunkSentenceCount: 2,
+        summaryIndexMinScore: 0.4,
+        summaryIndexCandidateLimit: 100,
+        summaryIndexChunkSentenceCount: 2,
+    };
+}
+
+export function validateSummaryVectorIndexConfig_ACU(configInput?: any): VectorMemoryConfigValidation_ACU {
+    const config = getEffectiveSummaryVectorIndexConfig_ACU(configInput);
+    const errors: string[] = [];
+    if (!config.embeddingEndpoint) {
+        errors.push('缺少 embeddingEndpoint');
+    }
+    if (!config.embeddingModel) {
+        errors.push('缺少 embeddingModel');
+    }
+    const rerankValidation = validateVectorMemoryRerankConfig_ACU(config);
+    errors.push(...rerankValidation.errors);
+    return {
+        valid: errors.length === 0,
+        errors,
+    };
+}
+
 export function isVectorMemoryEnabled_ACU(configInput?: any): boolean {
     const config = normalizeVectorMemoryConfig_ACU(configInput ?? getCurrentVectorMemoryConfig_ACU());
     if (!config.enabled) return false;

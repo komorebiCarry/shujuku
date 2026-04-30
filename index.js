@@ -94,7 +94,7 @@
     function checkAndMarkInstance() {
         const hostWin = getHostWindow();
         if (hostWin[ACU_INSTANCE_FLAG]) {
-            console.warn('[SP·数据库 II] 检测到另一个实例已在运行，跳过初始化。请勿同时安装油猴脚本和酒馆插件。');
+            console.warn('[SP·数据库 III] 检测到另一个实例已在运行，跳过初始化。请勿同时安装油猴脚本和酒馆插件。');
             return true; // 已有实例
         }
         hostWin[ACU_INSTANCE_FLAG] = true;
@@ -2742,7 +2742,7 @@ $CONTENT
     const DEFAULT_AUTO_UPDATE_TOKEN_THRESHOLD_ACU = 500;
     const AUTO_UPDATE_FLOOR_INCREASE_DELAY_ACU = 2000;
     // --- 一次性默认值刷新版本标记 ---
-    const VECTOR_MEMORY_DEFAULTS_REFRESH_VERSION_ACU = 'spv2.1.2-vector-defaults-500tk';
+    const VECTOR_MEMORY_DEFAULTS_REFRESH_VERSION_ACU = 'spv2.1.3-vector-keywords-12';
     const TABLE_TEMPLATE_DEFAULTS_REFRESH_VERSION_ACU = 'spv2.1.2-table-template-defaults';
     // --- 向量记忆全局默认配置（独立于世界书配置，跟随数据库全局设置） ---
     const defaultVectorMemoryConfig_ACU = {
@@ -2788,15 +2788,15 @@ $CONTENT
                 role: 'system',
                 content: '你负责为向量记忆召回生成检索关键词。\n'
                     + '你会看到最近对话上下文和当前用户输入。\n'
-                    + '请输出 3 到 8 个简洁关键词或短语，优先保留人物、地点、时间、事件、目标、道具、组织等检索价值高的信息。\n'
+                    + '请输出最相关的 12 个简洁关键词或短语，优先保留人物、地点、时间、事件、目标、道具、组织等检索价值高的信息。\n'
                     + '禁止输出解释、句子、编号、前后缀说明。\n'
                     + '多个关键词请使用中文逗号分隔。\n'
-                    + '如果当前输入信息很少，也必须尽量提炼可检索的核心词。',
+                    + '如果当前输入信息很少，也必须尽量提炼可检索的核心词；不足 12 个时用最接近当前语境的检索词补足。',
                 deletable: false,
             },
             {
                 role: 'user',
-                content: '最近上下文：\n$RECENT_CONTEXT\n\n当前用户输入：\n$USER_INPUT\n\n请仅输出关键词。',
+                content: '最近上下文：\n$RECENT_CONTEXT\n\n当前用户输入：\n$USER_INPUT\n\n请仅输出最相关的 12 个关键词。',
                 deletable: true,
             },
         ],
@@ -2810,6 +2810,7 @@ $CONTENT
         injectionTarget: 'character',
         outlineEntryEnabled: true,
         zeroTkOccupyMode: false,
+        summaryVectorIndexModeEnabled: false,
         // vectorMemory 保留引用以兼容旧数据迁移读取，但新数据写入 settings_ACU.vectorMemoryConfig
         vectorMemory: defaultVectorMemoryConfig_ACU,
     };
@@ -3422,6 +3423,7 @@ $CONTENT
     let currentChatFileIdentifier_ACU = 'unknown_chat_init';
     let currentJsonTableData_ACU = null;
     let independentTableStates_ACU = {};
+    let currentSummaryVectorIndexRecall_ACU = null;
     let settings_ACU = {
         apiConfig: { url: '', apiKey: '', model: '', useMainApi: true, max_tokens: 60000, temperature: 1.0 },
         apiMode: 'custom',
@@ -3509,6 +3511,7 @@ $CONTENT
     function _set_pendingBaseStatePlacement_ACU(v) { pendingBaseStatePlacement_ACU = v; }
     function _set_suppressWorldbookInjectionInGreeting_ACU(v) { suppressWorldbookInjectionInGreeting_ACU = v; }
     function _set_independentTableStates_ACU(v) { independentTableStates_ACU = v; }
+    function _set_currentSummaryVectorIndexRecall_ACU(v) { currentSummaryVectorIndexRecall_ACU = v; }
     // ═══ 从 plot-editors.ts 迁移的业务状态 ═══
     let isAutoUpdatingCard_ACU$1 = false;
     let wasStoppedByUser_ACU$1 = false;
@@ -3860,6 +3863,7 @@ $CONTENT
             : (settings_ACU?.zeroTkOccupyModeDefault === true);
         if (!settings_ACU.characterSettings[charId]) {
             const worldbookConfigForNewChat = JSON.parse(JSON.stringify(defaultWorldbookConfig_ACU));
+            worldbookConfigForNewChat.summaryVectorIndexModeEnabled = false;
             worldbookConfigForNewChat.zeroTkOccupyMode = globalZeroTkDefault;
             worldbookConfigForNewChat.outlineEntryEnabled = !globalZeroTkDefault;
             settings_ACU.characterSettings[charId] = {
@@ -3870,8 +3874,10 @@ $CONTENT
         try {
             const existingCfg = settings_ACU.characterSettings[charId].worldbookConfig || {};
             const mergedCfg = deepMerge_ACU(JSON.parse(JSON.stringify(defaultWorldbookConfig_ACU)), existingCfg);
-            mergedCfg.zeroTkOccupyMode = globalZeroTkDefault;
-            mergedCfg.outlineEntryEnabled = !globalZeroTkDefault;
+            const summaryVectorIndexModeEnabled = existingCfg?.summaryVectorIndexModeEnabled === true;
+            mergedCfg.summaryVectorIndexModeEnabled = summaryVectorIndexModeEnabled;
+            mergedCfg.zeroTkOccupyMode = summaryVectorIndexModeEnabled ? false : globalZeroTkDefault;
+            mergedCfg.outlineEntryEnabled = !mergedCfg.zeroTkOccupyMode;
             // [向量记忆] vectorMemory 不再跟随世界书配置规范化，
             // 已迁移到 settings_ACU.vectorMemoryConfig（全局数据库级）。
             // 保留 mergedCfg.vectorMemory 的旧数据引用以兼容迁移读取。
@@ -4672,6 +4678,140 @@ $CONTENT
     }
 
     /**
+     * service/runtime/helpers-table-lock.ts — 表格锁定与索引
+     * 从 helpers-remaining.ts 拆出
+     */
+    function getTableLockScopeKey_ACU() {
+        const chatKey = (currentChatFileIdentifier_ACU || 'default').trim() || 'default';
+        const isolationKey = getCurrentIsolationKey_ACU() || '';
+        return `${chatKey}::${isolationKey}`;
+    }
+    function ensureTableLockStore_ACU() {
+        if (!settings_ACU.tableUpdateLocks || typeof settings_ACU.tableUpdateLocks !== 'object') {
+            settings_ACU.tableUpdateLocks = {};
+        }
+        if (!settings_ACU.specialIndexLocks || typeof settings_ACU.specialIndexLocks !== 'object') {
+            settings_ACU.specialIndexLocks = {};
+        }
+    }
+    function getTableLocksForSheet_ACU(sheetKey) {
+        const scopeKey = getTableLockScopeKey_ACU();
+        const bucket = settings_ACU?.tableUpdateLocks?.[scopeKey]?.[sheetKey] || {};
+        return {
+            rows: new Set(Array.isArray(bucket.rows) ? bucket.rows : []),
+            cols: new Set(Array.isArray(bucket.cols) ? bucket.cols : []),
+            cells: new Set(Array.isArray(bucket.cells) ? bucket.cells : []),
+        };
+    }
+    function saveTableLocksForSheet_ACU(sheetKey, lockState) {
+        if (!sheetKey)
+            return;
+        ensureTableLockStore_ACU();
+        const scopeKey = getTableLockScopeKey_ACU();
+        if (!settings_ACU.tableUpdateLocks[scopeKey])
+            settings_ACU.tableUpdateLocks[scopeKey] = {};
+        settings_ACU.tableUpdateLocks[scopeKey][sheetKey] = {
+            rows: Array.from(lockState.rows || []),
+            cols: Array.from(lockState.cols || []),
+            cells: Array.from(lockState.cells || []),
+        };
+        saveSettings_ACU();
+    }
+    function toggleRowLock_ACU(sheetKey, rowIndex) {
+        const lockState = getTableLocksForSheet_ACU(sheetKey);
+        if (lockState.rows.has(rowIndex))
+            lockState.rows.delete(rowIndex);
+        else
+            lockState.rows.add(rowIndex);
+        saveTableLocksForSheet_ACU(sheetKey, lockState);
+    }
+    function toggleColLock_ACU(sheetKey, colIndex) {
+        const lockState = getTableLocksForSheet_ACU(sheetKey);
+        if (lockState.cols.has(colIndex))
+            lockState.cols.delete(colIndex);
+        else
+            lockState.cols.add(colIndex);
+        saveTableLocksForSheet_ACU(sheetKey, lockState);
+    }
+    function toggleCellLock_ACU(sheetKey, rowIndex, colIndex) {
+        const lockState = getTableLocksForSheet_ACU(sheetKey);
+        const key = `${rowIndex}:${colIndex}`;
+        if (lockState.cells.has(key))
+            lockState.cells.delete(key);
+        else
+            lockState.cells.add(key);
+        saveTableLocksForSheet_ACU(sheetKey, lockState);
+    }
+    function isSpecialIndexLockEnabled_ACU(sheetKey) {
+        const scopeKey = getTableLockScopeKey_ACU();
+        const bucket = settings_ACU?.specialIndexLocks?.[scopeKey] || {};
+        if (typeof bucket[sheetKey] === 'boolean')
+            return bucket[sheetKey];
+        return true; // 默认锁定
+    }
+    function setSpecialIndexLockEnabled_ACU(sheetKey, enabled) {
+        if (!sheetKey)
+            return;
+        ensureTableLockStore_ACU();
+        const scopeKey = getTableLockScopeKey_ACU();
+        if (!settings_ACU.specialIndexLocks[scopeKey])
+            settings_ACU.specialIndexLocks[scopeKey] = {};
+        settings_ACU.specialIndexLocks[scopeKey][sheetKey] = !!enabled;
+        saveSettings_ACU();
+    }
+    function getSummaryIndexColumnIndex_ACU(table) {
+        try {
+            if (!table || !Array.isArray(table.content) || !Array.isArray(table.content[0]))
+                return -1;
+            const headers = table.content[0].slice(1);
+            if (!headers.length)
+                return -1;
+            let idx = headers.findIndex(h => {
+                if (typeof h !== 'string')
+                    return false;
+                return /编码|索引/.test(h);
+            });
+            if (idx === -1)
+                idx = headers.length - 1;
+            return idx;
+        }
+        catch (e) {
+            return -1;
+        }
+    }
+    function formatSummaryIndexCode_ACU(num) {
+        const n = Math.max(1, parseInt(num, 10) || 1);
+        return `AM${String(n).padStart(4, '0')}`;
+    }
+    function applySummaryIndexSequenceToTable_ACU(table, colIndex) {
+        if (!table || !Array.isArray(table.content) || colIndex < 0)
+            return;
+        for (let i = 1; i < table.content.length; i++) {
+            const row = table.content[i];
+            if (!Array.isArray(row))
+                continue;
+            row[colIndex + 1] = formatSummaryIndexCode_ACU(i);
+        }
+    }
+    function applySpecialIndexSequenceToSummaryTables_ACU(dataObj) {
+        if (!dataObj || typeof dataObj !== 'object')
+            return;
+        Object.keys(dataObj).forEach(sheetKey => {
+            if (!sheetKey.startsWith('sheet_'))
+                return;
+            const table = dataObj[sheetKey];
+            if (!table || !isSummaryOrOutlineTable_ACU(table.name))
+                return;
+            if (!isSpecialIndexLockEnabled_ACU(sheetKey))
+                return;
+            const colIndex = getSummaryIndexColumnIndex_ACU(table);
+            if (colIndex < 0)
+                return;
+            applySummaryIndexSequenceToTable_ACU(table, colIndex);
+        });
+    }
+
+    /**
      * data/repositories/chat-message-data-repo.ts — 消息级表格数据 CRUD
      *
      * 封装所有对 message.TavernDB_ACU_* 字段的底层读写操作。
@@ -5265,7 +5405,7 @@ $CONTENT
     function cloneDefaultVectorMemoryConfig_ACU() {
         return JSON.parse(JSON.stringify(defaultVectorMemoryConfig_ACU));
     }
-    function normalizeMinScore_ACU$1(value, fallbackValue) {
+    function normalizeMinScore_ACU$2(value, fallbackValue) {
         const num = Number(value);
         if (!Number.isFinite(num))
             return fallbackValue;
@@ -5325,7 +5465,7 @@ $CONTENT
             archiveBatchSize,
             archiveMaxConcurrency,
             topK: normalizePositiveInteger_ACU$1(source.topK, defaults.topK),
-            minScore: normalizeMinScore_ACU$1(source.minScore, defaults.minScore),
+            minScore: normalizeMinScore_ACU$2(source.minScore, defaults.minScore),
             embeddingEndpoint: normalizeTextField_ACU(source.embeddingEndpoint, defaults.embeddingEndpoint),
             embeddingApiKey: normalizeTextField_ACU(source.embeddingApiKey, defaults.embeddingApiKey),
             embeddingModel: normalizeTextField_ACU(source.embeddingModel, defaults.embeddingModel),
@@ -5455,6 +5595,36 @@ $CONTENT
             errors,
         };
     }
+    function getEffectiveSummaryVectorIndexConfig_ACU(configInput) {
+        const config = normalizeVectorMemoryConfig_ACU(configInput ?? getCurrentVectorMemoryConfig_ACU());
+        return {
+            ...config,
+            enabled: true,
+            minScore: 0.4,
+            topK: 100,
+            recallCandidateLimit: 100,
+            summaryChunkSentenceCount: 2,
+            summaryIndexMinScore: 0.4,
+            summaryIndexCandidateLimit: 100,
+            summaryIndexChunkSentenceCount: 2,
+        };
+    }
+    function validateSummaryVectorIndexConfig_ACU(configInput) {
+        const config = getEffectiveSummaryVectorIndexConfig_ACU(configInput);
+        const errors = [];
+        if (!config.embeddingEndpoint) {
+            errors.push('缺少 embeddingEndpoint');
+        }
+        if (!config.embeddingModel) {
+            errors.push('缺少 embeddingModel');
+        }
+        const rerankValidation = validateVectorMemoryRerankConfig_ACU(config);
+        errors.push(...rerankValidation.errors);
+        return {
+            valid: errors.length === 0,
+            errors,
+        };
+    }
     function isVectorMemoryEnabled_ACU(configInput) {
         const config = normalizeVectorMemoryConfig_ACU(configInput ?? getCurrentVectorMemoryConfig_ACU());
         if (!config.enabled)
@@ -5462,11 +5632,11 @@ $CONTENT
         return validateVectorMemoryConfig_ACU(config).valid;
     }
 
-    function normalizeText_ACU$4(value) {
+    function normalizeText_ACU$7(value) {
         return String(value ?? '').trim();
     }
     function sanitizeSegment_ACU(value, fallback) {
-        const normalized = normalizeText_ACU$4(value)
+        const normalized = normalizeText_ACU$7(value)
             .toLowerCase()
             .replace(/[^a-z0-9_-]+/g, '-')
             .replace(/^-+|-+$/g, '');
@@ -5498,8 +5668,8 @@ $CONTENT
         const swipeId = Number.isFinite(Number(targetMessage?.swipe_id))
             ? Math.max(0, Math.floor(Number(targetMessage.swipe_id)))
             : 0;
-        const messageName = normalizeText_ACU$4(targetMessage?.name).slice(0, 80);
-        const messageSnippet = normalizeText_ACU$4(targetMessage?.mes)
+        const messageName = normalizeText_ACU$7(targetMessage?.name).slice(0, 80);
+        const messageSnippet = normalizeText_ACU$7(targetMessage?.mes)
             .replace(/\s+/g, ' ')
             .slice(0, 160);
         const signature = hashText_ACU([
@@ -5520,7 +5690,7 @@ $CONTENT
         if (!targetMessage || targetMessage.is_user) {
             return null;
         }
-        const realMessageId = normalizeText_ACU$4(targetMessage?.message_id);
+        const realMessageId = normalizeText_ACU$7(targetMessage?.message_id);
         const existingLocalAnchor = readLocalMessageAnchor_ACU(targetMessage) || '';
         const aiFloor = Math.max(1, countAiMessagesToIndex_ACU(chat, targetMessageIndex));
         if (realMessageId) {
@@ -9309,17 +9479,17 @@ $CONTENT
         return await upsertVectorMemoryLorebookEntry_ACU(content, config);
     }
 
-    function normalizeFiniteNumberArray_ACU(values) {
+    function normalizeFiniteNumberArray_ACU$1(values) {
         if (!Array.isArray(values))
             return [];
         return values
             .map((value) => Number(value))
             .filter((value) => Number.isFinite(value));
     }
-    function normalizeChunk_ACU(chunk) {
+    function normalizeChunk_ACU$1(chunk) {
         const chunkId = String(chunk?.chunkId || '').trim();
         const text = String(chunk?.text || '').trim();
-        const vector = normalizeFiniteNumberArray_ACU(chunk?.vector);
+        const vector = normalizeFiniteNumberArray_ACU$1(chunk?.vector);
         const sequenceNumber = Number(chunk?.sequence);
         if (!chunkId || !text || vector.length === 0) {
             return null;
@@ -9345,7 +9515,7 @@ $CONTENT
         const sourceRowCountNumber = Number(batch?.sourceRowCount);
         const chunks = Array.isArray(batch?.chunks)
             ? batch.chunks
-                .map((chunk) => normalizeChunk_ACU(chunk))
+                .map((chunk) => normalizeChunk_ACU$1(chunk))
                 .filter((chunk) => !!chunk)
             : [];
         if (!batchId || !snapshotMessageId || !sourceMessageId || !summaryText || !summaryHash || !promptGroupVersion || !createdAt || sourceRowKeys.length === 0 || chunks.length === 0) {
@@ -9518,7 +9688,7 @@ $CONTENT
         }));
     }
 
-    function normalizeText_ACU$3(value) {
+    function normalizeText_ACU$6(value) {
         return String(value ?? '').trim();
     }
     function normalizePromptRole_ACU(role) {
@@ -9547,7 +9717,7 @@ $CONTENT
     }
     function normalizeArchiveRows_ACU(rows) {
         return Array.isArray(rows)
-            ? rows.filter((row) => normalizeText_ACU$3(row?.rowKey) && normalizeText_ACU$3(row?.content || row?.summary))
+            ? rows.filter((row) => normalizeText_ACU$6(row?.rowKey) && normalizeText_ACU$6(row?.content || row?.summary))
             : [];
     }
     function buildArchiveSourceMaterial_ACU(rows) {
@@ -9555,12 +9725,12 @@ $CONTENT
             .map((row, index) => {
             const parts = [
                 `条目序号: ${index + 1}`,
-                `rowKey: ${normalizeText_ACU$3(row.rowKey) || '未填写'}`,
-                `row_id: ${normalizeText_ACU$3(row.rowId) || '未填写'}`,
-                `时间跨度: ${normalizeText_ACU$3(row.timeSpan) || '未填写'}`,
-                `地点: ${normalizeText_ACU$3(row.location) || '未填写'}`,
-                `概览: ${normalizeText_ACU$3(row.summary) || '未填写'}`,
-                `纪要内容: ${normalizeText_ACU$3(row.content) || '未填写'}`,
+                `rowKey: ${normalizeText_ACU$6(row.rowKey) || '未填写'}`,
+                `row_id: ${normalizeText_ACU$6(row.rowId) || '未填写'}`,
+                `时间跨度: ${normalizeText_ACU$6(row.timeSpan) || '未填写'}`,
+                `地点: ${normalizeText_ACU$6(row.location) || '未填写'}`,
+                `概览: ${normalizeText_ACU$6(row.summary) || '未填写'}`,
+                `纪要内容: ${normalizeText_ACU$6(row.content) || '未填写'}`,
             ];
             return parts.join('\n');
         })
@@ -9586,7 +9756,7 @@ $CONTENT
             }
             return {
                 role: normalizePromptRole_ACU(segment?.role),
-                content: normalizeText_ACU$3(rawContent.replace(/\$SUMMARY_SOURCE_ROWS/g, materialForPrompt)),
+                content: normalizeText_ACU$6(rawContent.replace(/\$SUMMARY_SOURCE_ROWS/g, materialForPrompt)),
             };
         })
             .filter((segment) => segment.content);
@@ -9600,36 +9770,36 @@ $CONTENT
             .map((row, index) => {
             const parts = [
                 `第${index + 1}条纪要`,
-                `时间跨度: ${normalizeText_ACU$3(row.timeSpan) || '未填写'}`,
-                `地点: ${normalizeText_ACU$3(row.location) || '未填写'}`,
-                `概览: ${normalizeText_ACU$3(row.summary) || '未填写'}`,
-                `纪要内容: ${normalizeText_ACU$3(row.content) || '未填写'}`,
+                `时间跨度: ${normalizeText_ACU$6(row.timeSpan) || '未填写'}`,
+                `地点: ${normalizeText_ACU$6(row.location) || '未填写'}`,
+                `概览: ${normalizeText_ACU$6(row.summary) || '未填写'}`,
+                `纪要内容: ${normalizeText_ACU$6(row.content) || '未填写'}`,
             ];
             return parts.join('\n');
         })
             .join('\n\n--------------------\n\n');
-        return normalizeText_ACU$3(`以下为未经过AI总结的远记忆直接归档内容，共 ${rows.length} 条纪要。\n`
+        return normalizeText_ACU$6(`以下为未经过AI总结的远记忆直接归档内容，共 ${rows.length} 条纪要。\n`
             + '为保证后续召回可读性，按原始纪要顺序整理如下：\n\n'
             + `${material || '（空）'}`);
     }
-    function splitSentences_ACU(text) {
-        const normalized = normalizeText_ACU$3(text);
+    function splitSentences_ACU$1(text) {
+        const normalized = normalizeText_ACU$6(text);
         if (!normalized)
             return [];
         const matches = normalized.match(/[^。！？!?；;\n]+[。！？!?；;]?/g);
         const sentences = Array.isArray(matches)
-            ? matches.map((item) => normalizeText_ACU$3(item)).filter(Boolean)
+            ? matches.map((item) => normalizeText_ACU$6(item)).filter(Boolean)
             : [normalized];
         return sentences.length > 0 ? sentences : [normalized];
     }
     function buildSummaryChunks_ACU(batchId, summaryText, sentenceCount) {
-        const sentences = splitSentences_ACU(summaryText);
+        const sentences = splitSentences_ACU$1(summaryText);
         if (sentences.length === 0)
             return [];
         const normalizedSentenceCount = Math.max(1, Math.floor(Number(sentenceCount) || 2));
         const chunks = [];
         for (let index = 0; index < sentences.length; index += normalizedSentenceCount) {
-            const text = normalizeText_ACU$3(sentences.slice(index, index + normalizedSentenceCount).join(''));
+            const text = normalizeText_ACU$6(sentences.slice(index, index + normalizedSentenceCount).join(''));
             if (!text)
                 continue;
             chunks.push({
@@ -9667,8 +9837,8 @@ $CONTENT
             throw new Error('缺少可归档的纪要条目。');
         }
         const messages = buildArchivePromptMessages_ACU(normalizedRows, promptGroup);
-        const result = await callAIWithPreset_ACU(messages, normalizeText_ACU$3(promptGroupId));
-        const summaryText = normalizeText_ACU$3(result);
+        const result = await callAIWithPreset_ACU(messages, normalizeText_ACU$6(promptGroupId));
+        const summaryText = normalizeText_ACU$6(result);
         if (!summaryText) {
             throw new Error('远记忆归档模型返回空内容。');
         }
@@ -9679,9 +9849,9 @@ $CONTENT
         if (normalizedRows.length === 0) {
             throw new Error('缺少可构建远记忆批次的来源行。');
         }
-        const createdAt = normalizeText_ACU$3(options.createdAt) || new Date().toISOString();
-        const snapshotMessageId = normalizeText_ACU$3(options.snapshotMessageId);
-        const sourceMessageId = normalizeText_ACU$3(options.sourceMessageId);
+        const createdAt = normalizeText_ACU$6(options.createdAt) || new Date().toISOString();
+        const snapshotMessageId = normalizeText_ACU$6(options.snapshotMessageId);
+        const sourceMessageId = normalizeText_ACU$6(options.sourceMessageId);
         const batchSequence = Math.max(0, Math.floor(Number(options.batchSequence) || 0));
         if (!snapshotMessageId) {
             throw new Error('缺少 snapshotMessageId。');
@@ -9699,7 +9869,7 @@ $CONTENT
         if (!summaryHash) {
             throw new Error('远记忆大总结 hash 生成失败。');
         }
-        const batchId = `${normalizeText_ACU$3(options.namespace) || 'chat'}:${sourceMessageId}:batch:${batchSequence}:${summaryHash}`;
+        const batchId = `${normalizeText_ACU$6(options.namespace) || 'chat'}:${sourceMessageId}:batch:${batchSequence}:${summaryHash}`;
         const chunkSources = buildSummaryChunks_ACU(batchId, summaryText, options.config.summaryChunkSentenceCount);
         if (chunkSources.length === 0) {
             throw new Error('远记忆大总结切分后未生成任何 chunk。');
@@ -9708,7 +9878,7 @@ $CONTENT
         if (chunks.length !== chunkSources.length) {
             throw new Error('远记忆大总结向量化结果不完整。');
         }
-        const sourceRowKeys = normalizedRows.map((row) => normalizeText_ACU$3(row.rowKey)).filter(Boolean);
+        const sourceRowKeys = normalizedRows.map((row) => normalizeText_ACU$6(row.rowKey)).filter(Boolean);
         const firstRowKey = sourceRowKeys[0] || '';
         const lastRowKey = sourceRowKeys[sourceRowKeys.length - 1] || '';
         return {
@@ -9720,7 +9890,7 @@ $CONTENT
             summaryText,
             summaryHash,
             chunks,
-            promptGroupVersion: normalizeText_ACU$3(options.config.summaryPromptGroupId),
+            promptGroupVersion: normalizeText_ACU$6(options.config.summaryPromptGroupId),
             createdAt,
             archivedRange: firstRowKey && lastRowKey
                 ? {
@@ -9731,11 +9901,11 @@ $CONTENT
         };
     }
     async function rebuildRemoteMemoryBatchSummary_ACU(batch, config) {
-        const summaryText = normalizeText_ACU$3(batch?.summaryText);
+        const summaryText = normalizeText_ACU$6(batch?.summaryText);
         if (!summaryText) {
             throw new Error('远记忆批次 summaryText 为空，无法重建向量。');
         }
-        const batchId = normalizeText_ACU$3(batch?.batchId);
+        const batchId = normalizeText_ACU$6(batch?.batchId);
         if (!batchId) {
             throw new Error('远记忆批次 batchId 为空，无法重建向量。');
         }
@@ -9755,7 +9925,7 @@ $CONTENT
         };
     }
 
-    function buildResult_ACU(partial = {}) {
+    function buildResult_ACU$1(partial = {}) {
         return {
             success: false,
             skipped: false,
@@ -9767,7 +9937,7 @@ $CONTENT
         };
     }
     function buildCanceledResult_ACU(partial = {}) {
-        return buildResult_ACU({
+        return buildResult_ACU$1({
             success: true,
             skipped: true,
             canceled: true,
@@ -9776,7 +9946,7 @@ $CONTENT
             ...partial,
         });
     }
-    function normalizeText_ACU$2(value) {
+    function normalizeText_ACU$5(value) {
         return String(value ?? '').trim();
     }
     function emitProgress_ACU(onProgress, event) {
@@ -9803,7 +9973,7 @@ $CONTENT
             throw createAbortError_ACU(message);
         }
     }
-    function findSummaryTable_ACU() {
+    function findSummaryTable_ACU$1() {
         if (!currentJsonTableData_ACU || typeof currentJsonTableData_ACU !== 'object') {
             return null;
         }
@@ -9823,8 +9993,8 @@ $CONTENT
     }
     function resolveSummaryColumnIndexByAliases_ACU(headerRow, aliases, fallbackIndex) {
         const headers = Array.isArray(headerRow) ? headerRow.slice(1) : [];
-        const normalizedAliases = aliases.map((item) => normalizeText_ACU$2(item).replace(/\s+/g, ''));
-        const index = headers.findIndex((header) => normalizedAliases.includes(normalizeText_ACU$2(header).replace(/\s+/g, '')));
+        const normalizedAliases = aliases.map((item) => normalizeText_ACU$5(item).replace(/\s+/g, ''));
+        const index = headers.findIndex((header) => normalizedAliases.includes(normalizeText_ACU$5(header).replace(/\s+/g, '')));
         return index >= 0 ? index : fallbackIndex;
     }
     function buildArchiveSourceRows_ACU(table, targetMessageId) {
@@ -9836,14 +10006,14 @@ $CONTENT
         const summaryIndex = resolveSummaryColumnIndexByAliases_ACU(headerRow, ['概要', '概览', '概述', '摘要'], 2);
         const contentIndex = resolveSummaryColumnIndexByAliases_ACU(headerRow, ['纪要', '纪要内容', '内容', '正文'], 3);
         return rows.map((row, index) => {
-            const rowId = normalizeText_ACU$2(row?.[0]) || String(index + 1);
+            const rowId = normalizeText_ACU$5(row?.[0]) || String(index + 1);
             return {
                 rowKey: `${targetMessageId}:${rowId}`,
                 rowId,
-                timeSpan: normalizeText_ACU$2(row?.[timeSpanIndex + 1]),
-                location: normalizeText_ACU$2(row?.[locationIndex + 1]),
-                summary: normalizeText_ACU$2(row?.[summaryIndex + 1]),
-                content: normalizeText_ACU$2(row?.[contentIndex + 1]),
+                timeSpan: normalizeText_ACU$5(row?.[timeSpanIndex + 1]),
+                location: normalizeText_ACU$5(row?.[locationIndex + 1]),
+                summary: normalizeText_ACU$5(row?.[summaryIndex + 1]),
+                content: normalizeText_ACU$5(row?.[contentIndex + 1]),
                 sourceMessageId: targetMessageId,
             };
         }).filter((row) => row.rowKey && (row.content || row.summary));
@@ -9940,12 +10110,12 @@ $CONTENT
         const preservedRows = table.content.slice(1).filter((row) => {
             if (!Array.isArray(row))
                 return false;
-            const rowId = normalizeText_ACU$2(row?.[0]);
+            const rowId = normalizeText_ACU$5(row?.[0]);
             return !archivedRowIds.has(rowId);
         });
         table.content = [headerRow, ...preservedRows];
     }
-    function resolveTargetMessageIndex_ACU(preferredIndex) {
+    function resolveTargetMessageIndex_ACU$1(preferredIndex) {
         const chat = getChatArray_ACU();
         if (!Array.isArray(chat) || chat.length === 0) {
             return -1;
@@ -9958,7 +10128,7 @@ $CONTENT
     async function buildSummaryVectorIndexIfNeeded_ACU(options = {}) {
         const vectorConfig = getCurrentVectorMemoryConfig_ACU();
         if (!vectorConfig.enabled) {
-            return buildResult_ACU({
+            return buildResult_ACU$1({
                 success: true,
                 skipped: true,
                 reason: 'vector_memory_disabled',
@@ -9966,24 +10136,24 @@ $CONTENT
         }
         const buildConfigValidation = validateVectorIndexBuildConfig_ACU(vectorConfig);
         if (!buildConfigValidation.valid) {
-            return buildResult_ACU({
+            return buildResult_ACU$1({
                 success: false,
                 skipped: false,
                 reason: 'vector_memory_build_config_invalid',
                 errors: buildConfigValidation.errors,
             });
         }
-        const selectedSummary = findSummaryTable_ACU();
+        const selectedSummary = findSummaryTable_ACU$1();
         if (!selectedSummary) {
-            return buildResult_ACU({
+            return buildResult_ACU$1({
                 success: true,
                 skipped: true,
                 reason: 'summary_table_not_found',
             });
         }
-        const targetMessageIndex = resolveTargetMessageIndex_ACU(options.targetMessageIndex);
+        const targetMessageIndex = resolveTargetMessageIndex_ACU$1(options.targetMessageIndex);
         if (targetMessageIndex < 0) {
-            return buildResult_ACU({
+            return buildResult_ACU$1({
                 success: false,
                 reason: 'target_message_not_found',
                 errors: ['未找到可写入远记忆快照的 AI 楼层。'],
@@ -9992,7 +10162,7 @@ $CONTENT
         const chat = getChatArray_ACU();
         const targetMessage = chat[targetMessageIndex];
         if (!targetMessage || targetMessage.is_user) {
-            return buildResult_ACU({
+            return buildResult_ACU$1({
                 success: false,
                 reason: 'target_message_invalid',
                 errors: ['目标楼层不是可写入的 AI 消息。'],
@@ -10000,7 +10170,7 @@ $CONTENT
         }
         const snapshotAnchor = resolveRemoteMemorySnapshotAnchor_ACU(chat, targetMessageIndex);
         if (!snapshotAnchor?.anchor) {
-            return buildResult_ACU({
+            return buildResult_ACU$1({
                 success: false,
                 reason: 'snapshot_anchor_unresolved',
                 errors: ['目标楼层缺少可用的远记忆快照锚点，无法写入远记忆快照。'],
@@ -10019,7 +10189,7 @@ $CONTENT
         }
         const sourceRows = buildArchiveSourceRows_ACU(selectedSummary.table, snapshotMessageId);
         if (sourceRows.length === 0) {
-            return buildResult_ACU({
+            return buildResult_ACU$1({
                 success: true,
                 skipped: true,
                 summaryKey: selectedSummary.summaryKey,
@@ -10029,7 +10199,7 @@ $CONTENT
         }
         const rowsToArchive = pickRowsToArchive_ACU(sourceRows, vectorConfig.threshold, vectorConfig.archiveTriggerCount, vectorConfig.archiveBatchSize, options.force === true);
         if (rowsToArchive.length === 0) {
-            return buildResult_ACU({
+            return buildResult_ACU$1({
                 success: true,
                 skipped: true,
                 summaryKey: selectedSummary.summaryKey,
@@ -10039,7 +10209,7 @@ $CONTENT
         }
         const rowBatches = chunkArchiveRows_ACU(rowsToArchive, vectorConfig.archiveBatchSize);
         if (rowBatches.length === 0) {
-            return buildResult_ACU({
+            return buildResult_ACU$1({
                 success: true,
                 skipped: true,
                 summaryKey: selectedSummary.summaryKey,
@@ -10148,7 +10318,7 @@ $CONTENT
                 completedBatches: rowBatches.length,
                 totalBatches: rowBatches.length,
             });
-            return buildResult_ACU({
+            return buildResult_ACU$1({
                 success: true,
                 skipped: false,
                 indexedCount: nextBatches.length,
@@ -10171,13 +10341,13 @@ $CONTENT
                 });
             }
             logWarn_ACU('[向量记忆] 远记忆归档失败，已跳过删除原纪要:', error);
-            return buildResult_ACU({
+            return buildResult_ACU$1({
                 success: false,
                 skipped: false,
                 summaryKey: selectedSummary.summaryKey,
                 messageIndex: targetMessageIndex,
                 reason: 'remote_memory_archive_failed',
-                errors: [normalizeText_ACU$2(error?.message) || '远记忆归档失败'],
+                errors: [normalizeText_ACU$5(error?.message) || '远记忆归档失败'],
             });
         }
     }
@@ -10250,8 +10420,19 @@ $CONTENT
         }
         let currentTagData = isolatedData[currentIsolationKey];
         let independentData = currentTagData.independentData || {};
-        const actuallyModifiedKeys = targetSheetKeys ? [...targetSheetKeys] : [];
-        let keysToSave = targetSheetKeys;
+        applySpecialIndexSequenceToSummaryTables_ACU(currentJsonTableData_ACU);
+        const sequenceAdjustedKeys = getSortedSheetKeys_ACU(currentJsonTableData_ACU).filter((sheetKey) => {
+            if (targetSheetKeys && !targetSheetKeys.includes(sheetKey))
+                return false;
+            const table = currentJsonTableData_ACU?.[sheetKey];
+            return table && isSummaryOrOutlineTable_ACU(table.name);
+        });
+        const actuallyModifiedKeys = targetSheetKeys
+            ? [...new Set([...targetSheetKeys, ...sequenceAdjustedKeys])]
+            : [];
+        let keysToSave = targetSheetKeys
+            ? [...new Set([...targetSheetKeys, ...sequenceAdjustedKeys])]
+            : targetSheetKeys;
         if (!keysToSave) {
             keysToSave = getSortedSheetKeys_ACU(currentJsonTableData_ACU);
         }
@@ -15573,9 +15754,35 @@ $CONTENT
             return '总体大纲表：格式化时发生错误。';
         }
     }
+    function formatSummaryVectorIndexRecallOverride_ACU() {
+        const override = currentSummaryVectorIndexRecall_ACU;
+        if (!override || typeof override !== 'object' || override.mode !== 'summary_vector_index') {
+            return null;
+        }
+        let out = `## 表格: 纪要索引\n`;
+        out += `Columns: 概要, 编码索引\n`;
+        const rows = Array.isArray(override.rows) ? override.rows : [];
+        if (rows.length === 0 || override.isEmpty === true) {
+            out += '(未召回相关纪要)\n';
+            return { success: true, content: out };
+        }
+        rows.forEach((row, idx) => {
+            const summary = String(row?.summary || '').trim();
+            const indexCode = String(row?.indexCode || '').trim();
+            if (summary || indexCode) {
+                out += `- [${idx}] 概要: ${summary} | 编码索引: ${indexCode}\n`;
+            }
+        });
+        return { success: true, content: out };
+    }
     /** [剧情推进专用] $5 从纪要表本地数据读取概要和编码索引两列 */
     function formatSummaryIndexForPlot_ACU(allTablesJson) {
         try {
+            const override = formatSummaryVectorIndexRecallOverride_ACU();
+            if (override) {
+                logDebug_ACU('[剧情推进] formatSummaryIndexForPlot_ACU: 使用纪要向量索引召回覆盖结果');
+                return override;
+            }
             if (!allTablesJson || typeof allTablesJson !== 'object') {
                 logDebug_ACU('[剧情推进] formatSummaryIndexForPlot_ACU: 未获取到表格数据');
                 return { success: false, content: '纪要索引：未获取到表格数据。' };
@@ -17274,140 +17481,6 @@ $CONTENT
      * 保持与原 helpers-plot-runtime.ts 完全相同的公共接口
      */
     // 数据格式化
-
-    /**
-     * service/runtime/helpers-table-lock.ts — 表格锁定与索引
-     * 从 helpers-remaining.ts 拆出
-     */
-    function getTableLockScopeKey_ACU() {
-        const chatKey = (currentChatFileIdentifier_ACU || 'default').trim() || 'default';
-        const isolationKey = getCurrentIsolationKey_ACU() || '';
-        return `${chatKey}::${isolationKey}`;
-    }
-    function ensureTableLockStore_ACU() {
-        if (!settings_ACU.tableUpdateLocks || typeof settings_ACU.tableUpdateLocks !== 'object') {
-            settings_ACU.tableUpdateLocks = {};
-        }
-        if (!settings_ACU.specialIndexLocks || typeof settings_ACU.specialIndexLocks !== 'object') {
-            settings_ACU.specialIndexLocks = {};
-        }
-    }
-    function getTableLocksForSheet_ACU(sheetKey) {
-        const scopeKey = getTableLockScopeKey_ACU();
-        const bucket = settings_ACU?.tableUpdateLocks?.[scopeKey]?.[sheetKey] || {};
-        return {
-            rows: new Set(Array.isArray(bucket.rows) ? bucket.rows : []),
-            cols: new Set(Array.isArray(bucket.cols) ? bucket.cols : []),
-            cells: new Set(Array.isArray(bucket.cells) ? bucket.cells : []),
-        };
-    }
-    function saveTableLocksForSheet_ACU(sheetKey, lockState) {
-        if (!sheetKey)
-            return;
-        ensureTableLockStore_ACU();
-        const scopeKey = getTableLockScopeKey_ACU();
-        if (!settings_ACU.tableUpdateLocks[scopeKey])
-            settings_ACU.tableUpdateLocks[scopeKey] = {};
-        settings_ACU.tableUpdateLocks[scopeKey][sheetKey] = {
-            rows: Array.from(lockState.rows || []),
-            cols: Array.from(lockState.cols || []),
-            cells: Array.from(lockState.cells || []),
-        };
-        saveSettings_ACU();
-    }
-    function toggleRowLock_ACU(sheetKey, rowIndex) {
-        const lockState = getTableLocksForSheet_ACU(sheetKey);
-        if (lockState.rows.has(rowIndex))
-            lockState.rows.delete(rowIndex);
-        else
-            lockState.rows.add(rowIndex);
-        saveTableLocksForSheet_ACU(sheetKey, lockState);
-    }
-    function toggleColLock_ACU(sheetKey, colIndex) {
-        const lockState = getTableLocksForSheet_ACU(sheetKey);
-        if (lockState.cols.has(colIndex))
-            lockState.cols.delete(colIndex);
-        else
-            lockState.cols.add(colIndex);
-        saveTableLocksForSheet_ACU(sheetKey, lockState);
-    }
-    function toggleCellLock_ACU(sheetKey, rowIndex, colIndex) {
-        const lockState = getTableLocksForSheet_ACU(sheetKey);
-        const key = `${rowIndex}:${colIndex}`;
-        if (lockState.cells.has(key))
-            lockState.cells.delete(key);
-        else
-            lockState.cells.add(key);
-        saveTableLocksForSheet_ACU(sheetKey, lockState);
-    }
-    function isSpecialIndexLockEnabled_ACU(sheetKey) {
-        const scopeKey = getTableLockScopeKey_ACU();
-        const bucket = settings_ACU?.specialIndexLocks?.[scopeKey] || {};
-        if (typeof bucket[sheetKey] === 'boolean')
-            return bucket[sheetKey];
-        return true; // 默认锁定
-    }
-    function setSpecialIndexLockEnabled_ACU(sheetKey, enabled) {
-        if (!sheetKey)
-            return;
-        ensureTableLockStore_ACU();
-        const scopeKey = getTableLockScopeKey_ACU();
-        if (!settings_ACU.specialIndexLocks[scopeKey])
-            settings_ACU.specialIndexLocks[scopeKey] = {};
-        settings_ACU.specialIndexLocks[scopeKey][sheetKey] = !!enabled;
-        saveSettings_ACU();
-    }
-    function getSummaryIndexColumnIndex_ACU(table) {
-        try {
-            if (!table || !Array.isArray(table.content) || !Array.isArray(table.content[0]))
-                return -1;
-            const headers = table.content[0].slice(1);
-            if (!headers.length)
-                return -1;
-            let idx = headers.findIndex(h => {
-                if (typeof h !== 'string')
-                    return false;
-                return /编码|索引/.test(h);
-            });
-            if (idx === -1)
-                idx = headers.length - 1;
-            return idx;
-        }
-        catch (e) {
-            return -1;
-        }
-    }
-    function formatSummaryIndexCode_ACU(num) {
-        const n = Math.max(1, parseInt(num, 10) || 1);
-        return `AM${String(n).padStart(4, '0')}`;
-    }
-    function applySummaryIndexSequenceToTable_ACU(table, colIndex) {
-        if (!table || !Array.isArray(table.content) || colIndex < 0)
-            return;
-        for (let i = 1; i < table.content.length; i++) {
-            const row = table.content[i];
-            if (!Array.isArray(row))
-                continue;
-            row[colIndex + 1] = formatSummaryIndexCode_ACU(i);
-        }
-    }
-    function applySpecialIndexSequenceToSummaryTables_ACU(dataObj) {
-        if (!dataObj || typeof dataObj !== 'object')
-            return;
-        Object.keys(dataObj).forEach(sheetKey => {
-            if (!sheetKey.startsWith('sheet_'))
-                return;
-            const table = dataObj[sheetKey];
-            if (!table || !isSummaryOrOutlineTable_ACU(table.name))
-                return;
-            if (!isSpecialIndexLockEnabled_ACU(sheetKey))
-                return;
-            const colIndex = getSummaryIndexColumnIndex_ACU(table);
-            if (colIndex < 0)
-                return;
-            applySummaryIndexSequenceToTable_ACU(table, colIndex);
-        });
-    }
 
     /**
      * service/runtime/helpers-remaining.ts — 辅助函数集入口文件
@@ -19345,7 +19418,10 @@ $CONTENT
                 const names = [];
                 const plans = [];
                 const entries = [];
-                const fullTable = buildMarkdownTableFromRows_ACU(extraIndexSpec.indexCols, extraIndexSpec.indexRows);
+                const summaryVectorIndexOverride = worldbookConfig?.summaryVectorIndexModeEnabled === true && extraIndexSpec.entryName === '纪要索引'
+                    ? formatSummaryVectorIndexRecallOverride_ACU()
+                    : null;
+                const fullTable = summaryVectorIndexOverride?.content || buildMarkdownTableFromRows_ACU(extraIndexSpec.indexCols, extraIndexSpec.indexRows);
                 const fallbackTemplate = `# ${extraIndexSpec.entryName}\n\n$1`;
                 // 自定义表格导出的附加索引条目：在注释名中加入统一标记，便于在世界书 UI 中识别为"数据库生成条目"并默认隐藏
                 // [修复] 外部导入时只使用"外部导入-"前缀
@@ -22177,8 +22253,9 @@ $CONTENT
                 vectorConfig.topK = defaultVectorMemoryConfig_ACU.topK;
                 vectorConfig.minScore = defaultVectorMemoryConfig_ACU.minScore;
                 vectorConfig.summaryPromptGroup = JSON.parse(JSON.stringify(defaultVectorMemoryConfig_ACU.summaryPromptGroup || []));
+                vectorConfig.keywordPromptGroup = JSON.parse(JSON.stringify(defaultVectorMemoryConfig_ACU.keywordPromptGroup || []));
                 vectorConfig.defaultsRefreshVersion = VECTOR_MEMORY_DEFAULTS_REFRESH_VERSION_ACU;
-                logDebug_ACU(`[向量记忆] 已刷新默认归档/召回参数: ${VECTOR_MEMORY_DEFAULTS_REFRESH_VERSION_ACU}`);
+                logDebug_ACU(`[向量记忆] 已刷新默认归档/召回/关键词参数: ${VECTOR_MEMORY_DEFAULTS_REFRESH_VERSION_ACU}`);
             }
         }
         refreshDefaultTableTemplateOnce_ACU(activeCode);
@@ -22493,10 +22570,25 @@ $CONTENT
     function setZeroTkOccupyMode_ACU(modeEnabled) {
         const cfg = getCurrentWorldbookConfig_ACU();
         cfg.zeroTkOccupyMode = !!modeEnabled;
+        if (cfg.zeroTkOccupyMode) {
+            cfg.summaryVectorIndexModeEnabled = false;
+        }
         cfg.outlineEntryEnabled = !cfg.zeroTkOccupyMode;
         settings_ACU.zeroTkOccupyModeDefault = !!modeEnabled;
         globalMeta_ACU.zeroTkOccupyModeGlobal = !!modeEnabled;
         saveGlobalMeta_ACU();
+        saveSettings_ACU();
+    }
+    function setSummaryVectorIndexMode_ACU(modeEnabled) {
+        const cfg = getCurrentWorldbookConfig_ACU();
+        cfg.summaryVectorIndexModeEnabled = !!modeEnabled;
+        if (cfg.summaryVectorIndexModeEnabled) {
+            cfg.zeroTkOccupyMode = false;
+            cfg.outlineEntryEnabled = true;
+        }
+        else {
+            cfg.outlineEntryEnabled = !cfg.zeroTkOccupyMode;
+        }
         saveSettings_ACU();
     }
     // ============================================================
@@ -22803,6 +22895,137 @@ $CONTENT
         finalizeAutoMerge_ACU: finalizeAutoMerge_ACU,
         prepareAutoMergeBatches_ACU: prepareAutoMergeBatches_ACU
     });
+
+    function normalizeText_ACU$4(value) {
+        return String(value ?? '').trim();
+    }
+    function normalizeFiniteNumberArray_ACU(values) {
+        if (!Array.isArray(values))
+            return [];
+        return values
+            .map((value) => Number(value))
+            .filter((value) => Number.isFinite(value));
+    }
+    function normalizeChunk_ACU(chunk) {
+        const chunkId = normalizeText_ACU$4(chunk?.chunkId);
+        const rowKey = normalizeText_ACU$4(chunk?.rowKey);
+        const text = normalizeText_ACU$4(chunk?.text);
+        const vector = normalizeFiniteNumberArray_ACU(chunk?.vector);
+        const sequenceNumber = Number(chunk?.sequence);
+        if (!chunkId || !rowKey || !text || vector.length === 0) {
+            return null;
+        }
+        return {
+            chunkId,
+            rowKey,
+            text,
+            vector,
+            sequence: Number.isFinite(sequenceNumber) && sequenceNumber >= 0 ? Math.floor(sequenceNumber) : 0,
+        };
+    }
+    function normalizeRow_ACU(row) {
+        const rowKey = normalizeText_ACU$4(row?.rowKey);
+        const rowId = normalizeText_ACU$4(row?.rowId);
+        const rowOrderNumber = Number(row?.rowOrder);
+        const summary = normalizeText_ACU$4(row?.summary);
+        const indexCode = normalizeText_ACU$4(row?.indexCode);
+        const vectorSourceText = normalizeText_ACU$4(row?.vectorSourceText);
+        const chunkIds = Array.isArray(row?.chunkIds)
+            ? row.chunkIds.map((item) => normalizeText_ACU$4(item)).filter(Boolean)
+            : [];
+        if (!rowKey || !rowId || !summary || !indexCode || chunkIds.length === 0) {
+            return null;
+        }
+        return {
+            rowKey,
+            rowId,
+            rowOrder: Number.isFinite(rowOrderNumber) && rowOrderNumber >= 0 ? Math.floor(rowOrderNumber) : 0,
+            summary,
+            indexCode,
+            vectorSourceText,
+            chunkIds,
+        };
+    }
+    function normalizeSummaryVectorIndexState_ACU(state) {
+        if (!state || typeof state !== 'object' || Array.isArray(state)) {
+            return null;
+        }
+        const snapshotMessageId = normalizeText_ACU$4(state.snapshotMessageId);
+        const sourceTableKey = normalizeText_ACU$4(state.sourceTableKey);
+        const sourceTableName = normalizeText_ACU$4(state.sourceTableName);
+        const indexedAt = normalizeText_ACU$4(state.indexedAt);
+        const normalizedRows = Array.isArray(state.rows)
+            ? state.rows
+                .map((row) => normalizeRow_ACU(row))
+                .filter((row) => !!row)
+            : [];
+        const rows = normalizedRows.sort((a, b) => a.rowOrder - b.rowOrder);
+        const rowKeySet = new Set(rows.map((row) => row.rowKey));
+        const normalizedChunks = Array.isArray(state.chunks)
+            ? state.chunks
+                .map((chunk) => normalizeChunk_ACU(chunk))
+                .filter((chunk) => !!chunk && rowKeySet.has(chunk.rowKey))
+            : [];
+        const chunks = normalizedChunks.sort((a, b) => a.sequence - b.sequence);
+        if (!snapshotMessageId || !sourceTableKey || !sourceTableName || !indexedAt || rows.length === 0 || chunks.length === 0) {
+            return null;
+        }
+        const skippedRowCount = Number(state.skippedRowCount);
+        return {
+            schemaVersion: 1,
+            snapshotMessageId,
+            sourceTableKey,
+            sourceTableName,
+            indexedAt,
+            rowCount: rows.length,
+            chunkCount: chunks.length,
+            skippedRowCount: Number.isFinite(skippedRowCount) && skippedRowCount >= 0 ? Math.floor(skippedRowCount) : 0,
+            rows,
+            chunks,
+        };
+    }
+    function getSummaryVectorIndexStateFromTagData_ACU(tagData) {
+        return normalizeSummaryVectorIndexState_ACU(tagData?.summaryVectorIndexState);
+    }
+    function assignSummaryVectorIndexStateToTagData_ACU(tagData, state) {
+        const normalized = normalizeSummaryVectorIndexState_ACU(state);
+        if (normalized) {
+            tagData.summaryVectorIndexState = normalized;
+        }
+        else {
+            delete tagData.summaryVectorIndexState;
+        }
+        return tagData;
+    }
+    function getActiveSummaryVectorIndexSnapshot_ACU() {
+        const chat = getChatArray_ACU();
+        if (!Array.isArray(chat) || chat.length === 0) {
+            return null;
+        }
+        const isolationKey = getCurrentIsolationKey_ACU();
+        if (typeof isolationKey !== 'string') {
+            return null;
+        }
+        for (let index = chat.length - 1; index >= 0; index -= 1) {
+            const message = chat[index];
+            if (!message || message.is_user === true) {
+                continue;
+            }
+            const tagData = readIsolatedTagData_ACU(message, isolationKey);
+            const summaryVectorIndexState = getSummaryVectorIndexStateFromTagData_ACU(tagData);
+            if (!summaryVectorIndexState) {
+                continue;
+            }
+            return {
+                messageIndex: index,
+                message,
+                isolationKey,
+                tagData,
+                summaryVectorIndexState,
+            };
+        }
+        return null;
+    }
 
     // toast.ts — presentation 层 toast 通知（含主题样式注入+消息过滤+去重）
     // 核心逻辑原位于 service/runtime/toast-service.ts，已搬回 presentation 层
@@ -24822,6 +25045,9 @@ $CONTENT
                 // UI 是"0TK占用模式"
                 const modeEnabled = jQuery_API_ACU(this).is(':checked');
                 setZeroTkOccupyMode_ACU(modeEnabled);
+                if (modeEnabled) {
+                    $popupInstance_ACU.find(`#${SCRIPT_ID_PREFIX_ACU}-worldbook-summary-vector-index-mode-enabled`).prop('checked', false);
+                }
                 showToastr_ACU('info', `0TK占用模式已${modeEnabled ? '启用' : '禁用'}（世界书中该条目显示为 ${modeEnabled ? '禁用' : '启用'}）。`);
                 // 尝试立即同步世界书条目 enabled 状态（不强制全量更新）
                 try {
@@ -24852,6 +25078,23 @@ $CONTENT
                 catch (e) {
                     logWarn_ACU('Failed to sync outline entry enabled state immediately:', e);
                 }
+            });
+        }
+        const $summaryVectorIndexModeToggle = $popupInstance_ACU.find(`#${SCRIPT_ID_PREFIX_ACU}-worldbook-summary-vector-index-mode-enabled`);
+        if ($summaryVectorIndexModeToggle.length) {
+            $summaryVectorIndexModeToggle.off('change.acu_summary_vector_index_mode').on('change.acu_summary_vector_index_mode', function () {
+                const modeEnabled = jQuery_API_ACU(this).is(':checked');
+                setSummaryVectorIndexMode_ACU(modeEnabled);
+                if (modeEnabled) {
+                    $popupInstance_ACU.find(`#${SCRIPT_ID_PREFIX_ACU}-worldbook-outline-entry-enabled`).prop('checked', false);
+                }
+                const activeSnapshot = getActiveSummaryVectorIndexSnapshot_ACU();
+                const hasArchive = !!activeSnapshot?.summaryVectorIndexState;
+                showToastr_ACU(hasArchive || !modeEnabled ? 'info' : 'warning', modeEnabled
+                    ? hasArchive
+                        ? '向量混合交火增强方案已启用。请确认已配置好向量模型以及 rerank 模型；发送前将跳过普通远记忆召回，并使用已归档纪要索引筛选概要索引。'
+                        : '向量混合交火增强方案已启用。请确认已配置好向量模型以及 rerank 模型；当前聊天尚无纪要向量索引归档，旧对话请先点击“立即执行远记忆归档”。'
+                    : '向量混合交火增强方案已禁用，概要索引将回到原本的全量纪要表流程。');
             });
         }
         // [新增] 全选/全不选事件
@@ -28533,6 +28776,18 @@ $CONTENT
                 mode = (worldbookConfig.outlineEntryEnabled === false);
             $outlineToggle.prop('checked', mode === true);
         }
+        setChecked('worldbook-summary-vector-index-mode-enabled', worldbookConfig.summaryVectorIndexModeEnabled === true);
+        const $summaryVectorIndexHint = find('summary-vector-index-archive-hint');
+        if ($summaryVectorIndexHint.length) {
+            const summaryVectorIndexEnabled = worldbookConfig.summaryVectorIndexModeEnabled === true;
+            const activeSummaryVectorIndexSnapshot = getActiveSummaryVectorIndexSnapshot_ACU();
+            const hasSummaryVectorIndexArchive = !!activeSummaryVectorIndexSnapshot?.summaryVectorIndexState;
+            $summaryVectorIndexHint.text(summaryVectorIndexEnabled
+                ? hasSummaryVectorIndexArchive
+                    ? `向量混合交火增强方案已启用；当前可用归档：${activeSummaryVectorIndexSnapshot?.summaryVectorIndexState?.rowCount || 0} 条纪要，${activeSummaryVectorIndexSnapshot?.summaryVectorIndexState?.chunkCount || 0} 个 chunks。请确认已配置好向量模型以及 rerank 模型。`
+                    : '向量混合交火增强方案已启用，但当前聊天尚无纪要向量索引归档；请确认已配置好向量模型以及 rerank 模型，旧对话请先点击“立即执行远记忆归档”。'
+                : '使用前请先配置好向量模型以及 rerank 模型；开启后会自动使用向量能力筛选概要索引，并跳过普通远记忆召回流程；旧对话需要点击“立即执行远记忆归档”按钮完成纪要向量索引归档。');
+        }
         if ($useMainApiCheckbox_ACU) {
             $useMainApiCheckbox_ACU.prop('checked', s.apiConfig.useMainApi);
             if (typeof updateCustomApiInputsState_ACU === 'function')
@@ -29154,6 +29409,13 @@ $CONTENT
                 return 'auto_standard';
         }
     }
+    function shouldPersistSequenceAdjustedSheet_ACU(targetSheetKeys, sheetKey) {
+        if (!Array.isArray(targetSheetKeys))
+            return true;
+        if (targetSheetKeys.length === 0)
+            return false;
+        return targetSheetKeys.includes(sheetKey);
+    }
     /**
      * 执行单次卡片更新的核心逻辑（AI调用 + 重试 + 解析 + 保存）
      * 纯业务逻辑，不驱动 UI。通过可选的 onProgress 回调传递纯数据进度事件。
@@ -29215,6 +29477,12 @@ $CONTENT
                     if (!parseSuccess) {
                         throw new Error('解析或应用AI更新时出错');
                     }
+                    applySpecialIndexSequenceToSummaryTables_ACU(currentJsonTableData_ACU);
+                    const sequenceAdjustedKeys = getSortedSheetKeys_ACU(currentJsonTableData_ACU).filter((sheetKey) => {
+                        const table = currentJsonTableData_ACU?.[sheetKey];
+                        return table && isSummaryOrOutlineTable_ACU(table.name) && shouldPersistSequenceAdjustedSheet_ACU(targetSheetKeys, sheetKey);
+                    });
+                    modifiedKeys = [...new Set([...(modifiedKeys || []), ...sequenceAdjustedKeys])];
                     success = true;
                     break;
                 }
@@ -36687,7 +36955,325 @@ $CONTENT
         }
     }
 
-    function normalizeText_ACU$1(value) {
+    function buildResult_ACU(partial = {}) {
+        return {
+            success: false,
+            skipped: false,
+            indexedRowCount: 0,
+            skippedRowCount: 0,
+            chunkCount: 0,
+            errors: [],
+            ...partial,
+        };
+    }
+    function normalizeText_ACU$3(value) {
+        return String(value ?? '').trim();
+    }
+    function resolveColumnIndexByAliases_ACU(headerRow, aliases, fallbackIndex = -1) {
+        const normalizedAliases = aliases.map((item) => normalizeText_ACU$3(item).replace(/\s+/g, ''));
+        const index = (Array.isArray(headerRow) ? headerRow : []).findIndex((header) => normalizedAliases.includes(normalizeText_ACU$3(header).replace(/\s+/g, '')));
+        return index >= 0 ? index : fallbackIndex;
+    }
+    function findSummaryTable_ACU() {
+        if (!currentJsonTableData_ACU || typeof currentJsonTableData_ACU !== 'object') {
+            return null;
+        }
+        const summaryKey = Object.keys(currentJsonTableData_ACU).find((key) => {
+            const table = currentJsonTableData_ACU[key];
+            return !!table?.name && isSummaryOrOutlineTable_ACU(String(table.name || ''));
+        });
+        if (!summaryKey)
+            return null;
+        const table = currentJsonTableData_ACU[summaryKey];
+        if (!table || !Array.isArray(table.content))
+            return null;
+        return {
+            summaryKey,
+            table,
+        };
+    }
+    function splitSentences_ACU(text) {
+        const normalized = normalizeText_ACU$3(text);
+        if (!normalized)
+            return [];
+        const matches = normalized.match(/[^。！？!?；;\n]+[。！？!?；;]?/g);
+        const sentences = Array.isArray(matches)
+            ? matches.map((item) => normalizeText_ACU$3(item)).filter(Boolean)
+            : [normalized];
+        return sentences.length > 0 ? sentences : [normalized];
+    }
+    function chunkTextBySentenceCount_ACU(text, sentenceCount) {
+        const sentences = splitSentences_ACU(text);
+        const normalizedSentenceCount = Math.max(1, Math.floor(Number(sentenceCount) || 2));
+        const chunks = [];
+        for (let index = 0; index < sentences.length; index += normalizedSentenceCount) {
+            const chunkText = normalizeText_ACU$3(sentences.slice(index, index + normalizedSentenceCount).join(''));
+            if (chunkText)
+                chunks.push(chunkText);
+        }
+        return chunks;
+    }
+    function buildPreparedRows_ACU(table, summaryKey, snapshotMessageId) {
+        const content = Array.isArray(table?.content) ? table.content : [];
+        const headerRow = Array.isArray(content[0]) ? content[0] : [];
+        const summaryColIdx = resolveColumnIndexByAliases_ACU(headerRow, ['概要', '概览', '概述', '摘要']);
+        const indexColIdx = resolveColumnIndexByAliases_ACU(headerRow, ['编码索引']);
+        if (summaryColIdx < 0) {
+            return { rows: [], skippedRowCount: 0, error: '纪要表缺少概要列，无法构建纪要向量索引。' };
+        }
+        if (indexColIdx < 0) {
+            return { rows: [], skippedRowCount: 0, error: '纪要表缺少编码索引列，无法构建纪要向量索引。' };
+        }
+        const dataRows = content.slice(1).filter((row) => Array.isArray(row));
+        const preparedRows = [];
+        let skippedRowCount = 0;
+        dataRows.forEach((row, rowIndex) => {
+            const rowId = normalizeText_ACU$3(row?.[0]) || String(rowIndex + 1);
+            const summary = normalizeText_ACU$3(row?.[summaryColIdx]);
+            const indexCode = normalizeText_ACU$3(row?.[indexColIdx]);
+            const sourceParts = [];
+            headerRow.forEach((header, colIndex) => {
+                if (colIndex === 0 || colIndex === summaryColIdx || colIndex === indexColIdx)
+                    return;
+                const headerText = normalizeText_ACU$3(header);
+                const cellText = normalizeText_ACU$3(row?.[colIndex]);
+                if (!headerText || !cellText)
+                    return;
+                sourceParts.push(`${headerText}: ${cellText}`);
+            });
+            const vectorSourceText = normalizeText_ACU$3(sourceParts.join('\n'));
+            if (!summary || !indexCode || !vectorSourceText) {
+                skippedRowCount += 1;
+                return;
+            }
+            preparedRows.push({
+                rowKey: `${snapshotMessageId}:${summaryKey}:${rowId}`,
+                rowId,
+                rowOrder: rowIndex,
+                summary,
+                indexCode,
+                vectorSourceText,
+            });
+        });
+        return { rows: preparedRows, skippedRowCount, error: '' };
+    }
+    function resolveTargetMessageIndex_ACU(preferredIndex) {
+        const chat = getChatArray_ACU();
+        if (!Array.isArray(chat) || chat.length === 0) {
+            return -1;
+        }
+        if (typeof preferredIndex === 'number' && preferredIndex >= 0 && chat[preferredIndex] && !chat[preferredIndex].is_user) {
+            return preferredIndex;
+        }
+        return getLatestAiMessageIndexFromChat_ACU(chat);
+    }
+    async function buildChunksWithEmbeddings_ACU(rows, options) {
+        const chunkSources = [];
+        rows.forEach((row, rowIndex) => {
+            const rowChunkTexts = chunkTextBySentenceCount_ACU(row.vectorSourceText, options.sentenceCount);
+            rowChunkTexts.forEach((text, chunkIndex) => {
+                chunkSources.push({
+                    chunkId: `${row.rowKey}:chunk:${chunkIndex}`,
+                    rowKey: row.rowKey,
+                    rowIndex,
+                    text,
+                    sequence: chunkSources.length,
+                });
+            });
+        });
+        if (chunkSources.length === 0) {
+            return { rows: [], chunks: [] };
+        }
+        const embeddings = await createEmbeddings_ACU({
+            endpoint: options.embeddingEndpoint,
+            apiKey: options.embeddingApiKey,
+            model: options.embeddingModel,
+            input: chunkSources.map((item) => item.text),
+        });
+        const embeddingMap = new Map();
+        embeddings.forEach((item) => {
+            if (Array.isArray(item.embedding) && item.embedding.length > 0) {
+                embeddingMap.set(item.index, item.embedding);
+            }
+        });
+        const chunks = [];
+        const rowChunkIds = new Map();
+        chunkSources.forEach((source, index) => {
+            const vector = embeddingMap.get(index) || [];
+            if (vector.length === 0)
+                return;
+            chunks.push({
+                chunkId: source.chunkId,
+                rowKey: source.rowKey,
+                text: source.text,
+                vector,
+                sequence: source.sequence,
+            });
+            const ids = rowChunkIds.get(source.rowKey) || [];
+            ids.push(source.chunkId);
+            rowChunkIds.set(source.rowKey, ids);
+        });
+        const indexedRows = rows
+            .map((row) => ({
+            rowKey: row.rowKey,
+            rowId: row.rowId,
+            rowOrder: row.rowOrder,
+            summary: row.summary,
+            indexCode: row.indexCode,
+            vectorSourceText: row.vectorSourceText,
+            chunkIds: rowChunkIds.get(row.rowKey) || [],
+        }))
+            .filter((row) => row.chunkIds.length > 0);
+        return { rows: indexedRows, chunks };
+    }
+    async function archiveSummaryVectorIndexNow_ACU(options = {}) {
+        const config = getEffectiveSummaryVectorIndexConfig_ACU();
+        const validation = validateSummaryVectorIndexConfig_ACU(config);
+        if (!validation.valid) {
+            return buildResult_ACU({
+                success: false,
+                reason: 'summary_vector_index_config_invalid',
+                errors: validation.errors,
+            });
+        }
+        const selectedSummary = findSummaryTable_ACU();
+        if (!selectedSummary) {
+            return buildResult_ACU({
+                success: true,
+                skipped: true,
+                reason: 'summary_table_not_found',
+            });
+        }
+        const targetMessageIndex = resolveTargetMessageIndex_ACU(options.targetMessageIndex);
+        if (targetMessageIndex < 0) {
+            return buildResult_ACU({
+                success: false,
+                reason: 'target_message_not_found',
+                errors: ['未找到可写入纪要向量索引的 AI 楼层。'],
+            });
+        }
+        const chat = getChatArray_ACU();
+        const targetMessage = chat[targetMessageIndex];
+        if (!targetMessage || targetMessage.is_user) {
+            return buildResult_ACU({
+                success: false,
+                reason: 'target_message_invalid',
+                errors: ['目标楼层不是可写入的 AI 消息。'],
+            });
+        }
+        const snapshotAnchor = resolveRemoteMemorySnapshotAnchor_ACU(chat, targetMessageIndex);
+        if (!snapshotAnchor?.anchor) {
+            return buildResult_ACU({
+                success: false,
+                reason: 'snapshot_anchor_unresolved',
+                errors: ['目标楼层缺少可用的本地聊天记录锚点，无法写入纪要向量索引。'],
+            });
+        }
+        const snapshotMessageId = snapshotAnchor.anchor;
+        const prepared = buildPreparedRows_ACU(selectedSummary.table, selectedSummary.summaryKey, snapshotMessageId);
+        if (prepared.error) {
+            return buildResult_ACU({
+                success: false,
+                summaryKey: selectedSummary.summaryKey,
+                messageIndex: targetMessageIndex,
+                reason: 'summary_vector_index_prepare_failed',
+                errors: [prepared.error],
+            });
+        }
+        if (prepared.rows.length === 0) {
+            return buildResult_ACU({
+                success: true,
+                skipped: true,
+                summaryKey: selectedSummary.summaryKey,
+                messageIndex: targetMessageIndex,
+                skippedRowCount: prepared.skippedRowCount,
+                reason: 'no_effective_rows',
+            });
+        }
+        try {
+            const embedded = await buildChunksWithEmbeddings_ACU(prepared.rows, {
+                snapshotMessageId,
+                sentenceCount: config.summaryIndexChunkSentenceCount,
+                embeddingEndpoint: config.embeddingEndpoint,
+                embeddingApiKey: config.embeddingApiKey,
+                embeddingModel: config.embeddingModel,
+            });
+            if (embedded.rows.length === 0 || embedded.chunks.length === 0) {
+                return buildResult_ACU({
+                    success: false,
+                    summaryKey: selectedSummary.summaryKey,
+                    messageIndex: targetMessageIndex,
+                    reason: 'embedding_empty',
+                    errors: ['纪要向量索引 embedding 结果为空。'],
+                });
+            }
+            const indexedAt = new Date().toISOString();
+            const state = {
+                schemaVersion: 1,
+                snapshotMessageId,
+                sourceTableKey: selectedSummary.summaryKey,
+                sourceTableName: normalizeText_ACU$3(selectedSummary.table?.name) || '纪要表',
+                indexedAt,
+                rowCount: embedded.rows.length,
+                chunkCount: embedded.chunks.length,
+                skippedRowCount: prepared.skippedRowCount + (prepared.rows.length - embedded.rows.length),
+                rows: embedded.rows,
+                chunks: embedded.chunks,
+            };
+            const isolationKey = getCurrentIsolationKey_ACU();
+            const existingTagData = readIsolatedTagData_ACU(targetMessage, isolationKey) || {
+                independentData: {},
+                modifiedKeys: [],
+                updateGroupKeys: [],
+            };
+            const nextIsolatedData = cloneIsolatedData_ACU(targetMessage);
+            const nextTagData = {
+                independentData: existingTagData.independentData || {},
+                modifiedKeys: Array.isArray(existingTagData.modifiedKeys) ? [...existingTagData.modifiedKeys] : [],
+                updateGroupKeys: Array.isArray(existingTagData.updateGroupKeys) ? [...existingTagData.updateGroupKeys] : [],
+                ...(existingTagData.vectorMemoryState ? { vectorMemoryState: existingTagData.vectorMemoryState } : {}),
+                ...(existingTagData._acu_base_state ? { _acu_base_state: existingTagData._acu_base_state } : {}),
+            };
+            assignSummaryVectorIndexStateToTagData_ACU(nextTagData, state);
+            nextIsolatedData[isolationKey] = nextTagData;
+            targetMessage.TavernDB_ACU_IsolatedData = nextIsolatedData;
+            writeIsolatedTagData_ACU(targetMessage, isolationKey, nextTagData);
+            persistRemoteMemorySnapshotAnchorIfNeeded_ACU(targetMessage, snapshotAnchor);
+            writeMessageIdentity_ACU(targetMessage, {
+                enabled: settings_ACU.dataIsolationEnabled,
+                code: settings_ACU.dataIsolationCode,
+            });
+            writeLegacyCompatData_ACU(targetMessage, nextTagData.independentData || {}, nextTagData.modifiedKeys || [], nextTagData.updateGroupKeys || []);
+            await saveChatToHost_ACU();
+            return buildResult_ACU({
+                success: true,
+                skipped: false,
+                indexedRowCount: state.rowCount,
+                skippedRowCount: state.skippedRowCount,
+                chunkCount: state.chunkCount,
+                messageIndex: targetMessageIndex,
+                summaryKey: selectedSummary.summaryKey,
+                reason: 'archived_summary_vector_index',
+            });
+        }
+        catch (error) {
+            logWarn_ACU('[纪要向量索引] 归档失败，未修改纪要表原条目:', error);
+            return buildResult_ACU({
+                success: false,
+                skipped: false,
+                summaryKey: selectedSummary.summaryKey,
+                messageIndex: targetMessageIndex,
+                reason: 'summary_vector_index_archive_failed',
+                errors: [normalizeText_ACU$3(error?.message) || '纪要向量索引归档失败'],
+            });
+        }
+    }
+    function buildSummaryVectorIndexBatchId_ACU(state) {
+        const source = `${state.snapshotMessageId}:${state.sourceTableKey}:${state.indexedAt}:${state.rowCount}:${state.chunkCount}`;
+        return `summary-vector-index:${hashUserInput_ACU(source)}`;
+    }
+
+    function normalizeText_ACU$2(value) {
         return String(value ?? '').trim();
     }
     function cloneBatches_ACU(batches) {
@@ -36704,14 +37290,14 @@ $CONTENT
         const snapshotAnchor = resolveRemoteMemorySnapshotAnchor_ACU(chat, snapshot.messageIndex);
         return {
             messageIndex: snapshot.messageIndex,
-            messageId: snapshotAnchor?.anchor || normalizeText_ACU$1(snapshot.message?.message_id),
+            messageId: snapshotAnchor?.anchor || normalizeText_ACU$2(snapshot.message?.message_id),
             vectorState: snapshot.vectorState,
             batches: cloneBatches_ACU(snapshot.vectorState.remoteMemoryBatches),
         };
     }
     async function saveEditedRemoteMemoryBatch_ACU(params) {
-        const batchId = normalizeText_ACU$1(params?.batchId);
-        const summaryText = normalizeText_ACU$1(params?.summaryText);
+        const batchId = normalizeText_ACU$2(params?.batchId);
+        const summaryText = normalizeText_ACU$2(params?.summaryText);
         if (!batchId) {
             return {
                 saved: false,
@@ -36759,7 +37345,7 @@ $CONTENT
             };
         }
         const sourceBatches = cloneBatches_ACU(snapshotView.batches);
-        const targetBatchIndex = sourceBatches.findIndex((batch) => normalizeText_ACU$1(batch?.batchId) === batchId);
+        const targetBatchIndex = sourceBatches.findIndex((batch) => normalizeText_ACU$2(batch?.batchId) === batchId);
         if (targetBatchIndex < 0) {
             return {
                 saved: false,
@@ -36820,7 +37406,7 @@ $CONTENT
         };
     }
     async function deleteRemoteMemoryBatch_ACU(params) {
-        const batchId = normalizeText_ACU$1(params?.batchId);
+        const batchId = normalizeText_ACU$2(params?.batchId);
         if (!batchId) {
             return {
                 deleted: false,
@@ -36845,7 +37431,7 @@ $CONTENT
             };
         }
         const sourceBatches = cloneBatches_ACU(snapshotView.batches);
-        const targetBatchIndex = sourceBatches.findIndex((batch) => normalizeText_ACU$1(batch?.batchId) === batchId);
+        const targetBatchIndex = sourceBatches.findIndex((batch) => normalizeText_ACU$2(batch?.batchId) === batchId);
         if (targetBatchIndex < 0) {
             return {
                 deleted: false,
@@ -36877,7 +37463,7 @@ $CONTENT
                 errors: ['目标楼层缺少可用的远记忆快照锚点，无法删除远记忆。'],
             };
         }
-        const nextBatches = sourceBatches.filter((batch) => normalizeText_ACU$1(batch?.batchId) !== batchId);
+        const nextBatches = sourceBatches.filter((batch) => normalizeText_ACU$2(batch?.batchId) !== batchId);
         const snapshotMessageId = snapshotAnchor.anchor;
         const nextVectorState = replaceVectorRemoteMemoryBatches_ACU(snapshotView.vectorState, nextBatches, {
             snapshotMessageId,
@@ -37199,6 +37785,40 @@ $CONTENT
                 }
                 if (archiveAbortController.signal.aborted) {
                     showToastr_ACU('info', '已终止远记忆归档，未提交新的归档结果。');
+                    return;
+                }
+                const summaryVectorIndexModeEnabled = getCurrentWorldbookConfig_ACU()?.summaryVectorIndexModeEnabled === true;
+                if (summaryVectorIndexModeEnabled) {
+                    updateRemoteMemoryArchiveProgressOverlay_ACU('保存完成，正在构建纪要向量索引归档（不会删除纪要表条目）...');
+                    const archiveResult = await archiveSummaryVectorIndexNow_ACU({
+                        targetMessageIndex: persistResult.messageIndex,
+                    });
+                    logWarn_ACU('[纪要向量索引] 手动归档返回结果:', archiveResult);
+                    if (archiveResult.success && !archiveResult.skipped && archiveResult.indexedRowCount > 0) {
+                        const successMessage = `纪要向量索引归档完成：索引 ${archiveResult.indexedRowCount} 条纪要，chunks=${archiveResult.chunkCount}，已保留纪要表原条目`;
+                        if (archiveResult.skippedRowCount > 0) {
+                            showToastr_ACU('warning', `${successMessage}；跳过 ${archiveResult.skippedRowCount} 条缺少概要、编码索引或可向量化内容的纪要。`);
+                            return;
+                        }
+                        showToastr_ACU('success', successMessage);
+                        return;
+                    }
+                    if (archiveResult.success && archiveResult.skipped) {
+                        const skipReasonText = archiveResult.reason === 'no_effective_rows'
+                            ? '纪要表暂无可构建纪要向量索引的有效条目。'
+                            : archiveResult.reason === 'summary_table_not_found'
+                                ? '未找到纪要表，无法构建纪要向量索引。'
+                                : '当前没有可归档的纪要向量索引条目。';
+                        showToastr_ACU('info', skipReasonText);
+                        return;
+                    }
+                    const archiveReasonText = String(archiveResult.reason || '').trim();
+                    const archiveDetailsText = archiveResult.errors.length > 0
+                        ? archiveResult.errors.join(' | ')
+                        : archiveReasonText
+                            ? `reason=${archiveReasonText}`
+                            : `返回结果=${JSON.stringify(archiveResult)}`;
+                    showToastr_ACU('error', `执行纪要向量索引归档失败：${archiveDetailsText}`);
                     return;
                 }
                 updateRemoteMemoryArchiveProgressOverlay_ACU('保存完成，正在执行远记忆归档检测与构建...');
@@ -40703,6 +41323,11 @@ insertRow(1, ["时间2", "大纲事件2...", "关键词"]);
                                 <label for="${SCRIPT_ID_PREFIX_ACU}-worldbook-outline-entry-enabled">0TK占用模式</label>
                             </div>
                             <small class="notes">0TK占用模式仍然作用于世界书注入链路，仅迁移到此处以提高可见性。</small>
+                            <div class="checkbox-group" style="margin-top: 6px;">
+                                <input type="checkbox" id="${SCRIPT_ID_PREFIX_ACU}-worldbook-summary-vector-index-mode-enabled">
+                                <label for="${SCRIPT_ID_PREFIX_ACU}-worldbook-summary-vector-index-mode-enabled">向量混合交火增强方案</label>
+                            </div>
+                            <small class="notes" id="${SCRIPT_ID_PREFIX_ACU}-summary-vector-index-archive-hint">使用前请先配置好向量模型以及 rerank 模型；开启后会自动使用向量能力筛选概要索引，并跳过普通远记忆召回流程；旧对话需要点击“立即执行远记忆归档”按钮完成纪要向量索引归档。</small>
 
                             <div class="acu-divider-dashed" style="margin: 4px 0;"></div>
                             <label class="acu-label">表格存储模式:</label>
@@ -43708,7 +44333,7 @@ insertRow(1, ["时间2", "大纲事件2...", "关键词"]);
         const windowId = `${SCRIPT_ID_PREFIX_ACU}-main-window`;
         createACUWindow({
             id: windowId,
-            title: 'SP·数据库 II',
+            title: 'SP·数据库 III',
             content: popupHtml,
             width: 1400, // 基础宽度
             height: 900, // 基础高度
@@ -43789,7 +44414,7 @@ insertRow(1, ["时间2", "大纲事件2...", "关键词"]);
             return true;
         }
         $menuItemContainer = jQuery_API_ACU(`<div class="extension_container interactable" id="${MENU_ITEM_CONTAINER_ID_ACU}" tabindex="0"></div>`);
-        const menuItemHTML = `<div class="list-group-item flex-container flexGap5 interactable" id="${MENU_ITEM_ID_ACU}" title="打开数据库自动更新工具"><div class="fa-fw fa-solid fa-database extensionsMenuExtensionButton"></div><span>SP·数据库 II</span></div>`;
+        const menuItemHTML = `<div class="list-group-item flex-container flexGap5 interactable" id="${MENU_ITEM_ID_ACU}" title="打开数据库自动更新工具"><div class="fa-fw fa-solid fa-database extensionsMenuExtensionButton"></div><span>SP·数据库 III</span></div>`;
         const $menuItem = jQuery_API_ACU(menuItemHTML);
         $menuItem.on(`click.${SCRIPT_ID_PREFIX_ACU}`, async function (e) {
             e.stopPropagation();
@@ -43808,7 +44433,7 @@ insertRow(1, ["时间2", "大纲事件2...", "关键词"]);
 
     const VECTOR_RECALL_USER_INPUT_CHAR_LIMIT_ACU = 500;
     const VECTOR_RECALL_KEYWORD_CHAR_LIMIT_ACU = 200;
-    function normalizeText_ACU(value) {
+    function normalizeText_ACU$1(value) {
         return typeof value === 'string'
             ? value.replace(/\r\n/g, '\n').replace(/\r/g, '\n').trim()
             : '';
@@ -43825,7 +44450,7 @@ insertRow(1, ["时间2", "大纲事件2...", "关键词"]);
         }
         return messages
             .map((message) => {
-            const text = normalizeText_ACU(message?.text);
+            const text = normalizeText_ACU$1(message?.text);
             if (!text) {
                 return null;
             }
@@ -43859,7 +44484,7 @@ insertRow(1, ["时间2", "大纲事件2...", "关键词"]);
         });
     }
     function sanitizeKeywordOutput_ACU(rawOutput) {
-        const normalized = normalizeText_ACU(rawOutput)
+        const normalized = normalizeText_ACU$1(rawOutput)
             .replace(/^```[a-zA-Z]*\n?/g, '')
             .replace(/```$/g, '')
             .replace(/^关键词[:：]\s*/i, '')
@@ -43883,7 +44508,7 @@ insertRow(1, ["时间2", "大纲事件2...", "关键词"]);
         return limitText_ACU(parts.join('，'), VECTOR_RECALL_KEYWORD_CHAR_LIMIT_ACU);
     }
     async function generateVectorRecallKeywords_ACU(input) {
-        const userInput = limitText_ACU(normalizeText_ACU(input?.userInput), VECTOR_RECALL_USER_INPUT_CHAR_LIMIT_ACU);
+        const userInput = limitText_ACU(normalizeText_ACU$1(input?.userInput), VECTOR_RECALL_USER_INPUT_CHAR_LIMIT_ACU);
         const promptContext = buildVectorRecallKeywordContext_ACU(input?.recentMessages);
         if (!userInput) {
             return {
@@ -44027,7 +44652,7 @@ insertRow(1, ["时间2", "大纲事件2...", "关键词"]);
         }
         return Math.max(1, Math.floor(topK));
     }
-    function normalizeMinScore_ACU(config) {
+    function normalizeMinScore_ACU$1(config) {
         const minScore = Number(config.minScore);
         if (!Number.isFinite(minScore)) {
             return 0;
@@ -44040,7 +44665,7 @@ insertRow(1, ["时间2", "大纲事件2...", "关键词"]);
         }
         return minScore;
     }
-    function normalizeCandidateLimit_ACU(config) {
+    function normalizeCandidateLimit_ACU$1(config) {
         const candidateLimit = Number(config.recallCandidateLimit);
         if (!Number.isFinite(candidateLimit) || candidateLimit <= 0) {
             return Math.max(normalizeTopK_ACU(config), 20);
@@ -44061,7 +44686,7 @@ insertRow(1, ["时间2", "大纲事件2...", "关键词"]);
             lastArchiveAt: typeof stateInput.lastArchiveAt === 'string' ? stateInput.lastArchiveAt : undefined,
         };
     }
-    function cosineSimilarity_ACU(left, right) {
+    function cosineSimilarity_ACU$1(left, right) {
         if (!Array.isArray(left) || !Array.isArray(right) || left.length === 0 || left.length !== right.length) {
             return -1;
         }
@@ -44096,11 +44721,11 @@ insertRow(1, ["时间2", "大纲事件2...", "关键词"]);
         return Array.from(new Set(ordered));
     }
     function collectScoredCandidates_ACU(state, queryEmbedding, config) {
-        const minScore = normalizeMinScore_ACU(config);
+        const minScore = normalizeMinScore_ACU$1(config);
         const candidates = [];
         (state.remoteMemoryBatches || []).forEach((batch) => {
             (batch?.chunks || []).forEach((chunk) => {
-                const score = cosineSimilarity_ACU(queryEmbedding, Array.isArray(chunk?.vector) ? chunk.vector : []);
+                const score = cosineSimilarity_ACU$1(queryEmbedding, Array.isArray(chunk?.vector) ? chunk.vector : []);
                 if (score >= minScore) {
                     candidates.push({ batch, chunk, score });
                 }
@@ -44108,7 +44733,7 @@ insertRow(1, ["时间2", "大纲事件2...", "关键词"]);
         });
         return candidates
             .sort((a, b) => b.score - a.score)
-            .slice(0, normalizeCandidateLimit_ACU(config));
+            .slice(0, normalizeCandidateLimit_ACU$1(config));
     }
     function collectRuleMatchedBatches_ACU(state, queryText) {
         const terms = extractQueryTerms_ACU(queryText);
@@ -44363,7 +44988,7 @@ insertRow(1, ["时间2", "大纲事件2...", "关键词"]);
             const chunkCandidates = collectScoredCandidates_ACU(state, queryEmbedding, config);
             const ruleMatchedBatches = collectRuleMatchedBatches_ACU(state, queryText);
             const heuristicCandidates = rerankBatchCandidates_ACU(chunkCandidates, ruleMatchedBatches)
-                .slice(0, normalizeCandidateLimit_ACU(config));
+                .slice(0, normalizeCandidateLimit_ACU$1(config));
             const warnings = [];
             let finalCandidates = heuristicCandidates;
             const rerankValidation = validateVectorMemoryRerankConfig_ACU(config);
@@ -44509,7 +45134,7 @@ insertRow(1, ["时间2", "大纲事件2...", "关键词"]);
             ...partial,
         };
     }
-    function buildCombinedRecallQuery_ACU(userInput, generatedKeywords) {
+    function buildCombinedRecallQuery_ACU$1(userInput, generatedKeywords) {
         const normalizedUserInput = typeof userInput === 'string' ? userInput.trim() : '';
         const normalizedKeywords = typeof generatedKeywords === 'string' ? generatedKeywords.trim() : '';
         const segments = [normalizedUserInput, normalizedKeywords]
@@ -44614,7 +45239,7 @@ insertRow(1, ["时间2", "大纲事件2...", "关键词"]);
                     shouldProceed: false,
                 });
             }
-            const combinedRecallQuery = buildCombinedRecallQuery_ACU(signature, recallQuery);
+            const combinedRecallQuery = buildCombinedRecallQuery_ACU$1(signature, recallQuery);
             if (!combinedRecallQuery) {
                 return buildVectorRecallOrchestrationResult_ACU({
                     intercepted: true,
@@ -44677,6 +45302,456 @@ insertRow(1, ["时间2", "大纲事件2...", "关键词"]);
                 signature,
                 blocking: true,
                 blockStage: 'orchestration_exception',
+                blockReason: errorMessage,
+                errors: [errorMessage],
+                shouldProceed: false,
+            });
+        }
+    }
+
+    function normalizeText_ACU(value) {
+        return typeof value === 'string' ? value.trim() : '';
+    }
+    function normalizeCandidateLimit_ACU(config) {
+        const limit = Number(config.summaryIndexCandidateLimit);
+        if (!Number.isFinite(limit) || limit <= 0) {
+            return 100;
+        }
+        return Math.max(1, Math.floor(limit));
+    }
+    function normalizeMinScore_ACU(config) {
+        const minScore = Number(config.summaryIndexMinScore);
+        if (!Number.isFinite(minScore)) {
+            return 0.4;
+        }
+        return Math.min(1, Math.max(0, minScore));
+    }
+    function cosineSimilarity_ACU(left, right) {
+        if (!Array.isArray(left) || !Array.isArray(right) || left.length === 0 || left.length !== right.length) {
+            return -1;
+        }
+        let dot = 0;
+        let leftNorm = 0;
+        let rightNorm = 0;
+        for (let index = 0; index < left.length; index += 1) {
+            const leftValue = Number(left[index]);
+            const rightValue = Number(right[index]);
+            if (!Number.isFinite(leftValue) || !Number.isFinite(rightValue)) {
+                return -1;
+            }
+            dot += leftValue * rightValue;
+            leftNorm += leftValue * leftValue;
+            rightNorm += rightValue * rightValue;
+        }
+        if (leftNorm <= 0 || rightNorm <= 0) {
+            return -1;
+        }
+        return dot / (Math.sqrt(leftNorm) * Math.sqrt(rightNorm));
+    }
+    function buildRowMap_ACU(rows) {
+        const rowMap = new Map();
+        rows.forEach((row) => {
+            const rowKey = normalizeText_ACU(row?.rowKey);
+            if (rowKey) {
+                rowMap.set(rowKey, row);
+            }
+        });
+        return rowMap;
+    }
+    function collectScoredChunkCandidates_ACU(state, queryEmbedding, config) {
+        const rowMap = buildRowMap_ACU(Array.isArray(state.rows) ? state.rows : []);
+        const minScore = normalizeMinScore_ACU(config);
+        const candidates = [];
+        (Array.isArray(state.chunks) ? state.chunks : []).forEach((chunk) => {
+            const row = rowMap.get(normalizeText_ACU(chunk?.rowKey));
+            if (!row) {
+                return;
+            }
+            const score = cosineSimilarity_ACU(queryEmbedding, Array.isArray(chunk?.vector) ? chunk.vector : []);
+            if (score >= minScore) {
+                candidates.push({ row, chunk, score });
+            }
+        });
+        return candidates.sort((left, right) => right.score - left.score);
+    }
+    function aggregateRowCandidates_ACU(chunkCandidates) {
+        const aggregated = new Map();
+        chunkCandidates.forEach((candidate) => {
+            const rowKey = normalizeText_ACU(candidate.row?.rowKey);
+            if (!rowKey) {
+                return;
+            }
+            const existing = aggregated.get(rowKey);
+            if (existing) {
+                existing.chunkMatches.push(candidate);
+                return;
+            }
+            aggregated.set(rowKey, {
+                row: candidate.row,
+                chunkMatches: [candidate],
+                maxChunkScore: 0,
+                avgChunkScore: 0,
+                finalScore: 0,
+            });
+        });
+        return Array.from(aggregated.values())
+            .map((candidate) => {
+            const scores = candidate.chunkMatches.map((item) => item.score).filter((score) => Number.isFinite(score));
+            const maxChunkScore = scores.length > 0 ? Math.max(...scores) : 0;
+            const avgChunkScore = scores.length > 0
+                ? scores.reduce((total, score) => total + score, 0) / scores.length
+                : 0;
+            const multiChunkBoost = scores.length > 1 ? Math.min(0.08, (scores.length - 1) * 0.02) : 0;
+            return {
+                ...candidate,
+                maxChunkScore,
+                avgChunkScore,
+                finalScore: maxChunkScore + multiChunkBoost,
+            };
+        })
+            .sort((left, right) => right.finalScore - left.finalScore);
+    }
+    function applyRerankScores_ACU(candidates, rerankResults) {
+        if (!Array.isArray(rerankResults) || rerankResults.length === 0) {
+            return candidates;
+        }
+        const rerankMap = new Map();
+        rerankResults.forEach((item) => {
+            const index = Number(item?.index);
+            const relevanceScore = Number(item?.relevanceScore);
+            if (!Number.isFinite(index) || index < 0 || !Number.isFinite(relevanceScore)) {
+                return;
+            }
+            rerankMap.set(Math.floor(index), relevanceScore);
+        });
+        return candidates
+            .map((candidate, originalIndex) => ({
+            candidate,
+            originalIndex,
+            rerankScore: rerankMap.get(originalIndex),
+        }))
+            .sort((left, right) => {
+            const leftHasRerank = Number.isFinite(left.rerankScore);
+            const rightHasRerank = Number.isFinite(right.rerankScore);
+            if (leftHasRerank && rightHasRerank) {
+                return Number(right.rerankScore) - Number(left.rerankScore);
+            }
+            if (leftHasRerank)
+                return -1;
+            if (rightHasRerank)
+                return 1;
+            return left.originalIndex - right.originalIndex;
+        })
+            .map(({ candidate, rerankScore }) => ({
+            ...candidate,
+            finalScore: Number.isFinite(rerankScore) ? Number(rerankScore) : candidate.finalScore,
+            rerankScore: Number.isFinite(rerankScore) ? Number(rerankScore) : undefined,
+        }));
+    }
+    function buildRecallMatches_ACU(candidates, limit) {
+        return candidates
+            .slice(0, limit)
+            .sort((left, right) => left.row.rowOrder - right.row.rowOrder)
+            .map((candidate) => {
+            const sortedChunks = [...candidate.chunkMatches].sort((left, right) => right.score - left.score);
+            const bestChunk = sortedChunks[0] || null;
+            return {
+                row: candidate.row,
+                score: candidate.finalScore,
+                maxChunkScore: candidate.maxChunkScore,
+                avgChunkScore: candidate.avgChunkScore,
+                matchedChunkIds: sortedChunks.map((item) => item.chunk.chunkId).filter(Boolean),
+                bestChunkText: normalizeText_ACU(bestChunk?.chunk?.text),
+                rerankScore: candidate.rerankScore,
+            };
+        });
+    }
+    async function recallSummaryVectorIndex_ACU(queryTextInput, stateInput, configInput) {
+        const queryText = normalizeText_ACU(queryTextInput);
+        const config = getEffectiveSummaryVectorIndexConfig_ACU(configInput);
+        const validation = validateSummaryVectorIndexConfig_ACU(config);
+        const state = stateInput && typeof stateInput === 'object' ? stateInput : null;
+        if (!queryText) {
+            return {
+                enabled: true,
+                skipped: true,
+                queryText,
+                matches: [],
+                errors: [],
+                warnings: [],
+            };
+        }
+        if (!validation.valid) {
+            return {
+                enabled: true,
+                skipped: true,
+                queryText,
+                matches: [],
+                errors: [...validation.errors],
+                warnings: [],
+            };
+        }
+        if (!state || !Array.isArray(state.rows) || state.rows.length === 0 || !Array.isArray(state.chunks) || state.chunks.length === 0) {
+            return {
+                enabled: true,
+                skipped: true,
+                queryText,
+                matches: [],
+                errors: [],
+                warnings: ['当前聊天没有可召回的纪要向量索引归档。'],
+            };
+        }
+        try {
+            const embeddings = await createEmbeddings_ACU({
+                endpoint: config.embeddingEndpoint,
+                apiKey: config.embeddingApiKey,
+                model: config.embeddingModel,
+                input: [queryText],
+            });
+            const queryEmbedding = embeddings[0]?.embedding;
+            if (!Array.isArray(queryEmbedding) || queryEmbedding.length === 0) {
+                return {
+                    enabled: true,
+                    skipped: true,
+                    queryText,
+                    matches: [],
+                    errors: ['纪要向量索引召回 embedding 结果为空'],
+                    warnings: [],
+                };
+            }
+            const candidateLimit = normalizeCandidateLimit_ACU(config);
+            const chunkCandidates = collectScoredChunkCandidates_ACU(state, queryEmbedding, config);
+            const heuristicCandidates = aggregateRowCandidates_ACU(chunkCandidates).slice(0, candidateLimit);
+            const warnings = [];
+            let finalCandidates = heuristicCandidates;
+            const rerankValidation = validateVectorMemoryRerankConfig_ACU(config);
+            const hasRerankConfigInput = !!(config.rerankEndpoint || config.rerankModel || config.rerankApiKey);
+            if (heuristicCandidates.length > 1) {
+                if (rerankValidation.valid) {
+                    try {
+                        const rerankResults = await createRerankScores_ACU({
+                            endpoint: config.rerankEndpoint,
+                            apiKey: config.rerankApiKey,
+                            model: config.rerankModel,
+                            query: queryText,
+                            documents: heuristicCandidates.map((candidate) => candidate.row.vectorSourceText || candidate.row.summary),
+                        });
+                        if (rerankResults.length > 0) {
+                            finalCandidates = applyRerankScores_ACU(heuristicCandidates, rerankResults);
+                        }
+                        else {
+                            warnings.push('纪要向量索引 Rerank 结果为空，已回退本地相似度排序。');
+                        }
+                    }
+                    catch (error) {
+                        logWarn_ACU('[纪要向量索引] Rerank 失败，已回退本地相似度排序:', error);
+                        warnings.push(`纪要向量索引 Rerank 失败，已回退本地相似度排序: ${error instanceof Error ? error.message : String(error)}`);
+                    }
+                }
+                else if (hasRerankConfigInput && rerankValidation.errors.length > 0) {
+                    warnings.push(...rerankValidation.errors.map((item) => `${item}；纪要向量索引已回退本地相似度排序`));
+                }
+            }
+            const matches = buildRecallMatches_ACU(finalCandidates, candidateLimit);
+            return {
+                enabled: true,
+                skipped: false,
+                queryText,
+                matches,
+                errors: [],
+                warnings,
+            };
+        }
+        catch (error) {
+            logWarn_ACU('[纪要向量索引] 召回失败:', error);
+            return {
+                enabled: true,
+                skipped: true,
+                queryText,
+                matches: [],
+                errors: [error instanceof Error ? error.message : String(error)],
+                warnings: [],
+            };
+        }
+    }
+
+    function buildSummaryVectorIndexOrchestrationResult_ACU(partial) {
+        return {
+            intercepted: false,
+            handled: false,
+            skipped: false,
+            success: false,
+            shouldProceed: false,
+            signature: '',
+            recallResult: null,
+            completedBeforeContinuation: false,
+            worldbookReady: false,
+            blocking: false,
+            blockStage: '',
+            blockReason: '',
+            recallQuery: '',
+            usedKeywordFallback: false,
+            errors: [],
+            warnings: [],
+            ...partial,
+        };
+    }
+    function buildCombinedRecallQuery_ACU(userInput, generatedKeywords) {
+        const normalizedUserInput = typeof userInput === 'string' ? userInput.trim() : '';
+        const normalizedKeywords = typeof generatedKeywords === 'string' ? generatedKeywords.trim() : '';
+        const segments = [normalizedUserInput, normalizedKeywords]
+            .filter((segment) => !!segment)
+            .filter((segment, index, array) => array.indexOf(segment) === index);
+        return segments.join('，');
+    }
+    function clearSummaryVectorIndexRecallOverride_ACU() {
+        _set_currentSummaryVectorIndexRecall_ACU(null);
+    }
+    async function orchestrateSummaryVectorIndexBeforeSend_ACU(userInput, options = {}) {
+        const signature = buildVectorRecallSignature_ACU(userInput);
+        const config = getEffectiveSummaryVectorIndexConfig_ACU(options.configInput);
+        const validation = validateSummaryVectorIndexConfig_ACU(config);
+        clearSummaryVectorIndexRecallOverride_ACU();
+        if (!signature) {
+            return buildSummaryVectorIndexOrchestrationResult_ACU({
+                skipped: true,
+                shouldProceed: true,
+                signature,
+            });
+        }
+        if (!validation.valid) {
+            return buildSummaryVectorIndexOrchestrationResult_ACU({
+                intercepted: true,
+                signature,
+                blocking: true,
+                blockStage: 'summary_vector_index_config_validation',
+                blockReason: validation.errors[0] || '纪要向量索引配置无效，发送前预处理未执行。',
+                errors: [...validation.errors],
+                shouldProceed: false,
+            });
+        }
+        if (!options.force && options.previousSignature && options.previousSignature === signature) {
+            return buildSummaryVectorIndexOrchestrationResult_ACU({
+                skipped: true,
+                shouldProceed: true,
+                signature,
+            });
+        }
+        try {
+            const activeSnapshot = getActiveSummaryVectorIndexSnapshot_ACU();
+            const state = activeSnapshot?.summaryVectorIndexState || null;
+            if (!activeSnapshot || !state || !Array.isArray(state.rows) || state.rows.length === 0 || !Array.isArray(state.chunks) || state.chunks.length === 0) {
+                return buildSummaryVectorIndexOrchestrationResult_ACU({
+                    intercepted: true,
+                    signature,
+                    blocking: true,
+                    blockStage: 'summary_vector_index_archive_missing',
+                    blockReason: '当前聊天没有可用的纪要向量索引归档。旧对话请先点击“立即归档”。',
+                    errors: ['当前聊天没有可用的纪要向量索引归档。旧对话请先点击“立即归档”。'],
+                    shouldProceed: false,
+                });
+            }
+            const chat = getChatArray_ACU();
+            const latestAiMessage = Array.isArray(chat)
+                ? [...chat].reverse().find((message) => message && !message.is_user) || null
+                : null;
+            const recentMessages = latestAiMessage
+                ? buildRecentContextMessages_ACU(chat, latestAiMessage, config.keywordContextPairCount)
+                : [];
+            const keywordResult = await generateVectorRecallKeywords_ACU({
+                userInput: signature,
+                recentMessages,
+            });
+            const keywordErrors = Array.isArray(keywordResult?.errors) ? [...keywordResult.errors] : [];
+            const recallQuery = String(keywordResult?.keywords || '').trim();
+            const usedKeywordFallback = keywordResult?.usedFallback === true;
+            if (!recallQuery || usedKeywordFallback) {
+                const fallbackErrors = keywordErrors.length > 0
+                    ? keywordErrors
+                    : [!recallQuery ? '关键词生成结果为空' : '关键词生成回退到原始输入，无法保证纪要向量索引召回质量'];
+                return buildSummaryVectorIndexOrchestrationResult_ACU({
+                    intercepted: true,
+                    signature,
+                    blocking: true,
+                    blockStage: 'summary_vector_index_keyword_generation',
+                    blockReason: fallbackErrors[0] || '纪要向量索引关键词生成失败。',
+                    recallQuery,
+                    usedKeywordFallback,
+                    errors: fallbackErrors,
+                    shouldProceed: false,
+                });
+            }
+            const combinedRecallQuery = buildCombinedRecallQuery_ACU(signature, recallQuery);
+            if (!combinedRecallQuery) {
+                return buildSummaryVectorIndexOrchestrationResult_ACU({
+                    intercepted: true,
+                    signature,
+                    blocking: true,
+                    blockStage: 'summary_vector_index_keyword_generation',
+                    blockReason: '纪要向量索引联合召回查询为空。',
+                    recallQuery,
+                    usedKeywordFallback,
+                    errors: ['纪要向量索引联合召回查询为空'],
+                    shouldProceed: false,
+                });
+            }
+            const recallResult = await recallSummaryVectorIndex_ACU(combinedRecallQuery, state, config);
+            const recallErrors = Array.isArray(recallResult?.errors) ? [...recallResult.errors] : [];
+            const recallWarnings = Array.isArray(recallResult?.warnings) ? [...recallResult.warnings] : [];
+            const errors = [...keywordErrors, ...recallErrors];
+            const warnings = [...recallWarnings];
+            if (recallErrors.length > 0) {
+                return buildSummaryVectorIndexOrchestrationResult_ACU({
+                    intercepted: true,
+                    signature,
+                    recallResult,
+                    blocking: true,
+                    blockStage: 'summary_vector_index_recall',
+                    blockReason: recallErrors[0] || '纪要向量索引召回失败。',
+                    recallQuery: combinedRecallQuery,
+                    usedKeywordFallback,
+                    errors,
+                    warnings,
+                    shouldProceed: false,
+                });
+            }
+            _set_currentSummaryVectorIndexRecall_ACU({
+                mode: 'summary_vector_index',
+                signature,
+                recallQuery: combinedRecallQuery,
+                snapshotMessageId: state.snapshotMessageId,
+                sourceTableKey: state.sourceTableKey,
+                sourceTableName: state.sourceTableName,
+                indexedAt: state.indexedAt,
+                matches: recallResult.matches,
+                rows: recallResult.matches.map((match) => match.row),
+                isEmpty: recallResult.matches.length === 0,
+                at: Date.now(),
+            });
+            return buildSummaryVectorIndexOrchestrationResult_ACU({
+                intercepted: true,
+                handled: true,
+                success: true,
+                shouldProceed: true,
+                signature,
+                recallResult,
+                completedBeforeContinuation: true,
+                worldbookReady: true,
+                recallQuery: combinedRecallQuery,
+                usedKeywordFallback,
+                errors,
+                warnings,
+            });
+        }
+        catch (error) {
+            clearSummaryVectorIndexRecallOverride_ACU();
+            logWarn_ACU('[纪要向量索引] 发送前召回编排失败:', error);
+            const errorMessage = error instanceof Error ? error.message : String(error);
+            return buildSummaryVectorIndexOrchestrationResult_ACU({
+                intercepted: true,
+                signature,
+                blocking: true,
+                blockStage: 'summary_vector_index_orchestration_exception',
                 blockReason: errorMessage,
                 errors: [errorMessage],
                 shouldProceed: false,
@@ -45131,11 +46206,18 @@ insertRow(1, ["时间2", "大纲事件2...", "关键词"]);
             if (!normalizedInput || (target && typeof target === 'object' && target._acu_vector_recall_processed)) {
                 return null;
             }
-            const vectorPreprocessResult = await orchestrateVectorRecallBeforeSend_ACU(normalizedInput, {
-                previousSignature: generationGate_ACU.lastVectorRecallSignature,
-                // 每次用户主动发送都必须重新计算向量并覆盖世界书条目；previousSignature 仅保留作诊断，不参与 fresh send 去重。
-                force: true,
-            });
+            const summaryVectorIndexModeEnabled = getCurrentWorldbookConfig_ACU()?.summaryVectorIndexModeEnabled === true;
+            const vectorPreprocessResult = summaryVectorIndexModeEnabled
+                ? await orchestrateSummaryVectorIndexBeforeSend_ACU(normalizedInput, {
+                    previousSignature: generationGate_ACU.lastVectorRecallSignature,
+                    // 每次用户主动发送都必须重新计算纪要索引覆盖；previousSignature 仅保留作诊断，不参与 fresh send 去重。
+                    force: true,
+                })
+                : await orchestrateVectorRecallBeforeSend_ACU(normalizedInput, {
+                    previousSignature: generationGate_ACU.lastVectorRecallSignature,
+                    // 每次用户主动发送都必须重新计算向量并覆盖世界书条目；previousSignature 仅保留作诊断，不参与 fresh send 去重。
+                    force: true,
+                });
             // ── 缓存 gate 结果到全局状态 ──
             generationGate_ACU.lastVectorRecallResult = vectorPreprocessResult;
             generationGate_ACU.lastVectorRecallIntentAt = Date.now();
@@ -50408,7 +51490,7 @@ insertRow(1, ["时间2", "大纲事件2...", "关键词"]);
     $(function () {
         // 互斥检测：如果已有实例（插件或另一个油猴脚本）在运行，跳过初始化
         if (checkAndMarkInstance()) {
-            console.warn('[SP·数据库 II] 油猴脚本检测到已有实例运行，跳过初始化。');
+            console.warn('[SP·数据库 III] 油猴脚本检测到已有实例运行，跳过初始化。');
             return;
         }
         console.log('ACU_INIT_DEBUG: Document is ready, attempting to initialize ACU script (Userscript mode).');

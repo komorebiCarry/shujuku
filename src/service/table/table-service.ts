@@ -6,6 +6,7 @@
 import { getChatArray_ACU, saveChatToHost_ACU } from '../../data/gateways/chat-gateway';
 import { isSummaryOrOutlineTable_ACU, logDebug_ACU, logError_ACU, logWarn_ACU, parseTableTemplateJson_ACU } from '../../shared/utils';
 import { currentJsonTableData_ACU, getCurrentIsolationKey_ACU, settings_ACU, _set_currentJsonTableData_ACU } from '../runtime/state-manager';
+import { applySpecialIndexSequenceToSummaryTables_ACU } from '../runtime/helpers-table-lock';
 import { applyTemplateScopeForCurrentChat_ACU } from '../settings/settings-service';
 import { buildSummaryVectorIndexIfNeeded_ACU } from '../vector/vector-index-orchestrator';
 import {
@@ -110,9 +111,21 @@ export async function persistTablesToChatMessage_ACU(
   let currentTagData = isolatedData[currentIsolationKey];
   let independentData = currentTagData.independentData || {};
 
-  const actuallyModifiedKeys = targetSheetKeys ? [...targetSheetKeys] : [];
+  applySpecialIndexSequenceToSummaryTables_ACU(currentJsonTableData_ACU);
 
-  let keysToSave: string[] = targetSheetKeys as string[];
+  const sequenceAdjustedKeys = getSortedSheetKeys_ACU(currentJsonTableData_ACU).filter((sheetKey: string) => {
+    if (targetSheetKeys && !targetSheetKeys.includes(sheetKey)) return false;
+    const table = currentJsonTableData_ACU?.[sheetKey];
+    return table && isSummaryOrOutlineTable_ACU(table.name);
+  });
+
+  const actuallyModifiedKeys = targetSheetKeys
+    ? [...new Set([...targetSheetKeys, ...sequenceAdjustedKeys])]
+    : [];
+
+  let keysToSave: string[] = targetSheetKeys
+    ? [...new Set([...targetSheetKeys, ...sequenceAdjustedKeys])]
+    : targetSheetKeys as string[];
 
   if (!keysToSave) {
     keysToSave = getSortedSheetKeys_ACU(currentJsonTableData_ACU);

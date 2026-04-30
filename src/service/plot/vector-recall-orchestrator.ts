@@ -47,7 +47,7 @@ export function buildVectorRecallSignature_ACU(userInput: any): string {
     return text;
 }
 
-function buildRecentContextMessages_ACU(chat: any[], anchorMessage: any, pairCount: number): VectorRecallKeywordContextMessage_ACU[] {
+export function buildRecentContextMessages_ACU(chat: any[], anchorMessage: any, pairCount: number): VectorRecallKeywordContextMessage_ACU[] {
     if (!Array.isArray(chat) || chat.length === 0 || !anchorMessage || pairCount < 1) {
         return [];
     }

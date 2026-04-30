@@ -40,12 +40,44 @@ export interface ChatVectorState_ACU {
     lastArchiveAt?: string;
 }
 
+export interface ChatSummaryVectorIndexChunk_ACU {
+    chunkId: string;
+    rowKey: string;
+    text: string;
+    vector: number[];
+    sequence: number;
+}
+
+export interface ChatSummaryVectorIndexRow_ACU {
+    rowKey: string;
+    rowId: string;
+    rowOrder: number;
+    summary: string;
+    indexCode: string;
+    vectorSourceText: string;
+    chunkIds: string[];
+}
+
+export interface ChatSummaryVectorIndexState_ACU {
+    schemaVersion: 1;
+    snapshotMessageId: string;
+    sourceTableKey: string;
+    sourceTableName: string;
+    indexedAt: string;
+    rowCount: number;
+    chunkCount: number;
+    skippedRowCount: number;
+    rows: ChatSummaryVectorIndexRow_ACU[];
+    chunks: ChatSummaryVectorIndexChunk_ACU[];
+}
+
 /** 单个隔离标签下的数据槽 */
 export interface IsolationTagData_ACU {
     independentData: Record<string, Sheet_ACU>;
     modifiedKeys: string[];
     updateGroupKeys: string[];
     vectorMemoryState?: ChatVectorState_ACU;
+    summaryVectorIndexState?: ChatSummaryVectorIndexState_ACU;
     /** 基底状态标记（首楼初始化时写入） */
     _acu_base_state?: string;
 }

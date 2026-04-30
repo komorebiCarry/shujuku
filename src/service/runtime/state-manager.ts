@@ -136,6 +136,7 @@ export let lastTotalAiMessages_ACU = 0;
 export let currentChatFileIdentifier_ACU: any = 'unknown_chat_init';
 export let currentJsonTableData_ACU: any = null;
 export let independentTableStates_ACU: any = {};
+export let currentSummaryVectorIndexRecall_ACU: any = null;
 
 export let settings_ACU: any = {
     apiConfig: { url: '', apiKey: '', model: '', useMainApi: true, max_tokens: 60000, temperature: 1.0 },
@@ -226,6 +227,7 @@ export function _set_tempPlotToSave_ACU(v: any) { tempPlotToSave_ACU = v; }
 export function _set_pendingBaseStatePlacement_ACU(v: any) { pendingBaseStatePlacement_ACU = v; }
 export function _set_suppressWorldbookInjectionInGreeting_ACU(v: any) { suppressWorldbookInjectionInGreeting_ACU = v; }
 export function _set_independentTableStates_ACU(v: any) { independentTableStates_ACU = v; }
+export function _set_currentSummaryVectorIndexRecall_ACU(v: any) { currentSummaryVectorIndexRecall_ACU = v; }
 
 // ═══ 从 plot-editors.ts 迁移的业务状态 ═══
 export let isAutoUpdatingCard_ACU = false;
