@@ -141,8 +141,25 @@ export async function generateVectorRecallKeywords_ACU(
         ? buildKeywordPromptMessagesFromGroup_ACU(promptGroup, userInput, promptContext)
         : buildKeywordPromptMessagesFromGroup_ACU(
             [
-                { role: 'system', content: '你负责为向量记忆召回生成检索关键词。\n请输出 3 到 8 个简洁关键词或短语。\n禁止输出解释、句子、编号、前后缀说明。\n多个关键词请使用中文逗号分隔。', deletable: false },
-                { role: 'user', content: '最近上下文：\n$RECENT_CONTEXT\n\n当前用户输入：\n$USER_INPUT\n\n请仅输出关键词。', deletable: true },
+                {
+                    role: 'system',
+                    content: '你负责为向量记忆召回生成检索关键词。\n'
+                        + '目标：输出最相关的 12 个简洁关键词或短语，用于向量召回与重排序。\n'
+                        + '优先级：人物、地点、时间、事件、目标、冲突、道具、组织、关系变化、未解决问题。\n'
+                        + '硬性格式：只输出关键词本身；禁止输出解释、句子、编号、标题、前后缀说明。\n'
+                        + '多个关键词必须使用中文逗号分隔。',
+                    deletable: false,
+                },
+                {
+                    role: 'user',
+                    content: '最近上下文：\n$RECENT_CONTEXT\n\n当前用户输入：\n$USER_INPUT\n\n请根据以上内容生成向量召回检索关键词。',
+                    deletable: true,
+                },
+                {
+                    role: 'assistant',
+                    content: '关键词：',
+                    deletable: true,
+                },
             ],
             userInput,
             promptContext,
