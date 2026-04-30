@@ -273,10 +273,16 @@ export interface SummaryVectorIndexEffectiveConfig_ACU extends VectorMemoryConfi
     summaryIndexMinScore: number;
     summaryIndexCandidateLimit: number;
     summaryIndexChunkSentenceCount: number;
+    summaryIndexArchiveMaxConcurrency: number;
 }
 
 export function getEffectiveSummaryVectorIndexConfig_ACU(configInput?: any): SummaryVectorIndexEffectiveConfig_ACU {
     const config = normalizeVectorMemoryConfig_ACU(configInput ?? getCurrentVectorMemoryConfig_ACU());
+    const defaults = cloneDefaultVectorMemoryConfig_ACU() as any;
+    const summaryIndexArchiveMaxConcurrency = normalizePositiveInteger_ACU(
+        (config as any).summaryIndexArchiveMaxConcurrency,
+        Number(defaults.summaryIndexArchiveMaxConcurrency) || 50,
+    );
     return {
         ...config,
         enabled: true,
@@ -287,6 +293,7 @@ export function getEffectiveSummaryVectorIndexConfig_ACU(configInput?: any): Sum
         summaryIndexMinScore: 0.4,
         summaryIndexCandidateLimit: 100,
         summaryIndexChunkSentenceCount: 2,
+        summaryIndexArchiveMaxConcurrency,
     };
 }
 

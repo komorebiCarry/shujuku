@@ -399,6 +399,43 @@ async function buildChunksWithEmbeddings_ACU(
     return { rows: indexedRows, chunks };
 }
 
+async function buildChunksWithRowConcurrencyLimit_ACU(
+    rows: SummaryVectorArchivePreparedRow_ACU[],
+    options: {
+        snapshotMessageId: string;
+        sentenceCount: number;
+        embeddingEndpoint: string;
+        embeddingApiKey: string;
+        embeddingModel: string;
+        maxRowsPerBatch: number;
+    },
+): Promise<{ rows: ChatSummaryVectorIndexRow_ACU[]; chunks: ChatSummaryVectorIndexChunk_ACU[] }> {
+    if (!Array.isArray(rows) || rows.length === 0) {
+        return { rows: [], chunks: [] };
+    }
+
+    const maxRowsPerBatch = Math.max(1, Math.floor(Number(options.maxRowsPerBatch) || 50));
+    const allRows: ChatSummaryVectorIndexRow_ACU[] = [];
+    const allChunks: ChatSummaryVectorIndexChunk_ACU[] = [];
+
+    for (let startIndex = 0; startIndex < rows.length; startIndex += maxRowsPerBatch) {
+        const rowBatch = rows.slice(startIndex, startIndex + maxRowsPerBatch);
+        if (rowBatch.length === 0) continue;
+        const batchResult = await buildChunksWithEmbeddings_ACU(rowBatch, {
+            snapshotMessageId: options.snapshotMessageId,
+            sentenceCount: options.sentenceCount,
+            embeddingEndpoint: options.embeddingEndpoint,
+            embeddingApiKey: options.embeddingApiKey,
+            embeddingModel: options.embeddingModel,
+            existingSequenceBase: allChunks.length,
+        });
+        allRows.push(...batchResult.rows);
+        allChunks.push(...batchResult.chunks);
+    }
+
+    return { rows: allRows, chunks: allChunks };
+}
+
 export async function archiveSummaryVectorIndexNow_ACU(options: { targetMessageIndex?: number } = {}): Promise<SummaryVectorIndexArchiveResult_ACU> {
     const config = getEffectiveSummaryVectorIndexConfig_ACU();
     const validation = validateSummaryVectorIndexConfig_ACU(config);
@@ -477,12 +514,13 @@ export async function archiveSummaryVectorIndexNow_ACU(options: { targetMessageI
         const reusableRowKeySet = new Set(reusable.reusableRows.map((row) => row.rowKey));
         const rowsNeedingEmbedding = prepared.rows.filter((row) => !reusableRowKeySet.has(row.rowKey));
         const embedded = rowsNeedingEmbedding.length > 0
-            ? await buildChunksWithEmbeddings_ACU(rowsNeedingEmbedding, {
+            ? await buildChunksWithRowConcurrencyLimit_ACU(rowsNeedingEmbedding, {
                 snapshotMessageId,
                 sentenceCount: config.summaryIndexChunkSentenceCount,
                 embeddingEndpoint: config.embeddingEndpoint,
                 embeddingApiKey: config.embeddingApiKey,
                 embeddingModel: config.embeddingModel,
+                maxRowsPerBatch: config.summaryIndexArchiveMaxConcurrency,
             })
             : { rows: [], chunks: [] };
         const finalRows = [...reusable.reusableRows, ...embedded.rows].sort((a, b) => a.rowOrder - b.rowOrder || a.rowKey.localeCompare(b.rowKey));
