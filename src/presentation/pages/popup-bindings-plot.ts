@@ -8,6 +8,7 @@ import { logDebug_ACU, logError_ACU, logWarn_ACU, normalizeExcludeRules_ACU, nor
 import { jQuery_API_ACU } from '../dom-utils';
 import { getCharLorebooks_ACU, getLorebookEntries_ACU } from '../../service/worldbook/worldbook-service';
 import { settings_ACU, currentChatFileIdentifier_ACU } from '../../service/runtime/state-manager';
+import { setGlobalPlotEnabled_ACU } from '../../service/settings/settings-service';
 import { $popupInstance_ACU, $plotPromptSegmentsContainer_ACU, $plotTaskListContainer_ACU, _assignUIPlaceholders_ACU } from '../state/ui-refs';
 import { saveSettingsAndNotify_ACU } from '../components/settings-ui-helpers';
 import { addPlotTaskFromUI_ACU, deleteCurrentPlotTaskFromUI_ACU, flushCurrentPlotTaskEditorState_ACU, getPlotPromptGroupFromUI_ACU, loadCurrentPlotTaskToUI_ACU, moveCurrentPlotTask_ACU, renderPlotPromptSegments_ACU, renderPlotTaskList_ACU, saveCurrentPlotTaskFromUI_ACU, schedulePlotTaskAutoSave_ACU, selectPlotTaskForEditing_ACU } from '../components/plot-editors';
@@ -29,7 +30,7 @@ export async function bindPlotEvents_ACU(): Promise<void> {
       const $plotEnabledCheckbox = $popupInstance_ACU.find(`#${SCRIPT_ID_PREFIX_ACU}-plot-enabled`);
       if ($plotEnabledCheckbox.length) {
         $plotEnabledCheckbox.on('change', function(this: HTMLElement) {
-          settings_ACU.plotSettings.enabled = jQuery_API_ACU(this).is(':checked');
+          setGlobalPlotEnabled_ACU(jQuery_API_ACU(this).is(':checked'));
           saveSettingsAndNotify_ACU();
         });
       }

@@ -28,6 +28,8 @@ import { $popupInstance_ACU, $statusMessageSpan_ACU, $manualUpdateCardButton_ACU
     if ($statusMessageSpan_ACU) $statusMessageSpan_ACU.text(text);
   }
 
+  const MANUAL_UPDATE_VECTOR_SOFT_DISABLED_CLASS_ACU = 'acu-manual-update-vector-soft-disabled';
+ 
   export function isVectorMemoryManualUpdateBlocked_ACU() {
     try {
         return getCurrentVectorMemoryConfig_ACU().enabled === true;
@@ -35,20 +37,26 @@ import { $popupInstance_ACU, $statusMessageSpan_ACU, $manualUpdateCardButton_ACU
         return false;
     }
   }
-
+ 
+  export function shouldShowVectorMemoryManualUpdateWarning_ACU() {
+    return isVectorMemoryManualUpdateBlocked_ACU();
+  }
+ 
   export function syncManualUpdateButtonAvailability_ACU() {
     if (!$manualUpdateCardButton_ACU) return;
-
-    if (isVectorMemoryManualUpdateBlocked_ACU()) {
+ 
+    if (shouldShowVectorMemoryManualUpdateWarning_ACU()) {
         $manualUpdateCardButton_ACU
-            .prop('disabled', true)
+            .prop('disabled', false)
+            .addClass(MANUAL_UPDATE_VECTOR_SOFT_DISABLED_CLASS_ACU)
             .text('请先关闭向量功能')
-            .attr('title', '向量功能启用时不可手动更新表格，请先关闭向量功能。');
+            .attr('title', '向量功能启用时不建议手动更新表格；特殊场景下仍可点击执行。');
         return;
     }
-
+ 
     $manualUpdateCardButton_ACU
         .prop('disabled', false)
+        .removeClass(MANUAL_UPDATE_VECTOR_SOFT_DISABLED_CLASS_ACU)
         .text('立即手动更新')
         .removeAttr('title');
   }

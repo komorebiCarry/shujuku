@@ -17,6 +17,7 @@ export let globalMeta_ACU: any = {
     migratedLegacySingleStore: false,
     zeroTkOccupyModeGlobal: false,
     summaryVectorIndexModeGlobal: false,
+    plotEnabledGlobal: true,
 };
 
 export function buildDefaultGlobalMeta_ACU(): any {
@@ -27,6 +28,7 @@ export function buildDefaultGlobalMeta_ACU(): any {
         migratedLegacySingleStore: false,
         zeroTkOccupyModeGlobal: false,
         summaryVectorIndexModeGlobal: false,
+        plotEnabledGlobal: true,
     };
 }
 

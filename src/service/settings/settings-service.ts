@@ -23,6 +23,20 @@ import { getCurrentChatTemplateScopeState_ACU, getGlobalTemplateSnapshotForCurre
 import { safeJsonParse_ACU } from '../../shared/json-helpers';
 import { deepMerge_ACU, ensureSheetOrderNumbers_ACU, logDebug_ACU, logError_ACU, logWarn_ACU } from '../../shared/utils';
 
+function applyGlobalPlotEnabledSetting_ACU(): boolean {
+  if (!settings_ACU.plotSettings || typeof settings_ACU.plotSettings !== 'object' || Array.isArray(settings_ACU.plotSettings)) {
+    settings_ACU.plotSettings = JSON.parse(JSON.stringify(DEFAULT_PLOT_SETTINGS_ACU));
+  }
+
+  if (typeof globalMeta_ACU.plotEnabledGlobal !== 'boolean') {
+    globalMeta_ACU.plotEnabledGlobal = settings_ACU.plotSettings.enabled === false ? false : true;
+    saveGlobalMeta_ACU();
+  }
+
+  settings_ACU.plotSettings.enabled = globalMeta_ACU.plotEnabledGlobal === true;
+  return settings_ACU.plotSettings.enabled;
+}
+
 export function saveSettings_ACU(): { saved: boolean; storageType: 'tavern' | 'indexeddb' | 'memory'; warning?: string; error?: string } {
   // 业务编排：同步隔离码到 globalMeta + 持久化
   const code = normalizeIsolationCode_ACU(settings_ACU?.dataIsolationCode || globalMeta_ACU?.activeIsolationCode || '');
@@ -173,6 +187,7 @@ export   function loadSettings_ACU() {
                   settings_ACU.plotSettings.plotWorldbookConfig.source = (legacySource === 'manual') ? 'manual' : 'character';
                   settings_ACU.plotSettings.plotWorldbookConfig.manualSelection = legacyBooks;
               }
+              applyGlobalPlotEnabledSetting_ACU();
               if (!settings_ACU.plotPresetBindings || typeof settings_ACU.plotPresetBindings !== 'object' || Array.isArray(settings_ACU.plotPresetBindings)) {
                   settings_ACU.plotPresetBindings = {};
               }
@@ -231,6 +246,7 @@ export   function loadSettings_ACU() {
               if (!settings_ACU.plotSettings.plotWorldbookConfig) {
                   settings_ACU.plotSettings.plotWorldbookConfig = buildDefaultPlotWorldbookConfig_ACU();
               }
+              applyGlobalPlotEnabledSetting_ACU();
               // [Profile] 强制以 globalMeta.activeIsolationCode 作为当前标识
               settings_ACU.dataIsolationCode = activeCode;
               settings_ACU.dataIsolationEnabled = (activeCode !== '');
@@ -621,6 +637,18 @@ export function persistCurrentTemplatePresetName_ACU(settingsObj: any, presetNam
 }
 
 // getCurrentCharSettings_ACU 和 getCurrentWorldbookConfig_ACU 已移至 settings-readers.ts
+export function setGlobalPlotEnabled_ACU(modeEnabled: boolean): boolean {
+    const enabled = !!modeEnabled;
+    if (!settings_ACU.plotSettings || typeof settings_ACU.plotSettings !== 'object' || Array.isArray(settings_ACU.plotSettings)) {
+        settings_ACU.plotSettings = JSON.parse(JSON.stringify(DEFAULT_PLOT_SETTINGS_ACU));
+    }
+
+    settings_ACU.plotSettings.enabled = enabled;
+    globalMeta_ACU.plotEnabledGlobal = enabled;
+    saveGlobalMeta_ACU();
+    return enabled;
+}
+
 // [从 popup-bindings.ts / api-registry.ts 提取] 切换 0TK 占用模式的完整业务流程
 export function setZeroTkOccupyMode_ACU(modeEnabled: boolean) {
     const enabled = !!modeEnabled;
