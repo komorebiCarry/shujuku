@@ -43,6 +43,40 @@ async function deleteVectorIndexManifestFromTagData_ACU(tagData: any): Promise<b
     return hadState || !!manifest;
 }
 
+function messageHasLocalLayerData_ACU(msg: any): boolean {
+    if (!msg || typeof msg !== 'object') return false;
+    return !!(
+        msg.TavernDB_ACU_Data ||
+        msg.TavernDB_ACU_SummaryData ||
+        msg.TavernDB_ACU_IndependentData ||
+        msg.TavernDB_ACU_ModifiedKeys ||
+        msg.TavernDB_ACU_UpdateGroupKeys ||
+        msg.TavernDB_ACU_IsolatedData ||
+        msg.TavernDB_ACU_Identity ||
+        msg.qrf_plot ||
+        msg.qrf_plot_preset ||
+        msg.qrf_plot_tasks
+    );
+}
+
+async function deleteVectorIndexManifestsFromMessage_ACU(msg: any): Promise<number> {
+    if (!msg || typeof msg !== 'object') return 0;
+    const isolatedData = msg.TavernDB_ACU_IsolatedData;
+    if (!isolatedData || typeof isolatedData !== 'object' || Array.isArray(isolatedData)) return 0;
+
+    let deletedCount = 0;
+    for (const isolationKey of Object.keys(isolatedData)) {
+        try {
+            if (await deleteVectorIndexManifestFromTagData_ACU(isolatedData[isolationKey])) {
+                deletedCount++;
+            }
+        } catch (error) {
+            logWarn_ACU(`[数据清理] 删除隔离标签 ${isolationKey} 的交火向量索引外置文件失败:`, error);
+        }
+    }
+    return deletedCount;
+}
+
 function tableListContainsSummaryOrOutline_ACU(targetSheetKeys: string[]): boolean {
     if (!Array.isArray(targetSheetKeys) || targetSheetKeys.length === 0) return false;
     return targetSheetKeys.some((sheetKey) => {
@@ -211,11 +245,7 @@ export async function purgeOldLayerData_ACU() {
     const dataMessageIndices = [];
     for (let i = 1; i < chat.length; i++) {
         const msg = chat[i];
-        if (msg && (
-            msg.TavernDB_ACU_Data ||
-            msg.TavernDB_ACU_SummaryData ||
-            msg.qrf_plot
-        )) {
+        if (messageHasLocalLayerData_ACU(msg)) {
             dataMessageIndices.push(i);
         }
     }
@@ -249,13 +279,16 @@ export async function purgeOldLayerData_ACU() {
         'qrf_plot_tasks'
     ];
 
+    let purgedVectorManifestCount = 0;
     for (const idx of indicesToPurge) {
         const msg = chat[idx];
         if (!msg) continue;
 
+        purgedVectorManifestCount += await deleteVectorIndexManifestsFromMessage_ACU(msg);
+
         let modified = false;
         for (const key of keysToDelete) {
-            if (msg.hasOwnProperty(key)) {
+            if (Object.prototype.hasOwnProperty.call(msg, key)) {
                 delete msg[key];
                 modified = true;
             }
@@ -269,7 +302,7 @@ export async function purgeOldLayerData_ACU() {
     if (purgedCount > 0) {
         try {
             await saveChatToHost_ACU();
-            logDebug_ACU(`[数据清理] 已清理 ${purgedCount} 层消息的本地数据，聊天记录已保存。`);
+            logDebug_ACU(`[数据清理] 已清理 ${purgedCount} 层消息的本地数据，已删除 ${purgedVectorManifestCount} 组交火向量索引外置文件引用，聊天记录已保存。`);
         } catch (e) {
             logError_ACU('[数据清理] 保存聊天记录失败:', e);
         }

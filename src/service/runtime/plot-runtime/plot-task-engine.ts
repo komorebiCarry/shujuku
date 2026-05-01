@@ -26,9 +26,15 @@ import { abortableDelay } from '../../../shared/abortable-delay';
     }
   }
 
+  function resolvePlotTaskApiPreset_ACU(task: any): string {
+    const taskPreset = String(task?.taskApiPreset || '').trim();
+    if (taskPreset) return taskPreset;
+    return String(settings_ACU.plotApiPreset || '').trim();
+  }
+
   export function willPlotUseMainApiGenerateRaw_ACU(taskApiPreset: string = '') {
     try {
-      const effectivePreset = taskApiPreset || settings_ACU.plotApiPreset || '';
+      const effectivePreset = String(taskApiPreset || '').trim() || String(settings_ACU.plotApiPreset || '').trim();
       const apiPresetConfig: any = getApiConfigByPreset_ACU(effectivePreset) || {};
       const effectiveApiMode = apiPresetConfig.apiMode ?? settings_ACU.apiMode;
       const effectiveApiConfig = apiPresetConfig.apiConfig || settings_ACU.apiConfig || {};
@@ -372,17 +378,15 @@ import { abortableDelay } from '../../../shared/abortable-delay';
       for (let attemptIndex = 0; attemptIndex < maxRetries; attemptIndex++) {
         checkPlotAbortRequested_ACU();
 
-        if (runtimeOptions.willUseMainApiGenerateRaw) {
+        const effectivePlotApiPreset = resolvePlotTaskApiPreset_ACU(normalizedTask);
+        if (willPlotUseMainApiGenerateRaw_ACU(effectivePlotApiPreset)) {
           planningGuard_ACU.ignoreNextGenerationEndedCount++;
         }
 
         let tempMessage = null;
         let apiError = null;
         try {
-          // [同组统一] API 预设覆盖：优先使用 stage 级决议的 effective preset
-          const effectivePlotApiPreset = runtimeOptions.stageEffectivePreset !== undefined
-            ? String(runtimeOptions.stageEffectivePreset)
-            : (normalizedTask.taskApiPreset || settings_ACU.plotApiPreset || '');
+          logDebug_ACU(`[剧情推进] [阶段:${taskStage}] [任务:${taskLabel}] 使用任务级API预设: ${effectivePlotApiPreset || '当前配置'}`);
           tempMessage = await callApiWithPlotPreset_ACU(messages, effectivePlotApiPreset, abortController_ACU?.signal || null);
         } catch (apiCallError) {
           if (apiCallError?.name === 'AbortError' || String(apiCallError?.message || '').toLowerCase().includes('aborted')) {
@@ -497,7 +501,6 @@ import { abortableDelay } from '../../../shared/abortable-delay';
         }
       : {};
 
-    const willUseMainApiGenerateRaw = willPlotUseMainApiGenerateRaw_ACU();
     const successfulResults: any[] = [];
     const failedResults: any[] = [];
     let aggregatedTags = new Map();
@@ -506,30 +509,14 @@ import { abortableDelay } from '../../../shared/abortable-delay';
     for (let stageIndex = 0; stageIndex < stageGroups.length; stageIndex++) {
       const stageGroup = stageGroups[stageIndex];
 
-      // [同组统一] 决议本 stage 的 groupEffectivePreset：
-      // 取 stage 内第一个有显式 taskApiPreset 的任务作为组级 preset；
-      // 若均无显式 preset，则回退到全局 plotApiPreset
-      let stageEffectivePreset = '';
-      for (const t of stageGroup.tasks) {
-        const taskPreset = String(t?.taskApiPreset || '').trim();
-        if (taskPreset) {
-          stageEffectivePreset = taskPreset;
-          break;
-        }
-      }
-      if (!stageEffectivePreset) {
-        stageEffectivePreset = settings_ACU.plotApiPreset || '';
-      }
-      logDebug_ACU(`[剧情推进] 阶段 ${stageGroup.stage} 统一 effective preset: ${stageEffectivePreset || '(当前配置)'}`);
+      logDebug_ACU(`[剧情推进] 阶段 ${stageGroup.stage} 开始执行，任务级API预设将按各任务独立决议。`);
 
       const stageResults = await Promise.all(
         stageGroup.tasks.map((task: any) =>
           executeSinglePlotTask_ACU(task, sharedContext, {
-            willUseMainApiGenerateRaw,
             relayTagMap: aggregatedTags,
             useHistoryRelay: stageIndex === 0,
             historyLookupOptions,
-            stageEffectivePreset,
           }),
         ),
       );

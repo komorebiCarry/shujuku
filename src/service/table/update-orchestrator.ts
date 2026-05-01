@@ -663,10 +663,9 @@ export async function orchestrateManualUpdate_ACU(
             const tableGroupId = Number.isFinite(tableConfig?.groupId)
                 ? Math.trunc(tableConfig.groupId)
                 : -1;
-            const tableFrequency = Number.isFinite(tableConfig?.updateFrequency) ? tableConfig.updateFrequency : -1;
-            const tableContextDepth = Number.isFinite(tableConfig?.contextDepth) ? tableConfig.contextDepth : -1;
-            const tableSkipFloors = Number.isFinite(tableConfig?.skipFloors) ? tableConfig.skipFloors : -1;
-            const groupKey = `${tableGroupId}|${tableFrequency}|${tableContextDepth}|${tableSkipFloors}|${contextScopeIndices.join(',')}|${uiBatchSize}`;
+            // 手动更新只尊重分组 ID。updateFrequency/contextDepth/skipFloors 属于自动更新调度参数，
+            // 混入手动路径会让用户选择被模板参数悄悄改写，属于职责污染。
+            const groupKey = `${tableGroupId}|${contextScopeIndices.join(',')}|${uiBatchSize}`;
             if (!updateGroups[groupKey]) {
                 updateGroups[groupKey] = {
                     indices: contextScopeIndices,
@@ -738,22 +737,11 @@ export async function orchestrateManualUpdate_ACU(
             const groupPromises = chunkKeys.map(gKey => (async () => {
                 const group = updateGroups[gKey];
 
-                // 决议本次 group 的 effective API preset：
-                // 以 group 内第一个表为准，查 settings_ACU.tableApiPresetOverridesByName
-                let groupEffectivePreset = '';
-                if (group.sheetKeys && group.sheetKeys.length > 0) {
-                    const firstSheetKey = group.sheetKeys[0];
-                    const firstTableName = templateData?.[firstSheetKey]?.name || '';
-                    groupEffectivePreset = resolveTableApiPresetOverride_ACU(firstTableName);
-                }
-
-                logDebug_ACU(`[Manual Parallel] Processing group update for groupId=${group.groupId}, sheets: ${group.sheetKeys.join(', ')}, effectivePreset=${groupEffectivePreset || '(全局)'}, chunk=${Math.floor(start / maxConcurrentGroups) + 1}`);
+                logDebug_ACU(`[Manual Parallel] Processing group update for groupId=${group.groupId}, sheets: ${group.sheetKeys.join(', ')}, apiPreset=(manual-global), chunk=${Math.floor(start / maxConcurrentGroups) + 1}`);
                 const batchResult = await processBatch(group.indices, 'manual_independent', {
                     targetSheetKeys: group.sheetKeys,
                     batchSize: group.batchSize,
-                    requestOptions: groupEffectivePreset
-                        ? { tableApiPreset: groupEffectivePreset }
-                        : null,
+                    requestOptions: null,
                 });
 
                 return {

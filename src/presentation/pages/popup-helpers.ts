@@ -31,8 +31,11 @@ import { $popupInstance_ACU, $plotPromptSegmentsContainer_ACU, $plotTaskListCont
       const plotSettings = setActivePlotEditorSettings_ACU(plotSettingsOverride || settings_ACU.plotSettings);
       if (!plotSettings) return;
 
-      // 功能开关
-      $popupInstance_ACU.find(`#${SCRIPT_ID_PREFIX_ACU}-plot-enabled`).prop('checked', plotSettings.enabled);
+      // 功能开关是全局状态，不属于剧情预设/聊天快照。UI 回填必须以 settings_ACU.plotSettings 为权威，
+      // 否则切换预设或新开对话时会被局部 snapshot.enabled 覆盖成“每次自动打开”。
+      const globalPlotEnabled = settings_ACU.plotSettings?.enabled === true;
+      plotSettings.enabled = globalPlotEnabled;
+      $popupInstance_ACU.find(`#${SCRIPT_ID_PREFIX_ACU}-plot-enabled`).prop('checked', globalPlotEnabled);
 
       renderPlotTaskList_ACU(plotSettings);
       loadCurrentPlotTaskToUI_ACU(plotSettings);

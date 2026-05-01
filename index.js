@@ -14225,9 +14225,15 @@ $CONTENT
             throw new Error('TaskAbortedByUser');
         }
     }
+    function resolvePlotTaskApiPreset_ACU(task) {
+        const taskPreset = String(task?.taskApiPreset || '').trim();
+        if (taskPreset)
+            return taskPreset;
+        return String(settings_ACU.plotApiPreset || '').trim();
+    }
     function willPlotUseMainApiGenerateRaw_ACU(taskApiPreset = '') {
         try {
-            const effectivePreset = taskApiPreset || settings_ACU.plotApiPreset || '';
+            const effectivePreset = String(taskApiPreset || '').trim() || String(settings_ACU.plotApiPreset || '').trim();
             const apiPresetConfig = getApiConfigByPreset_ACU(effectivePreset) || {};
             const effectiveApiMode = apiPresetConfig.apiMode ?? settings_ACU.apiMode;
             const effectiveApiConfig = apiPresetConfig.apiConfig || settings_ACU.apiConfig || {};
@@ -14546,16 +14552,14 @@ $CONTENT
             let lastErrorMessage = '';
             for (let attemptIndex = 0; attemptIndex < maxRetries; attemptIndex++) {
                 checkPlotAbortRequested_ACU();
-                if (runtimeOptions.willUseMainApiGenerateRaw) {
+                const effectivePlotApiPreset = resolvePlotTaskApiPreset_ACU(normalizedTask);
+                if (willPlotUseMainApiGenerateRaw_ACU(effectivePlotApiPreset)) {
                     planningGuard_ACU.ignoreNextGenerationEndedCount++;
                 }
                 let tempMessage = null;
                 let apiError = null;
                 try {
-                    // [同组统一] API 预设覆盖：优先使用 stage 级决议的 effective preset
-                    const effectivePlotApiPreset = runtimeOptions.stageEffectivePreset !== undefined
-                        ? String(runtimeOptions.stageEffectivePreset)
-                        : (normalizedTask.taskApiPreset || settings_ACU.plotApiPreset || '');
+                    logDebug_ACU(`[剧情推进] [阶段:${taskStage}] [任务:${taskLabel}] 使用任务级API预设: ${effectivePlotApiPreset || '当前配置'}`);
                     tempMessage = await callApiWithPlotPreset_ACU(messages, effectivePlotApiPreset, abortController_ACU?.signal || null);
                 }
                 catch (apiCallError) {
@@ -14659,34 +14663,17 @@ $CONTENT
                 beforeUserInputText: historyAnchorText,
             }
             : {};
-        const willUseMainApiGenerateRaw = willPlotUseMainApiGenerateRaw_ACU();
         const successfulResults = [];
         const failedResults = [];
         let aggregatedTags = new Map();
         let aggregatedInjectOnlyTagNames = new Set();
         for (let stageIndex = 0; stageIndex < stageGroups.length; stageIndex++) {
             const stageGroup = stageGroups[stageIndex];
-            // [同组统一] 决议本 stage 的 groupEffectivePreset：
-            // 取 stage 内第一个有显式 taskApiPreset 的任务作为组级 preset；
-            // 若均无显式 preset，则回退到全局 plotApiPreset
-            let stageEffectivePreset = '';
-            for (const t of stageGroup.tasks) {
-                const taskPreset = String(t?.taskApiPreset || '').trim();
-                if (taskPreset) {
-                    stageEffectivePreset = taskPreset;
-                    break;
-                }
-            }
-            if (!stageEffectivePreset) {
-                stageEffectivePreset = settings_ACU.plotApiPreset || '';
-            }
-            logDebug_ACU(`[剧情推进] 阶段 ${stageGroup.stage} 统一 effective preset: ${stageEffectivePreset || '(当前配置)'}`);
+            logDebug_ACU(`[剧情推进] 阶段 ${stageGroup.stage} 开始执行，任务级API预设将按各任务独立决议。`);
             const stageResults = await Promise.all(stageGroup.tasks.map((task) => executeSinglePlotTask_ACU(task, sharedContext, {
-                willUseMainApiGenerateRaw,
                 relayTagMap: aggregatedTags,
                 useHistoryRelay: stageIndex === 0,
                 historyLookupOptions,
-                stageEffectivePreset,
             })));
             checkPlotAbortRequested_ACU();
             const stageSuccessfulResults = stageResults.filter((result) => result?.success);
@@ -22193,6 +22180,39 @@ $CONTENT
         }
         return hadState || !!manifest;
     }
+    function messageHasLocalLayerData_ACU(msg) {
+        if (!msg || typeof msg !== 'object')
+            return false;
+        return !!(msg.TavernDB_ACU_Data ||
+            msg.TavernDB_ACU_SummaryData ||
+            msg.TavernDB_ACU_IndependentData ||
+            msg.TavernDB_ACU_ModifiedKeys ||
+            msg.TavernDB_ACU_UpdateGroupKeys ||
+            msg.TavernDB_ACU_IsolatedData ||
+            msg.TavernDB_ACU_Identity ||
+            msg.qrf_plot ||
+            msg.qrf_plot_preset ||
+            msg.qrf_plot_tasks);
+    }
+    async function deleteVectorIndexManifestsFromMessage_ACU(msg) {
+        if (!msg || typeof msg !== 'object')
+            return 0;
+        const isolatedData = msg.TavernDB_ACU_IsolatedData;
+        if (!isolatedData || typeof isolatedData !== 'object' || Array.isArray(isolatedData))
+            return 0;
+        let deletedCount = 0;
+        for (const isolationKey of Object.keys(isolatedData)) {
+            try {
+                if (await deleteVectorIndexManifestFromTagData_ACU(isolatedData[isolationKey])) {
+                    deletedCount++;
+                }
+            }
+            catch (error) {
+                logWarn_ACU(`[数据清理] 删除隔离标签 ${isolationKey} 的交火向量索引外置文件失败:`, error);
+            }
+        }
+        return deletedCount;
+    }
     function tableListContainsSummaryOrOutline_ACU(targetSheetKeys) {
         if (!Array.isArray(targetSheetKeys) || targetSheetKeys.length === 0)
             return false;
@@ -22341,9 +22361,7 @@ $CONTENT
         const dataMessageIndices = [];
         for (let i = 1; i < chat.length; i++) {
             const msg = chat[i];
-            if (msg && (msg.TavernDB_ACU_Data ||
-                msg.TavernDB_ACU_SummaryData ||
-                msg.qrf_plot)) {
+            if (messageHasLocalLayerData_ACU(msg)) {
                 dataMessageIndices.push(i);
             }
         }
@@ -22371,13 +22389,15 @@ $CONTENT
             'qrf_plot_preset',
             'qrf_plot_tasks'
         ];
+        let purgedVectorManifestCount = 0;
         for (const idx of indicesToPurge) {
             const msg = chat[idx];
             if (!msg)
                 continue;
+            purgedVectorManifestCount += await deleteVectorIndexManifestsFromMessage_ACU(msg);
             let modified = false;
             for (const key of keysToDelete) {
-                if (msg.hasOwnProperty(key)) {
+                if (Object.prototype.hasOwnProperty.call(msg, key)) {
                     delete msg[key];
                     modified = true;
                 }
@@ -22389,7 +22409,7 @@ $CONTENT
         if (purgedCount > 0) {
             try {
                 await saveChatToHost_ACU();
-                logDebug_ACU(`[数据清理] 已清理 ${purgedCount} 层消息的本地数据，聊天记录已保存。`);
+                logDebug_ACU(`[数据清理] 已清理 ${purgedCount} 层消息的本地数据，已删除 ${purgedVectorManifestCount} 组交火向量索引外置文件引用，聊天记录已保存。`);
             }
             catch (e) {
                 logError_ACU('[数据清理] 保存聊天记录失败:', e);
@@ -25998,8 +26018,11 @@ $CONTENT
         const plotSettings = setActivePlotEditorSettings_ACU(plotSettingsOverride || settings_ACU.plotSettings);
         if (!plotSettings)
             return;
-        // 功能开关
-        $popupInstance_ACU.find(`#${SCRIPT_ID_PREFIX_ACU}-plot-enabled`).prop('checked', plotSettings.enabled);
+        // 功能开关是全局状态，不属于剧情预设/聊天快照。UI 回填必须以 settings_ACU.plotSettings 为权威，
+        // 否则切换预设或新开对话时会被局部 snapshot.enabled 覆盖成“每次自动打开”。
+        const globalPlotEnabled = settings_ACU.plotSettings?.enabled === true;
+        plotSettings.enabled = globalPlotEnabled;
+        $popupInstance_ACU.find(`#${SCRIPT_ID_PREFIX_ACU}-plot-enabled`).prop('checked', globalPlotEnabled);
         renderPlotTaskList_ACU(plotSettings);
         loadCurrentPlotTaskToUI_ACU(plotSettings);
         // 最终注入指令
@@ -30415,10 +30438,9 @@ $CONTENT
                 const tableGroupId = Number.isFinite(tableConfig?.groupId)
                     ? Math.trunc(tableConfig.groupId)
                     : -1;
-                const tableFrequency = Number.isFinite(tableConfig?.updateFrequency) ? tableConfig.updateFrequency : -1;
-                const tableContextDepth = Number.isFinite(tableConfig?.contextDepth) ? tableConfig.contextDepth : -1;
-                const tableSkipFloors = Number.isFinite(tableConfig?.skipFloors) ? tableConfig.skipFloors : -1;
-                const groupKey = `${tableGroupId}|${tableFrequency}|${tableContextDepth}|${tableSkipFloors}|${contextScopeIndices.join(',')}|${uiBatchSize}`;
+                // 手动更新只尊重分组 ID。updateFrequency/contextDepth/skipFloors 属于自动更新调度参数，
+                // 混入手动路径会让用户选择被模板参数悄悄改写，属于职责污染。
+                const groupKey = `${tableGroupId}|${contextScopeIndices.join(',')}|${uiBatchSize}`;
                 if (!updateGroups[groupKey]) {
                     updateGroups[groupKey] = {
                         indices: contextScopeIndices,
@@ -30483,21 +30505,11 @@ $CONTENT
                 const chunkKeys = groupKeys.slice(start, start + maxConcurrentGroups);
                 const groupPromises = chunkKeys.map(gKey => (async () => {
                     const group = updateGroups[gKey];
-                    // 决议本次 group 的 effective API preset：
-                    // 以 group 内第一个表为准，查 settings_ACU.tableApiPresetOverridesByName
-                    let groupEffectivePreset = '';
-                    if (group.sheetKeys && group.sheetKeys.length > 0) {
-                        const firstSheetKey = group.sheetKeys[0];
-                        const firstTableName = templateData?.[firstSheetKey]?.name || '';
-                        groupEffectivePreset = resolveTableApiPresetOverride_ACU(firstTableName);
-                    }
-                    logDebug_ACU(`[Manual Parallel] Processing group update for groupId=${group.groupId}, sheets: ${group.sheetKeys.join(', ')}, effectivePreset=${groupEffectivePreset || '(全局)'}, chunk=${Math.floor(start / maxConcurrentGroups) + 1}`);
+                    logDebug_ACU(`[Manual Parallel] Processing group update for groupId=${group.groupId}, sheets: ${group.sheetKeys.join(', ')}, apiPreset=(manual-global), chunk=${Math.floor(start / maxConcurrentGroups) + 1}`);
                     const batchResult = await processBatch(group.indices, 'manual_independent', {
                         targetSheetKeys: group.sheetKeys,
                         batchSize: group.batchSize,
-                        requestOptions: groupEffectivePreset
-                            ? { tableApiPreset: groupEffectivePreset }
-                            : null,
+                        requestOptions: null,
                     });
                     return {
                         key: gKey,
