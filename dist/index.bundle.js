@@ -1302,28 +1302,61 @@ $CONTENT
         }
         return UNCATEGORIZED_TAG;
     }
+    function normalizeLogArg_ACU(arg) {
+        if (arg === null)
+            return 'null';
+        if (arg === undefined)
+            return 'undefined';
+        if (typeof arg === 'string')
+            return arg;
+        if (typeof arg === 'number' || typeof arg === 'boolean' || typeof arg === 'bigint')
+            return String(arg);
+        if (typeof arg === 'symbol')
+            return String(arg);
+        if (typeof arg === 'function')
+            return `[Function ${arg.name || 'anonymous'}]`;
+        const maybeErrorName = typeof arg?.name === 'string' ? arg.name : '';
+        const maybeErrorMessage = typeof arg?.message === 'string' ? arg.message : '';
+        const maybeErrorStack = typeof arg?.stack === 'string' ? arg.stack : '';
+        if (arg instanceof Error || maybeErrorMessage || maybeErrorStack) {
+            const parts = [];
+            const header = `${maybeErrorName || 'Error'}${maybeErrorMessage ? `: ${maybeErrorMessage}` : ''}`;
+            parts.push(header);
+            if (maybeErrorStack && maybeErrorStack !== header)
+                parts.push(maybeErrorStack);
+            if (arg?.cause !== undefined)
+                parts.push(`cause=${normalizeLogArg_ACU(arg.cause)}`);
+            return parts.join(' | ');
+        }
+        try {
+            const json = JSON.stringify(arg, null, 0);
+            if (json && json !== '{}')
+                return json;
+        }
+        catch {
+            // Fall through to structural fallback below.
+        }
+        try {
+            const constructorName = arg?.constructor?.name && arg.constructor.name !== 'Object'
+                ? arg.constructor.name
+                : 'Object';
+            const ownProperties = Object.getOwnPropertyNames(arg || {})
+                .map((key) => `${key}=${normalizeLogArg_ACU(arg[key])}`)
+                .join(', ');
+            if (ownProperties)
+                return `${constructorName}{${ownProperties}}`;
+            const stringValue = String(arg);
+            return stringValue === '[object Object]' ? `${constructorName}{}` : stringValue;
+        }
+        catch {
+            return '[Unserializable log argument]';
+        }
+    }
     /**
      * 将日志参数序列化为可读的消息字符串
      */
     function formatArgs(args) {
-        return args.map(arg => {
-            if (arg === null)
-                return 'null';
-            if (arg === undefined)
-                return 'undefined';
-            if (typeof arg === 'string')
-                return arg;
-            if (typeof arg === 'number' || typeof arg === 'boolean')
-                return String(arg);
-            if (arg instanceof Error)
-                return `${arg.name}: ${arg.message}`;
-            try {
-                return JSON.stringify(arg, null, 0);
-            }
-            catch {
-                return String(arg);
-            }
-        }).join(' ');
+        return args.map(normalizeLogArg_ACU).join(' ');
     }
     /**
      * 设置 debug 级别日志是否写入缓冲区
@@ -21413,22 +21446,52 @@ $CONTENT
             return { ok: false, error: normalizeError_ACU(error) };
         }
     }
-    async function deleteVectorIndexFile_ACU(path) {
-        try {
-            const response = await fetch('/api/files/delete', {
-                method: 'POST',
-                headers: getRequestHeaders_ACU(),
-                body: JSON.stringify({ path }),
-            });
-            if (!response.ok) {
-                const detail = await response.text().catch(() => response.statusText);
-                return { ok: false, path, error: `删除失败 ${response.status}: ${detail}` };
+    function buildDeleteRequestCandidates_ACU(path) {
+        const normalizedPath = String(path || '').trim().replace(/^\/+/, '');
+        const candidates = [];
+        const seen = new Set();
+        const addCandidate = (label, body) => {
+            const key = JSON.stringify(body);
+            if (!seen.has(key)) {
+                seen.add(key);
+                candidates.push({ label, body });
             }
-            return { ok: true, path };
+        };
+        addCandidate('path', { path: normalizedPath });
+        addCandidate('name', { name: normalizedPath });
+        if (normalizedPath && !normalizedPath.startsWith('user/files/')) {
+            addCandidate('path:user-files-prefix', { path: `user/files/${normalizedPath}` });
         }
-        catch (error) {
-            return { ok: false, path, error: normalizeError_ACU(error) };
+        return candidates;
+    }
+    async function deleteVectorIndexFile_ACU(path) {
+        const normalizedPath = String(path || '').trim().replace(/^\/+/, '');
+        if (!normalizedPath) {
+            return { ok: false, path, error: '删除失败：文件路径为空' };
         }
+        const attempts = [];
+        for (const candidate of buildDeleteRequestCandidates_ACU(normalizedPath)) {
+            try {
+                const response = await fetch('/api/files/delete', {
+                    method: 'POST',
+                    headers: getRequestHeaders_ACU(),
+                    body: JSON.stringify(candidate.body),
+                });
+                if (response.ok) {
+                    return { ok: true, path: normalizedPath };
+                }
+                const detail = await response.text().catch(() => response.statusText);
+                attempts.push(`${candidate.label} -> ${response.status}: ${detail || response.statusText}`);
+            }
+            catch (error) {
+                attempts.push(`${candidate.label} -> ${normalizeError_ACU(error)}`);
+            }
+        }
+        return {
+            ok: false,
+            path: normalizedPath,
+            error: `删除失败，已尝试 ${attempts.length} 种请求体: ${attempts.join('；')}`,
+        };
     }
     async function loadVectorIndexRegistry_ACU() {
         const loaded = await readVectorIndexJsonFile_ACU(SUMMARY_VECTOR_INDEX_REGISTRY_PATH_ACU);
@@ -21480,14 +21543,18 @@ $CONTENT
         const removablePaths = Array.from(new Set(removableFiles.map((file) => file.path).filter(Boolean)));
         if (removablePaths.length === 0)
             return [];
+        const deletedPaths = [];
         for (const path of removablePaths) {
             const result = await deleteVectorIndexFile_ACU(path);
-            if (!result.ok) {
+            if (result.ok) {
+                deletedPaths.push(result.path);
+            }
+            else {
                 logWarn_ACU('[交火向量索引] registry 作用域清理外置文件失败:', path, result.error);
             }
         }
-        await unregisterVectorIndexFiles_ACU(removablePaths);
-        return removablePaths;
+        await unregisterVectorIndexFiles_ACU(deletedPaths);
+        return deletedPaths;
     }
 
     const DB_NAME_ACU = 'TavernDB_ACU_VectorTempCache';
@@ -44848,16 +44915,22 @@ $CONTENT
             },
             // 内部使用：通知更新
             _notifyTableUpdate: function () {
-                logDebug_ACU(`Notifying ${ctx.tableUpdateCallbacks.length} callbacks about table update.`);
+                const callbackCount = ctx.tableUpdateCallbacks.length;
+                logDebug_ACU(`Notifying ${callbackCount} callbacks about table update.`);
                 // 修复：确保回调函数永远不会收到 null，而是收到一个空对象，增加稳健性。
                 const dataToSend = currentJsonTableData_ACU || {};
-                ctx.tableUpdateCallbacks.forEach(callback => {
+                ctx.tableUpdateCallbacks.forEach((callback, callbackIndex) => {
                     try {
                         // 将最新的数据作为参数传给回调
                         callback(dataToSend);
                     }
                     catch (e) {
-                        logError_ACU('Error executing a table update callback:', e);
+                        logError_ACU('[回调管理] Error executing a table update callback:', {
+                            callbackIndex,
+                            callbackName: callback?.name || 'anonymous',
+                            callbackCount,
+                            error: e,
+                        });
                     }
                 });
             },
@@ -44870,13 +44943,19 @@ $CONTENT
             },
             // 内部使用：通知"填表开始"
             _notifyTableFillStart: function () {
-                logDebug_ACU(`Notifying ${ctx.tableFillStartCallbacks.length} callbacks about table fill start.`);
-                ctx.tableFillStartCallbacks.forEach(callback => {
+                const callbackCount = ctx.tableFillStartCallbacks.length;
+                logDebug_ACU(`Notifying ${callbackCount} callbacks about table fill start.`);
+                ctx.tableFillStartCallbacks.forEach((callback, callbackIndex) => {
                     try {
                         callback();
                     }
                     catch (e) {
-                        logError_ACU('Error executing a table fill start callback:', e);
+                        logError_ACU('[回调管理] Error executing a table fill start callback:', {
+                            callbackIndex,
+                            callbackName: callback?.name || 'anonymous',
+                            callbackCount,
+                            error: e,
+                        });
                     }
                 });
             },
