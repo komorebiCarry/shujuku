@@ -34,15 +34,21 @@ export function createCallbackApi(ctx: ApiGroupContext): Record<string, Function
         },
         // 内部使用：通知更新
         _notifyTableUpdate: function() {
-            logDebug_ACU(`Notifying ${ctx.tableUpdateCallbacks.length} callbacks about table update.`);
+            const callbackCount = ctx.tableUpdateCallbacks.length;
+            logDebug_ACU(`Notifying ${callbackCount} callbacks about table update.`);
             // 修复：确保回调函数永远不会收到 null，而是收到一个空对象，增加稳健性。
             const dataToSend = currentJsonTableData_ACU || {};
-            ctx.tableUpdateCallbacks.forEach(callback => {
+            ctx.tableUpdateCallbacks.forEach((callback, callbackIndex) => {
                 try {
                     // 将最新的数据作为参数传给回调
                     callback(dataToSend);
                 } catch (e) {
-                    logError_ACU('Error executing a table update callback:', e);
+                    logError_ACU('[回调管理] Error executing a table update callback:', {
+                        callbackIndex,
+                        callbackName: callback?.name || 'anonymous',
+                        callbackCount,
+                        error: e,
+                    });
                 }
             });
         },
@@ -55,12 +61,18 @@ export function createCallbackApi(ctx: ApiGroupContext): Record<string, Function
         },
         // 内部使用：通知"填表开始"
         _notifyTableFillStart: function() {
-            logDebug_ACU(`Notifying ${ctx.tableFillStartCallbacks.length} callbacks about table fill start.`);
-            ctx.tableFillStartCallbacks.forEach(callback => {
+            const callbackCount = ctx.tableFillStartCallbacks.length;
+            logDebug_ACU(`Notifying ${callbackCount} callbacks about table fill start.`);
+            ctx.tableFillStartCallbacks.forEach((callback, callbackIndex) => {
                 try {
                     callback();
                 } catch (e) {
-                    logError_ACU('Error executing a table fill start callback:', e);
+                    logError_ACU('[回调管理] Error executing a table fill start callback:', {
+                        callbackIndex,
+                        callbackName: callback?.name || 'anonymous',
+                        callbackCount,
+                        error: e,
+                    });
                 }
             });
         },

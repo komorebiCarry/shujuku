@@ -88,22 +88,53 @@ export function extractTag(args: any[]): string {
   return UNCATEGORIZED_TAG;
 }
 
+function normalizeLogArg_ACU(arg: any): string {
+  if (arg === null) return 'null';
+  if (arg === undefined) return 'undefined';
+  if (typeof arg === 'string') return arg;
+  if (typeof arg === 'number' || typeof arg === 'boolean' || typeof arg === 'bigint') return String(arg);
+  if (typeof arg === 'symbol') return String(arg);
+  if (typeof arg === 'function') return `[Function ${arg.name || 'anonymous'}]`;
+
+  const maybeErrorName = typeof arg?.name === 'string' ? arg.name : '';
+  const maybeErrorMessage = typeof arg?.message === 'string' ? arg.message : '';
+  const maybeErrorStack = typeof arg?.stack === 'string' ? arg.stack : '';
+  if (arg instanceof Error || maybeErrorMessage || maybeErrorStack) {
+    const parts: string[] = [];
+    const header = `${maybeErrorName || 'Error'}${maybeErrorMessage ? `: ${maybeErrorMessage}` : ''}`;
+    parts.push(header);
+    if (maybeErrorStack && maybeErrorStack !== header) parts.push(maybeErrorStack);
+    if (arg?.cause !== undefined) parts.push(`cause=${normalizeLogArg_ACU(arg.cause)}`);
+    return parts.join(' | ');
+  }
+
+  try {
+    const json = JSON.stringify(arg, null, 0);
+    if (json && json !== '{}') return json;
+  } catch {
+    // Fall through to structural fallback below.
+  }
+
+  try {
+    const constructorName = arg?.constructor?.name && arg.constructor.name !== 'Object'
+      ? arg.constructor.name
+      : 'Object';
+    const ownProperties = Object.getOwnPropertyNames(arg || {})
+      .map((key) => `${key}=${normalizeLogArg_ACU(arg[key])}`)
+      .join(', ');
+    if (ownProperties) return `${constructorName}{${ownProperties}}`;
+    const stringValue = String(arg);
+    return stringValue === '[object Object]' ? `${constructorName}{}` : stringValue;
+  } catch {
+    return '[Unserializable log argument]';
+  }
+}
+
 /**
  * 将日志参数序列化为可读的消息字符串
  */
 export function formatArgs(args: any[]): string {
-  return args.map(arg => {
-    if (arg === null) return 'null';
-    if (arg === undefined) return 'undefined';
-    if (typeof arg === 'string') return arg;
-    if (typeof arg === 'number' || typeof arg === 'boolean') return String(arg);
-    if (arg instanceof Error) return `${arg.name}: ${arg.message}`;
-    try {
-      return JSON.stringify(arg, null, 0);
-    } catch {
-      return String(arg);
-    }
-  }).join(' ');
+  return args.map(normalizeLogArg_ACU).join(' ');
 }
 
 /**

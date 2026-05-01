@@ -146,21 +146,60 @@ export async function readVectorIndexJsonFile_ACU<T = any>(path: string): Promis
     }
 }
 
-export async function deleteVectorIndexFile_ACU(path: string): Promise<VectorIndexFileDeleteResult_ACU> {
-    try {
-        const response = await fetch('/api/files/delete', {
-            method: 'POST',
-            headers: getRequestHeaders_ACU(),
-            body: JSON.stringify({ path }),
-        });
-        if (!response.ok) {
-            const detail = await response.text().catch(() => response.statusText);
-            return { ok: false, path, error: `删除失败 ${response.status}: ${detail}` };
+interface VectorIndexFileDeleteRequestCandidate_ACU {
+    label: string;
+    body: Record<string, string>;
+}
+
+function buildDeleteRequestCandidates_ACU(path: string): VectorIndexFileDeleteRequestCandidate_ACU[] {
+    const normalizedPath = String(path || '').trim().replace(/^\/+/, '');
+    const candidates: VectorIndexFileDeleteRequestCandidate_ACU[] = [];
+    const seen = new Set<string>();
+    const addCandidate = (label: string, body: Record<string, string>): void => {
+        const key = JSON.stringify(body);
+        if (!seen.has(key)) {
+            seen.add(key);
+            candidates.push({ label, body });
         }
-        return { ok: true, path };
-    } catch (error) {
-        return { ok: false, path, error: normalizeError_ACU(error) };
+    };
+
+    addCandidate('path', { path: normalizedPath });
+    addCandidate('name', { name: normalizedPath });
+    if (normalizedPath && !normalizedPath.startsWith('user/files/')) {
+        addCandidate('path:user-files-prefix', { path: `user/files/${normalizedPath}` });
     }
+    return candidates;
+}
+
+export async function deleteVectorIndexFile_ACU(path: string): Promise<VectorIndexFileDeleteResult_ACU> {
+    const normalizedPath = String(path || '').trim().replace(/^\/+/, '');
+    if (!normalizedPath) {
+        return { ok: false, path, error: '删除失败：文件路径为空' };
+    }
+
+    const attempts: string[] = [];
+    for (const candidate of buildDeleteRequestCandidates_ACU(normalizedPath)) {
+        try {
+            const response = await fetch('/api/files/delete', {
+                method: 'POST',
+                headers: getRequestHeaders_ACU(),
+                body: JSON.stringify(candidate.body),
+            });
+            if (response.ok) {
+                return { ok: true, path: normalizedPath };
+            }
+            const detail = await response.text().catch(() => response.statusText);
+            attempts.push(`${candidate.label} -> ${response.status}: ${detail || response.statusText}`);
+        } catch (error) {
+            attempts.push(`${candidate.label} -> ${normalizeError_ACU(error)}`);
+        }
+    }
+
+    return {
+        ok: false,
+        path: normalizedPath,
+        error: `删除失败，已尝试 ${attempts.length} 种请求体: ${attempts.join('；')}`,
+    };
 }
 
 export async function loadVectorIndexRegistry_ACU(): Promise<SummaryVectorIndexRegistryFile_ACU> {
@@ -217,12 +256,15 @@ export async function deleteRegisteredVectorIndexFilesWhere_ACU(
     const removablePaths = Array.from(new Set(removableFiles.map((file) => file.path).filter(Boolean)));
     if (removablePaths.length === 0) return [];
 
+    const deletedPaths: string[] = [];
     for (const path of removablePaths) {
         const result = await deleteVectorIndexFile_ACU(path);
-        if (!result.ok) {
+        if (result.ok) {
+            deletedPaths.push(result.path);
+        } else {
             logWarn_ACU('[交火向量索引] registry 作用域清理外置文件失败:', path, result.error);
         }
     }
-    await unregisterVectorIndexFiles_ACU(removablePaths);
-    return removablePaths;
+    await unregisterVectorIndexFiles_ACU(deletedPaths);
+    return deletedPaths;
 }
