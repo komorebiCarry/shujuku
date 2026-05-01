@@ -30462,42 +30462,81 @@ $CONTENT
                 }
             }
             _set_isAutoUpdatingCard_ACU$1(true);
-            for (const gKey of groupKeys) {
-                const group = updateGroups[gKey];
-                // 决议本次 group 的 effective API preset：
-                // 以 group 内第一个表为准，查 settings_ACU.tableApiPresetOverridesByName
-                let groupEffectivePreset = '';
-                if (group.sheetKeys && group.sheetKeys.length > 0) {
-                    const firstSheetKey = group.sheetKeys[0];
-                    const firstTableName = templateData?.[firstSheetKey]?.name || '';
-                    groupEffectivePreset = resolveTableApiPresetOverride_ACU(firstTableName);
-                }
-                logDebug_ACU(`[Manual Parallel] Processing group update for groupId=${group.groupId}, sheets: ${group.sheetKeys.join(', ')}, effectivePreset=${groupEffectivePreset || '(全局)'}`);
-                const batchResult = await processBatch(group.indices, 'manual_independent', {
-                    targetSheetKeys: group.sheetKeys,
-                    batchSize: group.batchSize,
-                    requestOptions: groupEffectivePreset
-                        ? { tableApiPreset: groupEffectivePreset }
-                        : null,
+            const maxConcurrentGroups = Math.max(1, Number(settings_ACU.maxConcurrentGroups) || 1);
+            const failedGroups = [];
+            for (let start = 0; start < groupKeys.length; start += maxConcurrentGroups) {
+                const chunkKeys = groupKeys.slice(start, start + maxConcurrentGroups);
+                const groupPromises = chunkKeys.map(gKey => (async () => {
+                    const group = updateGroups[gKey];
+                    // 决议本次 group 的 effective API preset：
+                    // 以 group 内第一个表为准，查 settings_ACU.tableApiPresetOverridesByName
+                    let groupEffectivePreset = '';
+                    if (group.sheetKeys && group.sheetKeys.length > 0) {
+                        const firstSheetKey = group.sheetKeys[0];
+                        const firstTableName = templateData?.[firstSheetKey]?.name || '';
+                        groupEffectivePreset = resolveTableApiPresetOverride_ACU(firstTableName);
+                    }
+                    logDebug_ACU(`[Manual Parallel] Processing group update for groupId=${group.groupId}, sheets: ${group.sheetKeys.join(', ')}, effectivePreset=${groupEffectivePreset || '(全局)'}, chunk=${Math.floor(start / maxConcurrentGroups) + 1}`);
+                    const batchResult = await processBatch(group.indices, 'manual_independent', {
+                        targetSheetKeys: group.sheetKeys,
+                        batchSize: group.batchSize,
+                        requestOptions: groupEffectivePreset
+                            ? { tableApiPreset: groupEffectivePreset }
+                            : null,
+                    });
+                    return {
+                        key: gKey,
+                        groupId: group.groupId,
+                        sheetKeys: group.sheetKeys,
+                        result: batchResult,
+                    };
+                })());
+                const results = await Promise.allSettled(groupPromises);
+                results.forEach((settledResult, idx) => {
+                    const gKey = chunkKeys[idx];
+                    const group = updateGroups[gKey];
+                    if (settledResult.status === 'rejected') {
+                        failedGroups.push({
+                            key: gKey,
+                            error: settledResult.reason instanceof Error
+                                ? settledResult.reason.message
+                                : String(settledResult.reason || '手动更新分组执行异常。'),
+                        });
+                        logError_ACU(`[Manual Parallel] Group update threw for groupId=${group?.groupId}, sheets=${(group?.sheetKeys || []).join(', ')}:`, settledResult.reason);
+                        return;
+                    }
+                    const batchResult = settledResult.value.result;
+                    if (!batchResult.success) {
+                        failedGroups.push({
+                            key: settledResult.value.key,
+                            error: batchResult.error || '手动更新失败或被终止。',
+                        });
+                        logWarn_ACU(`[Manual Parallel] Group update failed for groupId=${settledResult.value.groupId}, sheets=${settledResult.value.sheetKeys.join(', ')}: ${batchResult.error || 'unknown error'}`);
+                    }
                 });
-                if (!batchResult.success) {
-                    _set_isAutoUpdatingCard_ACU$1(false);
-                    // [修复] 填表失败时，processUpdatesBatch 内部的 loadBatchBaseData 已经用聊天记录中的旧数据
-                    // 覆盖了 currentJsonTableData_ACU（包括旧表头）。必须调用 refreshData 恢复到正确状态，
-                    // 否则用户重新打开可视化编辑器时会看到旧表头（指导表中的新表头不会被应用）。
-                    try {
-                        await loadAllChatMessages_ACU();
-                        await refreshData();
-                    }
-                    catch (e) {
-                        logWarn_ACU('[Manual Update] 填表失败后恢复数据时出错:', e);
-                    }
-                    return { success: false, error: batchResult.error || '手动更新失败或被终止。' };
-                }
+                // 并发组内禁止每组单独刷新：多组同时写聊天记录时，提前刷新会制造中间态覆盖风险。
+                // 每个并发 chunk 结束后统一刷新一次，确保后续 chunk 基于已落盘的最新状态继续执行。
                 await loadAllChatMessages_ACU();
                 await refreshData();
+                if (failedGroups.length > 0) {
+                    break;
+                }
             }
             _set_isAutoUpdatingCard_ACU$1(false);
+            if (failedGroups.length > 0) {
+                // [修复] 填表失败时，processUpdatesBatch 内部的 loadBatchBaseData 已经用聊天记录中的旧数据
+                // 覆盖了 currentJsonTableData_ACU（包括旧表头）。必须调用 refreshData 恢复到正确状态，
+                // 否则用户重新打开可视化编辑器时会看到旧表头（指导表中的新表头不会被应用）。
+                try {
+                    await loadAllChatMessages_ACU();
+                    await refreshData();
+                }
+                catch (e) {
+                    logWarn_ACU('[Manual Update] 填表失败后恢复数据时出错:', e);
+                }
+                const firstFailure = failedGroups[0];
+                return { success: false, error: firstFailure.error || '手动更新失败或被终止。' };
+            }
             // 手动更新完成后检测自动合并总结
             let autoMergeTriggered = false;
             let autoMergeSuccess = false;
