@@ -7,13 +7,9 @@ import { newMessageDebounceTimer_ACU, _set_newMessageDebounceTimer_ACU} from '..
 import { showToastr_ACU } from '../theme/toast';
 import { attemptToLoadCoreApis_ACU } from '../triggers/settings-ui-sync';
 import { handleChatCompletionReady_ACU, loadPresetAndCleanCharacterData_ACU } from '../../service/runtime/helpers-remaining';
-import { SillyTavern_API_ACU, toastr_API_ACU } from '../../shared/host-api';
-import { ACU_TOAST_CATEGORY_ACU } from '../../shared/constants';
-import { currentChatFileIdentifier_ACU, generationGate_ACU, getFreshUserSendGate_ACU, markUserSendIntent_ACU, isProcessing_Plot_ACU, isQuietLikeGeneration_ACU, loopState_ACU, recordGenerationContext_ACU, recordLastUserSend_ACU, settings_ACU, shouldProcessAutoTableUpdateForGenerationEnded_ACU, shouldProcessPlotForGeneration_ACU, _set_isProcessing_Plot_ACU} from '../../service/runtime/state-manager';
-import { orchestrateVectorRecallBeforeSend_ACU } from '../../service/plot/vector-recall-orchestrator';
-import { orchestrateSummaryVectorIndexBeforeSend_ACU } from '../../service/plot/summary-vector-index-orchestrator';
+import { SillyTavern_API_ACU } from '../../shared/host-api';
+import { currentChatFileIdentifier_ACU, generationGate_ACU, markUserSendIntent_ACU, isProcessing_Plot_ACU, isQuietLikeGeneration_ACU, isRecentUserSendIntent_ACU, loopState_ACU, recordGenerationContext_ACU, recordLastUserSend_ACU, settings_ACU, shouldProcessAutoTableUpdateForGenerationEnded_ACU, shouldProcessPlotForGeneration_ACU, shouldProcessSummaryVectorIndexForGeneration_ACU, _set_isProcessing_Plot_ACU} from '../../service/runtime/state-manager';
 import { applyTemplateScopeForCurrentChat_ACU, loadSettings_ACU } from '../../service/settings/settings-service';
-import { getCurrentWorldbookConfig_ACU } from '../../service/settings/settings-readers';
 import { resetScriptStateForNewChat_ACU } from '../../service/worldbook/injection-engine';
 import { reloadStorageProvider, disposeStorageProvider } from '../../service/table/table-storage-strategy';
 import { isSqliteMode } from '../../service/table/storage-mode';
@@ -27,6 +23,7 @@ import { updateCardUpdateStatusDisplay_ACU } from '../components/update-status-d
 import { handleNewMessageDebounced_ACU } from '../triggers/settings-ui-sync';
 import { enterLoopRetryFlow_ACU, onLoopGenerationEnded_ACU, stopAutoLoop_ACU } from '../triggers/auto-loop';
 import { runOptimizationLogicWithUI_ACU } from '../components/plot-planning-ui';
+import { processSummaryVectorIndexBeforeGenerationWithUI_ACU } from '../components/summary-vector-index-ui';
 
 // [从 state-manager.ts 搬入 presentation 层] 安装发送意图捕捉钩子（DOM 事件绑定）
 function installSendIntentCaptureHooks_ACU() {
@@ -72,96 +69,6 @@ function installSendIntentCaptureHooks_ACU() {
 }
 
 export   function mainInitialize_ACU() {
-
-    function buildVectorRecallBlockingFingerprint_ACU(result: any) {
-      const signature = String(result?.signature || '').trim();
-      const blockStage = String(result?.blockStage || '').trim();
-      const blockReason = String(result?.blockReason || '').trim();
-      return [signature, blockStage, blockReason].filter(Boolean).join('::');
-    }
-
-    function notifyVectorRecallBlockingOnce_ACU(result: any) {
-      if (!result?.blocking) {
-        return;
-      }
-      const fingerprint = buildVectorRecallBlockingFingerprint_ACU(result);
-      if (!fingerprint) {
-        return;
-      }
-      const gate = generationGate_ACU as any;
-      const now = Date.now();
-      const lastFingerprint = String(gate.lastVectorRecallBlockFingerprint || '');
-      const lastAt = Number(gate.lastVectorRecallBlockAt || 0);
-      if (lastFingerprint === fingerprint && Number.isFinite(lastAt) && (now - lastAt) <= 2000) {
-        return;
-      }
-      gate.lastVectorRecallBlockFingerprint = fingerprint;
-      gate.lastVectorRecallBlockAt = now;
-      const errors = Array.isArray(result?.errors)
-        ? result.errors.map((item: any) => String(item || '').trim()).filter(Boolean)
-        : [];
-      const blockReason = String(result?.blockReason || errors[0] || '向量记忆发送前预处理被阻断。').trim();
-      const blockStage = String(result?.blockStage || '').trim() || 'unknown';
-      const detailText = errors.length > 1 ? `；详情：${errors.join(' | ')}` : '';
-      showToastr_ACU('warning', `[向量记忆] 发送前预处理已阻断（阶段=${blockStage}）：${blockReason}${detailText}`);
-    }
-
-    function clearVectorRecallBlockingDeduper_ACU() {
-      const gate = generationGate_ACU as any;
-      gate.lastVectorRecallBlockFingerprint = '';
-      gate.lastVectorRecallBlockAt = 0;
-    }
-
-    async function runVectorRecallPreprocess_ACU(inputText: any, target: any) {
-      const normalizedInput = String(inputText || '');
-      if (!normalizedInput || (target && typeof target === 'object' && target._acu_vector_recall_processed)) {
-        return null;
-      }
-
-      const summaryVectorIndexModeEnabled = getCurrentWorldbookConfig_ACU()?.summaryVectorIndexModeEnabled === true;
-      const vectorPreprocessResult = summaryVectorIndexModeEnabled
-        ? await orchestrateSummaryVectorIndexBeforeSend_ACU(normalizedInput, {
-            previousSignature: generationGate_ACU.lastVectorRecallSignature,
-            // 每次用户主动发送都必须重新计算纪要索引覆盖；previousSignature 仅保留作诊断，不参与 fresh send 去重。
-            force: true,
-          })
-        : await orchestrateVectorRecallBeforeSend_ACU(normalizedInput, {
-            previousSignature: generationGate_ACU.lastVectorRecallSignature,
-            // 每次用户主动发送都必须重新计算向量并覆盖世界书条目；previousSignature 仅保留作诊断，不参与 fresh send 去重。
-            force: true,
-          });
-
-      // ── 缓存 gate 结果到全局状态 ──
-      generationGate_ACU.lastVectorRecallResult = vectorPreprocessResult;
-      generationGate_ACU.lastVectorRecallIntentAt = Date.now();
-
-      if (target && typeof target === 'object') {
-        target._acu_vector_recall_completed_before_continuation = vectorPreprocessResult?.completedBeforeContinuation === true;
-        target._acu_vector_worldbook_ready = vectorPreprocessResult?.worldbookReady === true;
-        target._acu_vector_recall_query = String(vectorPreprocessResult?.recallQuery || '');
-        target._acu_vector_recall_intercepted = vectorPreprocessResult?.intercepted === true;
-        target._acu_vector_recall_blocking = vectorPreprocessResult?.blocking === true;
-        target._acu_vector_recall_block_stage = String(vectorPreprocessResult?.blockStage || '');
-        target._acu_vector_recall_block_reason = String(vectorPreprocessResult?.blockReason || '');
-        target._acu_vector_recall_errors = Array.isArray(vectorPreprocessResult?.errors)
-          ? [...vectorPreprocessResult.errors]
-          : [];
-      }
-
-      if (vectorPreprocessResult?.intercepted && target && typeof target === 'object') {
-        target._acu_vector_recall_processed = true;
-      }
-
-      if (vectorPreprocessResult?.success && vectorPreprocessResult.signature) {
-        generationGate_ACU.lastVectorRecallSignature = vectorPreprocessResult.signature;
-        generationGate_ACU.lastVectorRecallAt = Date.now();
-        clearVectorRecallBlockingDeduper_ACU();
-      } else if (vectorPreprocessResult?.blocking) {
-        notifyVectorRecallBlockingOnce_ACU(vectorPreprocessResult);
-      }
-
-      return vectorPreprocessResult;
-    }
 
     console.log('ACU_INIT_DEBUG: mainInitialize_ACU called.');
     if (attemptToLoadCoreApis_ACU()) {
@@ -234,6 +141,12 @@ export   function mainInitialize_ACU() {
                 // quiet/automatic_trigger 直接透传
                 if (isQuietLikeGeneration_ACU('tavernhelper', { quiet_prompt: options.quiet_prompt }) || options.automatic_trigger) {
                   return (window as any).original_TavernHelper_generate_ACU.apply(this, args);
+                }
+
+                if (shouldProcessSummaryVectorIndexForGeneration_ACU('tavernhelper', { quiet_prompt: options.quiet_prompt, automatic_trigger: options.automatic_trigger }, false)) {
+                  const userInput = String(options.user_input || options.prompt || getSendTextareaValue_ACU() || '').trim();
+                  const summaryVectorResult = await processSummaryVectorIndexBeforeGenerationWithUI_ACU({ userInput, source: 'tavernhelper' });
+                  logDebug_ACU(`[交火模式纪要索引] TavernHelper.generate 发送前处理完成：success=${summaryVectorResult.success}, skipped=${summaryVectorResult.skipped === true}, reason=${summaryVectorResult.reason || 'none'}, keywords=${summaryVectorResult.keywordCount ?? 0}, injected=${summaryVectorResult.injectedCount ?? 0}`);
                 }
 
                 // [重构] 调用 service 层编排函数，传入 UI 规划回调
@@ -340,88 +253,30 @@ export   function mainInitialize_ACU() {
             });
         }
 
-        // [剧情推进 + 向量召回] 拦截用户输入
+        // [剧情推进] 拦截用户输入进行剧情规划
         if (SillyTavern_API_ACU.eventTypes.GENERATION_AFTER_COMMANDS) {
           SillyTavern_API_ACU.eventSource.on(SillyTavern_API_ACU.eventTypes.GENERATION_AFTER_COMMANDS, async (type: any, params: any, dryRun: any) => {
             // 前置过滤（纯 UI/宿主层判断）
             if (params?._qrf_processed_by_hook) return;
-            if (type === 'regenerate' || isProcessing_Plot_ACU) return;
-
-            const chat = SillyTavern_API_ACU.chat;
-            if (!chat || chat.length === 0) return;
-
-            const lastMessageIndex = chat.length - 1;
-            const lastMessage = chat[lastMessageIndex];
-            const strategy1Text = lastMessage?.is_user ? String(lastMessage.mes || '') : '';
-            const strategy2Text = String(getSendTextareaValue_ACU() || '');
-            const strategy3Text = String(params?.prompt || params?.user_input || '');
-            const vectorInputText = strategy1Text || strategy2Text || strategy3Text;
-
-            // ── 阶段1：向量召回（仅用户主动发送时执行，即使剧情推进关闭也执行） ──
-
-            const freshUserSendGate = getFreshUserSendGate_ACU();
-            logDebug_ACU(`[向量记忆] 阶段总守卫: vectorInputText=${!!vectorInputText}, hasFreshIntent=${freshUserSendGate.hasFreshIntent}, hasFreshUserMessage=${freshUserSendGate.hasFreshUserMessage}, isFreshUserSend=${freshUserSendGate.isFreshUserSend}`);
-            if (vectorInputText && freshUserSendGate.isFreshUserSend) {
-
-              // 显示进度 toast（与剧情推进共用风格）
-            const vectorRecallToastMsg = `
-              <div style="display: flex; align-items: center; justify-content: space-between;">
-                <span class="toastr-message" style="margin-right: 10px;">正在读取过往的记忆并分析，请稍后...</span>
-              </div>
-            `;
-            const $vectorRecallToast = showToastr_ACU('info', vectorRecallToastMsg, {
-              timeOut: 0,
-              extendedTimeOut: 0,
-              escapeHtml: false,
-              tapToDismiss: false,
-              closeButton: false,
-              progressBar: false,
-              toastClass: 'toast acu-toast acu-toast--info',
-              acuToastCategory: ACU_TOAST_CATEGORY_ACU.PLANNING,
-            });
-
-            const vectorPreprocessResult = await runVectorRecallPreprocess_ACU(vectorInputText, params);
-
-            // 清除进度 toast
-            try { if ($vectorRecallToast) toastr_API_ACU.clear($vectorRecallToast); } catch (e) {}
-
-            // 严格 gate：向量召回失败 → 阻断生成
-            if (vectorPreprocessResult && !vectorPreprocessResult.shouldProceed) {
-              const blockStage = String(vectorPreprocessResult.blockStage || 'unknown');
-              const blockReason = String(vectorPreprocessResult.blockReason || '未知原因');
-              logWarn_ACU(`[向量记忆] 严格 gate 阻断。stage=${blockStage} reason=${blockReason}`);
-              showToastr_ACU('error', `[向量记忆] 预处理失败，生成已终止（${blockStage}）：${blockReason}`, '记忆召回');
+            const shouldProcessSummaryVectorIndex = shouldProcessSummaryVectorIndexForGeneration_ACU(type, params, dryRun);
+            const shouldProcessPlot = shouldProcessPlotForGeneration_ACU(type, params, dryRun);
+            if (!shouldProcessSummaryVectorIndex && !shouldProcessPlot) return;
+            if (shouldProcessSummaryVectorIndex) {
               try {
-                if (SillyTavern_API_ACU && typeof SillyTavern_API_ACU.stopGeneration === 'function') SillyTavern_API_ACU.stopGeneration();
-                else if ((window as any).SillyTavern?.stopGeneration) (window as any).SillyTavern.stopGeneration();
-              } catch (e) {}
-              generationGate_ACU.lastUserSendIntentAt = 0;
-              return;
-            }
-
-            // 向量召回成功 → 区分结果显示
-            if (vectorPreprocessResult?.success) {
-              const recallResult = vectorPreprocessResult.recallResult;
-              if (!recallResult) {
-                logDebug_ACU('[向量记忆] 无远记忆快照，世界书已同步清理');
-              } else if (recallResult.matches.length > 0) {
-                const matchCount = recallResult.matches.length;
-                logDebug_ACU(`[向量记忆] 召回成功，${matchCount} 条匹配已注入世界书`);
-                showToastr_ACU('success', `[向量记忆] 召回完成，${matchCount} 条远记忆已注入`, '记忆召回');
-              } else {
-                logDebug_ACU('[向量记忆] 召回完成，无匹配的远记忆');
+                const chatForSummaryIndex = SillyTavern_API_ACU.chat;
+                const lastUserText = (chatForSummaryIndex?.length && (chatForSummaryIndex as any)[chatForSummaryIndex.length - 1]?.is_user)
+                  ? String((chatForSummaryIndex as any)[chatForSummaryIndex.length - 1].mes || '')
+                  : String(getSendTextareaValue_ACU() || params?.prompt || '');
+                const summaryVectorResult = await processSummaryVectorIndexBeforeGenerationWithUI_ACU({ userInput: lastUserText, source: 'generation_after_commands' });
+                logDebug_ACU(`[交火模式纪要索引] GENERATION_AFTER_COMMANDS 发送前处理完成：success=${summaryVectorResult.success}, skipped=${summaryVectorResult.skipped === true}, reason=${summaryVectorResult.reason || 'none'}, keywords=${summaryVectorResult.keywordCount ?? 0}, injected=${summaryVectorResult.injectedCount ?? 0}`);
+              } catch (error) {
+                logWarn_ACU('[交火模式纪要索引] 发送前注入失败，继续原始生成:', error);
               }
             }
+            if (!shouldProcessPlot) return;
+            if (type === 'regenerate' || isProcessing_Plot_ACU) return;
 
-            // 向量召回可能耗时超过 USER_SEND_TRIGGER_TTL_MS_ACU；本事件在召回前已通过 fresh gate，
-            // 因此必须延续本次发送资格给剧情推进，不能让 TTL 过期导致直接正文生成。
-            generationGate_ACU.lastUserSendIntentAt = Date.now();
-
-            } // end if (vectorInputText && isRecentUserSendIntent_ACU)
-
-            // ── 阶段2：剧情推进（仅当启用时执行） ──
-
-            // [去重] 若同一文本刚被 TavernHelper.generate 钩子处理过，跳过剧情推进
+            // [去重] 若同一文本刚被 TavernHelper.generate 钩子处理过，跳过
             try {
               const lastMsgText = (SillyTavern_API_ACU.chat?.length && (SillyTavern_API_ACU.chat as any)[SillyTavern_API_ACU.chat.length - 1]?.is_user)
                 ? ((SillyTavern_API_ACU.chat as any)[SillyTavern_API_ACU.chat.length - 1].mes || '')
@@ -429,18 +284,16 @@ export   function mainInitialize_ACU() {
               const boxText = String(getSendTextareaValue_ACU() || '');
               if (shouldSkipPlotIntercept_ACU(String(lastMsgText)) || shouldSkipPlotIntercept_ACU(boxText)) {
                 logDebug_ACU('[剧情推进] Skip GENERATION_AFTER_COMMANDS due to recent TavernHelper.generate interception.');
-                generationGate_ACU.lastUserSendIntentAt = 0;
                 return;
               }
             } catch (e) {}
 
-            const shouldRunPlot = shouldProcessPlotForGeneration_ACU(type, params, dryRun);
-            if (!shouldRunPlot) {
-              generationGate_ACU.lastUserSendIntentAt = 0;
-              return;
-            }
+            const chat = SillyTavern_API_ACU.chat;
+            if (!chat || chat.length === 0) return;
 
             // ── 策略1：已有用户消息 ──
+            const lastMessageIndex = chat.length - 1;
+            const lastMessage = chat[lastMessageIndex];
 
             // [重构] 调用 service 层策略1编排
             const s1 = await orchestrateAfterCommandsStrategy1_ACU(lastMessage, lastMessageIndex, runOptimizationLogicWithUI_ACU);
@@ -489,7 +342,10 @@ export   function mainInitialize_ACU() {
             }
 
             // ── 策略2：输入框文本 ──
-            if (!freshUserSendGate.isFreshUserSend) return;
+            // shouldProcessPlot 是本次 GENERATION_AFTER_COMMANDS 事件开始时捕获的授权。
+            // 交火召回可能耗时超过 USER_SEND_TRIGGER_TTL_MS_ACU；这里不能再用 TTL 二次否决，
+            // 否则会出现“交火已覆盖纪要索引，但剧情推进被跳过并直接正文生成”的断链。
+            if (!shouldProcessPlot && !isRecentUserSendIntent_ACU()) return;
             const textInBox = getSendTextareaValue_ACU();
 
             // [重构] 调用 service 层策略2编排

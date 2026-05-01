@@ -11,9 +11,10 @@ import { coreApisAreReady_ACU, currentJsonTableData_ACU, getCurrentIsolationKey_
 import { checkAutoMergeTrigger_ACU, prepareAutoMergeBatches_ACU, executeAutoMergeBatch_ACU, finalizeAutoMerge_ACU } from '../summary/merge-logic';
 import { getChatSheetGuideDataForIsolationKey_ACU } from '../template/chat-scope';
 import { loadAllChatMessages_ACU, updateReadableLorebookEntry_ACU } from '../worldbook/pipeline';
+import { archiveSummaryVectorIndexNow_ACU } from '../vector/summary-vector-index-archive-service';
+import { getCurrentWorldbookConfig_ACU } from '../settings/settings-readers';
 
 import { isSummaryOrOutlineTable_ACU, logDebug_ACU, logError_ACU, logWarn_ACU, parseTableTemplateJson_ACU } from '../../shared/utils';
-import { applySpecialIndexSequenceToSummaryTables_ACU } from '../runtime/helpers-table-lock';
 
 /**
  * 表名标准化：trim 后空串视为无效键
@@ -40,7 +41,6 @@ import { parseAndApplyTableEdits_ACU, prepareAIInput_ACU } from '../ai/prompt-bu
 import { buildGuidedBaseDataFromSheetGuide_ACU, getSortedSheetKeys_ACU } from '../template/chat-scope';
 import { isSqliteMode } from './storage-mode';
 import { reloadStorageProvider } from './table-storage-strategy';
-import { executeGroupedUpdateChunks_ACU } from './update-scheduler';
 import { clearTableDataAtFloors_ACU } from '../chat/chat-service';
 
 // ============================================================
@@ -63,11 +63,12 @@ export interface CardUpdateProgressEvent {
     phase: CardUpdatePhase;
     attempt?: number;
     maxRetries?: number;
+    message?: string;
     currentBatch?: number;
     totalBatches?: number;
-    message?: string;
 }
 
+/** 批处理进度上下文 */
 export interface BatchUpdateProgressContext {
     currentBatch: number;
     totalBatches: number;
@@ -86,14 +87,12 @@ export interface BatchUpdateResult {
     success: boolean;
     failedBatch?: number;
     error?: string;
-    aborted?: boolean;
 }
 
 /** orchestrateManualUpdate 的返回值 */
 export interface ManualUpdateResult {
     success: boolean;
     error?: string;
-    aborted?: boolean;
     /** 是否触发了自动合并 */
     autoMergeTriggered?: boolean;
     autoMergeSuccess?: boolean;
@@ -264,12 +263,6 @@ export function resolveUpdateMode_ACU(mode: string): string {
     }
 }
 
-function shouldPersistSequenceAdjustedSheet_ACU(targetSheetKeys: string[] | null, sheetKey: string): boolean {
-    if (!Array.isArray(targetSheetKeys)) return true;
-    if (targetSheetKeys.length === 0) return false;
-    return targetSheetKeys.includes(sheetKey);
-}
-
 /**
  * 执行单次卡片更新的核心逻辑（AI调用 + 重试 + 解析 + 保存）
  * 纯业务逻辑，不驱动 UI。通过可选的 onProgress 回调传递纯数据进度事件。
@@ -287,12 +280,20 @@ export async function executeCardUpdateCore_ACU(
     progressContext: BatchUpdateProgressContext | null = null,
     onProgress?: (event: CardUpdateProgressEvent) => void
 ): Promise<CardUpdateResult> {
+    const emitProgress = (event: CardUpdateProgressEvent): void => {
+        onProgress?.({
+            ...event,
+            ...(progressContext
+                ? {
+                    currentBatch: progressContext.currentBatch,
+                    totalBatches: progressContext.totalBatches,
+                }
+                : {}),
+        });
+    };
     let success = false;
     let modifiedKeys: string[] = [];
     const maxRetries = settings_ACU.tableMaxRetries || 3;
-    const emitProgress = (event: CardUpdateProgressEvent) => {
-        onProgress?.(progressContext ? { ...progressContext, ...event } : event);
-    };
 
     try {
         emitProgress({ phase: 'preparing' });
@@ -357,12 +358,6 @@ export async function executeCardUpdateCore_ACU(
                     throw new Error('解析或应用AI更新时出错');
                 }
 
-                applySpecialIndexSequenceToSummaryTables_ACU(currentJsonTableData_ACU);
-                const sequenceAdjustedKeys = getSortedSheetKeys_ACU(currentJsonTableData_ACU).filter((sheetKey: string) => {
-                    const table = currentJsonTableData_ACU?.[sheetKey];
-                    return table && isSummaryOrOutlineTable_ACU(table.name) && shouldPersistSequenceAdjustedSheet_ACU(targetSheetKeys, sheetKey);
-                });
-                modifiedKeys = [...new Set([...(modifiedKeys || []), ...sequenceAdjustedKeys])];
                 success = true;
                 break;
 
@@ -401,7 +396,6 @@ export async function executeCardUpdateCore_ACU(
                 const isFirstTimeInit = await checkIfFirstTimeInit_ACU();
 
                 if (keysToPersist.length > 0 || isFirstTimeInit) {
-                    const keysToTrackAsUpdated = keysToPersist;
                     let keysToActuallySave = keysToPersist;
                     if (isFirstTimeInit) {
                         const allSheetKeys = getSortedSheetKeys_ACU(currentJsonTableData_ACU);
@@ -425,16 +419,10 @@ export async function executeCardUpdateCore_ACU(
                         ? updateGroupKeysRaw.filter(sheetKey => {
                             const table = currentJsonTableData_ACU?.[sheetKey];
                             if (!table || !isSummaryOrOutlineTable_ACU(table.name)) return true;
-                            return keysToTrackAsUpdated.includes(sheetKey);
+                            return keysToActuallySave.includes(sheetKey);
                         })
                         : updateGroupKeysRaw;
-                    const saveSuccess = await saveIndependentTableToChatHistory_ACU(
-                        saveTargetIndex,
-                        keysToActuallySave,
-                        updateGroupKeysToUse,
-                        false,
-                        keysToTrackAsUpdated,
-                    );
+                    const saveSuccess = await saveIndependentTableToChatHistory_ACU(saveTargetIndex, keysToActuallySave, updateGroupKeysToUse);
                     if (!saveSuccess) {
                         return { success: false, modifiedKeys, error: '无法将更新后的数据库保存到聊天记录。' };
                     }
@@ -442,7 +430,20 @@ export async function executeCardUpdateCore_ACU(
                     logDebug_ACU("No tables were modified by AI, skipping save to chat history.");
                 }
 
-                await updateReadableLorebookEntry_ACU(true);
+                    await updateReadableLorebookEntry_ACU(true);
+
+                    if (getCurrentWorldbookConfig_ACU().summaryVectorIndexModeEnabled === true) {
+                        try {
+                            const archiveResult = await archiveSummaryVectorIndexNow_ACU({ targetMessageIndex: saveTargetIndex, mode: 'append' });
+                            if (!archiveResult.success && !archiveResult.skipped) {
+                                logWarn_ACU('[交火模式纪要索引] 填表完成后自动归档失败:', archiveResult.errors?.join('; ') || archiveResult.reason || 'unknown_error');
+                            } else {
+                                logDebug_ACU(`[交火模式纪要索引] 填表完成后自动归档完成：rows=${archiveResult.indexedRowCount}, chunks=${archiveResult.chunkCount}, skipped=${archiveResult.skipped}, reason=${archiveResult.reason || ''}`);
+                            }
+                        } catch (archiveError) {
+                            logWarn_ACU('[交火模式纪要索引] 填表完成后自动归档异常，已保留本次表格保存结果:', archiveError);
+                        }
+                    }
             } else {
                 emitProgress({ phase: 'chunk_done' });
                 logDebug_ACU("Import mode: skipping save to chat history for this chunk.");
@@ -471,13 +472,23 @@ export async function processUpdatesBatch_ACU(
     indicesToUpdate: number[],
     mode: string,
     options: any,
-    executeUpdate: (messagesToUse: any[], saveTargetIndex: number, updateMode: string, isSilentMode: boolean, targetSheetKeys: string[] | null, requestOptions: Record<string, any> | null, progressContext: BatchUpdateProgressContext) => Promise<CardUpdateResult>
+    executeUpdate: (
+        messagesToUse: any[],
+        saveTargetIndex: number,
+        updateMode: string,
+        isSilentMode: boolean,
+        targetSheetKeys: string[] | null,
+        requestOptions: Record<string, any> | null,
+        progressContext: BatchUpdateProgressContext
+    ) => Promise<CardUpdateResult>
 ): Promise<BatchUpdateResult> {
     if (!indicesToUpdate || indicesToUpdate.length === 0) {
         return { success: true };
     }
 
     const { targetSheetKeys, batchSize: specificBatchSize, requestOptions } = options;
+
+    _set_isAutoUpdatingCard_ACU(true);
 
     const isSummaryMode = (mode && (mode.includes('summary') || mode === 'manual_summary')) || false;
     const batchSize = specificBatchSize || (settings_ACU.updateBatchSize || 2);
@@ -496,10 +507,6 @@ export async function processUpdatesBatch_ACU(
     for (let i = 0; i < batches.length; i++) {
         const batchIndices = batches[i];
         const batchNumber = i + 1;
-        if (wasStoppedByUser_ACU) {
-            return { success: false, failedBatch: batchNumber, aborted: true, error: '填表任务已由用户终止。' };
-        }
-
         const firstMessageIndexOfBatch = batchIndices[0];
         const lastMessageIndexOfBatch = batchIndices[batchIndices.length - 1];
         const finalSaveTargetIndex = lastMessageIndexOfBatch;
@@ -507,6 +514,7 @@ export async function processUpdatesBatch_ACU(
         // 构建合并基底
         const baseResult = buildBatchMergeBase_ACU(batchNumber);
         if (!baseResult.data) {
+            _set_isAutoUpdatingCard_ACU(false);
             return { success: false, failedBatch: batchNumber, error: baseResult.error || '无法构建合并基底，操作已终止。' };
         }
         const mergedBatchData = baseResult.data;
@@ -518,10 +526,6 @@ export async function processUpdatesBatch_ACU(
         const loadResult = loadBatchBaseData_ACU(chatHistory, firstMessageIndexOfBatch, batchIsolationKey, batchSheetKeys, mergedBatchData);
         _set_currentJsonTableData_ACU(mergedBatchData);
         logDebug_ACU(`[Batch ${batchNumber}] Loaded ${loadResult.foundCount}/${loadResult.totalCount} tables from history before index ${firstMessageIndexOfBatch}. Missing tables will use template structure (header-only).`);
-
-        if (wasStoppedByUser_ACU) {
-            return { success: false, failedBatch: batchNumber, aborted: true, error: '填表任务已由用户终止。' };
-        }
 
         // 计算上下文范围
         let sliceStartIndex = firstMessageIndexOfBatch;
@@ -564,23 +568,16 @@ export async function processUpdatesBatch_ACU(
             isSilentMode,
             targetSheetKeys,
             effectiveRequestOptions,
-            {
-                currentBatch: batchNumber,
-                totalBatches: batches.length,
-            },
+            { currentBatch: batchNumber, totalBatches: batches.length }
         );
 
         if (!result.success) {
-            if (result.aborted || wasStoppedByUser_ACU) {
-                return { success: false, failedBatch: batchNumber, aborted: true, error: result.error || '填表任务已由用户终止。' };
-            }
+            _set_isAutoUpdatingCard_ACU(false);
             return { success: false, failedBatch: batchNumber, error: result.error || `批处理在第 ${batchNumber} 批时失败或被终止。` };
         }
     }
 
-    if (wasStoppedByUser_ACU) {
-        return { success: false, failedBatch: batches.length, aborted: true, error: '填表任务已由用户终止。' };
-    }
+    _set_isAutoUpdatingCard_ACU(false);
     return { success: true };
 }
 
@@ -653,27 +650,22 @@ export async function orchestrateManualUpdate_ACU(
         }
 
         const templateData = parseTableTemplateJson_ACU({ stripSeedRows: true }) || {};
-        const updateGroups: Record<string, {
-            indices: number[];
-            batchSize: number;
-            groupId: number;
-            sheetKeys: string[];
-        }> = {};
-
-        targetKeys.forEach((sheetKey: string) => {
+            const updateGroups: Record<string, any> = {};
+            targetKeys.forEach((sheetKey: string) => {
             const tableConfig = templateData?.[sheetKey]?.updateConfig || {};
             const tableGroupId = Number.isFinite(tableConfig?.groupId)
                 ? Math.trunc(tableConfig.groupId)
                 : -1;
-            // 手动更新只允许受分组参数与手动 UI/全局参数影响。
-            // 模板中的 updateFrequency/contextDepth/skipFloors/batchSize 属于自动更新策略，不能参与手动批次拆分。
-            const groupKey = `${tableGroupId}|${contextScopeIndices.join(',')}|${uiBatchSize}`;
+            const tableFrequency = Number.isFinite(tableConfig?.updateFrequency) ? tableConfig.updateFrequency : -1;
+            const tableContextDepth = Number.isFinite(tableConfig?.contextDepth) ? tableConfig.contextDepth : -1;
+            const tableSkipFloors = Number.isFinite(tableConfig?.skipFloors) ? tableConfig.skipFloors : -1;
+            const groupKey = `${tableGroupId}|${tableFrequency}|${tableContextDepth}|${tableSkipFloors}|${contextScopeIndices.join(',')}|${uiBatchSize}`;
             if (!updateGroups[groupKey]) {
                 updateGroups[groupKey] = {
                     indices: contextScopeIndices,
                     batchSize: uiBatchSize,
                     groupId: tableGroupId,
-                    sheetKeys: [],
+                    sheetKeys: []
                 };
             }
             updateGroups[groupKey].sheetKeys.push(sheetKey);
@@ -730,10 +722,12 @@ export async function orchestrateManualUpdate_ACU(
             }
         }
 
-        _set_wasStoppedByUser_ACU(false);
         _set_isAutoUpdatingCard_ACU(true);
+        for (const gKey of groupKeys) {
+            const group = updateGroups[gKey];
 
-        const execution = await executeGroupedUpdateChunks_ACU(updateGroups, settings_ACU, async (_groupKey, group) => {
+            // 决议本次 group 的 effective API preset：
+            // 以 group 内第一个表为准，查 settings_ACU.tableApiPresetOverridesByName
             let groupEffectivePreset = '';
             if (group.sheetKeys && group.sheetKeys.length > 0) {
                 const firstSheetKey = group.sheetKeys[0];
@@ -749,38 +743,23 @@ export async function orchestrateManualUpdate_ACU(
                     ? { tableApiPreset: groupEffectivePreset }
                     : null,
             });
-
-            return { success: !!batchResult?.success, value: batchResult };
-        }, {
-            shouldStop: () => wasStoppedByUser_ACU,
-        });
-
-        await loadAllChatMessages_ACU();
-        await refreshData();
-
-        const firstFailedExecution = execution.results.find(result => !result.success);
-        const firstFailedBatchResult = firstFailedExecution?.value;
-        const executionAborted = wasStoppedByUser_ACU || execution.stopped || firstFailedBatchResult?.aborted === true;
-
-        if (execution.failedGroupKeys.length > 0) {
-            logWarn_ACU(`[Manual Update] 并发分组更新失败 ${execution.failedGroupKeys.length}/${execution.totalGroups} 组。`);
+            if (!batchResult.success) {
+                _set_isAutoUpdatingCard_ACU(false);
+                // [修复] 填表失败时，processUpdatesBatch 内部的 loadBatchBaseData 已经用聊天记录中的旧数据
+                // 覆盖了 currentJsonTableData_ACU（包括旧表头）。必须调用 refreshData 恢复到正确状态，
+                // 否则用户重新打开可视化编辑器时会看到旧表头（指导表中的新表头不会被应用）。
+                try {
+                    await loadAllChatMessages_ACU();
+                    await refreshData();
+                } catch (e) {
+                    logWarn_ACU('[Manual Update] 填表失败后恢复数据时出错:', e);
+                }
+                return { success: false, error: batchResult.error || '手动更新失败或被终止。' };
+            }
+            await loadAllChatMessages_ACU();
+            await refreshData();
         }
-
-        if (executionAborted) {
-            return {
-                success: false,
-                aborted: true,
-                error: firstFailedBatchResult?.error || '手动更新已由用户终止。',
-            };
-        }
-
-        if (execution.failedGroupKeys.length > 0) {
-            return {
-                success: false,
-                aborted: false,
-                error: firstFailedBatchResult?.error || `手动更新有 ${execution.failedGroupKeys.length} 个分组失败。`,
-            };
-        }
+        _set_isAutoUpdatingCard_ACU(false);
 
         // 手动更新完成后检测自动合并总结
         let autoMergeTriggered = false;
@@ -808,7 +787,6 @@ export async function orchestrateManualUpdate_ACU(
         return { success: true, autoMergeTriggered, autoMergeSuccess };
     } finally {
         _set_manualExtraHint_ACU('');
-        _set_wasStoppedByUser_ACU(false);
         _set_isAutoUpdatingCard_ACU(false);
     }
 }

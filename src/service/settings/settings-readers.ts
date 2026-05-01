@@ -20,22 +20,14 @@ export function getCurrentCharSettings_ACU() {
     if (!settings_ACU.characterSettings) {
         settings_ACU.characterSettings = {};
     }
-    const globalSummaryVectorIndexEnabled =
-        (typeof globalMeta_ACU?.summaryVectorIndexModeGlobal === 'boolean')
-            ? (globalMeta_ACU.summaryVectorIndexModeGlobal === true)
-            : (settings_ACU?.summaryVectorIndexModeDefault === true);
-    const globalZeroTkEnabled = globalSummaryVectorIndexEnabled
-        ? false
-        : (typeof globalMeta_ACU?.zeroTkOccupyModeGlobal === 'boolean')
+    const globalZeroTkDefault =
+        (typeof globalMeta_ACU?.zeroTkOccupyModeGlobal === 'boolean')
             ? (globalMeta_ACU.zeroTkOccupyModeGlobal === true)
             : (settings_ACU?.zeroTkOccupyModeDefault === true);
     if (!settings_ACU.characterSettings[charId]) {
         const worldbookConfigForNewChat = JSON.parse(JSON.stringify(defaultWorldbookConfig_ACU));
-        // 0TK 与向量混合交火增强方案是全局互斥开关，不是聊天级配置。
-        // 这里保留 worldbookConfig 字段只是为了兼容既有调用方读取。
-        worldbookConfigForNewChat.summaryVectorIndexModeEnabled = globalSummaryVectorIndexEnabled;
-        worldbookConfigForNewChat.zeroTkOccupyMode = globalZeroTkEnabled;
-        worldbookConfigForNewChat.outlineEntryEnabled = globalSummaryVectorIndexEnabled ? true : !globalZeroTkEnabled;
+        worldbookConfigForNewChat.zeroTkOccupyMode = globalZeroTkDefault;
+        worldbookConfigForNewChat.outlineEntryEnabled = !globalZeroTkDefault;
         settings_ACU.characterSettings[charId] = {
             worldbookConfig: worldbookConfigForNewChat,
         };
@@ -47,13 +39,10 @@ export function getCurrentCharSettings_ACU() {
             JSON.parse(JSON.stringify(defaultWorldbookConfig_ACU)),
             existingCfg,
         );
-        // 强制使用全局状态覆盖旧聊天残留字段，避免模式跟着对话走。
+        const globalSummaryVectorIndexEnabled = globalMeta_ACU?.summaryVectorIndexModeGlobal === true;
         mergedCfg.summaryVectorIndexModeEnabled = globalSummaryVectorIndexEnabled;
-        mergedCfg.zeroTkOccupyMode = globalZeroTkEnabled;
-        mergedCfg.outlineEntryEnabled = globalSummaryVectorIndexEnabled ? true : !globalZeroTkEnabled;
-        // [向量记忆] vectorMemory 不再跟随世界书配置规范化，
-        // 已迁移到 settings_ACU.vectorMemoryConfig（全局数据库级）。
-        // 保留 mergedCfg.vectorMemory 的旧数据引用以兼容迁移读取。
+        mergedCfg.zeroTkOccupyMode = globalSummaryVectorIndexEnabled ? false : globalZeroTkDefault;
+        mergedCfg.outlineEntryEnabled = globalSummaryVectorIndexEnabled ? true : !mergedCfg.zeroTkOccupyMode;
         settings_ACU.characterSettings[charId].worldbookConfig = mergedCfg;
     } catch (e) {
         // ignore

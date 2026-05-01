@@ -13,8 +13,6 @@ import { loadAllChatMessages_ACU } from './pipeline';
 import { cleanChatName_ACU, getChatFirstLayerMessage_ACU, logDebug_ACU, logError_ACU, logWarn_ACU } from '../../shared/utils';
 import { loadOrCreateJsonTableFromChatHistory_ACU } from '../table/table-service';
 import { purgeSheetKeysFromMessage_ACU } from '../../data/repositories/chat-message-data-repo';
-import { getCurrentVectorMemoryConfig_ACU } from '../vector/vector-memory-config';
-import { defaultVectorMemoryConfig_ACU } from '../../shared/defaults';
 
   async function enforceCleanupOfCharacterWorldbook_ACU() {
       // 延迟一段时间，确保其他操作完成
@@ -61,13 +59,6 @@ import { defaultVectorMemoryConfig_ACU } from '../../shared/defaults';
     // MUST be called AFTER setting currentChatFileIdentifier_ACU so it loads the correct character settings.
     loadSettings_ACU();
 
-    try {
-        await deleteAllGeneratedEntries_ACU();
-        logDebug_ACU('[Worldbook] New chat reset: cleaned generated entries including vector memory slot.');
-    } catch (e) {
-        logWarn_ACU('[Worldbook] New chat reset cleanup failed:', e);
-    }
-
     _set_allChatMessages_ACU([]);
     _set_lastTotalAiMessages_ACU(0); // 重置 AI 消息计数
 
@@ -76,12 +67,6 @@ import { defaultVectorMemoryConfig_ACU } from '../../shared/defaults';
     generationGate_ACU.lastUserMessageText = '';
     generationGate_ACU.lastUserMessageAt = 0;
     generationGate_ACU.lastUserSendIntentAt = 0;
-    generationGate_ACU.lastVectorRecallSignature = '';
-    generationGate_ACU.lastVectorRecallAt = 0;
-    generationGate_ACU.lastVectorRecallIntentAt = 0;
-    generationGate_ACU.lastVectorRecallResult = null;
-    generationGate_ACU.lastVectorRecallBlockFingerprint = '';
-    generationGate_ACU.lastVectorRecallBlockAt = 0;
     generationGate_ACU.lastGeneration = null;
 
     logDebug_ACU(
@@ -145,24 +130,6 @@ import { defaultVectorMemoryConfig_ACU } from '../../shared/defaults';
       return '';
   }
 
-  function buildVectorMemoryEntryCommentsForCleanup_ACU() {
-    const vectorMemoryConfig = getCurrentVectorMemoryConfig_ACU();
-    const isolationPrefix = getIsolationPrefix_ACU();
-    const comments = new Set<string>();
-    const addRawComment_ACU = (value: any) => {
-        const rawComment = String(value || '').trim();
-        if (!rawComment) return;
-        comments.add(rawComment);
-        if (isolationPrefix) {
-            comments.add(`${isolationPrefix}${rawComment}`);
-        }
-    };
-
-    addRawComment_ACU(vectorMemoryConfig.entryComment);
-    addRawComment_ACU(defaultVectorMemoryConfig_ACU.entryComment);
-    return comments;
-  }
-
   async function deleteAllGeneratedEntries_ACU(targetLorebook: string | null = null) {
     const primaryLorebookName = targetLorebook || (await getInjectionTargetLorebook_ACU());
     if (!primaryLorebookName) return;
@@ -206,9 +173,6 @@ import { defaultVectorMemoryConfig_ACU } from '../../shared/defaults';
              });
         }
 
-        const vectorEntryCommentsForCleanup = buildVectorMemoryEntryCommentsForCleanup_ACU();
-        const isVectorMemoryEntryComment_ACU = (comment: string) => vectorEntryCommentsForCleanup.has(comment);
-
         const uidsToDelete = allEntries
             .filter(entry => {
                 if (!entry.comment) return false;
@@ -222,9 +186,6 @@ import { defaultVectorMemoryConfig_ACU } from '../../shared/defaults';
                     if (entry.comment.startsWith('外部导入-')) return false;
                 }
                 
-                // [向量记忆] 向量召回条目属于脚本生成的世界书注入槽，新开对话时必须随数据库生成条目一起清理。
-                if (isVectorMemoryEntryComment_ACU(entry.comment)) return true;
-
                 if (settings_ACU.dataIsolationEnabled) {
                     // 隔离模式：只删除匹配当前标识前缀的
                     if (!isolationPrefix) return false;

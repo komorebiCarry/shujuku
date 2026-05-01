@@ -107,6 +107,10 @@ export function resolveTableHistoryStateFromChat_ACU(
         }
     }
 
+    if (lastTrackedUpdateMessageIndex === -1 && latestDataMessageIndex !== -1) {
+        lastTrackedUpdateMessageIndex = latestDataMessageIndex;
+    }
+
     return {
         latestAiMessageIndex,
         latestDataMessageIndex,

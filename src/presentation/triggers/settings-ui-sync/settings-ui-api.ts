@@ -4,7 +4,7 @@
 import { DEFAULT_CHAR_CARD_PROMPT_ACU } from '../../../shared/defaults-json.js';
 import { AUTO_UPDATE_FLOOR_INCREASE_DELAY_ACU } from '../../../shared/defaults';
 import { updateCardUpdateStatusDisplay_ACU } from '../../components/update-status-display';
-import { getCharCardPromptFromUI_ACU, getCurrentPlotTaskEditorState_ACU, isAutoUpdatingCard_ACU, manualExtraHint_ACU, newMessageDebounceTimer_ACU, renderPromptSegments_ACU, wasStoppedByUser_ACU , _set_isAutoUpdatingCard_ACU, _set_manualExtraHint_ACU, _set_newMessageDebounceTimer_ACU} from '../../components/plot-editors';
+import { getCharCardPromptFromUI_ACU, isAutoUpdatingCard_ACU, manualExtraHint_ACU, newMessageDebounceTimer_ACU, renderPromptSegments_ACU, wasStoppedByUser_ACU , _set_isAutoUpdatingCard_ACU, _set_manualExtraHint_ACU, _set_newMessageDebounceTimer_ACU} from '../../components/plot-editors';
 import { showToastr_ACU } from '../../theme/toast';
 import { ACU_TOAST_CATEGORY_ACU } from '../../../shared/constants';
 import { SillyTavern_API_ACU, TavernHelper_API_ACU, toastr_API_ACU, _set_SillyTavern_API_ACU, _set_TavernHelper_API_ACU, _set_jQuery_API_ACU, _set_toastr_API_ACU } from '../../../shared/host-api';
@@ -241,9 +241,6 @@ import { maybeLiftWorldbookSuppression_ACU } from '../../../service/runtime/help
     if (settings_ACU.plotApiPreset === presetName) {
       settings_ACU.plotApiPreset = '';
     }
-    if (settings_ACU.vectorMemoryConfig && typeof settings_ACU.vectorMemoryConfig === 'object' && settings_ACU.vectorMemoryConfig.keywordApiPreset === presetName) {
-      settings_ACU.vectorMemoryConfig.keywordApiPreset = '';
-    }
     // [新增] 清除按表名保存的表级 API 预设覆盖中引用了该预设的条目
     if (settings_ACU.tableApiPresetOverridesByName && typeof settings_ACU.tableApiPresetOverridesByName === 'object') {
       const overrides = settings_ACU.tableApiPresetOverridesByName;
@@ -294,21 +291,14 @@ $plotApiPresetSelect.append(renderOption_ACU(p.name, p.name));
       $plotApiPresetSelect.val(settings_ACU.plotApiPreset || '');
     }
 
-    // 刷新任务级剧情推进API预设选择器。优先使用当前编辑任务的持久化值，避免新开对话/刷新预设列表时被 DOM 空值覆盖。
+    // 刷新任务级数据库API预设选择器
     const $plotTaskApiPresetSelect = $popupInstance_ACU.find(`#${SCRIPT_ID_PREFIX_ACU}-plot-task-api-preset`);
     if ($plotTaskApiPresetSelect.length) {
-      const { selectedTask } = getCurrentPlotTaskEditorState_ACU(settings_ACU.plotSettings, { autoSelect: false });
-      const currentTaskApiPreset = String(selectedTask?.taskApiPreset || $plotTaskApiPresetSelect.val() || '');
-      const hasCurrentPreset = currentTaskApiPreset
-        ? presets.some((p: any) => p && p.name === currentTaskApiPreset)
-        : true;
+      const currentTaskApiPreset = $plotTaskApiPresetSelect.val() || '';
       $plotTaskApiPresetSelect.empty().append('<option value="">继承全局剧情推进API预设</option>');
       presets.forEach((p: any) => {
 $plotTaskApiPresetSelect.append(renderOption_ACU(p.name, p.name));
       });
-      if (currentTaskApiPreset && !hasCurrentPreset) {
-        $plotTaskApiPresetSelect.append(renderOption_ACU(currentTaskApiPreset, `已保存但当前不可用：${currentTaskApiPreset}`));
-      }
       $plotTaskApiPresetSelect.val(currentTaskApiPreset);
     }
 
@@ -322,16 +312,6 @@ $optimizationApiPresetSelect.append(renderOption_ACU(p.name, p.name));
       $optimizationApiPresetSelect.val(settings_ACU.contentOptimizationSettings?.apiPreset || '');
     }
 
-    // 刷新向量关键词生成的 API 预设选择器
-    const $vectorKeywordApiPresetSelect = $popupInstance_ACU.find(`#${SCRIPT_ID_PREFIX_ACU}-worldbook-vector-memory-keyword-api-preset`);
-    if ($vectorKeywordApiPresetSelect.length) {
-      $vectorKeywordApiPresetSelect.empty().append('<option value="">使用当前API配置</option>');
-      presets.forEach((p: any) => {
-        $vectorKeywordApiPresetSelect.append(renderOption_ACU(p.name, p.name));
-      });
-      $vectorKeywordApiPresetSelect.val(settings_ACU.vectorMemoryConfig?.keywordApiPreset || '');
-    }
- 
     // [新增] 刷新可视化编辑器配置面板中的表级 API 预设覆盖选择器
     // 该 select 可能不在 popup 中，而是在可视化编辑器容器里
     const $cfgTableApiPreset = jQuery_API_ACU('#cfg-table-api-preset');

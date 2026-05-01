@@ -6,83 +6,34 @@
  */
 
 import type { Sheet_ACU } from '../../shared/models/table-data';
+import type {
+    ChatSummaryVectorIndexManifest_ACU,
+    ChatSummaryVectorIndexState_ACU,
+} from '../../service/vector/summary-vector-index-types';
 
 // ── 新版按标签分组存储 ──
-
-export interface ChatVectorRemoteMemoryChunk_ACU {
-    chunkId: string;
-    text: string;
-    vector: number[];
-    sequence: number;
-}
-
-export interface ChatVectorRemoteMemoryBatch_ACU {
-    batchId: string;
-    snapshotMessageId: string;
-    sourceMessageId: string;
-    sourceRowKeys: string[];
-    sourceRowCount: number;
-    summaryText: string;
-    summaryHash: string;
-    chunks: ChatVectorRemoteMemoryChunk_ACU[];
-    promptGroupVersion: string;
-    createdAt: string;
-    archivedRange?: {
-        firstRowKey: string;
-        lastRowKey: string;
-    };
-}
-
-export interface ChatVectorState_ACU {
-    snapshotMessageId: string;
-    remoteMemoryBatches: ChatVectorRemoteMemoryBatch_ACU[];
-    lastIndexedAt?: string;
-    lastArchiveAt?: string;
-}
-
-export interface ChatSummaryVectorIndexChunk_ACU {
-    chunkId: string;
-    rowKey: string;
-    text: string;
-    vector: number[];
-    sequence: number;
-}
-
-export interface ChatSummaryVectorIndexRow_ACU {
-    rowKey: string;
-    rowId: string;
-    rowOrder: number;
-    timeSpan: string;
-    location: string;
-    summary: string;
-    indexCode: string;
-    vectorSourceText: string;
-    chunkIds: string[];
-}
-
-export interface ChatSummaryVectorIndexState_ACU {
-    schemaVersion: 1;
-    snapshotMessageId: string;
-    sourceTableKey: string;
-    sourceTableName: string;
-    indexedAt: string;
-    rowCount: number;
-    chunkCount: number;
-    skippedRowCount: number;
-    rows: ChatSummaryVectorIndexRow_ACU[];
-    chunks: ChatSummaryVectorIndexChunk_ACU[];
-}
 
 /** 单个隔离标签下的数据槽 */
 export interface IsolationTagData_ACU {
     independentData: Record<string, Sheet_ACU>;
     modifiedKeys: string[];
     updateGroupKeys: string[];
-    vectorMemoryState?: ChatVectorState_ACU;
-    summaryVectorIndexState?: ChatSummaryVectorIndexState_ACU;
+    /** 旧版/兼容向量记忆状态。保留字段是为了不破坏已有聊天记录。 */
+    vectorMemoryState?: any;
+    /** 交火模式纪要向量索引轻量状态。新外置模式下不应保存完整 vector 数组。 */
+    summaryVectorIndexState?: ChatSummaryVectorIndexState_ACU | null;
+    /** 外置向量索引 manifest。聊天记录只保存定位和校验信息。 */
+    summaryVectorIndexManifest?: ChatSummaryVectorIndexManifest_ACU | null;
     /** 基底状态标记（首楼初始化时写入） */
     _acu_base_state?: string;
 }
+
+export type {
+    ChatSummaryVectorIndexChunk_ACU,
+    ChatSummaryVectorIndexManifest_ACU,
+    ChatSummaryVectorIndexRow_ACU,
+    ChatSummaryVectorIndexState_ACU,
+} from '../../service/vector/summary-vector-index-types';
 
 /** 按标签分组的容器（TavernDB_ACU_IsolatedData 的类型） */
 export interface IsolatedDataContainer_ACU {
@@ -111,8 +62,6 @@ export interface MessageTableFields_ACU {
     TavernDB_ACU_SummaryData?: LegacyTableContainer_ACU;
     /** 隔离标识代码 */
     TavernDB_ACU_Identity?: string;
-    /** 本地消息锚点（用于宿主 message_id 缺失时的稳定回退） */
-    TavernDB_ACU_LocalMessageAnchor?: string;
     /** 本次修改的表格键列表 */
     TavernDB_ACU_ModifiedKeys?: string[];
     /** 本次更新组的表格键列表 */

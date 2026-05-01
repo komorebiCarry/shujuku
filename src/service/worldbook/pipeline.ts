@@ -10,8 +10,6 @@ import { logDebug_ACU, logError_ACU, logWarn_ACU, parseTableTemplateJson_ACU } f
 import { isEntryBlocked_ACU } from '../../shared/utils';
 import { formatJsonToReadable_ACU, maybeLiftWorldbookSuppression_ACU, mergeAllIndependentTables_ACU, shouldSuppressWorldbookInjection_ACU } from '../runtime/helpers-remaining';
 import { allocConsecutiveOrderBlock_ACU, applyPlacementToEntry_ACU, buildDefaultGlobalInjectionConfig_ACU, buildUsedOrderSet_ACU, ensureExportConfigDefaults_ACU, ensureGlobalInjectionConfigDefaults_ACU, getEntryOrderNumber_ACU, getFixedPlacementDefaultsForTable_ACU, getInjectionTargetLorebook_ACU, getIsolationPrefix_ACU, isEntryPlacementMatched_ACU, normalizeLorebookPosition_ACU, normalizePlacementConfig_ACU, updateCustomTableExports_ACU, updateImportantPersonsRelatedEntries_ACU, updateOutlineTableEntry_ACU, updateSummaryTableEntries_ACU } from './injection-engine';
-import { getCurrentVectorMemoryConfig_ACU } from '../vector/vector-memory-config';
-import { defaultVectorMemoryConfig_ACU } from '../../shared/defaults';
 // pipeline.ts
 // 从 05_core_tail.js 迁入
 
@@ -110,18 +108,18 @@ export   async function updateReadableLorebookEntry_ACU(createIfNeeded = false, 
     }
 
     // Call all the individual entry updaters
-    await updateImportantPersonsRelatedEntries_ACU(importantPersonsTable, isImport, targetLorebookOverride);
-    await updateSummaryTableEntries_ACU(summaryTable, isImport, targetLorebookOverride);
-    await updateOutlineTableEntry_ACU(outlineTable, isImport, targetLorebookOverride);
+    await updateImportantPersonsRelatedEntries_ACU(importantPersonsTable, isImport);
+    await updateSummaryTableEntries_ACU(summaryTable, isImport);
+    await updateOutlineTableEntry_ACU(outlineTable, isImport);
 
     // [修复] 自定义导出/按行拆分条目是否需要注入，应以 mergedData 中是否存在真实单元格数据为准，
     // 不能再依赖 readableText 判空。
     // 否则当所有表格都开启“按行拆分”后，readableText 会为空，进而误判为“数据库为空”，
     // 导致本应创建的拆分世界书条目被整体跳过。
     if (hasNonEmptyCellData_ACU) {
-        await updateCustomTableExports_ACU(mergedData, isImport, targetLorebookOverride);
+        await updateCustomTableExports_ACU(mergedData, isImport);
     } else {
-        await updateCustomTableExports_ACU(null, isImport, targetLorebookOverride); // 仅清理旧自定义导出条目，不创建新条目
+        await updateCustomTableExports_ACU(null, isImport); // 仅清理旧自定义导出条目，不创建新条目
     }
 
     // [修复] 外部导入时优先使用 targetLorebookOverride 参数，避免临时修改 worldbookConfig 被兜底补齐逻辑覆盖
@@ -428,24 +426,6 @@ export   async function updateReadableLorebookEntry_ACU(createIfNeeded = false, 
   }
 
 
-function buildVectorMemoryEntryCommentsForCleanup_ACU() {
-    const vectorMemoryConfig = getCurrentVectorMemoryConfig_ACU();
-    const isolationPrefix = getIsolationPrefix_ACU();
-    const comments = new Set<string>();
-    const addRawComment_ACU = (value: any) => {
-        const rawComment = String(value || '').trim();
-        if (!rawComment) return;
-        comments.add(rawComment);
-        if (isolationPrefix) {
-            comments.add(`${isolationPrefix}${rawComment}`);
-        }
-    };
-
-    addRawComment_ACU(vectorMemoryConfig.entryComment);
-    addRawComment_ACU(defaultVectorMemoryConfig_ACU.entryComment);
-    return comments;
-}
-
 export   async function deleteAllGeneratedEntries_ACU(targetLorebook: string | null = null) {
     const primaryLorebookName = targetLorebook || (await getInjectionTargetLorebook_ACU());
     if (!primaryLorebookName) return;
@@ -489,9 +469,6 @@ export   async function deleteAllGeneratedEntries_ACU(targetLorebook: string | n
              });
         }
 
-        const vectorEntryCommentsForCleanup = buildVectorMemoryEntryCommentsForCleanup_ACU();
-        const isVectorMemoryEntryComment_ACU = (comment: string) => vectorEntryCommentsForCleanup.has(comment);
-
         const uidsToDelete = allEntries
             .filter(entry => {
                 if (!entry.comment) return false;
@@ -505,9 +482,6 @@ export   async function deleteAllGeneratedEntries_ACU(targetLorebook: string | n
                     if (entry.comment.startsWith('外部导入-')) return false;
                 }
                 
-                // [向量记忆] 向量召回条目属于脚本生成的世界书注入槽，新开对话时必须随数据库生成条目一起清理。
-                if (isVectorMemoryEntryComment_ACU(entry.comment)) return true;
-
                 if (settings_ACU.dataIsolationEnabled) {
                     // 隔离模式：只删除匹配当前标识前缀的
                     if (!isolationPrefix) return false;
