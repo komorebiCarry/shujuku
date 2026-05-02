@@ -26,9 +26,21 @@ import { abortableDelay } from '../../../shared/abortable-delay';
     }
   }
 
+  function getPlotTaskApiPresetOverrides_ACU(): Record<string, string> {
+    if (!settings_ACU.plotTaskApiPresetOverridesById || typeof settings_ACU.plotTaskApiPresetOverridesById !== 'object' || Array.isArray(settings_ACU.plotTaskApiPresetOverridesById)) {
+      settings_ACU.plotTaskApiPresetOverridesById = {};
+    }
+    return settings_ACU.plotTaskApiPresetOverridesById;
+  }
+
   function resolvePlotTaskApiPreset_ACU(task: any): string {
-    const taskPreset = String(task?.taskApiPreset || '').trim();
-    if (taskPreset) return taskPreset;
+    const taskId = String(task?.id || '').trim();
+    if (taskId) {
+      const mappedPreset = String(getPlotTaskApiPresetOverrides_ACU()[taskId] || '').trim();
+      if (mappedPreset) return mappedPreset;
+    }
+    const legacyTaskPreset = String(task?.taskApiPreset || '').trim();
+    if (legacyTaskPreset) return legacyTaskPreset;
     return String(settings_ACU.plotApiPreset || '').trim();
   }
 

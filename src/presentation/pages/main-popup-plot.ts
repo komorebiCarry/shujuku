@@ -164,7 +164,7 @@ export function generateCoreFuncTabHTML(): string {
                                             <select id="${SCRIPT_ID_PREFIX_ACU}-plot-task-api-preset" class="text_pole" style="width:100%;">
                                                 <option value="">继承全局剧情推进API预设</option>
                                             </select>
-                                            <small class="notes">仅作用于当前剧情任务；未选择时继承全局剧情推进 API 预设，不会联动修改其他任务。</small>
+                                            <small class="notes">按任务ID保存到插件全局设置；不写入聊天记录或剧情推进预设，未选择时继承全局剧情推进 API 预设。</small>
                                         </div>
                                     </div>
                                     <div id="${SCRIPT_ID_PREFIX_ACU}-plot-prompt-constructor-area">

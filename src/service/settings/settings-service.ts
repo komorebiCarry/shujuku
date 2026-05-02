@@ -192,6 +192,9 @@ export   function loadSettings_ACU() {
               if (!settings_ACU.plotPresetBindings || typeof settings_ACU.plotPresetBindings !== 'object' || Array.isArray(settings_ACU.plotPresetBindings)) {
                   settings_ACU.plotPresetBindings = {};
               }
+              if (!settings_ACU.plotTaskApiPresetOverridesById || typeof settings_ACU.plotTaskApiPresetOverridesById !== 'object' || Array.isArray(settings_ACU.plotTaskApiPresetOverridesById)) {
+                  settings_ACU.plotTaskApiPresetOverridesById = {};
+              }
               settings_ACU.currentTemplatePresetName = normalizeTemplatePresetSelectionValue_ACU(settings_ACU.currentTemplatePresetName || '');
               if (typeof settings_ACU.plotSettings.lastUsedPresetName !== 'string') {
                   settings_ACU.plotSettings.lastUsedPresetName = '';
@@ -564,6 +567,9 @@ export   function buildDefaultSettings_ACU() {
           apiPresets: [] as any[],
           tableApiPreset: '',
           plotApiPreset: '',
+          // [剧情推进] 按剧情任务ID保存的任务级 API 预设覆盖（key=taskId, value=presetName）
+          // 不保存入聊天记录或剧情推进预设，只写进插件全局设置。
+          plotTaskApiPresetOverridesById: {} as Record<string, string>,
           // [新增] 按表格名称保存的表级 API 预设覆盖（key=标准化表名, value=presetName）
           // 不保存入模板，只写进数据库插件设置；同名表跨模板复用
           tableApiPresetOverridesByName: {} as Record<string, string>,

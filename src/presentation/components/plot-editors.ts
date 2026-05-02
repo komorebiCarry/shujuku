@@ -15,6 +15,41 @@ import { $popupInstance_ACU, $charCardPromptSegmentsContainer_ACU, $plotPromptSe
 import { DEFAULT_PLOT_SETTINGS_ACU } from '../../shared/defaults-json.js';
 import { jQuery_API_ACU } from '../dom-utils';
 
+function getPlotTaskApiPresetOverrides_ACU(): Record<string, string> {
+    if (!settings_ACU.plotTaskApiPresetOverridesById || typeof settings_ACU.plotTaskApiPresetOverridesById !== 'object' || Array.isArray(settings_ACU.plotTaskApiPresetOverridesById)) {
+        settings_ACU.plotTaskApiPresetOverridesById = {};
+    }
+    return settings_ACU.plotTaskApiPresetOverridesById;
+}
+
+function getPlotTaskApiPresetFromGlobalSettings_ACU(task: any): string {
+    const taskId = String(task?.id || '').trim();
+    if (!taskId) return '';
+    const overrides = getPlotTaskApiPresetOverrides_ACU();
+    const mappedPreset = String(overrides[taskId] || '').trim();
+    if (mappedPreset) return mappedPreset;
+    return String(task?.taskApiPreset || '').trim();
+}
+
+function setPlotTaskApiPresetInGlobalSettings_ACU(taskId: any, presetName: any) {
+    const normalizedTaskId = String(taskId || '').trim();
+    if (!normalizedTaskId) return;
+    const overrides = getPlotTaskApiPresetOverrides_ACU();
+    const normalizedPresetName = String(presetName || '').trim();
+    if (normalizedPresetName) {
+        overrides[normalizedTaskId] = normalizedPresetName;
+    } else {
+        delete overrides[normalizedTaskId];
+    }
+}
+
+function stripRuntimeOnlyPlotTaskFields_ACU(task: any) {
+    if (!task || typeof task !== 'object') return task;
+    const cloned = { ...task };
+    delete cloned.taskApiPreset;
+    return cloned;
+}
+
   export function renderPromptSegments_ACU(segments: any) {
       if (!$charCardPromptSegmentsContainer_ACU) return;
       $charCardPromptSegmentsContainer_ACU.empty();
@@ -314,7 +349,7 @@ import { jQuery_API_ACU } from '../dom-utils';
       $popupInstance_ACU.find(`#${SCRIPT_ID_PREFIX_ACU}-plot-min-length`).val(selectedTask.minLength ?? 0);
       $popupInstance_ACU.find(`#${SCRIPT_ID_PREFIX_ACU}-plot-task-stage`).val(normalizePositiveInteger_ACU(selectedTask.stage, 1));
       $popupInstance_ACU.find(`#${SCRIPT_ID_PREFIX_ACU}-plot-task-max-retries`).val(selectedTask.maxRetries ?? DEFAULT_PLOT_SETTINGS_ACU.loopSettings?.maxRetries ?? 3);
-      $popupInstance_ACU.find(`#${SCRIPT_ID_PREFIX_ACU}-plot-task-api-preset`).val(selectedTask.taskApiPreset || '');
+      $popupInstance_ACU.find(`#${SCRIPT_ID_PREFIX_ACU}-plot-task-api-preset`).val(getPlotTaskApiPresetFromGlobalSettings_ACU(selectedTask));
   }
 
 function persistPlotTaskEditorSettings_ACU(source = 'ui_task_edit') {
@@ -339,14 +374,14 @@ function persistPlotTaskEditorSettings_ACU(source = 'ui_task_edit') {
       const taskStageRaw = parseInt($popupInstance_ACU.find(`#${SCRIPT_ID_PREFIX_ACU}-plot-task-stage`).val() as string, 10);
       const taskMaxRetriesRaw = parseInt($popupInstance_ACU.find(`#${SCRIPT_ID_PREFIX_ACU}-plot-task-max-retries`).val() as string, 10);
       const taskApiPresetRaw = $popupInstance_ACU.find(`#${SCRIPT_ID_PREFIX_ACU}-plot-task-api-preset`).val();
+      setPlotTaskApiPresetInGlobalSettings_ACU(selectedTask.id, taskApiPresetRaw);
       const updatedTask = normalizePlotTask_ACU({
-          ...selectedTask,
+          ...stripRuntimeOnlyPlotTaskFields_ACU(selectedTask),
           name: String(taskNameRaw || '').trim() || selectedTask.name || `剧情任务${selectedIndex + 1}`,
           enabled: $popupInstance_ACU.find(`#${SCRIPT_ID_PREFIX_ACU}-plot-task-enabled`).is(':checked'),
           promptGroup: getPlotPromptGroupFromUI_ACU(),
           extractTags: String(taskExtractTagsRaw || ''),
           extractInjectTags: String(taskExtractInjectTagsRaw || ''),
-          taskApiPreset: String(taskApiPresetRaw || ''),
           minLength: Number.isFinite(taskMinLengthRaw) ? taskMinLengthRaw : selectedTask.minLength,
           stage: Number.isFinite(taskStageRaw) && taskStageRaw > 0
               ? taskStageRaw

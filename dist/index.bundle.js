@@ -3437,6 +3437,9 @@ $CONTENT
         apiPresets: [],
         tableApiPreset: '',
         plotApiPreset: '',
+        // [剧情推进] 按剧情任务ID保存的任务级 API 预设覆盖（key=taskId, value=presetName）
+        // 不保存入聊天记录或剧情推进预设，只写进插件全局设置。
+        plotTaskApiPresetOverridesById: {},
         // [新增] 按表格名称保存的表级 API 预设覆盖（key=标准化表名, value=presetName）
         tableApiPresetOverridesByName: {},
         charCardPrompt: DEFAULT_CHAR_CARD_PROMPT_ACU,
@@ -14258,10 +14261,22 @@ $CONTENT
             throw new Error('TaskAbortedByUser');
         }
     }
+    function getPlotTaskApiPresetOverrides_ACU$1() {
+        if (!settings_ACU.plotTaskApiPresetOverridesById || typeof settings_ACU.plotTaskApiPresetOverridesById !== 'object' || Array.isArray(settings_ACU.plotTaskApiPresetOverridesById)) {
+            settings_ACU.plotTaskApiPresetOverridesById = {};
+        }
+        return settings_ACU.plotTaskApiPresetOverridesById;
+    }
     function resolvePlotTaskApiPreset_ACU(task) {
-        const taskPreset = String(task?.taskApiPreset || '').trim();
-        if (taskPreset)
-            return taskPreset;
+        const taskId = String(task?.id || '').trim();
+        if (taskId) {
+            const mappedPreset = String(getPlotTaskApiPresetOverrides_ACU$1()[taskId] || '').trim();
+            if (mappedPreset)
+                return mappedPreset;
+        }
+        const legacyTaskPreset = String(task?.taskApiPreset || '').trim();
+        if (legacyTaskPreset)
+            return legacyTaskPreset;
         return String(settings_ACU.plotApiPreset || '').trim();
     }
     function willPlotUseMainApiGenerateRaw_ACU(taskApiPreset = '') {
@@ -19608,7 +19623,6 @@ $CONTENT
             promptGroup,
             extractTags: typeof cloned.extractTags === 'string' ? cloned.extractTags : (fallback?.extractTags || ''),
             extractInjectTags: typeof cloned.extractInjectTags === 'string' ? cloned.extractInjectTags : (fallback?.extractInjectTags || ''),
-            taskApiPreset: typeof cloned.taskApiPreset === 'string' ? cloned.taskApiPreset : (fallback?.taskApiPreset || ''),
             finalDirectiveTemplate: typeof cloned.finalDirectiveTemplate === 'string' ? cloned.finalDirectiveTemplate : (fallback?.finalDirectiveTemplate || ''),
             minLength: normalizeNonNegativeInteger_ACU$1(cloned.minLength, fallback?.minLength ?? 0),
             maxRetries: normalizePositiveInteger_ACU$1(cloned.maxRetries ?? cloned.loopSettings?.maxRetries, fallback?.maxRetries ?? DEFAULT_PLOT_SETTINGS_ACU.loopSettings?.maxRetries ?? 3),
@@ -20415,6 +20429,9 @@ $CONTENT
                 if (!settings_ACU.plotPresetBindings || typeof settings_ACU.plotPresetBindings !== 'object' || Array.isArray(settings_ACU.plotPresetBindings)) {
                     settings_ACU.plotPresetBindings = {};
                 }
+                if (!settings_ACU.plotTaskApiPresetOverridesById || typeof settings_ACU.plotTaskApiPresetOverridesById !== 'object' || Array.isArray(settings_ACU.plotTaskApiPresetOverridesById)) {
+                    settings_ACU.plotTaskApiPresetOverridesById = {};
+                }
                 settings_ACU.currentTemplatePresetName = normalizeTemplatePresetSelectionValue_ACU(settings_ACU.currentTemplatePresetName || '');
                 if (typeof settings_ACU.plotSettings.lastUsedPresetName !== 'string') {
                     settings_ACU.plotSettings.lastUsedPresetName = '';
@@ -20783,6 +20800,9 @@ $CONTENT
             apiPresets: [],
             tableApiPreset: '',
             plotApiPreset: '',
+            // [剧情推进] 按剧情任务ID保存的任务级 API 预设覆盖（key=taskId, value=presetName）
+            // 不保存入聊天记录或剧情推进预设，只写进插件全局设置。
+            plotTaskApiPresetOverridesById: {},
             // [新增] 按表格名称保存的表级 API 预设覆盖（key=标准化表名, value=presetName）
             // 不保存入模板，只写进数据库插件设置；同名表跨模板复用
             tableApiPresetOverridesByName: {},
@@ -23499,6 +23519,42 @@ $CONTENT
 
     // plot-editors.ts
     // 从 02_shared_editors_and_selectors.js 整体迁入
+    function getPlotTaskApiPresetOverrides_ACU() {
+        if (!settings_ACU.plotTaskApiPresetOverridesById || typeof settings_ACU.plotTaskApiPresetOverridesById !== 'object' || Array.isArray(settings_ACU.plotTaskApiPresetOverridesById)) {
+            settings_ACU.plotTaskApiPresetOverridesById = {};
+        }
+        return settings_ACU.plotTaskApiPresetOverridesById;
+    }
+    function getPlotTaskApiPresetFromGlobalSettings_ACU(task) {
+        const taskId = String(task?.id || '').trim();
+        if (!taskId)
+            return '';
+        const overrides = getPlotTaskApiPresetOverrides_ACU();
+        const mappedPreset = String(overrides[taskId] || '').trim();
+        if (mappedPreset)
+            return mappedPreset;
+        return String(task?.taskApiPreset || '').trim();
+    }
+    function setPlotTaskApiPresetInGlobalSettings_ACU(taskId, presetName) {
+        const normalizedTaskId = String(taskId || '').trim();
+        if (!normalizedTaskId)
+            return;
+        const overrides = getPlotTaskApiPresetOverrides_ACU();
+        const normalizedPresetName = String(presetName || '').trim();
+        if (normalizedPresetName) {
+            overrides[normalizedTaskId] = normalizedPresetName;
+        }
+        else {
+            delete overrides[normalizedTaskId];
+        }
+    }
+    function stripRuntimeOnlyPlotTaskFields_ACU(task) {
+        if (!task || typeof task !== 'object')
+            return task;
+        const cloned = { ...task };
+        delete cloned.taskApiPreset;
+        return cloned;
+    }
     function renderPromptSegments_ACU(segments) {
         if (!$charCardPromptSegmentsContainer_ACU)
             return;
@@ -23779,7 +23835,7 @@ $CONTENT
         $popupInstance_ACU.find(`#${SCRIPT_ID_PREFIX_ACU}-plot-min-length`).val(selectedTask.minLength ?? 0);
         $popupInstance_ACU.find(`#${SCRIPT_ID_PREFIX_ACU}-plot-task-stage`).val(normalizePositiveInteger_ACU$1(selectedTask.stage, 1));
         $popupInstance_ACU.find(`#${SCRIPT_ID_PREFIX_ACU}-plot-task-max-retries`).val(selectedTask.maxRetries ?? DEFAULT_PLOT_SETTINGS_ACU.loopSettings?.maxRetries ?? 3);
-        $popupInstance_ACU.find(`#${SCRIPT_ID_PREFIX_ACU}-plot-task-api-preset`).val(selectedTask.taskApiPreset || '');
+        $popupInstance_ACU.find(`#${SCRIPT_ID_PREFIX_ACU}-plot-task-api-preset`).val(getPlotTaskApiPresetFromGlobalSettings_ACU(selectedTask));
     }
     function persistPlotTaskEditorSettings_ACU(source = 'ui_task_edit') {
         if (currentEditablePlotPresetState_ACU?.scope === 'global') {
@@ -23804,14 +23860,14 @@ $CONTENT
         const taskStageRaw = parseInt($popupInstance_ACU.find(`#${SCRIPT_ID_PREFIX_ACU}-plot-task-stage`).val(), 10);
         const taskMaxRetriesRaw = parseInt($popupInstance_ACU.find(`#${SCRIPT_ID_PREFIX_ACU}-plot-task-max-retries`).val(), 10);
         const taskApiPresetRaw = $popupInstance_ACU.find(`#${SCRIPT_ID_PREFIX_ACU}-plot-task-api-preset`).val();
+        setPlotTaskApiPresetInGlobalSettings_ACU(selectedTask.id, taskApiPresetRaw);
         const updatedTask = normalizePlotTask_ACU({
-            ...selectedTask,
+            ...stripRuntimeOnlyPlotTaskFields_ACU(selectedTask),
             name: String(taskNameRaw || '').trim() || selectedTask.name || `剧情任务${selectedIndex + 1}`,
             enabled: $popupInstance_ACU.find(`#${SCRIPT_ID_PREFIX_ACU}-plot-task-enabled`).is(':checked'),
             promptGroup: getPlotPromptGroupFromUI_ACU(),
             extractTags: String(taskExtractTagsRaw || ''),
             extractInjectTags: String(taskExtractInjectTagsRaw || ''),
-            taskApiPreset: String(taskApiPresetRaw || ''),
             minLength: Number.isFinite(taskMinLengthRaw) ? taskMinLengthRaw : selectedTask.minLength,
             stage: Number.isFinite(taskStageRaw) && taskStageRaw > 0
                 ? taskStageRaw
@@ -41651,7 +41707,7 @@ $CONTENT
                                             <select id="${SCRIPT_ID_PREFIX_ACU}-plot-task-api-preset" class="text_pole" style="width:100%;">
                                                 <option value="">继承全局剧情推进API预设</option>
                                             </select>
-                                            <small class="notes">仅作用于当前剧情任务；未选择时继承全局剧情推进 API 预设，不会联动修改其他任务。</small>
+                                            <small class="notes">按任务ID保存到插件全局设置；不写入聊天记录或剧情推进预设，未选择时继承全局剧情推进 API 预设。</small>
                                         </div>
                                     </div>
                                     <div id="${SCRIPT_ID_PREFIX_ACU}-plot-prompt-constructor-area">
