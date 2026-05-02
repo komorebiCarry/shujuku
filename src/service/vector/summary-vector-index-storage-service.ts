@@ -66,6 +66,23 @@ export interface PersistSummaryVectorIndexExternalResult_ACU {
     uploadedFiles: SummaryVectorIndexExternalFileRef_ACU[];
 }
 
+export interface SummaryVectorIndexManifestRepair_ACU {
+    path: string;
+    role: SummaryVectorIndexExternalFileRef_ACU['role'];
+    shardId?: string;
+    checksum: string;
+    byteSize: number;
+    chunkCount?: number;
+    rowCount?: number;
+    updatedAt: string;
+}
+
+export interface LoadSummaryVectorIndexChunksOptions_ACU {
+    preferExternalFiles?: boolean;
+    allowChecksumRepair?: boolean;
+    repairs?: SummaryVectorIndexManifestRepair_ACU[];
+}
+
 function normalizeChatKey_ACU(chatKey?: string): string {
     const raw = String(chatKey || currentChatFileIdentifier_ACU || 'current-chat').trim();
     return raw || 'current-chat';
@@ -599,7 +616,7 @@ export async function persistSummaryVectorIndexSnapshot_ACU(
 async function loadChunksFromShardRefs_ACU(
     indexId: string,
     shardRefs: SummaryVectorIndexExternalFileRef_ACU[],
-    options: { preferExternalFiles?: boolean } = {},
+    options: LoadSummaryVectorIndexChunksOptions_ACU = {},
 ): Promise<ChatSummaryVectorIndexChunk_ACU[]> {
     const chunks: ChatSummaryVectorIndexChunk_ACU[] = [];
     for (const ref of shardRefs) {
@@ -613,13 +630,33 @@ async function loadChunksFromShardRefs_ACU(
             if (!loaded.ok || !loaded.data) {
                 throw new Error(`交火向量索引分片读取失败: ${ref.path} ${loaded.error || ''}`.trim());
             }
-            const json = JSON.stringify(loaded.data);
+            const loadedShard = loaded.data;
+            const loadedShardId = String(loadedShard?.shardId || '');
+            const loadedIndexId = String(loadedShard?.indexId || '');
+            const shardMatchesManifest = loadedIndexId === indexId && loadedShardId === ref.shardId;
+            if (!shardMatchesManifest) {
+                throw new Error(`交火向量索引分片身份不匹配: ${ref.path} expectedIndex=${indexId} actualIndex=${loadedIndexId || 'empty'} expectedShard=${ref.shardId} actualShard=${loadedShardId || 'empty'}`);
+            }
+            const json = JSON.stringify(loadedShard);
             const checksum = await sha256Text_ACU(json);
             if (ref.checksum && checksum !== ref.checksum) {
-                throw new Error(`交火向量索引分片校验失败: ${ref.path}`);
+                if (options.allowChecksumRepair !== true) {
+                    throw new Error(`交火向量索引分片校验失败: ${ref.path} expected=${ref.checksum} actual=${checksum}`);
+                }
+                const repair: SummaryVectorIndexManifestRepair_ACU = {
+                    path: ref.path,
+                    role: ref.role,
+                    shardId: ref.shardId,
+                    checksum,
+                    byteSize: new Blob([json]).size,
+                    chunkCount: Array.isArray(loadedShard.chunks) ? loadedShard.chunks.length : 0,
+                    updatedAt: new Date().toISOString(),
+                };
+                options.repairs?.push(repair);
+                logWarn_ACU('[交火向量索引] 分片 checksum 与 manifest 不一致，但 indexId/shardId 匹配，已按外置文件登记自愈:', ref.path);
             }
-            shard = loaded.data;
-            await putVectorIndexCachedShard_ACU(indexId, ref.shardId, shard, ref.checksum);
+            shard = loadedShard;
+            await putVectorIndexCachedShard_ACU(indexId, ref.shardId, shard, checksum || ref.checksum);
         }
         (shard.chunks || []).forEach((chunk) => chunks.push({ ...chunk }));
     }
@@ -628,7 +665,7 @@ async function loadChunksFromShardRefs_ACU(
 
 export async function loadSummaryVectorIndexChunksFromManifest_ACU(
     manifest: ChatSummaryVectorIndexManifest_ACU | null | undefined,
-    options: { preferExternalFiles?: boolean } = {},
+    options: LoadSummaryVectorIndexChunksOptions_ACU = {},
 ): Promise<ChatSummaryVectorIndexChunk_ACU[]> {
     if (!manifest) return [];
     if (Array.isArray(manifest.batchRefs) && manifest.batchRefs.length > 0) {
@@ -654,6 +691,43 @@ export async function loadSummaryVectorIndexChunksFromManifest_ACU(
     if (!manifest.files?.length) return [];
     const shardRefs = manifest.files.filter((file) => file.role === 'base_shard' || file.role === 'delta_shard');
     return loadChunksFromShardRefs_ACU(manifest.indexId, shardRefs, options);
+}
+
+function applyRepairToFileRef_ACU(
+    file: SummaryVectorIndexExternalFileRef_ACU,
+    repairsByPath: Map<string, SummaryVectorIndexManifestRepair_ACU>,
+): SummaryVectorIndexExternalFileRef_ACU {
+    const repair = repairsByPath.get(file.path);
+    if (!repair) return { ...file };
+    return {
+        ...file,
+        checksum: repair.checksum,
+        byteSize: repair.byteSize,
+        chunkCount: repair.chunkCount ?? file.chunkCount,
+        rowCount: repair.rowCount ?? file.rowCount,
+        updatedAt: repair.updatedAt,
+        status: 'ready',
+    };
+}
+
+export function applySummaryVectorIndexManifestRepairs_ACU(
+    manifest: ChatSummaryVectorIndexManifest_ACU,
+    repairs: SummaryVectorIndexManifestRepair_ACU[],
+): ChatSummaryVectorIndexManifest_ACU {
+    const validRepairs = (repairs || []).filter((repair) => repair?.path && repair.checksum);
+    if (validRepairs.length === 0) return manifest;
+    const repairsByPath = new Map(validRepairs.map((repair) => [repair.path, repair]));
+    const updatedAt = new Date().toISOString();
+    return {
+        ...manifest,
+        updatedAt,
+        files: (manifest.files || []).map((file) => applyRepairToFileRef_ACU(file, repairsByPath)),
+        batchRefs: (manifest.batchRefs || []).map((batch) => ({
+            ...batch,
+            updatedAt,
+            files: (batch.files || []).map((file) => applyRepairToFileRef_ACU(file, repairsByPath)),
+        })),
+    };
 }
 
 export async function deleteSummaryVectorIndexExternal_ACU(manifest: ChatSummaryVectorIndexManifest_ACU | null | undefined): Promise<void> {

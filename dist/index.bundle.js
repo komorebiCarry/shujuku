@@ -22325,13 +22325,33 @@ $CONTENT
                 if (!loaded.ok || !loaded.data) {
                     throw new Error(`交火向量索引分片读取失败: ${ref.path} ${loaded.error || ''}`.trim());
                 }
-                const json = JSON.stringify(loaded.data);
+                const loadedShard = loaded.data;
+                const loadedShardId = String(loadedShard?.shardId || '');
+                const loadedIndexId = String(loadedShard?.indexId || '');
+                const shardMatchesManifest = loadedIndexId === indexId && loadedShardId === ref.shardId;
+                if (!shardMatchesManifest) {
+                    throw new Error(`交火向量索引分片身份不匹配: ${ref.path} expectedIndex=${indexId} actualIndex=${loadedIndexId || 'empty'} expectedShard=${ref.shardId} actualShard=${loadedShardId || 'empty'}`);
+                }
+                const json = JSON.stringify(loadedShard);
                 const checksum = await sha256Text_ACU(json);
                 if (ref.checksum && checksum !== ref.checksum) {
-                    throw new Error(`交火向量索引分片校验失败: ${ref.path}`);
+                    if (options.allowChecksumRepair !== true) {
+                        throw new Error(`交火向量索引分片校验失败: ${ref.path} expected=${ref.checksum} actual=${checksum}`);
+                    }
+                    const repair = {
+                        path: ref.path,
+                        role: ref.role,
+                        shardId: ref.shardId,
+                        checksum,
+                        byteSize: new Blob([json]).size,
+                        chunkCount: Array.isArray(loadedShard.chunks) ? loadedShard.chunks.length : 0,
+                        updatedAt: new Date().toISOString(),
+                    };
+                    options.repairs?.push(repair);
+                    logWarn_ACU('[交火向量索引] 分片 checksum 与 manifest 不一致，但 indexId/shardId 匹配，已按外置文件登记自愈:', ref.path);
                 }
-                shard = loaded.data;
-                await putVectorIndexCachedShard_ACU(indexId, ref.shardId, shard, ref.checksum);
+                shard = loadedShard;
+                await putVectorIndexCachedShard_ACU(indexId, ref.shardId, shard, checksum || ref.checksum);
             }
             (shard.chunks || []).forEach((chunk) => chunks.push({ ...chunk }));
         }
@@ -22367,6 +22387,37 @@ $CONTENT
             return [];
         const shardRefs = manifest.files.filter((file) => file.role === 'base_shard' || file.role === 'delta_shard');
         return loadChunksFromShardRefs_ACU(manifest.indexId, shardRefs, options);
+    }
+    function applyRepairToFileRef_ACU(file, repairsByPath) {
+        const repair = repairsByPath.get(file.path);
+        if (!repair)
+            return { ...file };
+        return {
+            ...file,
+            checksum: repair.checksum,
+            byteSize: repair.byteSize,
+            chunkCount: repair.chunkCount ?? file.chunkCount,
+            rowCount: repair.rowCount ?? file.rowCount,
+            updatedAt: repair.updatedAt,
+            status: 'ready',
+        };
+    }
+    function applySummaryVectorIndexManifestRepairs_ACU(manifest, repairs) {
+        const validRepairs = (repairs || []).filter((repair) => repair?.path && repair.checksum);
+        if (validRepairs.length === 0)
+            return manifest;
+        const repairsByPath = new Map(validRepairs.map((repair) => [repair.path, repair]));
+        const updatedAt = new Date().toISOString();
+        return {
+            ...manifest,
+            updatedAt,
+            files: (manifest.files || []).map((file) => applyRepairToFileRef_ACU(file, repairsByPath)),
+            batchRefs: (manifest.batchRefs || []).map((batch) => ({
+                ...batch,
+                updatedAt,
+                files: (batch.files || []).map((file) => applyRepairToFileRef_ACU(file, repairsByPath)),
+            })),
+        };
     }
     async function deleteSummaryVectorIndexExternal_ACU(manifest) {
         if (!manifest)
@@ -44473,6 +44524,35 @@ $CONTENT
             isolationKey: params.isolationKey,
         });
     }
+    async function clearLatestSummaryVectorIndexStateForInvalidExternalFiles_ACU(params) {
+        await deleteVectorIndexCacheByIndex_ACU(params.indexId);
+        return clearLatestSummaryVectorIndexState_ACU({
+            messageIndex: params.messageIndex,
+            isolationKey: params.isolationKey,
+        });
+    }
+    function isInvalidExternalVectorFileError_ACU(message) {
+        const text = String(message || '').toLowerCase();
+        return text.includes('交火向量索引分片身份不匹配')
+            || text.includes('交火向量索引分片校验失败');
+    }
+    async function persistLatestSummaryVectorIndexManifestRepair_ACU(params) {
+        if (!params.repairs?.length)
+            return null;
+        const chat = getChatArray_ACU();
+        const message = chat?.[params.messageIndex];
+        if (!message || message.is_user)
+            return null;
+        const tagData = readIsolatedTagData_ACU(message, params.isolationKey);
+        if (!tagData)
+            return null;
+        const repairedManifest = applySummaryVectorIndexManifestRepairs_ACU(params.manifest, params.repairs);
+        assignSummaryVectorIndexStateToTagData_ACU(tagData, params.currentState, repairedManifest);
+        writeIsolatedTagData_ACU(message, params.isolationKey, tagData);
+        await saveChatToHost_ACU();
+        logWarn_ACU(`[交火向量索引] 已修复 manifest 分片校验信息并写回聊天记录：indexId=${repairedManifest.indexId}, repairs=${params.repairs.length}`);
+        return repairedManifest;
+    }
     async function preloadSummaryVectorIndexCacheForCurrentChat_ACU() {
         const snapshot = getLatestSummaryVectorIndexSnapshotState_ACU();
         const latestLayer = snapshot?.layers?.[0] || null;
@@ -44495,7 +44575,21 @@ $CONTENT
             };
         }
         try {
-            const chunks = await loadSummaryVectorIndexChunksFromManifest_ACU(manifest, { preferExternalFiles: true });
+            const repairs = [];
+            const chunks = await loadSummaryVectorIndexChunksFromManifest_ACU(manifest, {
+                preferExternalFiles: true,
+                allowChecksumRepair: true,
+                repairs,
+            });
+            if (repairs.length > 0 && latestLayer && snapshot?.summaryVectorIndexState) {
+                await persistLatestSummaryVectorIndexManifestRepair_ACU({
+                    messageIndex: latestLayer.messageIndex,
+                    isolationKey: latestLayer.isolationKey,
+                    currentState: snapshot.summaryVectorIndexState,
+                    manifest,
+                    repairs,
+                });
+            }
             logDebug_ACU(`[交火向量索引] 当前聊天向量缓存预热完成：indexId=${manifest.indexId}, chunks=${chunks.length}`);
             return {
                 success: true,
@@ -44519,6 +44613,26 @@ $CONTENT
                     success: true,
                     skipped: true,
                     reason: 'external_files_missing_cache_cleared',
+                    chunkCount: 0,
+                    indexId: manifest.indexId,
+                    error: message,
+                    cacheCleared: true,
+                    chatStateCleared,
+                };
+            }
+            if (isInvalidExternalVectorFileError_ACU(message)) {
+                const chatStateCleared = latestLayer
+                    ? await clearLatestSummaryVectorIndexStateForInvalidExternalFiles_ACU({
+                        messageIndex: latestLayer.messageIndex,
+                        isolationKey: latestLayer.isolationKey,
+                        indexId: manifest.indexId,
+                    })
+                    : false;
+                logWarn_ACU('[交火向量索引] 当前聊天外置向量文件校验失败且不可自愈，已清空对应缓存与聊天索引状态:', message);
+                return {
+                    success: true,
+                    skipped: true,
+                    reason: 'external_files_invalid_cache_cleared',
                     chunkCount: 0,
                     indexId: manifest.indexId,
                     error: message,
@@ -44765,7 +44879,20 @@ $CONTENT
         let chunks = Array.isArray(state.chunks) ? state.chunks : [];
         if (state.manifest) {
             try {
-                chunks = await loadSummaryVectorIndexChunksFromManifest_ACU(state.manifest);
+                const repairs = [];
+                chunks = await loadSummaryVectorIndexChunksFromManifest_ACU(state.manifest, {
+                    allowChecksumRepair: true,
+                    repairs,
+                });
+                if (repairs.length > 0 && latestLayer) {
+                    await persistLatestSummaryVectorIndexManifestRepair_ACU({
+                        messageIndex: latestLayer.messageIndex,
+                        isolationKey: latestLayer.isolationKey,
+                        currentState: state,
+                        manifest: state.manifest,
+                        repairs,
+                    });
+                }
             }
             catch (error) {
                 const message = error instanceof Error ? error.message : String(error || '未知错误');
@@ -44779,6 +44906,17 @@ $CONTENT
                     }
                     logWarn_ACU('[交火模式纪要索引] 外置向量文件缺失，已清空缓存与聊天索引状态，跳过本次发送前注入:', message);
                     return { success: false, skipped: true, reason: 'external_vector_files_missing' };
+                }
+                if (isInvalidExternalVectorFileError_ACU(message)) {
+                    if (latestLayer && state.manifest.indexId) {
+                        await clearLatestSummaryVectorIndexStateForInvalidExternalFiles_ACU({
+                            messageIndex: latestLayer.messageIndex,
+                            isolationKey: latestLayer.isolationKey,
+                            indexId: state.manifest.indexId,
+                        });
+                    }
+                    logWarn_ACU('[交火模式纪要索引] 外置向量文件校验失败且不可自愈，已清空缓存与聊天索引状态，需要重新归档:', message);
+                    return { success: false, skipped: true, reason: 'vector_index_corrupted_rebuild_required' };
                 }
                 throw error;
             }

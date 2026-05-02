@@ -3,7 +3,12 @@ import { getChatArray_ACU, saveChatToHost_ACU } from '../chat/chat-service';
 import { readIsolatedTagData_ACU, writeIsolatedTagData_ACU } from '../../data/repositories/chat-message-data-repo';
 import { deleteVectorIndexCacheByIndex_ACU } from '../../data/storage/vector-index-temp-cache';
 import { assignSummaryVectorIndexStateToTagData_ACU, getLatestSummaryVectorIndexSnapshotState_ACU } from './summary-vector-index-state-service';
-import { loadSummaryVectorIndexChunksFromManifest_ACU } from './summary-vector-index-storage-service';
+import {
+    applySummaryVectorIndexManifestRepairs_ACU,
+    loadSummaryVectorIndexChunksFromManifest_ACU,
+    type SummaryVectorIndexManifestRepair_ACU,
+} from './summary-vector-index-storage-service';
+import type { ChatSummaryVectorIndexManifest_ACU, ChatSummaryVectorIndexState_ACU } from './summary-vector-index-types';
 
 export interface SummaryVectorIndexCachePreloadResult_ACU {
     success: boolean;
@@ -57,6 +62,45 @@ export async function clearLatestSummaryVectorIndexStateForMissingExternalFiles_
     });
 }
 
+export async function clearLatestSummaryVectorIndexStateForInvalidExternalFiles_ACU(params: {
+    messageIndex: number;
+    isolationKey: string;
+    indexId: string;
+}): Promise<boolean> {
+    await deleteVectorIndexCacheByIndex_ACU(params.indexId);
+    return clearLatestSummaryVectorIndexState_ACU({
+        messageIndex: params.messageIndex,
+        isolationKey: params.isolationKey,
+    });
+}
+
+export function isInvalidExternalVectorFileError_ACU(message: string): boolean {
+    const text = String(message || '').toLowerCase();
+    return text.includes('交火向量索引分片身份不匹配')
+        || text.includes('交火向量索引分片校验失败');
+}
+
+export async function persistLatestSummaryVectorIndexManifestRepair_ACU(params: {
+    messageIndex: number;
+    isolationKey: string;
+    currentState: ChatSummaryVectorIndexState_ACU;
+    manifest: ChatSummaryVectorIndexManifest_ACU;
+    repairs: SummaryVectorIndexManifestRepair_ACU[];
+}): Promise<ChatSummaryVectorIndexManifest_ACU | null> {
+    if (!params.repairs?.length) return null;
+    const chat = getChatArray_ACU();
+    const message = chat?.[params.messageIndex];
+    if (!message || message.is_user) return null;
+    const tagData = readIsolatedTagData_ACU(message, params.isolationKey);
+    if (!tagData) return null;
+    const repairedManifest = applySummaryVectorIndexManifestRepairs_ACU(params.manifest, params.repairs);
+    assignSummaryVectorIndexStateToTagData_ACU(tagData, params.currentState, repairedManifest);
+    writeIsolatedTagData_ACU(message, params.isolationKey, tagData);
+    await saveChatToHost_ACU();
+    logWarn_ACU(`[交火向量索引] 已修复 manifest 分片校验信息并写回聊天记录：indexId=${repairedManifest.indexId}, repairs=${params.repairs.length}`);
+    return repairedManifest;
+}
+
 export async function preloadSummaryVectorIndexCacheForCurrentChat_ACU(): Promise<SummaryVectorIndexCachePreloadResult_ACU> {
     const snapshot = getLatestSummaryVectorIndexSnapshotState_ACU();
     const latestLayer = snapshot?.layers?.[0] || null;
@@ -81,7 +125,21 @@ export async function preloadSummaryVectorIndexCacheForCurrentChat_ACU(): Promis
     }
 
     try {
-        const chunks = await loadSummaryVectorIndexChunksFromManifest_ACU(manifest, { preferExternalFiles: true });
+        const repairs: SummaryVectorIndexManifestRepair_ACU[] = [];
+        const chunks = await loadSummaryVectorIndexChunksFromManifest_ACU(manifest, {
+            preferExternalFiles: true,
+            allowChecksumRepair: true,
+            repairs,
+        });
+        if (repairs.length > 0 && latestLayer && snapshot?.summaryVectorIndexState) {
+            await persistLatestSummaryVectorIndexManifestRepair_ACU({
+                messageIndex: latestLayer.messageIndex,
+                isolationKey: latestLayer.isolationKey,
+                currentState: snapshot.summaryVectorIndexState,
+                manifest,
+                repairs,
+            });
+        }
         logDebug_ACU(`[交火向量索引] 当前聊天向量缓存预热完成：indexId=${manifest.indexId}, chunks=${chunks.length}`);
         return {
             success: true,
@@ -104,6 +162,26 @@ export async function preloadSummaryVectorIndexCacheForCurrentChat_ACU(): Promis
                 success: true,
                 skipped: true,
                 reason: 'external_files_missing_cache_cleared',
+                chunkCount: 0,
+                indexId: manifest.indexId,
+                error: message,
+                cacheCleared: true,
+                chatStateCleared,
+            };
+        }
+        if (isInvalidExternalVectorFileError_ACU(message)) {
+            const chatStateCleared = latestLayer
+                ? await clearLatestSummaryVectorIndexStateForInvalidExternalFiles_ACU({
+                    messageIndex: latestLayer.messageIndex,
+                    isolationKey: latestLayer.isolationKey,
+                    indexId: manifest.indexId,
+                })
+                : false;
+            logWarn_ACU('[交火向量索引] 当前聊天外置向量文件校验失败且不可自愈，已清空对应缓存与聊天索引状态:', message);
+            return {
+                success: true,
+                skipped: true,
+                reason: 'external_files_invalid_cache_cleared',
                 chunkCount: 0,
                 indexId: manifest.indexId,
                 error: message,

@@ -13,8 +13,14 @@ import {
 } from '../worldbook/worldbook-service';
 import { getEffectiveSummaryVectorIndexConfig_ACU, validateSummaryVectorIndexConfig_ACU } from './vector-memory-config';
 import { getLatestSummaryVectorIndexSnapshotState_ACU } from './summary-vector-index-state-service';
-import { loadSummaryVectorIndexChunksFromManifest_ACU } from './summary-vector-index-storage-service';
-import { clearLatestSummaryVectorIndexStateForMissingExternalFiles_ACU, isMissingExternalVectorFileError_ACU } from './summary-vector-index-cache-service';
+import { loadSummaryVectorIndexChunksFromManifest_ACU, type SummaryVectorIndexManifestRepair_ACU } from './summary-vector-index-storage-service';
+import {
+    clearLatestSummaryVectorIndexStateForInvalidExternalFiles_ACU,
+    clearLatestSummaryVectorIndexStateForMissingExternalFiles_ACU,
+    isInvalidExternalVectorFileError_ACU,
+    isMissingExternalVectorFileError_ACU,
+    persistLatestSummaryVectorIndexManifestRepair_ACU,
+} from './summary-vector-index-cache-service';
 import type { ChatSummaryVectorIndexChunk_ACU, ChatSummaryVectorIndexRow_ACU } from './summary-vector-index-types';
 
 interface SummaryVectorIndexRuntimeOptions_ACU {
@@ -274,7 +280,20 @@ export async function processSummaryVectorIndexBeforeGeneration_ACU(
     let chunks: ChatSummaryVectorIndexChunk_ACU[] = Array.isArray(state.chunks) ? state.chunks : [];
     if (state.manifest) {
         try {
-            chunks = await loadSummaryVectorIndexChunksFromManifest_ACU(state.manifest);
+            const repairs: SummaryVectorIndexManifestRepair_ACU[] = [];
+            chunks = await loadSummaryVectorIndexChunksFromManifest_ACU(state.manifest, {
+                allowChecksumRepair: true,
+                repairs,
+            });
+            if (repairs.length > 0 && latestLayer) {
+                await persistLatestSummaryVectorIndexManifestRepair_ACU({
+                    messageIndex: latestLayer.messageIndex,
+                    isolationKey: latestLayer.isolationKey,
+                    currentState: state,
+                    manifest: state.manifest,
+                    repairs,
+                });
+            }
         } catch (error) {
             const message = error instanceof Error ? error.message : String(error || '未知错误');
             if (isMissingExternalVectorFileError_ACU(message)) {
@@ -287,6 +306,17 @@ export async function processSummaryVectorIndexBeforeGeneration_ACU(
                 }
                 logWarn_ACU('[交火模式纪要索引] 外置向量文件缺失，已清空缓存与聊天索引状态，跳过本次发送前注入:', message);
                 return { success: false, skipped: true, reason: 'external_vector_files_missing' };
+            }
+            if (isInvalidExternalVectorFileError_ACU(message)) {
+                if (latestLayer && state.manifest.indexId) {
+                    await clearLatestSummaryVectorIndexStateForInvalidExternalFiles_ACU({
+                        messageIndex: latestLayer.messageIndex,
+                        isolationKey: latestLayer.isolationKey,
+                        indexId: state.manifest.indexId,
+                    });
+                }
+                logWarn_ACU('[交火模式纪要索引] 外置向量文件校验失败且不可自愈，已清空缓存与聊天索引状态，需要重新归档:', message);
+                return { success: false, skipped: true, reason: 'vector_index_corrupted_rebuild_required' };
             }
             throw error;
         }
