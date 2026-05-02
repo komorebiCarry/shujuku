@@ -27,7 +27,7 @@ function normalizeErrorMessage_ACU(error: unknown): string {
     }
 }
 
-function isMissingExternalVectorFileError_ACU(message: string): boolean {
+export function isMissingExternalVectorFileError_ACU(message: string): boolean {
     const text = String(message || '').toLowerCase();
     return text.includes('交火向量索引分片读取失败')
         && (text.includes('404') || text.includes('not found') || text.includes('读取失败'));
@@ -43,6 +43,18 @@ async function clearLatestSummaryVectorIndexState_ACU(params: { messageIndex: nu
     writeIsolatedTagData_ACU(message, params.isolationKey, tagData);
     await saveChatToHost_ACU();
     return true;
+}
+
+export async function clearLatestSummaryVectorIndexStateForMissingExternalFiles_ACU(params: {
+    messageIndex: number;
+    isolationKey: string;
+    indexId: string;
+}): Promise<boolean> {
+    await deleteVectorIndexCacheByIndex_ACU(params.indexId);
+    return clearLatestSummaryVectorIndexState_ACU({
+        messageIndex: params.messageIndex,
+        isolationKey: params.isolationKey,
+    });
 }
 
 export async function preloadSummaryVectorIndexCacheForCurrentChat_ACU(): Promise<SummaryVectorIndexCachePreloadResult_ACU> {
@@ -80,9 +92,12 @@ export async function preloadSummaryVectorIndexCacheForCurrentChat_ACU(): Promis
     } catch (error) {
         const message = normalizeErrorMessage_ACU(error);
         if (isMissingExternalVectorFileError_ACU(message)) {
-            await deleteVectorIndexCacheByIndex_ACU(manifest.indexId);
             const chatStateCleared = latestLayer
-                ? await clearLatestSummaryVectorIndexState_ACU({ messageIndex: latestLayer.messageIndex, isolationKey: latestLayer.isolationKey })
+                ? await clearLatestSummaryVectorIndexStateForMissingExternalFiles_ACU({
+                    messageIndex: latestLayer.messageIndex,
+                    isolationKey: latestLayer.isolationKey,
+                    indexId: manifest.indexId,
+                })
                 : false;
             logWarn_ACU('[交火向量索引] 当前聊天外置向量文件缺失，已清空对应缓存与聊天索引状态:', message);
             return {

@@ -14,6 +14,7 @@ import {
 import { getEffectiveSummaryVectorIndexConfig_ACU, validateSummaryVectorIndexConfig_ACU } from './vector-memory-config';
 import { getLatestSummaryVectorIndexSnapshotState_ACU } from './summary-vector-index-state-service';
 import { loadSummaryVectorIndexChunksFromManifest_ACU } from './summary-vector-index-storage-service';
+import { clearLatestSummaryVectorIndexStateForMissingExternalFiles_ACU, isMissingExternalVectorFileError_ACU } from './summary-vector-index-cache-service';
 import type { ChatSummaryVectorIndexChunk_ACU, ChatSummaryVectorIndexRow_ACU } from './summary-vector-index-types';
 
 interface SummaryVectorIndexRuntimeOptions_ACU {
@@ -259,6 +260,7 @@ export async function processSummaryVectorIndexBeforeGeneration_ACU(
 
     const snapshot = getLatestSummaryVectorIndexSnapshotState_ACU();
     const state = snapshot?.summaryVectorIndexState || null;
+    const latestLayer = snapshot?.layers?.[0] || null;
     if (!state) {
         return { success: false, skipped: true, reason: 'no_index_state' };
     }
@@ -271,7 +273,23 @@ export async function processSummaryVectorIndexBeforeGeneration_ACU(
     }
     let chunks: ChatSummaryVectorIndexChunk_ACU[] = Array.isArray(state.chunks) ? state.chunks : [];
     if (state.manifest) {
-        chunks = await loadSummaryVectorIndexChunksFromManifest_ACU(state.manifest);
+        try {
+            chunks = await loadSummaryVectorIndexChunksFromManifest_ACU(state.manifest);
+        } catch (error) {
+            const message = error instanceof Error ? error.message : String(error || '未知错误');
+            if (isMissingExternalVectorFileError_ACU(message)) {
+                if (latestLayer && state.manifest.indexId) {
+                    await clearLatestSummaryVectorIndexStateForMissingExternalFiles_ACU({
+                        messageIndex: latestLayer.messageIndex,
+                        isolationKey: latestLayer.isolationKey,
+                        indexId: state.manifest.indexId,
+                    });
+                }
+                logWarn_ACU('[交火模式纪要索引] 外置向量文件缺失，已清空缓存与聊天索引状态，跳过本次发送前注入:', message);
+                return { success: false, skipped: true, reason: 'external_vector_files_missing' };
+            }
+            throw error;
+        }
     }
     if (chunks.length === 0) {
         return { success: false, skipped: true, reason: 'no_chunks' };
