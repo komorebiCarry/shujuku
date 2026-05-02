@@ -41,6 +41,10 @@ function normalizeFileNamePart_ACU(value: string): string {
         .slice(0, 96) || 'default';
 }
 
+function normalizePathSegment_ACU(value: string): string {
+    return normalizeFileNamePart_ACU(value);
+}
+
 export function buildVectorIndexFileName_ACU(parts: {
     chatKey: string;
     isolationKey: string;
@@ -55,8 +59,52 @@ export function buildVectorIndexFileName_ACU(parts: {
     return `TavernDB_ACU_vector_${chatKey}_${isolationKey}_${indexId}_${parts.role}${shardId}.json`;
 }
 
+export function buildVectorIndexStableDirectory_ACU(parts: {
+    chatKey: string;
+    isolationKey: string;
+    sourceTableKey: string;
+}): string {
+    return [
+        'TavernDB_ACU_vector',
+        normalizePathSegment_ACU(parts.chatKey),
+        normalizePathSegment_ACU(parts.isolationKey || 'default'),
+        normalizePathSegment_ACU(parts.sourceTableKey || 'summary'),
+    ].join('/');
+}
+
+export function buildVectorIndexStableFilePath_ACU(parts: {
+    chatKey: string;
+    isolationKey: string;
+    sourceTableKey: string;
+    role: SummaryVectorIndexExternalFileRole_ACU;
+    shardId?: string;
+}): string {
+    const directory = buildVectorIndexStableDirectory_ACU(parts);
+    if (parts.role === 'base_shard' || parts.role === 'delta_shard') {
+        const shardName = normalizePathSegment_ACU(parts.shardId || 'shard_0001');
+        return `${directory}/${shardName}.json`;
+    }
+    const fileNameByRole: Record<SummaryVectorIndexExternalFileRole_ACU, string> = {
+        manifest: 'manifest.json',
+        row_index: 'row_index.json',
+        tombstone: 'tombstone.json',
+        base_shard: 'shard_0001.json',
+        delta_shard: 'shard_0001.json',
+        registry: 'registry.json',
+    };
+    return `${directory}/${fileNameByRole[parts.role]}`;
+}
+
+function encodeUserFilePath_ACU(path: string): string {
+    return String(path || '')
+        .split('/')
+        .filter((segment) => segment.length > 0)
+        .map((segment) => encodeURIComponent(segment))
+        .join('/');
+}
+
 function getUserFileUrl_ACU(path: string): string {
-    return `/user/files/${encodeURIComponent(path)}?t=${Date.now()}`;
+    return `/user/files/${encodeUserFilePath_ACU(path)}?t=${Date.now()}`;
 }
 
 async function encodeBase64_ACU(text: string): Promise<string> {

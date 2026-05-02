@@ -21359,6 +21359,9 @@ $CONTENT
             .replace(/^_+|_+$/g, '')
             .slice(0, 96) || 'default';
     }
+    function normalizePathSegment_ACU(value) {
+        return normalizeFileNamePart_ACU(value);
+    }
     function buildVectorIndexFileName_ACU(parts) {
         const chatKey = normalizeFileNamePart_ACU(parts.chatKey);
         const isolationKey = normalizeFileNamePart_ACU(parts.isolationKey || 'default');
@@ -21366,8 +21369,39 @@ $CONTENT
         const shardId = parts.shardId ? `_${normalizeFileNamePart_ACU(parts.shardId)}` : '';
         return `TavernDB_ACU_vector_${chatKey}_${isolationKey}_${indexId}_${parts.role}${shardId}.json`;
     }
+    function buildVectorIndexStableDirectory_ACU(parts) {
+        return [
+            'TavernDB_ACU_vector',
+            normalizePathSegment_ACU(parts.chatKey),
+            normalizePathSegment_ACU(parts.isolationKey || 'default'),
+            normalizePathSegment_ACU(parts.sourceTableKey || 'summary'),
+        ].join('/');
+    }
+    function buildVectorIndexStableFilePath_ACU(parts) {
+        const directory = buildVectorIndexStableDirectory_ACU(parts);
+        if (parts.role === 'base_shard' || parts.role === 'delta_shard') {
+            const shardName = normalizePathSegment_ACU(parts.shardId || 'shard_0001');
+            return `${directory}/${shardName}.json`;
+        }
+        const fileNameByRole = {
+            manifest: 'manifest.json',
+            row_index: 'row_index.json',
+            tombstone: 'tombstone.json',
+            base_shard: 'shard_0001.json',
+            delta_shard: 'shard_0001.json',
+            registry: 'registry.json',
+        };
+        return `${directory}/${fileNameByRole[parts.role]}`;
+    }
+    function encodeUserFilePath_ACU(path) {
+        return String(path || '')
+            .split('/')
+            .filter((segment) => segment.length > 0)
+            .map((segment) => encodeURIComponent(segment))
+            .join('/');
+    }
     function getUserFileUrl_ACU(path) {
-        return `/user/files/${encodeURIComponent(path)}?t=${Date.now()}`;
+        return `/user/files/${encodeUserFilePath_ACU(path)}?t=${Date.now()}`;
     }
     async function encodeBase64_ACU(text) {
         const blob = new Blob([text], { type: 'application/json' });
@@ -21733,8 +21767,14 @@ $CONTENT
     function buildVectorIndexScopePrefix_ACU(chatKey, isolationKey) {
         return `TavernDB_ACU_vector_${normalizeVectorFileNamePart_ACU(chatKey)}_${normalizeVectorFileNamePart_ACU(isolationKey || 'default')}_`;
     }
+    function buildVectorIndexStableScopePrefix_ACU(chatKey, isolationKey, sourceTableKey) {
+        return `${buildVectorIndexStableDirectory_ACU({ chatKey, isolationKey, sourceTableKey })}/`;
+    }
     function buildIndexId_ACU(params) {
         return `idx_${hashUserInput_ACU(`${params.chatKey}\n${params.isolationKey}\n${params.sourceTableKey}\n${params.snapshotMessageId}\n${params.indexedAt}`)}`;
+    }
+    function buildStableSnapshotIndexId_ACU(params) {
+        return `stable_${hashUserInput_ACU(`${params.chatKey}\n${params.isolationKey}\n${params.sourceTableKey}\n${params.snapshotMessageId}`)}`;
     }
     function normalizeRows_ACU$1(rows) {
         return (Array.isArray(rows) ? rows : [])
@@ -21838,10 +21878,12 @@ $CONTENT
         }
     }
     async function cleanupSnapshotScopeFilesExcept_ACU(manifest, retainedPaths) {
-        const scopePrefix = buildVectorIndexScopePrefix_ACU(manifest.chatKey, manifest.isolationKey);
+        const legacyScopePrefix = buildVectorIndexScopePrefix_ACU(manifest.chatKey, manifest.isolationKey);
+        const stableScopePrefix = buildVectorIndexStableScopePrefix_ACU(manifest.chatKey, manifest.isolationKey, manifest.sourceTableKey);
         const removedPaths = await deleteRegisteredVectorIndexFilesWhere_ACU((file) => {
             const path = String(file?.path || '');
-            return path.startsWith(scopePrefix) && !retainedPaths.has(path);
+            const inSameScope = path.startsWith(legacyScopePrefix) || path.startsWith(stableScopePrefix);
+            return inSameScope && !retainedPaths.has(path);
         });
         if (removedPaths.length > 0) {
             logDebug_ACU(`[交火向量索引] 已清理最新快照未引用的同作用域外置文件: count=${removedPaths.length}`);
@@ -21862,26 +21904,6 @@ $CONTENT
             sourceSnapshotMessageId: params.sourceSnapshotMessageId,
             status: 'ready',
         };
-    }
-    function normalizeBatchRefs_ACU(batchRefs) {
-        return (Array.isArray(batchRefs) ? batchRefs : [])
-            .filter((batch) => batch?.batchId && batch.indexId && Array.isArray(batch.files) && batch.files.length > 0)
-            .map((batch) => ({
-            ...batch,
-            rowKeys: Array.from(new Set((batch.rowKeys || []).filter(Boolean))),
-            chunkIds: Array.from(new Set((batch.chunkIds || []).filter(Boolean))),
-            files: [...batch.files],
-            status: batch.status || 'ready',
-        }));
-    }
-    function retainReusablePreviousBatchRefs_ACU(params) {
-        return normalizeBatchRefs_ACU(params.previousBatchRefs).filter((batch) => {
-            if ((batch.rowKeys || []).some((rowKey) => !params.activeRowKeys.has(rowKey)))
-                return false;
-            if ((batch.chunkIds || []).some((chunkId) => !params.activeChunkIds.has(chunkId)))
-                return false;
-            return true;
-        });
     }
     async function rollbackUploadedFiles_ACU(files) {
         const paths = files.map((file) => file.path).filter(Boolean);
@@ -22015,25 +22037,18 @@ $CONTENT
         const chatKey = normalizeChatKey_ACU(options.chatKey);
         const isolationKey = options.isolationKey || getCurrentIsolationKey_ACU();
         const indexedAt = options.indexedAt || new Date().toISOString();
-        const indexId = buildIndexId_ACU({ chatKey, isolationKey, sourceTableKey: options.sourceTableKey, snapshotMessageId: options.snapshotMessageId, indexedAt });
+        const indexId = buildStableSnapshotIndexId_ACU({ chatKey, isolationKey, sourceTableKey: options.sourceTableKey, snapshotMessageId: options.snapshotMessageId });
         const rows = normalizeRows_ACU$1(options.rows);
         const allChunks = normalizeChunks_ACU$1(options.chunks);
         const activeRowKeys = Array.from(new Set(options.activeRowKeys?.length ? options.activeRowKeys : rows.map((row) => row.rowKey)));
         const activeChunkIds = Array.from(new Set(options.activeChunkIds?.length ? options.activeChunkIds : rows.flatMap((row) => row.chunkIds || [])));
         const activeRowKeySet = new Set(activeRowKeys);
         const activeChunkIdSet = new Set(activeChunkIds);
-        const deltaRows = normalizeRows_ACU$1(options.deltaRows?.length ? options.deltaRows : rows).filter((row) => activeRowKeySet.has(row.rowKey));
-        const deltaRowKeySet = new Set(deltaRows.map((row) => row.rowKey));
-        const deltaAllowedChunkIds = new Set(deltaRows.flatMap((row) => row.chunkIds || []));
-        const deltaChunks = normalizeChunks_ACU$1(options.deltaChunks?.length ? options.deltaChunks : allChunks)
-            .filter((chunk) => deltaRowKeySet.has(chunk.rowKey) && deltaAllowedChunkIds.has(chunk.chunkId) && activeChunkIdSet.has(chunk.chunkId));
-        if (rows.length === 0 || activeChunkIds.length === 0) {
+        const chunks = allChunks.filter((chunk) => activeRowKeySet.has(chunk.rowKey) && activeChunkIdSet.has(chunk.chunkId));
+        if (rows.length === 0 || chunks.length === 0 || activeChunkIds.length === 0) {
             throw new Error('交火向量快照索引为空，拒绝写入外置文件。');
         }
-        if (deltaRows.length === 0 || deltaChunks.length === 0) {
-            throw new Error('交火向量快照增量为空，拒绝写入无效外置批次。');
-        }
-        const dimension = deltaChunks[0]?.vector?.length || 0;
+        const dimension = chunks[0]?.vector?.length || 0;
         if (dimension <= 0) {
             throw new Error('交火向量快照索引缺少有效向量维度。');
         }
@@ -22041,24 +22056,24 @@ $CONTENT
         try {
             const shardIdsByChunkId = new Map();
             const shardRefs = [];
-            const shardGroups = chunkArray_ACU(deltaChunks, options.shardChunkLimit || DEFAULT_SHARD_CHUNK_LIMIT_ACU);
+            const shardGroups = chunkArray_ACU(chunks, options.shardChunkLimit || DEFAULT_SHARD_CHUNK_LIMIT_ACU);
             for (let shardIndex = 0; shardIndex < shardGroups.length; shardIndex += 1) {
-                const shardId = `batch_${String(shardIndex + 1).padStart(4, '0')}`;
-                const shardChunks = shardGroups[shardIndex].map((chunk) => ({ ...chunk, shardId, shardRole: 'delta' }));
+                const shardId = `shard_${String(shardIndex + 1).padStart(4, '0')}`;
+                const shardChunks = shardGroups[shardIndex].map((chunk) => ({ ...chunk, shardId, shardRole: 'base' }));
                 shardChunks.forEach((chunk) => shardIdsByChunkId.set(chunk.chunkId, shardId));
                 const shard = {
                     version: SUMMARY_VECTOR_INDEX_MANIFEST_VERSION_ACU,
                     indexId,
                     shardId,
-                    role: 'delta',
+                    role: 'base',
                     createdAt: indexedAt,
                     updatedAt: indexedAt,
                     chunks: shardChunks,
                 };
-                const path = buildVectorIndexFileName_ACU({ chatKey, isolationKey, indexId, role: 'delta_shard', shardId });
-                const written = await uploadVectorIndexJsonFile_ACU({ path, role: 'delta_shard', shardId, data: shard, chunkCount: shardChunks.length, status: 'ready' });
+                const path = buildVectorIndexStableFilePath_ACU({ chatKey, isolationKey, sourceTableKey: options.sourceTableKey, role: 'base_shard', shardId });
+                const written = await uploadVectorIndexJsonFile_ACU({ path, role: 'base_shard', shardId, data: shard, chunkCount: shardChunks.length, status: 'ready' });
                 if (!written.ok || !written.ref)
-                    throw new Error(written.error || `快照批次分片 ${shardId} 上传失败`);
+                    throw new Error(written.error || `快照分片 ${shardId} 覆盖上传失败`);
                 uploadedFiles.push(written.ref);
                 shardRefs.push(written.ref);
                 await putVectorIndexCachedShard_ACU(indexId, shardId, shard, written.ref.checksum);
@@ -22069,7 +22084,8 @@ $CONTENT
             }));
             const rowIndex = buildRowIndex_ACU(indexId, rowsWithShardIds, shardIdsByChunkId, indexedAt);
             const tombstone = buildTombstone_ACU(indexId, options.previousManifest, indexedAt);
-            (options.removedRowKeys || []).forEach((rowKey) => {
+            const removedRowKeys = Array.from(new Set(options.removedRowKeys || []));
+            removedRowKeys.forEach((rowKey) => {
                 tombstone.removedRows[rowKey] = {
                     rowKey,
                     chunkIds: [],
@@ -22077,41 +22093,31 @@ $CONTENT
                     removedAt: indexedAt,
                 };
             });
-            const rowIndexPath = buildVectorIndexFileName_ACU({ chatKey, isolationKey, indexId, role: 'row_index' });
+            const rowIndexPath = buildVectorIndexStableFilePath_ACU({ chatKey, isolationKey, sourceTableKey: options.sourceTableKey, role: 'row_index' });
             const rowIndexWritten = await uploadVectorIndexJsonFile_ACU({ path: rowIndexPath, role: 'row_index', data: rowIndex, rowCount: rowsWithShardIds.length, status: 'ready' });
             if (!rowIndexWritten.ok || !rowIndexWritten.ref)
-                throw new Error(rowIndexWritten.error || '快照 rowIndex 上传失败');
+                throw new Error(rowIndexWritten.error || '快照 rowIndex 覆盖上传失败');
             uploadedFiles.push(rowIndexWritten.ref);
-            const tombstonePath = buildVectorIndexFileName_ACU({ chatKey, isolationKey, indexId, role: 'tombstone' });
+            const tombstonePath = buildVectorIndexStableFilePath_ACU({ chatKey, isolationKey, sourceTableKey: options.sourceTableKey, role: 'tombstone' });
             const tombstoneWritten = await uploadVectorIndexJsonFile_ACU({ path: tombstonePath, role: 'tombstone', data: tombstone, status: 'ready' });
             if (!tombstoneWritten.ok || !tombstoneWritten.ref)
-                throw new Error(tombstoneWritten.error || '快照 tombstone 上传失败');
+                throw new Error(tombstoneWritten.error || '快照 tombstone 覆盖上传失败');
             uploadedFiles.push(tombstoneWritten.ref);
-            const deltaRowsWithShardIds = deltaRows.map((row) => ({
-                ...row,
-                shardIds: Array.from(new Set(row.chunkIds.map((chunkId) => shardIdsByChunkId.get(chunkId)).filter((value) => !!value))),
-            }));
             const currentBatchRef = buildBatchRef_ACU({
-                batchId: `batch_${indexId}`,
+                batchId: `snapshot_${indexId}`,
                 indexId,
                 createdAt: indexedAt,
                 updatedAt: indexedAt,
-                rows: deltaRowsWithShardIds,
-                chunks: deltaChunks,
+                rows: rowsWithShardIds,
+                chunks,
                 files: [...shardRefs],
                 sourceMessageIndex: options.sourceMessageIndex,
                 sourceSnapshotMessageId: options.snapshotMessageId,
             });
-            const removedRowKeys = Array.from(new Set(options.removedRowKeys || []));
+            const batchRefs = [currentBatchRef];
             const replacedRowKeys = Array.from(new Set(options.replacedRowKeys || []));
-            const retainedPreviousBatchRefs = retainReusablePreviousBatchRefs_ACU({
-                previousBatchRefs: options.previousBatchRefs,
-                activeRowKeys: activeRowKeySet,
-                activeChunkIds: activeChunkIdSet,
-            });
-            const batchRefs = [...retainedPreviousBatchRefs, currentBatchRef];
             const parentIndexIds = Array.from(new Set([...(options.parentIndexIds || []), ...(options.previousManifest?.indexId ? [options.previousManifest.indexId] : [])].filter(Boolean)));
-            const manifestPath = buildVectorIndexFileName_ACU({ chatKey, isolationKey, indexId, role: 'manifest' });
+            const manifestPath = buildVectorIndexStableFilePath_ACU({ chatKey, isolationKey, sourceTableKey: options.sourceTableKey, role: 'manifest' });
             const manifestFilesWithoutManifest = [...uploadedFiles, ...batchRefs.flatMap((batch) => batch.files || [])];
             const externalTotalBytesWithoutManifest = manifestFilesWithoutManifest.reduce((sum, file) => sum + Math.max(0, Number(file.byteSize) || 0), 0);
             const manifestDraft = {
@@ -22135,8 +22141,8 @@ $CONTENT
                 tombstoneFile: tombstonePath,
                 manifestFile: manifestPath,
                 files: [],
-                baseShardCount: 0,
-                deltaShardCount: shardRefs.length,
+                baseShardCount: shardRefs.length,
+                deltaShardCount: 0,
                 tombstoneRowCount: removedRowKeys.length,
                 tombstoneChunkCount: 0,
                 externalTotalBytes: externalTotalBytesWithoutManifest,
@@ -22154,7 +22160,7 @@ $CONTENT
             };
             const manifestWritten = await uploadVectorIndexJsonFile_ACU({ path: manifestPath, role: 'manifest', data: { ...manifestDraft, files: [...uploadedFiles] }, status: 'ready' });
             if (!manifestWritten.ok || !manifestWritten.ref)
-                throw new Error(manifestWritten.error || '快照 manifest 上传失败');
+                throw new Error(manifestWritten.error || '快照 manifest 覆盖上传失败');
             uploadedFiles.push(manifestWritten.ref);
             const manifest = {
                 ...manifestDraft,
@@ -29802,11 +29808,8 @@ $CONTENT
                 chatKey: options.snapshotMessageId,
                 isolationKey,
                 previousManifest,
-                previousBatchRefs: previousManifest?.batchRefs || previousState?.manifest?.batchRefs || [],
                 rows: nextState.rows,
                 chunks: nextChunks,
-                deltaRows: options.deltaRows,
-                deltaChunks: options.deltaChunks,
                 snapshotMessageId: options.snapshotMessageId,
                 sourceTableKey: options.sourceTableKey,
                 sourceTableName: options.sourceTableName,
@@ -30004,8 +30007,6 @@ $CONTENT
                         preparedRows: prepared.rows,
                         finalRows: checkpointResult.rows,
                         finalChunks: checkpointResult.chunks,
-                        deltaRows: batchResult.rows,
-                        deltaChunks: batchResult.chunks,
                         targetMessageIndex,
                         snapshotMessageId,
                         sourceTableKey: selectedSummary.summaryKey,
@@ -30027,7 +30028,22 @@ $CONTENT
                 });
             }
             if (rowsNeedingEmbedding.length === 0) {
-                logDebug_ACU('[纪要向量索引] 无新增或变更条目，跳过空增量快照写入。');
+                await writeSummaryVectorIndexCheckpoint_ACU({
+                    chat,
+                    aggregatedSnapshot,
+                    embeddingModel: config.embeddingModel,
+                    preparedRows: prepared.rows,
+                    finalRows: finalResult.rows,
+                    finalChunks: finalResult.chunks,
+                    targetMessageIndex,
+                    snapshotMessageId,
+                    sourceTableKey: selectedSummary.summaryKey,
+                    sourceTableName,
+                    indexedAt,
+                    skippedRowCount: prepared.skippedRowCount,
+                    mode: archiveMode,
+                });
+                logDebug_ACU('[纪要向量索引] 无新增或变更条目，已覆盖刷新稳定快照文件。');
             }
             return buildResult_ACU({
                 success: true,

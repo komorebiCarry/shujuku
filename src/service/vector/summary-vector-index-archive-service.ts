@@ -485,8 +485,6 @@ async function writeSummaryVectorIndexCheckpoint_ACU(options: {
     preparedRows: SummaryVectorArchivePreparedRow_ACU[];
     finalRows: ChatSummaryVectorIndexRow_ACU[];
     finalChunks: ChatSummaryVectorIndexChunk_ACU[];
-    deltaRows?: ChatSummaryVectorIndexRow_ACU[];
-    deltaChunks?: ChatSummaryVectorIndexChunk_ACU[];
     targetMessageIndex: number;
     snapshotMessageId: string;
     sourceTableKey: string;
@@ -585,11 +583,8 @@ async function writeSummaryVectorIndexCheckpoint_ACU(options: {
             chatKey: options.snapshotMessageId,
             isolationKey,
             previousManifest,
-            previousBatchRefs: previousManifest?.batchRefs || previousState?.manifest?.batchRefs || [],
             rows: nextState.rows,
             chunks: nextChunks,
-            deltaRows: options.deltaRows,
-            deltaChunks: options.deltaChunks,
             snapshotMessageId: options.snapshotMessageId,
             sourceTableKey: options.sourceTableKey,
             sourceTableName: options.sourceTableName,
@@ -809,8 +804,6 @@ export async function archiveSummaryVectorIndexNow_ACU(options: { targetMessageI
                     preparedRows: prepared.rows,
                     finalRows: checkpointResult.rows,
                     finalChunks: checkpointResult.chunks,
-                    deltaRows: batchResult.rows,
-                    deltaChunks: batchResult.chunks,
                     targetMessageIndex,
                     snapshotMessageId,
                     sourceTableKey: selectedSummary.summaryKey,
@@ -837,7 +830,22 @@ export async function archiveSummaryVectorIndexNow_ACU(options: { targetMessageI
         }
 
         if (rowsNeedingEmbedding.length === 0) {
-            logDebug_ACU('[纪要向量索引] 无新增或变更条目，跳过空增量快照写入。');
+            await writeSummaryVectorIndexCheckpoint_ACU({
+                chat,
+                aggregatedSnapshot,
+                embeddingModel: config.embeddingModel,
+                preparedRows: prepared.rows,
+                finalRows: finalResult.rows,
+                finalChunks: finalResult.chunks,
+                targetMessageIndex,
+                snapshotMessageId,
+                sourceTableKey: selectedSummary.summaryKey,
+                sourceTableName,
+                indexedAt,
+                skippedRowCount: prepared.skippedRowCount,
+                mode: archiveMode,
+            });
+            logDebug_ACU('[纪要向量索引] 无新增或变更条目，已覆盖刷新稳定快照文件。');
         }
 
         return buildResult_ACU({
