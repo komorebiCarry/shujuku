@@ -181,9 +181,16 @@ async function cleanupPreviousManifest_ACU(previousManifest: ChatSummaryVectorIn
 
 function collectManifestFilePaths_ACU(manifest: ChatSummaryVectorIndexManifest_ACU | null | undefined): Set<string> {
     const paths = new Set<string>();
-    const addFile = (file: SummaryVectorIndexExternalFileRef_ACU | null | undefined): void => {
-        if (file?.path) paths.add(file.path);
+    const addPath = (path: any): void => {
+        const normalizedPath = String(path || '').trim();
+        if (normalizedPath) paths.add(normalizedPath);
     };
+    const addFile = (file: SummaryVectorIndexExternalFileRef_ACU | null | undefined): void => {
+        addPath(file?.path);
+    };
+    addPath(manifest?.manifestFile);
+    addPath(manifest?.rowsFile);
+    addPath(manifest?.tombstoneFile);
     (manifest?.files || []).forEach(addFile);
     (manifest?.batchRefs || []).forEach((batch) => (batch.files || []).forEach(addFile));
     return paths;
@@ -193,8 +200,8 @@ async function cleanupManifestFilesExcept_ACU(
     previousManifest: ChatSummaryVectorIndexManifest_ACU | null | undefined,
     retainedPaths: Set<string>,
 ): Promise<void> {
-    if (!previousManifest?.files?.length && !previousManifest?.batchRefs?.length) return;
     const previousPaths = collectManifestFilePaths_ACU(previousManifest);
+    if (previousPaths.size === 0) return;
     const removablePaths = Array.from(previousPaths).filter((path) => path && !retainedPaths.has(path));
     const deletedPaths: string[] = [];
     for (const path of removablePaths) {
@@ -238,6 +245,33 @@ async function cleanupSnapshotScopeFilesExcept_ACU(
     if (removedPaths.length > 0) {
         logDebug_ACU(`[交火向量索引] 已清理最新快照未引用的同作用域外置文件: count=${removedPaths.length}`);
     }
+}
+
+export async function deleteSummaryVectorIndexExternalByScope_ACU(options: {
+    chatKey?: string;
+    isolationKey?: string;
+    sourceTableKey?: string;
+} = {}): Promise<string[]> {
+    const chatKey = normalizeChatKey_ACU(options.chatKey);
+    const isolationKey = options.isolationKey || getCurrentIsolationKey_ACU();
+    const sourceTableKey = options.sourceTableKey || 'summary';
+    const legacyScopePrefix = buildVectorIndexScopePrefix_ACU(chatKey, isolationKey);
+    const stableScopePrefix = buildVectorIndexStableScopePrefix_ACU(chatKey, isolationKey, sourceTableKey);
+    const legacyStableScopePrefix = buildLegacyVectorIndexStableScopePrefix_ACU(chatKey, isolationKey, sourceTableKey);
+    const isolationPart = normalizeVectorFileNamePart_ACU(isolationKey || 'default');
+    const sourceTablePart = normalizeVectorFileNamePart_ACU(sourceTableKey || 'summary');
+    const removedPaths = await deleteRegisteredVectorIndexFilesWhere_ACU((file) => {
+        const path = String(file?.path || '');
+        if (!path.startsWith('TavernDB_ACU_vector_')) return false;
+        return path.startsWith(legacyScopePrefix)
+            || path.startsWith(stableScopePrefix)
+            || path.startsWith(legacyStableScopePrefix)
+            || path.includes(`_${isolationPart}_${sourceTablePart}_`);
+    });
+    if (removedPaths.length > 0) {
+        logDebug_ACU(`[交火向量索引] 已按当前作用域清理外置文件: count=${removedPaths.length}`);
+    }
+    return removedPaths;
 }
 
 function buildBatchRef_ACU(params: {

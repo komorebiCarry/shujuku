@@ -207,17 +207,30 @@ function buildDeleteRequestCandidates_ACU(path: string): VectorIndexFileDeleteRe
     const seen = new Set<string>();
     const addCandidate = (label: string, body: Record<string, string>): void => {
         const key = JSON.stringify(body);
-        if (body.path && !seen.has(key)) {
+        if ((body.path || body.name) && !seen.has(key)) {
             seen.add(key);
             candidates.push({ label, body });
         }
     };
 
-    // SillyTavern exposes uploaded files as /user/files/<name>, while the delete API expects
-    // a user-directory relative path. Keep the raw filename fallback for older compatible builds.
+    // SillyTavern exposes uploaded files as /user/files/<name>. Different builds have accepted
+    // different relative roots for /api/files/delete, so keep candidates explicit and verify after
+    // a 404 instead of pretending the delete succeeded. 能跑不等于能删干净。
     addCandidate('path:files-prefix', { path: `files/${fileName}` });
     addCandidate('path:filename', { path: fileName });
+    addCandidate('path:user-files-prefix', { path: `user/files/${fileName}` });
+    addCandidate('path:absolute-user-files-prefix', { path: `/user/files/${fileName}` });
     return candidates;
+}
+
+async function vectorIndexFileExists_ACU(path: string): Promise<boolean> {
+    try {
+        const response = await fetch(getUserFileUrl_ACU(path), { method: 'GET' });
+        if (response.status === 404) return false;
+        return response.ok;
+    } catch (_) {
+        return false;
+    }
 }
 
 export async function deleteVectorIndexFile_ACU(path: string): Promise<VectorIndexFileDeleteResult_ACU> {
@@ -248,7 +261,7 @@ export async function deleteVectorIndexFile_ACU(path: string): Promise<VectorInd
         }
     }
 
-    if (notFoundSeen) {
+    if (notFoundSeen && !(await vectorIndexFileExists_ACU(normalizedPath))) {
         return { ok: true, path: normalizedPath };
     }
 

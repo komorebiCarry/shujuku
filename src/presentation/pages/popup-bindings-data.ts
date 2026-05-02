@@ -7,7 +7,7 @@ import { showToastr_ACU } from '../theme/toast';
 import { ACU_TOAST_CATEGORY_ACU, SCRIPT_ID_PREFIX_ACU } from '../../shared/constants';
 import { topLevelWindow_ACU } from '../../shared/env';
 import { escapeHtml_ACU } from '../../shared/html-helpers';
-import { logDebug_ACU, logError_ACU, logWarn_ACU } from '../../shared/utils';
+import { isSummaryOrOutlineTable_ACU, logDebug_ACU, logError_ACU, logWarn_ACU } from '../../shared/utils';
 import { jQuery_API_ACU } from '../dom-utils';
 import { isSqliteMode } from '../../service/table/storage-mode';
 import { settings_ACU, currentChatFileIdentifier_ACU, currentJsonTableData_ACU, getCurrentIsolationKey_ACU } from '../../service/runtime/state-manager';
@@ -36,7 +36,7 @@ import { getAggregatedSummaryVectorIndexSnapshot_ACU, getLatestSummaryVectorInde
 import { archiveSummaryVectorIndexNow_ACU } from '../../service/vector/summary-vector-index-archive-service';
 import { getCurrentWorldbookConfig_ACU } from '../../service/settings/settings-readers';
 import { syncManualUpdateButtonAvailability_ACU } from '../components/status-display';
-import { deleteSummaryVectorIndexExternal_ACU, getSummaryVectorIndexStats_ACU } from '../../service/vector/summary-vector-index-storage-service';
+import { deleteSummaryVectorIndexExternal_ACU, deleteSummaryVectorIndexExternalByScope_ACU, getSummaryVectorIndexStats_ACU } from '../../service/vector/summary-vector-index-storage-service';
 import { clearVectorIndexTempCache_ACU } from '../../data/storage/vector-index-temp-cache';
 import { getChatArray_ACU, getLastMessageIndex_ACU, saveChatToHost_ACU } from '../../service/chat/chat-service';
 import { readIsolatedTagData_ACU, writeIsolatedTagData_ACU } from '../../data/repositories/chat-message-data-repo';
@@ -70,27 +70,54 @@ async function refreshVectorIndexStatsPanel_ACU(): Promise<void> {
     setField('updatedAt', stats.updatedAt || '-');
 }
 
+function getCurrentSummaryVectorIndexSourceTableKey_ACU(): string {
+    const tables = currentJsonTableData_ACU && typeof currentJsonTableData_ACU === 'object'
+        ? currentJsonTableData_ACU
+        : null;
+    if (!tables) return 'summary';
+    return Object.keys(tables).find((key) => {
+        const table = tables[key];
+        return !!table?.name && isSummaryOrOutlineTable_ACU(String(table.name || ''));
+    }) || 'summary';
+}
+
 async function deleteCurrentVectorIndexFromChat_ACU(): Promise<boolean> {
     const snapshot = getAggregatedSummaryVectorIndexSnapshot_ACU();
-    if (!snapshot?.layers?.length) return false;
     const chat = getChatArray_ACU();
+    const sourceTableKeys = new Set<string>();
     let changed = false;
-    for (const layer of snapshot.layers) {
-        const message = chat[layer.messageIndex];
-        if (!message || message.is_user) continue;
-        const tagData = readIsolatedTagData_ACU(message, layer.isolationKey);
-        const manifest = tagData?.summaryVectorIndexManifest || tagData?.summaryVectorIndexState?.manifest || null;
-        if (manifest) {
-            await deleteSummaryVectorIndexExternal_ACU(manifest);
-        }
-        if (tagData) {
-            assignSummaryVectorIndexStateToTagData_ACU(tagData, null);
-            writeIsolatedTagData_ACU(message, layer.isolationKey, tagData);
-            changed = true;
+
+    if (snapshot?.layers?.length) {
+        for (const layer of snapshot.layers) {
+            const message = chat[layer.messageIndex];
+            if (!message || message.is_user) continue;
+            const tagData = readIsolatedTagData_ACU(message, layer.isolationKey);
+            const manifest = tagData?.summaryVectorIndexManifest || tagData?.summaryVectorIndexState?.manifest || null;
+            if (manifest) {
+                sourceTableKeys.add(manifest.sourceTableKey || 'summary');
+                await deleteSummaryVectorIndexExternal_ACU(manifest);
+            }
+            if (tagData) {
+                assignSummaryVectorIndexStateToTagData_ACU(tagData, null);
+                writeIsolatedTagData_ACU(message, layer.isolationKey, tagData);
+                changed = true;
+            }
         }
     }
+
+    sourceTableKeys.add(getCurrentSummaryVectorIndexSourceTableKey_ACU());
+    let orphanDeleted = false;
+    for (const sourceTableKey of sourceTableKeys) {
+        const removedPaths = await deleteSummaryVectorIndexExternalByScope_ACU({
+            chatKey: currentChatFileIdentifier_ACU,
+            isolationKey: getCurrentIsolationKey_ACU(),
+            sourceTableKey,
+        });
+        if (removedPaths.length > 0) orphanDeleted = true;
+    }
+
     if (changed) await saveChatToHost_ACU();
-    return changed;
+    return changed || orphanDeleted;
 }
 
 /**

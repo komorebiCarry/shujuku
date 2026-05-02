@@ -21544,16 +21544,30 @@ $CONTENT
         const seen = new Set();
         const addCandidate = (label, body) => {
             const key = JSON.stringify(body);
-            if (body.path && !seen.has(key)) {
+            if ((body.path || body.name) && !seen.has(key)) {
                 seen.add(key);
                 candidates.push({ label, body });
             }
         };
-        // SillyTavern exposes uploaded files as /user/files/<name>, while the delete API expects
-        // a user-directory relative path. Keep the raw filename fallback for older compatible builds.
+        // SillyTavern exposes uploaded files as /user/files/<name>. Different builds have accepted
+        // different relative roots for /api/files/delete, so keep candidates explicit and verify after
+        // a 404 instead of pretending the delete succeeded. 能跑不等于能删干净。
         addCandidate('path:files-prefix', { path: `files/${fileName}` });
         addCandidate('path:filename', { path: fileName });
+        addCandidate('path:user-files-prefix', { path: `user/files/${fileName}` });
+        addCandidate('path:absolute-user-files-prefix', { path: `/user/files/${fileName}` });
         return candidates;
+    }
+    async function vectorIndexFileExists_ACU(path) {
+        try {
+            const response = await fetch(getUserFileUrl_ACU(path), { method: 'GET' });
+            if (response.status === 404)
+                return false;
+            return response.ok;
+        }
+        catch (_) {
+            return false;
+        }
     }
     async function deleteVectorIndexFile_ACU(path) {
         const normalizedPath = normalizeDeletePathInput_ACU(path);
@@ -21582,7 +21596,7 @@ $CONTENT
                 attempts.push(`${candidate.label} -> ${normalizeError_ACU(error)}`);
             }
         }
-        if (notFoundSeen) {
+        if (notFoundSeen && !(await vectorIndexFileExists_ACU(normalizedPath))) {
             return { ok: true, path: normalizedPath };
         }
         return {
@@ -21908,18 +21922,25 @@ $CONTENT
     }
     function collectManifestFilePaths_ACU(manifest) {
         const paths = new Set();
-        const addFile = (file) => {
-            if (file?.path)
-                paths.add(file.path);
+        const addPath = (path) => {
+            const normalizedPath = String(path || '').trim();
+            if (normalizedPath)
+                paths.add(normalizedPath);
         };
+        const addFile = (file) => {
+            addPath(file?.path);
+        };
+        addPath(manifest?.manifestFile);
+        addPath(manifest?.rowsFile);
+        addPath(manifest?.tombstoneFile);
         (manifest?.files || []).forEach(addFile);
         (manifest?.batchRefs || []).forEach((batch) => (batch.files || []).forEach(addFile));
         return paths;
     }
     async function cleanupManifestFilesExcept_ACU(previousManifest, retainedPaths) {
-        if (!previousManifest?.files?.length && !previousManifest?.batchRefs?.length)
-            return;
         const previousPaths = collectManifestFilePaths_ACU(previousManifest);
+        if (previousPaths.size === 0)
+            return;
         const removablePaths = Array.from(previousPaths).filter((path) => path && !retainedPaths.has(path));
         const deletedPaths = [];
         for (const path of removablePaths) {
@@ -21959,6 +21980,29 @@ $CONTENT
         if (removedPaths.length > 0) {
             logDebug_ACU(`[交火向量索引] 已清理最新快照未引用的同作用域外置文件: count=${removedPaths.length}`);
         }
+    }
+    async function deleteSummaryVectorIndexExternalByScope_ACU(options = {}) {
+        const chatKey = normalizeChatKey_ACU(options.chatKey);
+        const isolationKey = options.isolationKey || getCurrentIsolationKey_ACU();
+        const sourceTableKey = options.sourceTableKey || 'summary';
+        const legacyScopePrefix = buildVectorIndexScopePrefix_ACU(chatKey, isolationKey);
+        const stableScopePrefix = buildVectorIndexStableScopePrefix_ACU(chatKey, isolationKey, sourceTableKey);
+        const legacyStableScopePrefix = buildLegacyVectorIndexStableScopePrefix_ACU(chatKey, isolationKey, sourceTableKey);
+        const isolationPart = normalizeVectorFileNamePart_ACU(isolationKey || 'default');
+        const sourceTablePart = normalizeVectorFileNamePart_ACU(sourceTableKey || 'summary');
+        const removedPaths = await deleteRegisteredVectorIndexFilesWhere_ACU((file) => {
+            const path = String(file?.path || '');
+            if (!path.startsWith('TavernDB_ACU_vector_'))
+                return false;
+            return path.startsWith(legacyScopePrefix)
+                || path.startsWith(stableScopePrefix)
+                || path.startsWith(legacyStableScopePrefix)
+                || path.includes(`_${isolationPart}_${sourceTablePart}_`);
+        });
+        if (removedPaths.length > 0) {
+            logDebug_ACU(`[交火向量索引] 已按当前作用域清理外置文件: count=${removedPaths.length}`);
+        }
+        return removedPaths;
     }
     function buildBatchRef_ACU(params) {
         return {
@@ -37638,30 +37682,54 @@ $CONTENT
         setField('cacheBytes', formatBytes_ACU(stats.cacheTotalBytes));
         setField('updatedAt', stats.updatedAt || '-');
     }
+    function getCurrentSummaryVectorIndexSourceTableKey_ACU() {
+        const tables = currentJsonTableData_ACU && typeof currentJsonTableData_ACU === 'object'
+            ? currentJsonTableData_ACU
+            : null;
+        if (!tables)
+            return 'summary';
+        return Object.keys(tables).find((key) => {
+            const table = tables[key];
+            return !!table?.name && isSummaryOrOutlineTable_ACU(String(table.name || ''));
+        }) || 'summary';
+    }
     async function deleteCurrentVectorIndexFromChat_ACU() {
         const snapshot = getAggregatedSummaryVectorIndexSnapshot_ACU();
-        if (!snapshot?.layers?.length)
-            return false;
         const chat = getChatArray_ACU();
+        const sourceTableKeys = new Set();
         let changed = false;
-        for (const layer of snapshot.layers) {
-            const message = chat[layer.messageIndex];
-            if (!message || message.is_user)
-                continue;
-            const tagData = readIsolatedTagData_ACU(message, layer.isolationKey);
-            const manifest = tagData?.summaryVectorIndexManifest || tagData?.summaryVectorIndexState?.manifest || null;
-            if (manifest) {
-                await deleteSummaryVectorIndexExternal_ACU(manifest);
+        if (snapshot?.layers?.length) {
+            for (const layer of snapshot.layers) {
+                const message = chat[layer.messageIndex];
+                if (!message || message.is_user)
+                    continue;
+                const tagData = readIsolatedTagData_ACU(message, layer.isolationKey);
+                const manifest = tagData?.summaryVectorIndexManifest || tagData?.summaryVectorIndexState?.manifest || null;
+                if (manifest) {
+                    sourceTableKeys.add(manifest.sourceTableKey || 'summary');
+                    await deleteSummaryVectorIndexExternal_ACU(manifest);
+                }
+                if (tagData) {
+                    assignSummaryVectorIndexStateToTagData_ACU(tagData, null);
+                    writeIsolatedTagData_ACU(message, layer.isolationKey, tagData);
+                    changed = true;
+                }
             }
-            if (tagData) {
-                assignSummaryVectorIndexStateToTagData_ACU(tagData, null);
-                writeIsolatedTagData_ACU(message, layer.isolationKey, tagData);
-                changed = true;
-            }
+        }
+        sourceTableKeys.add(getCurrentSummaryVectorIndexSourceTableKey_ACU());
+        let orphanDeleted = false;
+        for (const sourceTableKey of sourceTableKeys) {
+            const removedPaths = await deleteSummaryVectorIndexExternalByScope_ACU({
+                chatKey: currentChatFileIdentifier_ACU,
+                isolationKey: getCurrentIsolationKey_ACU(),
+                sourceTableKey,
+            });
+            if (removedPaths.length > 0)
+                orphanDeleted = true;
         }
         if (changed)
             await saveChatToHost_ACU();
-        return changed;
+        return changed || orphanDeleted;
     }
     /**
      * 绑定数据管理标签页的所有事件（数据隔离 + 外部导入 + 模板预设 + 数据管理按钮）
