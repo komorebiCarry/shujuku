@@ -11,7 +11,7 @@ import { settings_ACU, currentChatFileIdentifier_ACU } from '../../service/runti
 import { setGlobalPlotEnabled_ACU } from '../../service/settings/settings-service';
 import { $popupInstance_ACU, $plotPromptSegmentsContainer_ACU, $plotTaskListContainer_ACU, _assignUIPlaceholders_ACU } from '../state/ui-refs';
 import { saveSettingsAndNotify_ACU } from '../components/settings-ui-helpers';
-import { addPlotTaskFromUI_ACU, deleteCurrentPlotTaskFromUI_ACU, flushCurrentPlotTaskEditorState_ACU, getPlotPromptGroupFromUI_ACU, loadCurrentPlotTaskToUI_ACU, moveCurrentPlotTask_ACU, renderPlotPromptSegments_ACU, renderPlotTaskList_ACU, saveCurrentPlotTaskFromUI_ACU, schedulePlotTaskAutoSave_ACU, selectPlotTaskForEditing_ACU } from '../components/plot-editors';
+import { addPlotTaskFromUI_ACU, deleteCurrentPlotTaskFromUI_ACU, flushCurrentPlotTaskEditorState_ACU, getPlotPromptGroupFromUI_ACU, loadCurrentPlotTaskToUI_ACU, moveCurrentPlotTask_ACU, renderPlotPromptSegments_ACU, renderPlotTaskList_ACU, saveCurrentPlotTaskApiPresetFromUI_ACU, saveCurrentPlotTaskFromUI_ACU, schedulePlotTaskAutoSave_ACU, selectPlotTaskForEditing_ACU } from '../components/plot-editors';
 import { appendExcludeRuleRow_ACU, applyGlobalPlotPresetSelectionForEditor_ACU, applyPlotPresetToSettings_ACU, clearPlotPresetBindingForChat_ACU, ensureLoopPromptsArray_ACU, ensurePlotTasksCompat_ACU, getActivePlotEditorSettings_ACU, getCurrentRuntimePlotPresetName_ACU, getPlotPresetBindingForChat_ACU, isDefaultPlotPresetSelection_ACU, normalizePlotPresetExcludeRules_ACU, normalizePlotPresetSelectionValue_ACU, persistPlotPresetSelectionState_ACU, readExcludeRulesFromRows_ACU, renderLoopPromptsList_ACU, saveLoopPromptsFromUI_ACU, setActivePlotEditorSettings_ACU, setCurrentEditablePlotPresetState_ACU, setPlotPromptContentByIdForSettings_ACU, stripPlotPresetWorldbookEntrySelectionForExport_ACU, switchCurrentChatPlotPreset_ACU } from '../components/optimization-ui';
 import { buildDefaultPlotPromptGroup_ACU } from '../../service/plot/plot-state';
 import { getCurrentChatPlotScopeState_ACU } from '../../service/template/chat-scope';
@@ -164,7 +164,7 @@ export async function bindPlotEvents_ACU(): Promise<void> {
         loadCurrentPlotTaskToUI_ACU();
       });
       $popupInstance_ACU.on('change', `#${SCRIPT_ID_PREFIX_ACU}-plot-task-api-preset`, function(this: HTMLElement) {
-        saveCurrentPlotTaskFromUI_ACU({ silent: true, renderTaskList: false, persist: true });
+        saveCurrentPlotTaskApiPresetFromUI_ACU({ persist: true });
       });
 
       // 匹配替换速率保存

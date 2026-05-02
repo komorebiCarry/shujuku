@@ -43,6 +43,14 @@ function setPlotTaskApiPresetInGlobalSettings_ACU(taskId: any, presetName: any) 
     }
 }
 
+function persistPlotTaskApiPresetOverride_ACU(source = 'ui_task_api_preset') {
+    if (currentEditablePlotPresetState_ACU?.scope === 'global') {
+        saveSettingsAndNotify_ACU();
+        return;
+    }
+    persistCurrentChatPlotEditorSnapshot_ACU({ source, save: true });
+}
+
 function stripRuntimeOnlyPlotTaskFields_ACU(task: any) {
     if (!task || typeof task !== 'object') return task;
     const cloned = { ...task };
@@ -373,8 +381,6 @@ function persistPlotTaskEditorSettings_ACU(source = 'ui_task_edit') {
       const taskMinLengthRaw = parseInt($popupInstance_ACU.find(`#${SCRIPT_ID_PREFIX_ACU}-plot-min-length`).val() as string, 10);
       const taskStageRaw = parseInt($popupInstance_ACU.find(`#${SCRIPT_ID_PREFIX_ACU}-plot-task-stage`).val() as string, 10);
       const taskMaxRetriesRaw = parseInt($popupInstance_ACU.find(`#${SCRIPT_ID_PREFIX_ACU}-plot-task-max-retries`).val() as string, 10);
-      const taskApiPresetRaw = $popupInstance_ACU.find(`#${SCRIPT_ID_PREFIX_ACU}-plot-task-api-preset`).val();
-      setPlotTaskApiPresetInGlobalSettings_ACU(selectedTask.id, taskApiPresetRaw);
       const updatedTask = normalizePlotTask_ACU({
           ...stripRuntimeOnlyPlotTaskFields_ACU(selectedTask),
           name: String(taskNameRaw || '').trim() || selectedTask.name || `剧情任务${selectedIndex + 1}`,
@@ -406,6 +412,22 @@ function persistPlotTaskEditorSettings_ACU(source = 'ui_task_edit') {
       if (renderTaskList) renderPlotTaskList_ACU(plotSettings);
       if (!silent) showToastr_ACU('success', '当前剧情任务已保存。');
       return updatedTask;
+  }
+
+  export function saveCurrentPlotTaskApiPresetFromUI_ACU({ persist = true } = {}) {
+      if (!$popupInstance_ACU) return false;
+      const plotSettings = getActivePlotEditorSettings_ACU();
+      if (!plotSettings) return false;
+      const { selectedTask } = getCurrentPlotTaskEditorState_ACU(plotSettings, { autoSelect: true });
+      const taskId = String(selectedTask?.id || currentPlotTaskEditorId_ACU || '').trim();
+      if (!taskId) return false;
+
+      const taskApiPresetRaw = $popupInstance_ACU.find(`#${SCRIPT_ID_PREFIX_ACU}-plot-task-api-preset`).val();
+      setPlotTaskApiPresetInGlobalSettings_ACU(taskId, taskApiPresetRaw);
+      if (persist) {
+          persistPlotTaskApiPresetOverride_ACU('ui_task_api_preset');
+      }
+      return true;
   }
 
   export function flushCurrentPlotTaskEditorState_ACU({ renderTaskList = false, persist = true } = {}) {

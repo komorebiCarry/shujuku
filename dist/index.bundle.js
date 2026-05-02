@@ -23548,6 +23548,13 @@ $CONTENT
             delete overrides[normalizedTaskId];
         }
     }
+    function persistPlotTaskApiPresetOverride_ACU(source = 'ui_task_api_preset') {
+        if (currentEditablePlotPresetState_ACU?.scope === 'global') {
+            saveSettingsAndNotify_ACU();
+            return;
+        }
+        persistCurrentChatPlotEditorSnapshot_ACU({ source, save: true });
+    }
     function stripRuntimeOnlyPlotTaskFields_ACU(task) {
         if (!task || typeof task !== 'object')
             return task;
@@ -23859,8 +23866,6 @@ $CONTENT
         const taskMinLengthRaw = parseInt($popupInstance_ACU.find(`#${SCRIPT_ID_PREFIX_ACU}-plot-min-length`).val(), 10);
         const taskStageRaw = parseInt($popupInstance_ACU.find(`#${SCRIPT_ID_PREFIX_ACU}-plot-task-stage`).val(), 10);
         const taskMaxRetriesRaw = parseInt($popupInstance_ACU.find(`#${SCRIPT_ID_PREFIX_ACU}-plot-task-max-retries`).val(), 10);
-        const taskApiPresetRaw = $popupInstance_ACU.find(`#${SCRIPT_ID_PREFIX_ACU}-plot-task-api-preset`).val();
-        setPlotTaskApiPresetInGlobalSettings_ACU(selectedTask.id, taskApiPresetRaw);
         const updatedTask = normalizePlotTask_ACU({
             ...stripRuntimeOnlyPlotTaskFields_ACU(selectedTask),
             name: String(taskNameRaw || '').trim() || selectedTask.name || `剧情任务${selectedIndex + 1}`,
@@ -23892,6 +23897,23 @@ $CONTENT
         if (!silent)
             showToastr_ACU('success', '当前剧情任务已保存。');
         return updatedTask;
+    }
+    function saveCurrentPlotTaskApiPresetFromUI_ACU({ persist = true } = {}) {
+        if (!$popupInstance_ACU)
+            return false;
+        const plotSettings = getActivePlotEditorSettings_ACU();
+        if (!plotSettings)
+            return false;
+        const { selectedTask } = getCurrentPlotTaskEditorState_ACU(plotSettings, { autoSelect: true });
+        const taskId = String(selectedTask?.id || currentPlotTaskEditorId_ACU || '').trim();
+        if (!taskId)
+            return false;
+        const taskApiPresetRaw = $popupInstance_ACU.find(`#${SCRIPT_ID_PREFIX_ACU}-plot-task-api-preset`).val();
+        setPlotTaskApiPresetInGlobalSettings_ACU(taskId, taskApiPresetRaw);
+        if (persist) {
+            persistPlotTaskApiPresetOverride_ACU('ui_task_api_preset');
+        }
+        return true;
     }
     function flushCurrentPlotTaskEditorState_ACU({ renderTaskList = false, persist = true } = {}) {
         clearTimeout(plotTaskEditorAutoSaveTimer_ACU);
@@ -38947,7 +38969,7 @@ $CONTENT
             loadCurrentPlotTaskToUI_ACU();
         });
         $popupInstance_ACU.on('change', `#${SCRIPT_ID_PREFIX_ACU}-plot-task-api-preset`, function () {
-            saveCurrentPlotTaskFromUI_ACU({ silent: true, renderTaskList: false, persist: true });
+            saveCurrentPlotTaskApiPresetFromUI_ACU({ persist: true });
         });
         // 匹配替换速率保存
         const plotRateInputs = [
