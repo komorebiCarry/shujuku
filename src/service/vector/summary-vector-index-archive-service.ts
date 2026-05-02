@@ -13,7 +13,7 @@ import type {
 import { createEmbeddings_ACU } from '../../data/gateways/vector-embedding-gateway';
 import type { VectorEmbeddingResult_ACU } from '../../data/gateways/vector-embedding-gateway';
 import { saveChatToHost_ACU } from '../../data/gateways/chat-gateway';
-import { currentJsonTableData_ACU, getCurrentIsolationKey_ACU, settings_ACU } from '../runtime/state-manager';
+import { currentChatFileIdentifier_ACU, currentJsonTableData_ACU, getCurrentIsolationKey_ACU, settings_ACU } from '../runtime/state-manager';
 import { getChatArray_ACU } from '../chat/chat-service';
 import { getLatestAiMessageIndexFromChat_ACU } from '../table/table-history';
 import {
@@ -580,7 +580,7 @@ async function writeSummaryVectorIndexCheckpoint_ACU(options: {
     if (nextState) {
         const previousManifest = existingTagData.summaryVectorIndexManifest || previousState?.manifest || null;
         const persisted = await persistSummaryVectorIndexSnapshot_ACU({
-            chatKey: options.snapshotMessageId,
+            chatKey: currentChatFileIdentifier_ACU,
             isolationKey,
             previousManifest,
             rows: nextState.rows,

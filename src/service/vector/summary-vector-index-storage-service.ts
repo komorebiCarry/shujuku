@@ -90,8 +90,8 @@ function buildIndexId_ACU(params: { chatKey: string; isolationKey: string; sourc
     return `idx_${hashUserInput_ACU(`${params.chatKey}\n${params.isolationKey}\n${params.sourceTableKey}\n${params.snapshotMessageId}\n${params.indexedAt}`)}`;
 }
 
-function buildStableSnapshotIndexId_ACU(params: { chatKey: string; isolationKey: string; sourceTableKey: string; snapshotMessageId: string }): string {
-    return `stable_${hashUserInput_ACU(`${params.chatKey}\n${params.isolationKey}\n${params.sourceTableKey}\n${params.snapshotMessageId}`)}`;
+function buildStableSnapshotIndexId_ACU(params: { chatKey: string; isolationKey: string; sourceTableKey: string }): string {
+    return `stable_${hashUserInput_ACU(`${params.chatKey}\n${params.isolationKey}\n${params.sourceTableKey}`)}`;
 }
 
 function normalizeRows_ACU(rows: ChatSummaryVectorIndexRow_ACU[]): ChatSummaryVectorIndexRow_ACU[] {
@@ -381,7 +381,7 @@ export async function persistSummaryVectorIndexSnapshot_ACU(
     const chatKey = normalizeChatKey_ACU(options.chatKey);
     const isolationKey = options.isolationKey || getCurrentIsolationKey_ACU();
     const indexedAt = options.indexedAt || new Date().toISOString();
-    const indexId = buildStableSnapshotIndexId_ACU({ chatKey, isolationKey, sourceTableKey: options.sourceTableKey, snapshotMessageId: options.snapshotMessageId });
+    const indexId = buildStableSnapshotIndexId_ACU({ chatKey, isolationKey, sourceTableKey: options.sourceTableKey });
     const rows = normalizeRows_ACU(options.rows);
     const allChunks = normalizeChunks_ACU(options.chunks);
     const activeRowKeys = Array.from(new Set(options.activeRowKeys?.length ? options.activeRowKeys : rows.map((row) => row.rowKey)));

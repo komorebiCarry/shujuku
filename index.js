@@ -21768,7 +21768,7 @@ $CONTENT
         return `idx_${hashUserInput_ACU(`${params.chatKey}\n${params.isolationKey}\n${params.sourceTableKey}\n${params.snapshotMessageId}\n${params.indexedAt}`)}`;
     }
     function buildStableSnapshotIndexId_ACU(params) {
-        return `stable_${hashUserInput_ACU(`${params.chatKey}\n${params.isolationKey}\n${params.sourceTableKey}\n${params.snapshotMessageId}`)}`;
+        return `stable_${hashUserInput_ACU(`${params.chatKey}\n${params.isolationKey}\n${params.sourceTableKey}`)}`;
     }
     function normalizeRows_ACU$1(rows) {
         return (Array.isArray(rows) ? rows : [])
@@ -22031,7 +22031,7 @@ $CONTENT
         const chatKey = normalizeChatKey_ACU(options.chatKey);
         const isolationKey = options.isolationKey || getCurrentIsolationKey_ACU();
         const indexedAt = options.indexedAt || new Date().toISOString();
-        const indexId = buildStableSnapshotIndexId_ACU({ chatKey, isolationKey, sourceTableKey: options.sourceTableKey, snapshotMessageId: options.snapshotMessageId });
+        const indexId = buildStableSnapshotIndexId_ACU({ chatKey, isolationKey, sourceTableKey: options.sourceTableKey });
         const rows = normalizeRows_ACU$1(options.rows);
         const allChunks = normalizeChunks_ACU$1(options.chunks);
         const activeRowKeys = Array.from(new Set(options.activeRowKeys?.length ? options.activeRowKeys : rows.map((row) => row.rowKey)));
@@ -29799,7 +29799,7 @@ $CONTENT
         if (nextState) {
             const previousManifest = existingTagData.summaryVectorIndexManifest || previousState?.manifest || null;
             const persisted = await persistSummaryVectorIndexSnapshot_ACU({
-                chatKey: options.snapshotMessageId,
+                chatKey: currentChatFileIdentifier_ACU,
                 isolationKey,
                 previousManifest,
                 rows: nextState.rows,
