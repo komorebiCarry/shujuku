@@ -102,6 +102,7 @@ export interface SummaryVectorIndexSnapshotInfo_ACU {
     mode: 'snapshot';
     parentIndexIds: string[];
     activeRowKeys: string[];
+    activeChunkIds?: string[];
     removedRowKeys: string[];
     replacedRowKeys: string[];
     batchIds: string[];

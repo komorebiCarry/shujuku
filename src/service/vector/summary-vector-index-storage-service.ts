@@ -50,7 +50,10 @@ export interface PersistSummaryVectorIndexExternalOptions_ACU {
 
 export interface PersistSummaryVectorIndexSnapshotOptions_ACU extends PersistSummaryVectorIndexExternalOptions_ACU {
     previousBatchRefs?: SummaryVectorIndexBatchRef_ACU[];
+    deltaRows?: ChatSummaryVectorIndexRow_ACU[];
+    deltaChunks?: ChatSummaryVectorIndexChunk_ACU[];
     activeRowKeys?: string[];
+    activeChunkIds?: string[];
     removedRowKeys?: string[];
     replacedRowKeys?: string[];
     parentIndexIds?: string[];
@@ -233,6 +236,30 @@ function buildBatchRef_ACU(params: {
     };
 }
 
+function normalizeBatchRefs_ACU(batchRefs: SummaryVectorIndexBatchRef_ACU[] | null | undefined): SummaryVectorIndexBatchRef_ACU[] {
+    return (Array.isArray(batchRefs) ? batchRefs : [])
+        .filter((batch) => batch?.batchId && batch.indexId && Array.isArray(batch.files) && batch.files.length > 0)
+        .map((batch) => ({
+            ...batch,
+            rowKeys: Array.from(new Set((batch.rowKeys || []).filter(Boolean))),
+            chunkIds: Array.from(new Set((batch.chunkIds || []).filter(Boolean))),
+            files: [...batch.files],
+            status: batch.status || 'ready',
+        }));
+}
+
+function retainReusablePreviousBatchRefs_ACU(params: {
+    previousBatchRefs?: SummaryVectorIndexBatchRef_ACU[];
+    activeRowKeys: Set<string>;
+    activeChunkIds: Set<string>;
+}): SummaryVectorIndexBatchRef_ACU[] {
+    return normalizeBatchRefs_ACU(params.previousBatchRefs).filter((batch) => {
+        if ((batch.rowKeys || []).some((rowKey) => !params.activeRowKeys.has(rowKey))) return false;
+        if ((batch.chunkIds || []).some((chunkId) => !params.activeChunkIds.has(chunkId))) return false;
+        return true;
+    });
+}
+
 async function rollbackUploadedFiles_ACU(files: SummaryVectorIndexExternalFileRef_ACU[]): Promise<void> {
     const paths = files.map((file) => file.path).filter(Boolean);
     for (const path of paths) {
@@ -371,11 +398,23 @@ export async function persistSummaryVectorIndexSnapshot_ACU(
     const indexedAt = options.indexedAt || new Date().toISOString();
     const indexId = buildIndexId_ACU({ chatKey, isolationKey, sourceTableKey: options.sourceTableKey, snapshotMessageId: options.snapshotMessageId, indexedAt });
     const rows = normalizeRows_ACU(options.rows);
-    const chunks = normalizeChunks_ACU(options.chunks);
-    if (rows.length === 0 || chunks.length === 0) {
+    const allChunks = normalizeChunks_ACU(options.chunks);
+    const activeRowKeys = Array.from(new Set(options.activeRowKeys?.length ? options.activeRowKeys : rows.map((row) => row.rowKey)));
+    const activeChunkIds = Array.from(new Set(options.activeChunkIds?.length ? options.activeChunkIds : rows.flatMap((row) => row.chunkIds || [])));
+    const activeRowKeySet = new Set(activeRowKeys);
+    const activeChunkIdSet = new Set(activeChunkIds);
+    const deltaRows = normalizeRows_ACU(options.deltaRows?.length ? options.deltaRows : rows).filter((row) => activeRowKeySet.has(row.rowKey));
+    const deltaRowKeySet = new Set(deltaRows.map((row) => row.rowKey));
+    const deltaAllowedChunkIds = new Set(deltaRows.flatMap((row) => row.chunkIds || []));
+    const deltaChunks = normalizeChunks_ACU(options.deltaChunks?.length ? options.deltaChunks : allChunks)
+        .filter((chunk) => deltaRowKeySet.has(chunk.rowKey) && deltaAllowedChunkIds.has(chunk.chunkId) && activeChunkIdSet.has(chunk.chunkId));
+    if (rows.length === 0 || activeChunkIds.length === 0) {
         throw new Error('交火向量快照索引为空，拒绝写入外置文件。');
     }
-    const dimension = chunks[0]?.vector?.length || 0;
+    if (deltaRows.length === 0 || deltaChunks.length === 0) {
+        throw new Error('交火向量快照增量为空，拒绝写入无效外置批次。');
+    }
+    const dimension = deltaChunks[0]?.vector?.length || 0;
     if (dimension <= 0) {
         throw new Error('交火向量快照索引缺少有效向量维度。');
     }
@@ -384,7 +423,7 @@ export async function persistSummaryVectorIndexSnapshot_ACU(
     try {
         const shardIdsByChunkId = new Map<string, string>();
         const shardRefs: SummaryVectorIndexExternalFileRef_ACU[] = [];
-        const shardGroups = chunkArray_ACU(chunks, options.shardChunkLimit || DEFAULT_SHARD_CHUNK_LIMIT_ACU);
+        const shardGroups = chunkArray_ACU(deltaChunks, options.shardChunkLimit || DEFAULT_SHARD_CHUNK_LIMIT_ACU);
         for (let shardIndex = 0; shardIndex < shardGroups.length; shardIndex += 1) {
             const shardId = `batch_${String(shardIndex + 1).padStart(4, '0')}`;
             const shardChunks = shardGroups[shardIndex].map((chunk) => ({ ...chunk, shardId, shardRole: 'delta' as const }));
@@ -430,23 +469,29 @@ export async function persistSummaryVectorIndexSnapshot_ACU(
         if (!tombstoneWritten.ok || !tombstoneWritten.ref) throw new Error(tombstoneWritten.error || '快照 tombstone 上传失败');
         uploadedFiles.push(tombstoneWritten.ref);
 
+        const deltaRowsWithShardIds = deltaRows.map((row) => ({
+            ...row,
+            shardIds: Array.from(new Set(row.chunkIds.map((chunkId) => shardIdsByChunkId.get(chunkId)).filter((value): value is string => !!value))),
+        }));
         const currentBatchRef = buildBatchRef_ACU({
             batchId: `batch_${indexId}`,
             indexId,
             createdAt: indexedAt,
             updatedAt: indexedAt,
-            rows: rowsWithShardIds,
-            chunks,
+            rows: deltaRowsWithShardIds,
+            chunks: deltaChunks,
             files: [...shardRefs],
             sourceMessageIndex: options.sourceMessageIndex,
             sourceSnapshotMessageId: options.snapshotMessageId,
         });
-        // 最新 manifest 是完整快照，不是历史增量链。旧 batchRefs 若继续继承，删除/修改行的旧向量文件会仍被 manifest 引用，
-        // 导致 scope cleanup 无法删除旧本地数据。新增、删除、修改都以本次完整 currentBatchRef 为权威。
-        const batchRefs = [currentBatchRef];
-        const activeRowKeys = Array.from(new Set(options.activeRowKeys?.length ? options.activeRowKeys : rowsWithShardIds.map((row) => row.rowKey)));
         const removedRowKeys = Array.from(new Set(options.removedRowKeys || []));
         const replacedRowKeys = Array.from(new Set(options.replacedRowKeys || []));
+        const retainedPreviousBatchRefs = retainReusablePreviousBatchRefs_ACU({
+            previousBatchRefs: options.previousBatchRefs,
+            activeRowKeys: activeRowKeySet,
+            activeChunkIds: activeChunkIdSet,
+        });
+        const batchRefs = [...retainedPreviousBatchRefs, currentBatchRef];
         const parentIndexIds = Array.from(new Set([...(options.parentIndexIds || []), ...(options.previousManifest?.indexId ? [options.previousManifest.indexId] : [])].filter(Boolean)));
         const manifestPath = buildVectorIndexFileName_ACU({ chatKey, isolationKey, indexId, role: 'manifest' });
         const manifestFilesWithoutManifest = [...uploadedFiles, ...batchRefs.flatMap((batch) => batch.files || [])];
@@ -464,7 +509,7 @@ export async function persistSummaryVectorIndexSnapshot_ACU(
             indexedAt,
             updatedAt: indexedAt,
             rowCount: rowsWithShardIds.length,
-            chunkCount: chunks.length,
+            chunkCount: activeChunkIds.length,
             skippedRowCount: Math.max(0, Math.floor(Number(options.skippedRowCount) || 0)),
             embeddingModel: options.embeddingModel,
             dimension,
@@ -482,6 +527,7 @@ export async function persistSummaryVectorIndexSnapshot_ACU(
                 mode: 'snapshot',
                 parentIndexIds,
                 activeRowKeys,
+                activeChunkIds,
                 removedRowKeys,
                 replacedRowKeys,
                 batchIds: batchRefs.map((batch) => batch.batchId),
@@ -510,7 +556,7 @@ export async function persistSummaryVectorIndexSnapshot_ACU(
             sourceTableName: options.sourceTableName,
             indexedAt,
             rowCount: rowsWithShardIds.length,
-            chunkCount: chunks.length,
+            chunkCount: activeChunkIds.length,
             skippedRowCount: Math.max(0, Math.floor(Number(options.skippedRowCount) || 0)),
             rows: rowsWithShardIds,
             manifest,
@@ -555,6 +601,7 @@ export async function loadSummaryVectorIndexChunksFromManifest_ACU(
     if (!manifest) return [];
     if (Array.isArray(manifest.batchRefs) && manifest.batchRefs.length > 0) {
         const activeRowKeys = new Set(manifest.snapshot?.activeRowKeys || []);
+        const activeChunkIds = new Set(manifest.snapshot?.activeChunkIds || []);
         const removedRowKeys = new Set(manifest.snapshot?.removedRowKeys || []);
         const chunks: ChatSummaryVectorIndexChunk_ACU[] = [];
         for (const batch of manifest.batchRefs) {
@@ -563,6 +610,7 @@ export async function loadSummaryVectorIndexChunksFromManifest_ACU(
             batchChunks.forEach((chunk) => {
                 if (removedRowKeys.has(chunk.rowKey)) return;
                 if (activeRowKeys.size > 0 && !activeRowKeys.has(chunk.rowKey)) return;
+                if (activeChunkIds.size > 0 && !activeChunkIds.has(chunk.chunkId)) return;
                 chunks.push(chunk);
             });
         }
