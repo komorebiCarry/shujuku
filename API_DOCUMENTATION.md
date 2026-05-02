@@ -109,6 +109,29 @@ if (success) {
 
 ---
 
+### `injectPlotPresetToCurrentChat(presetName)`
+
+仅将指定剧情预设注入当前聊天，不修改全局当前剧情预设。
+
+**参数**:
+| 参数名 | 类型 | 必填 | 说明 |
+|--------|------|------|------|
+| presetName | string | 是 | 要注入到当前聊天的预设名称；传空字符串表示当前聊天跟随全局剧情预设 |
+
+**返回值**: `boolean` - 注入是否成功
+
+**说明**:
+- 成功后会保存当前聊天的剧情预设绑定状态。
+- 不会修改全局 `lastUsedPresetName`，适合外部插件只影响当前聊天的场景。
+- 如果传入不存在的预设名称，返回 `false`。
+
+**示例**:
+```javascript
+const success = window.AutoCardUpdaterAPI.injectPlotPresetToCurrentChat("战斗场景");
+```
+
+---
+
 ### `getPlotPresetDetails(presetName)`
 
 获取指定预设的详细信息。
@@ -209,8 +232,8 @@ const success = await window.AutoCardUpdaterAPI.importTableAsJson(jsonData);
 | 参数名| 类型 | 必填 | 说明 |
 |--------|------|------|------|
 | tableName | string | 是 | 表格名称 |
-| rowIndex | number | 是 | 行索引（0为表头，1为第一行数据） |
-| colIdentifier | string \| number | 是 | | 列标识（列名或列索引） |
+| rowIndex | number \| string | 是 | 行索引（0为表头，1为第一行数据；数字字符串会被规范化） |
+| colIdentifier | string \| number | 是 | 列标识（列名或列索引） |
 | value | any | 是 | 新的单元格值 |
 
 **返回值**: `Promise<boolean>` - 成功返回true，失败返回false
@@ -218,6 +241,7 @@ const success = await window.AutoCardUpdaterAPI.importTableAsJson(jsonData);
 **说明**:
 - 使用列名时，会自动查找对应的列索引
 - 更新后会自动保存到聊天历史
+- 支持对象参数形式：`updateCell({ tableName, rowIndex, colIdentifier, value })`
 - 如果表格不存在或参数无效，返回false
 
 **示例**:
@@ -239,7 +263,7 @@ const success2 = await window.AutoCardUpdaterAPI.updateCell('主角信息', 1, 3
 | 参数名| 类型 | 必填 | 说明 |
 | -------- | ------ | ------ | ------ |
 | tableName | string | 是 | 表格名称 |
-| rowIndex | number | 是 | 行索引（1为第一行数据） |
+| rowIndex | number \| string | 是 | 行索引（1为第一行数据；数字字符串会被规范化） |
 | data | object | 是 | 列名-值映射对象 |
 
 **返回值**: `Promise<boolean>` - 成功返回true，失败返回false
@@ -247,6 +271,7 @@ const success2 = await window.AutoCardUpdaterAPI.updateCell('主角信息', 1, 3
 **说明**:
 - data对象中的键值对应于表格的列名和单元格值
 - 只更新data中指定的列，其他列保持不变
+- 支持对象参数形式：`updateRow({ tableName, rowIndex, data })`
 - **表的最新楼层保存**：更新后会自动查找该表数据最后一次出现的楼层，并保存到该楼层
 - **世界书刷新**：保存后会自动触发世界书重新写入，确保前端能读取到最新数据
 - 如果找不到该表的楼层（新表格），会保存到最新AI楼层
@@ -281,6 +306,7 @@ const success = await window.AutoCardUpdaterAPI.updateRow('主角信息', 1, {
 **说明**:
 - 新行会插入到表头之后（索引为行数）
 - 插入后会自动保存到聊天历史
+- 支持对象参数形式：`insertRow({ tableName, data })`
 
 **示例**:
 ```javascript
@@ -306,13 +332,14 @@ if (rowIndex !== -1) {
 | 参数名| 类型 | 必填 | 说明 |
 |--------|------|------|------|
 | tableName | string | 是 | 表格名称 |
-| rowIndex | number | 是 | 要删除的行索引（1为第一行数据） |
+| rowIndex | number \| string | 是 | 要删除的行索引（1为第一行数据；数字字符串会被规范化） |
 
 **返回值**: `Promise<boolean>` - 成功返回true，失败返回false
 
 **说明**:
 - 不能删除表头（rowIndex=0）
 - 删除后会自动保存到聊天历史
+- 支持对象参数形式：`deleteRow({ tableName, rowIndex })`
 
 **示例**:
 ```javascript
@@ -1418,7 +1445,7 @@ window.AutoCardUpdaterAPI.deleteApiPreset('测试预设');
 | 参数名 | 类型 | 必填 | 说明 |
 |--------|------|------|------|
 | messages | Array | 是 | 消息数组，格式: `[{role: 'system'\|'user'\|'assistant', content: '...'}]` |
-| options.max_tokens | number | 否 | 最大 token 数，默认使用数据库配置或 4096 |
+| options.max_tokens / options.maxTokens | number \| string | 否 | 最大 token 数，默认使用数据库配置或 4096；数字字符串会被规范化 |
 
 **返回值**: `Promise<string|null>` - AI 返回的文本内容，失败返回 `null`
 
@@ -1446,6 +1473,7 @@ if (window.AutoCardUpdaterAPI && typeof window.AutoCardUpdaterAPI.callAI === 'fu
     ];
     
     const response = await window.AutoCardUpdaterAPI.callAI(messages, { max_tokens: 2000 });
+    const response2 = await window.AutoCardUpdaterAPI.callAI(messages, { maxTokens: '2000' });
     
     if (response) {
         console.log('AI 响应:', response);

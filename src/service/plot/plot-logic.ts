@@ -599,6 +599,29 @@ function queueSaveCurrentChatPlotScope_ACU(source = 'ui_plot_scope') {
       .catch(error => logWarn_ACU(`[剧情推进] 保存聊天级预设快照失败(${source}):`, error));
 }
 
+export function persistCurrentChatPlotEditorSnapshot_ACU({ source = 'ui_task_edit', save = true } = {}) {
+    if (!settings_ACU?.plotSettings) return null;
+    const normalizedPresetName = getCurrentRuntimePlotPresetName_ACU({ fallbackToGlobal: true });
+    const plotScopeState = buildChatPlotScopeStateFromSettings_ACU(settings_ACU.plotSettings, {
+      presetName: normalizedPresetName,
+      source,
+      originGlobalName: normalizePlotPresetSelectionValue_ACU(settings_ACU.plotSettings.lastUsedPresetName || ''),
+      originGlobalRevision: getPlotGlobalRevision_ACU(),
+      updatedAt: Date.now(),
+    });
+    if (!plotScopeState) return null;
+    setCurrentChatPlotScopeState_ACU(plotScopeState, { reason: `plot_scope_${source}` });
+    setPlotPresetBindingForChat_ACU(currentChatFileIdentifier_ACU, normalizedPresetName, {
+      source,
+      isExplicit: source !== 'inherit',
+    });
+    if (save) {
+      saveSettings_ACU();
+      queueSaveCurrentChatPlotScope_ACU(source);
+    }
+    return plotScopeState;
+}
+
 export function persistPlotPresetSelectionState_ACU(presetName: string, options: { source?: string; updateGlobal?: boolean; save?: boolean; persistChatScope?: boolean } = {}) {
     const { source = 'ui', updateGlobal = false, save = true, persistChatScope = !updateGlobal } = options;
     const normalizedPresetName = normalizePlotPresetSelectionValue_ACU(presetName);

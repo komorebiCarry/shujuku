@@ -117,6 +117,122 @@ function toSqlValueParam_ACU(value: any): string | number | null {
     return String(value);
 }
 
+function isPlainObjectArg_ACU(value: any): value is Record<string, any> {
+    return value !== null && typeof value === 'object' && !Array.isArray(value);
+}
+
+function firstDefined_ACU<T = any>(...values: T[]): T | undefined {
+    for (const value of values) {
+        if (value !== undefined) return value;
+    }
+    return undefined;
+}
+
+function normalizeRowIndexArg_ACU(value: any, methodName: string): number | null {
+    const numericValue = typeof value === 'number' ? value : Number(value);
+    if (!Number.isFinite(numericValue) || !Number.isInteger(numericValue)) {
+        logError_ACU(`${methodName}: Invalid rowIndex "${String(value)}". rowIndex must be an integer, where 1 is the first data row.`);
+        return null;
+    }
+    return numericValue;
+}
+
+function normalizeTableNameArg_ACU(value: any, methodName: string): string | null {
+    const tableName = String(value ?? '').trim();
+    if (!tableName) {
+        logError_ACU(`${methodName}: tableName is required.`);
+        return null;
+    }
+    return tableName;
+}
+
+function parseUpdateCellArgs_ACU(
+    tableNameOrOptions: any,
+    rowIndex?: any,
+    colIdentifier?: any,
+    value?: any,
+): { tableName: string; rowIndex: number; colIdentifier: string | number; value: any } | null {
+    const options = isPlainObjectArg_ACU(tableNameOrOptions) ? tableNameOrOptions : null;
+    const tableName = normalizeTableNameArg_ACU(
+        options ? firstDefined_ACU(options.tableName, options.table, options.sheetName, options.name) : tableNameOrOptions,
+        'updateCell',
+    );
+    const normalizedRowIndex = normalizeRowIndexArg_ACU(
+        options ? firstDefined_ACU(options.rowIndex, options.row, options.index) : rowIndex,
+        'updateCell',
+    );
+    const rawColIdentifier = options ? firstDefined_ACU(options.colIdentifier, options.column, options.colName, options.colIndex, options.columnIndex) : colIdentifier;
+    if (rawColIdentifier === undefined || rawColIdentifier === null || rawColIdentifier === '') {
+        logError_ACU('updateCell: colIdentifier is required.');
+        return null;
+    }
+    if (!tableName || normalizedRowIndex === null) return null;
+    return {
+        tableName,
+        rowIndex: normalizedRowIndex,
+        colIdentifier: rawColIdentifier,
+        value: options ? options.value : value,
+    };
+}
+
+function parseUpdateRowArgs_ACU(
+    tableNameOrOptions: any,
+    rowIndex?: any,
+    data?: any,
+): { tableName: string; rowIndex: number; data: Record<string, any> } | null {
+    const options = isPlainObjectArg_ACU(tableNameOrOptions) ? tableNameOrOptions : null;
+    const tableName = normalizeTableNameArg_ACU(
+        options ? firstDefined_ACU(options.tableName, options.table, options.sheetName, options.name) : tableNameOrOptions,
+        'updateRow',
+    );
+    const normalizedRowIndex = normalizeRowIndexArg_ACU(
+        options ? firstDefined_ACU(options.rowIndex, options.row, options.index) : rowIndex,
+        'updateRow',
+    );
+    const rowData = options ? firstDefined_ACU(options.data, options.values, options.rowData) : data;
+    if (!isPlainObjectArg_ACU(rowData)) {
+        logError_ACU('updateRow: data must be an object.');
+        return null;
+    }
+    if (!tableName || normalizedRowIndex === null) return null;
+    return { tableName, rowIndex: normalizedRowIndex, data: rowData };
+}
+
+function parseInsertRowArgs_ACU(
+    tableNameOrOptions: any,
+    data?: any,
+): { tableName: string; data: Record<string, any> } | null {
+    const options = isPlainObjectArg_ACU(tableNameOrOptions) ? tableNameOrOptions : null;
+    const tableName = normalizeTableNameArg_ACU(
+        options ? firstDefined_ACU(options.tableName, options.table, options.sheetName, options.name) : tableNameOrOptions,
+        'insertRow',
+    );
+    const rowData = options ? firstDefined_ACU(options.data, options.values, options.rowData) : data;
+    if (!isPlainObjectArg_ACU(rowData)) {
+        logError_ACU('insertRow: data must be an object.');
+        return null;
+    }
+    if (!tableName) return null;
+    return { tableName, data: rowData };
+}
+
+function parseDeleteRowArgs_ACU(
+    tableNameOrOptions: any,
+    rowIndex?: any,
+): { tableName: string; rowIndex: number } | null {
+    const options = isPlainObjectArg_ACU(tableNameOrOptions) ? tableNameOrOptions : null;
+    const tableName = normalizeTableNameArg_ACU(
+        options ? firstDefined_ACU(options.tableName, options.table, options.sheetName, options.name) : tableNameOrOptions,
+        'deleteRow',
+    );
+    const normalizedRowIndex = normalizeRowIndexArg_ACU(
+        options ? firstDefined_ACU(options.rowIndex, options.row, options.index) : rowIndex,
+        'deleteRow',
+    );
+    if (!tableName || normalizedRowIndex === null) return null;
+    return { tableName, rowIndex: normalizedRowIndex };
+}
+
 function assertSqlMutationChanged_ACU(
     methodName: string,
     actionLabel: string,
@@ -226,12 +342,16 @@ async function saveToLatestFloorAndRefresh(
 
 export function createTableCrudApi(ctx: ApiGroupContext): Record<string, Function> {
     return {
-        updateCell: async function(tableName: string, rowIndex: number, colIdentifier: string | number, value: any) {
+        updateCell: async function(tableNameOrOptions: any, rowIndex?: any, colIdentifier?: any, value?: any) {
             try {
                 if (!currentJsonTableData_ACU) {
                     logError_ACU('updateCell: No table data loaded.');
                     return false;
                 }
+
+                const args = parseUpdateCellArgs_ACU(tableNameOrOptions, rowIndex, colIdentifier, value);
+                if (!args) return false;
+                const { tableName, rowIndex: normalizedRowIndex, colIdentifier: normalizedColIdentifier, value: normalizedValue } = args;
 
                 const target = findTargetSheet(tableName);
                 if (!target) {
@@ -247,16 +367,19 @@ export function createTableCrudApi(ctx: ApiGroupContext): Record<string, Functio
                 }
 
                 // 解析列名：先拿到一个「原始列名」（来自用户输入或表头索引）
+                const numericColIdentifier = typeof normalizedColIdentifier === 'number'
+                    ? normalizedColIdentifier
+                    : (String(normalizedColIdentifier).trim() !== '' && Number.isInteger(Number(normalizedColIdentifier)) ? Number(normalizedColIdentifier) : null);
                 let rawColName: string;
-                if (typeof colIdentifier === 'number') {
+                if (numericColIdentifier !== null) {
                     const headers = targetSheet.content[0] || [];
-                    if (colIdentifier < 0 || colIdentifier >= headers.length) {
-                        logError_ACU(`updateCell: Column index ${colIdentifier} out of bounds in table "${tableName}".`);
+                    if (numericColIdentifier < 0 || numericColIdentifier >= headers.length) {
+                        logError_ACU(`updateCell: Column index ${numericColIdentifier} out of bounds in table "${tableName}".`);
                         return false;
                     }
-                    rawColName = headers[colIdentifier]; // 中文
+                    rawColName = headers[numericColIdentifier]; // 中文
                 } else {
-                    rawColName = colIdentifier; // 可能中文也可能英文
+                    rawColName = String(normalizedColIdentifier); // 可能中文也可能英文
                 }
 
                 // 统一翻译为英文+中文双形态
@@ -264,29 +387,29 @@ export function createTableCrudApi(ctx: ApiGroupContext): Record<string, Functio
 
                 // 校验列名：用中文形态和 headers 比对（headers 是中文），
                 // 这样用户传英文列名也能通过校验
-                if (typeof colIdentifier !== 'number') {
+                if (numericColIdentifier === null) {
                     const headers = targetSheet.content[0] || [];
                     if (!headers.includes(chineseColName)) {
-                        logError_ACU(`updateCell: Column "${colIdentifier}" not found in table "${tableName}".`);
+                        logError_ACU(`updateCell: Column "${normalizedColIdentifier}" not found in table "${tableName}".`);
                         return false;
                     }
                 }
 
-                if (rowIndex < 1 || rowIndex >= targetSheet.content.length) {
-                    logError_ACU(`updateCell: Row index ${rowIndex} out of bounds in table "${tableName}".`);
+                if (normalizedRowIndex < 1 || normalizedRowIndex >= targetSheet.content.length) {
+                    logError_ACU(`updateCell: Row index ${normalizedRowIndex} out of bounds in table "${tableName}".`);
                     return false;
                 }
 
                 if (isSqliteMode()) {
                     // SQLite 模式：用英文物理表名和英文列名生成 UPDATE SQL；值统一走参数绑定，避免 row_id/单元格值字符串破坏 SQL。
-                    const rowId = targetSheet.content[rowIndex][0]; // row_id 是第一列
+                    const rowId = targetSheet.content[normalizedRowIndex][0]; // row_id 是第一列
                     if (rowId === undefined || rowId === null) {
-                        logError_ACU(`updateCell: row_id not found at index ${rowIndex}`);
+                        logError_ACU(`updateCell: row_id not found at index ${normalizedRowIndex}`);
                         return false;
                     }
                     const sql = `UPDATE ${quoteIdentifier(englishTableName)} SET ${quoteIdentifier(englishColName)} = ? WHERE ${quoteIdentifier('row_id')} = ?;`;
                     const result = getStorageProvider().executeMutation(sql, [
-                        toSqlValueParam_ACU(value),
+                        toSqlValueParam_ACU(normalizedValue),
                         toSqlValueParam_ACU(rowId),
                     ]);
                     if (!assertSqlMutationChanged_ACU('updateCell', `table=${englishTableName}, row_id=${rowId}, col=${englishColName}`, result)) {
@@ -296,18 +419,18 @@ export function createTableCrudApi(ctx: ApiGroupContext): Record<string, Functio
                 } else {
                     // 原生模式：直接操作 JSON 数组，用中文列名在 headers 中定位
                     let colIndex = -1;
-                    if (typeof colIdentifier === 'number') {
-                        colIndex = colIdentifier;
+                    if (numericColIdentifier !== null) {
+                        colIndex = numericColIdentifier;
                     } else {
                         const headers = targetSheet.content[0] || [];
                         colIndex = headers.indexOf(chineseColName);
                     }
                     if (colIndex < 0) {
-                        logError_ACU(`updateCell: Column "${colIdentifier}" not found in table "${tableName}".`);
+                        logError_ACU(`updateCell: Column "${normalizedColIdentifier}" not found in table "${tableName}".`);
                         return false;
                     }
-                    targetSheet.content[rowIndex][colIndex] = value;
-                    logDebug_ACU(`updateCell: Updated [${tableName}] row ${rowIndex}, col ${colIdentifier} = ${value}`);
+                    targetSheet.content[normalizedRowIndex][colIndex] = normalizedValue;
+                    logDebug_ACU(`updateCell: Updated [${tableName}] row ${normalizedRowIndex}, col ${normalizedColIdentifier} = ${normalizedValue}`);
                 }
 
                 await saveToLatestFloorAndRefresh(targetSheetKey, targetSheet.name, ctx, 'updateCell');
@@ -319,14 +442,18 @@ export function createTableCrudApi(ctx: ApiGroupContext): Record<string, Functio
             }
         },
 
-        updateRow: async function(tableName: string, rowIndex: number, data: Record<string, any>) {
+        updateRow: async function(tableNameOrOptions: any, rowIndex?: any, data?: any) {
             try {
                 if (!currentJsonTableData_ACU) {
                     logError_ACU('updateRow: No table data loaded.');
                     return false;
                 }
 
-                if (rowIndex < 1) {
+                const args = parseUpdateRowArgs_ACU(tableNameOrOptions, rowIndex, data);
+                if (!args) return false;
+                const { tableName, rowIndex: normalizedRowIndex, data: normalizedData } = args;
+
+                if (normalizedRowIndex < 1) {
                     logError_ACU('updateRow: Cannot modify header row (index 0).');
                     return false;
                 }
@@ -341,15 +468,15 @@ export function createTableCrudApi(ctx: ApiGroupContext): Record<string, Functio
 
                 if (isSqliteMode()) {
                     // SQLite 模式：用英文物理表名和英文列名生成 UPDATE SQL
-                    const rowId = targetSheet.content[rowIndex]?.[0];
+                    const rowId = targetSheet.content[normalizedRowIndex]?.[0];
                     if (rowId === undefined || rowId === null) {
-                        logError_ACU(`updateRow: row_id not found at index ${rowIndex}`);
+                        logError_ACU(`updateRow: row_id not found at index ${normalizedRowIndex}`);
                         return false;
                     }
                     const setClauses: string[] = [];
                     const params: (string | number | null)[] = [];
                     const headers = targetSheet.content[0] || [];
-                    for (const colName in data) {
+                    for (const colName in normalizedData) {
                         if (colName === 'isImportMode') continue; // 跳过内部标记
                         const { englishColName, chineseColName } = resolveColumnForSheet(englishTableName, colName);
                         if (!headers.includes(chineseColName)) {
@@ -357,7 +484,7 @@ export function createTableCrudApi(ctx: ApiGroupContext): Record<string, Functio
                             continue;
                         }
                         setClauses.push(`${quoteIdentifier(englishColName)} = ?`);
-                        params.push(toSqlValueParam_ACU(data[colName]));
+                        params.push(toSqlValueParam_ACU(normalizedData[colName]));
                     }
                     if (setClauses.length === 0) {
                         logWarn_ACU('updateRow: No valid columns to update.');
@@ -372,16 +499,16 @@ export function createTableCrudApi(ctx: ApiGroupContext): Record<string, Functio
                     logDebug_ACU(`updateRow: [SQLite] Updated ${setClauses.length} cols in [${englishTableName}] row_id=${rowId}`);
                 } else {
                     // 原生模式：直接操作 JSON 数组
-                    while (targetSheet.content.length <= rowIndex) {
+                    while (targetSheet.content.length <= normalizedRowIndex) {
                         const newRow = new Array((targetSheet.content[0] || []).length).fill('');
                         targetSheet.content.push(newRow);
                     }
 
                     const headers = targetSheet.content[0] || [];
-                    const row = targetSheet.content[rowIndex];
+                    const row = targetSheet.content[normalizedRowIndex];
 
                     let updated = 0;
-                    for (const colName in data) {
+                    for (const colName in normalizedData) {
                         if (colName === 'isImportMode') continue;
                         // 将用户传入的列名翻译为中文（原生模式 headers 是中文）。
                         // 原生模式下 NameMapper 未构建时 resolveColumnForSheet 原样返回，
@@ -389,7 +516,7 @@ export function createTableCrudApi(ctx: ApiGroupContext): Record<string, Functio
                         const { chineseColName } = resolveColumnForSheet(englishTableName, colName);
                         const colIndex = headers.indexOf(chineseColName);
                         if (colIndex !== -1) {
-                            row[colIndex] = data[colName];
+                            row[colIndex] = normalizedData[colName];
                             updated++;
                         } else {
                             logWarn_ACU(`updateRow: Column "${colName}" not found in table "${tableName}".`);
@@ -397,13 +524,13 @@ export function createTableCrudApi(ctx: ApiGroupContext): Record<string, Functio
                     }
 
                     if (updated === 0) {
-                        logWarn_ACU(`updateRow: No valid columns updated in [${tableName}] row ${rowIndex}.`);
+                        logWarn_ACU(`updateRow: No valid columns updated in [${tableName}] row ${normalizedRowIndex}.`);
                         return false;
                     }
-                    logDebug_ACU(`updateRow: Updated ${updated} cells in [${tableName}] row ${rowIndex}`);
+                    logDebug_ACU(`updateRow: Updated ${updated} cells in [${tableName}] row ${normalizedRowIndex}`);
                 }
 
-                await saveToLatestFloorAndRefresh(targetSheetKey, targetSheet.name, ctx, 'updateRow', !!data?.isImportMode);
+                await saveToLatestFloorAndRefresh(targetSheetKey, targetSheet.name, ctx, 'updateRow', !!normalizedData?.isImportMode);
 
                 return true;
             } catch (e) {
@@ -412,12 +539,16 @@ export function createTableCrudApi(ctx: ApiGroupContext): Record<string, Functio
             }
         },
 
-        insertRow: async function(tableName: string, data: Record<string, any>) {
+        insertRow: async function(tableNameOrOptions: any, data?: any) {
             try {
                 if (!currentJsonTableData_ACU) {
                     logError_ACU('insertRow: No table data loaded.');
                     return -1;
                 }
+
+                const args = parseInsertRowArgs_ACU(tableNameOrOptions, data);
+                if (!args) return -1;
+                const { tableName, data: normalizedData } = args;
 
                 const target = findTargetSheet(tableName);
                 if (!target) {
@@ -433,13 +564,13 @@ export function createTableCrudApi(ctx: ApiGroupContext): Record<string, Functio
                     const beforeLength = targetSheet.content.length;
                     const colNames: string[] = [];
                     const params: (string | number | null)[] = [];
-                    for (const colName in data) {
+                    for (const colName in normalizedData) {
                         const { englishColName, chineseColName } = resolveColumnForSheet(englishTableName, colName);
                         // 跳过 row_id（自增主键），同时检查英文形态和原始名，防止用户传中文"行号"等变体
                         if (englishColName === 'row_id' || colName === 'row_id') continue;
                         if (!headers.includes(chineseColName)) continue;
                         colNames.push(quoteIdentifier(englishColName));
-                        params.push(toSqlValueParam_ACU(data[colName]));
+                        params.push(toSqlValueParam_ACU(normalizedData[colName]));
                     }
                     const placeholders = colNames.map(() => '?').join(', ');
                     const sql = colNames.length > 0
@@ -464,11 +595,11 @@ export function createTableCrudApi(ctx: ApiGroupContext): Record<string, Functio
                     // 原生模式：直接操作 JSON 数组，用中文列名在 headers 中定位
                     const newRow = new Array(headers.length).fill('');
 
-                    for (const colName in data) {
+                    for (const colName in normalizedData) {
                         const { chineseColName } = resolveColumnForSheet(englishTableName, colName);
                         const colIndex = headers.indexOf(chineseColName);
                         if (colIndex !== -1) {
-                            newRow[colIndex] = data[colName];
+                            newRow[colIndex] = normalizedData[colName];
                         }
                     }
 
@@ -487,14 +618,18 @@ export function createTableCrudApi(ctx: ApiGroupContext): Record<string, Functio
             }
         },
 
-        deleteRow: async function(tableName: string, rowIndex: number) {
+        deleteRow: async function(tableNameOrOptions: any, rowIndex?: any) {
             try {
                 if (!currentJsonTableData_ACU) {
                     logError_ACU('deleteRow: No table data loaded.');
                     return false;
                 }
 
-                if (rowIndex < 1) {
+                const args = parseDeleteRowArgs_ACU(tableNameOrOptions, rowIndex);
+                if (!args) return false;
+                const { tableName, rowIndex: normalizedRowIndex } = args;
+
+                if (normalizedRowIndex < 1) {
                     logError_ACU('deleteRow: Cannot delete header row (index 0).');
                     return false;
                 }
@@ -507,16 +642,16 @@ export function createTableCrudApi(ctx: ApiGroupContext): Record<string, Functio
 
                 const { sheet: targetSheet, sheetKey: targetSheetKey, englishTableName } = target;
 
-                if (rowIndex >= targetSheet.content.length) {
-                    logError_ACU(`deleteRow: Row index ${rowIndex} out of bounds.`);
+                if (normalizedRowIndex >= targetSheet.content.length) {
+                    logError_ACU(`deleteRow: Row index ${normalizedRowIndex} out of bounds.`);
                     return false;
                 }
 
                 if (isSqliteMode()) {
                     // SQLite 模式：用英文物理表名生成 DELETE SQL；row_id 走参数绑定，避免字符串 row_id 删除失效。
-                    const rowId = targetSheet.content[rowIndex]?.[0];
+                    const rowId = targetSheet.content[normalizedRowIndex]?.[0];
                     if (rowId === undefined || rowId === null) {
-                        logError_ACU(`deleteRow: row_id not found at index ${rowIndex}`);
+                        logError_ACU(`deleteRow: row_id not found at index ${normalizedRowIndex}`);
                         return false;
                     }
                     const sql = `DELETE FROM ${quoteIdentifier(englishTableName)} WHERE ${quoteIdentifier('row_id')} = ?;`;
@@ -527,8 +662,8 @@ export function createTableCrudApi(ctx: ApiGroupContext): Record<string, Functio
                     logDebug_ACU(`deleteRow: [SQLite] Deleted row_id=${rowId} from [${englishTableName}]`);
                 } else {
                     // 原生模式：直接操作 JSON 数组
-                    targetSheet.content.splice(rowIndex, 1);
-                    logDebug_ACU(`deleteRow: Deleted row ${rowIndex} from [${tableName}]`);
+                    targetSheet.content.splice(normalizedRowIndex, 1);
+                    logDebug_ACU(`deleteRow: Deleted row ${normalizedRowIndex} from [${tableName}]`);
                 }
 
                 await saveToLatestFloorAndRefresh(targetSheetKey, targetSheet.name, ctx, 'deleteRow');

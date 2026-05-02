@@ -128,7 +128,11 @@ export function createWorldbookAiApi(_ctx: ApiGroupContext): Record<string, Func
 
                 logDebug_ACU(`[callAI] Calling AI with ${messages.length} messages, preset: ${presetName || '当前配置'}, mode: ${effectiveApiMode}`);
 
-                const maxTokens = options.max_tokens || effectiveApiConfig.max_tokens || effectiveApiConfig.maxTokens || 4096;
+                const maxTokensRaw = options.max_tokens ?? options.maxTokens ?? effectiveApiConfig.max_tokens ?? effectiveApiConfig.maxTokens ?? 4096;
+                const maxTokensNumber = Number(maxTokensRaw);
+                const maxTokens = Number.isFinite(maxTokensNumber) && maxTokensNumber > 0
+                    ? Math.trunc(maxTokensNumber)
+                    : 4096;
 
                 if (effectiveApiMode === 'tavern') {
                     const profileId = effectiveTavernProfile || settings_ACU.tavernProfile;

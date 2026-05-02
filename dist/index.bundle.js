@@ -20031,6 +20031,30 @@ $CONTENT
             .then(() => saveChatToHost_ACU())
             .catch(error => logWarn_ACU(`[剧情推进] 保存聊天级预设快照失败(${source}):`, error));
     }
+    function persistCurrentChatPlotEditorSnapshot_ACU({ source = 'ui_task_edit', save = true } = {}) {
+        if (!settings_ACU?.plotSettings)
+            return null;
+        const normalizedPresetName = getCurrentRuntimePlotPresetName_ACU({ fallbackToGlobal: true });
+        const plotScopeState = buildChatPlotScopeStateFromSettings_ACU(settings_ACU.plotSettings, {
+            presetName: normalizedPresetName,
+            source,
+            originGlobalName: normalizePlotPresetSelectionValue_ACU(settings_ACU.plotSettings.lastUsedPresetName || ''),
+            originGlobalRevision: getPlotGlobalRevision_ACU(),
+            updatedAt: Date.now(),
+        });
+        if (!plotScopeState)
+            return null;
+        setCurrentChatPlotScopeState_ACU(plotScopeState, { reason: `plot_scope_${source}` });
+        setPlotPresetBindingForChat_ACU(currentChatFileIdentifier_ACU, normalizedPresetName, {
+            source,
+            isExplicit: source !== 'inherit',
+        });
+        if (save) {
+            saveSettings_ACU();
+            queueSaveCurrentChatPlotScope_ACU(source);
+        }
+        return plotScopeState;
+    }
     function persistPlotPresetSelectionState_ACU(presetName, options = {}) {
         const { source = 'ui', updateGlobal = false, save = true, persistChatScope = !updateGlobal } = options;
         const normalizedPresetName = normalizePlotPresetSelectionValue_ACU(presetName);
@@ -23744,6 +23768,13 @@ $CONTENT
         $popupInstance_ACU.find(`#${SCRIPT_ID_PREFIX_ACU}-plot-task-max-retries`).val(selectedTask.maxRetries ?? DEFAULT_PLOT_SETTINGS_ACU.loopSettings?.maxRetries ?? 3);
         $popupInstance_ACU.find(`#${SCRIPT_ID_PREFIX_ACU}-plot-task-api-preset`).val(selectedTask.taskApiPreset || '');
     }
+    function persistPlotTaskEditorSettings_ACU(source = 'ui_task_edit') {
+        if (currentEditablePlotPresetState_ACU?.scope === 'global') {
+            saveSettingsAndNotify_ACU();
+            return;
+        }
+        persistCurrentChatPlotEditorSnapshot_ACU({ source, save: true });
+    }
     function saveCurrentPlotTaskFromUI_ACU({ silent = false, renderTaskList = false, persist = true } = {}) {
         if (!$popupInstance_ACU)
             return null;
@@ -23784,8 +23815,9 @@ $CONTENT
         plotSettings.plotTasks = nextTasks;
         _set_currentPlotTaskEditorId_ACU(updatedTask.id);
         syncLegacyPlotSettingsFromPrimaryTask_ACU(plotSettings);
-        if (persist)
-            saveSettingsAndNotify_ACU();
+        if (persist) {
+            persistPlotTaskEditorSettings_ACU('ui_task_edit');
+        }
         if (renderTaskList)
             renderPlotTaskList_ACU(plotSettings);
         if (!silent)
@@ -23846,7 +23878,7 @@ $CONTENT
         plotSettings.plotTasks = nextTasks;
         _set_currentPlotTaskEditorId_ACU(nextTasks[nextTasks.length - 1]?.id || currentPlotTaskEditorId_ACU);
         syncLegacyPlotSettingsFromPrimaryTask_ACU(plotSettings);
-        saveSettingsAndNotify_ACU();
+        persistPlotTaskEditorSettings_ACU('ui_task_add');
         renderPlotTaskList_ACU(plotSettings);
         loadCurrentPlotTaskToUI_ACU(plotSettings);
         showToastr_ACU('success', '已新增一个剧情任务。');
@@ -23870,7 +23902,7 @@ $CONTENT
         plotSettings.plotTasks = nextTasks;
         _set_currentPlotTaskEditorId_ACU(nextTasks[fallbackIndex]?.id || nextTasks[0]?.id || '');
         syncLegacyPlotSettingsFromPrimaryTask_ACU(plotSettings);
-        saveSettingsAndNotify_ACU();
+        persistPlotTaskEditorSettings_ACU('ui_task_delete');
         renderPlotTaskList_ACU(plotSettings);
         loadCurrentPlotTaskToUI_ACU(plotSettings);
         showToastr_ACU('success', '剧情任务已删除。');
@@ -23893,7 +23925,7 @@ $CONTENT
         plotSettings.plotTasks = normalizePlotTaskListForEditor_ACU(reordered);
         _set_currentPlotTaskEditorId_ACU(movedTask?.id || currentPlotTaskEditorId_ACU);
         syncLegacyPlotSettingsFromPrimaryTask_ACU(plotSettings);
-        saveSettingsAndNotify_ACU();
+        persistPlotTaskEditorSettings_ACU('ui_task_move');
         renderPlotTaskList_ACU(plotSettings);
         loadCurrentPlotTaskToUI_ACU(plotSettings);
     }
@@ -45390,6 +45422,83 @@ $CONTENT
             return value ? 1 : 0;
         return String(value);
     }
+    function isPlainObjectArg_ACU(value) {
+        return value !== null && typeof value === 'object' && !Array.isArray(value);
+    }
+    function firstDefined_ACU(...values) {
+        for (const value of values) {
+            if (value !== undefined)
+                return value;
+        }
+        return undefined;
+    }
+    function normalizeRowIndexArg_ACU(value, methodName) {
+        const numericValue = typeof value === 'number' ? value : Number(value);
+        if (!Number.isFinite(numericValue) || !Number.isInteger(numericValue)) {
+            logError_ACU(`${methodName}: Invalid rowIndex "${String(value)}". rowIndex must be an integer, where 1 is the first data row.`);
+            return null;
+        }
+        return numericValue;
+    }
+    function normalizeTableNameArg_ACU(value, methodName) {
+        const tableName = String(value ?? '').trim();
+        if (!tableName) {
+            logError_ACU(`${methodName}: tableName is required.`);
+            return null;
+        }
+        return tableName;
+    }
+    function parseUpdateCellArgs_ACU(tableNameOrOptions, rowIndex, colIdentifier, value) {
+        const options = isPlainObjectArg_ACU(tableNameOrOptions) ? tableNameOrOptions : null;
+        const tableName = normalizeTableNameArg_ACU(options ? firstDefined_ACU(options.tableName, options.table, options.sheetName, options.name) : tableNameOrOptions, 'updateCell');
+        const normalizedRowIndex = normalizeRowIndexArg_ACU(options ? firstDefined_ACU(options.rowIndex, options.row, options.index) : rowIndex, 'updateCell');
+        const rawColIdentifier = options ? firstDefined_ACU(options.colIdentifier, options.column, options.colName, options.colIndex, options.columnIndex) : colIdentifier;
+        if (rawColIdentifier === undefined || rawColIdentifier === null || rawColIdentifier === '') {
+            logError_ACU('updateCell: colIdentifier is required.');
+            return null;
+        }
+        if (!tableName || normalizedRowIndex === null)
+            return null;
+        return {
+            tableName,
+            rowIndex: normalizedRowIndex,
+            colIdentifier: rawColIdentifier,
+            value: options ? options.value : value,
+        };
+    }
+    function parseUpdateRowArgs_ACU(tableNameOrOptions, rowIndex, data) {
+        const options = isPlainObjectArg_ACU(tableNameOrOptions) ? tableNameOrOptions : null;
+        const tableName = normalizeTableNameArg_ACU(options ? firstDefined_ACU(options.tableName, options.table, options.sheetName, options.name) : tableNameOrOptions, 'updateRow');
+        const normalizedRowIndex = normalizeRowIndexArg_ACU(options ? firstDefined_ACU(options.rowIndex, options.row, options.index) : rowIndex, 'updateRow');
+        const rowData = options ? firstDefined_ACU(options.data, options.values, options.rowData) : data;
+        if (!isPlainObjectArg_ACU(rowData)) {
+            logError_ACU('updateRow: data must be an object.');
+            return null;
+        }
+        if (!tableName || normalizedRowIndex === null)
+            return null;
+        return { tableName, rowIndex: normalizedRowIndex, data: rowData };
+    }
+    function parseInsertRowArgs_ACU(tableNameOrOptions, data) {
+        const options = isPlainObjectArg_ACU(tableNameOrOptions) ? tableNameOrOptions : null;
+        const tableName = normalizeTableNameArg_ACU(options ? firstDefined_ACU(options.tableName, options.table, options.sheetName, options.name) : tableNameOrOptions, 'insertRow');
+        const rowData = options ? firstDefined_ACU(options.data, options.values, options.rowData) : data;
+        if (!isPlainObjectArg_ACU(rowData)) {
+            logError_ACU('insertRow: data must be an object.');
+            return null;
+        }
+        if (!tableName)
+            return null;
+        return { tableName, data: rowData };
+    }
+    function parseDeleteRowArgs_ACU(tableNameOrOptions, rowIndex) {
+        const options = isPlainObjectArg_ACU(tableNameOrOptions) ? tableNameOrOptions : null;
+        const tableName = normalizeTableNameArg_ACU(options ? firstDefined_ACU(options.tableName, options.table, options.sheetName, options.name) : tableNameOrOptions, 'deleteRow');
+        const normalizedRowIndex = normalizeRowIndexArg_ACU(options ? firstDefined_ACU(options.rowIndex, options.row, options.index) : rowIndex, 'deleteRow');
+        if (!tableName || normalizedRowIndex === null)
+            return null;
+        return { tableName, rowIndex: normalizedRowIndex };
+    }
     function assertSqlMutationChanged_ACU(methodName, actionLabel, result) {
         if (result.errors.length > 0) {
             logError_ACU(`${methodName} SQL failed: ${result.errors.join(', ')}`);
@@ -45478,12 +45587,16 @@ $CONTENT
     }
     function createTableCrudApi(ctx) {
         return {
-            updateCell: async function (tableName, rowIndex, colIdentifier, value) {
+            updateCell: async function (tableNameOrOptions, rowIndex, colIdentifier, value) {
                 try {
                     if (!currentJsonTableData_ACU) {
                         logError_ACU('updateCell: No table data loaded.');
                         return false;
                     }
+                    const args = parseUpdateCellArgs_ACU(tableNameOrOptions, rowIndex, colIdentifier, value);
+                    if (!args)
+                        return false;
+                    const { tableName, rowIndex: normalizedRowIndex, colIdentifier: normalizedColIdentifier, value: normalizedValue } = args;
                     const target = findTargetSheet(tableName);
                     if (!target) {
                         logError_ACU(`updateCell: Table "${tableName}" not found.`);
@@ -45495,43 +45608,46 @@ $CONTENT
                         return false;
                     }
                     // 解析列名：先拿到一个「原始列名」（来自用户输入或表头索引）
+                    const numericColIdentifier = typeof normalizedColIdentifier === 'number'
+                        ? normalizedColIdentifier
+                        : (String(normalizedColIdentifier).trim() !== '' && Number.isInteger(Number(normalizedColIdentifier)) ? Number(normalizedColIdentifier) : null);
                     let rawColName;
-                    if (typeof colIdentifier === 'number') {
+                    if (numericColIdentifier !== null) {
                         const headers = targetSheet.content[0] || [];
-                        if (colIdentifier < 0 || colIdentifier >= headers.length) {
-                            logError_ACU(`updateCell: Column index ${colIdentifier} out of bounds in table "${tableName}".`);
+                        if (numericColIdentifier < 0 || numericColIdentifier >= headers.length) {
+                            logError_ACU(`updateCell: Column index ${numericColIdentifier} out of bounds in table "${tableName}".`);
                             return false;
                         }
-                        rawColName = headers[colIdentifier]; // 中文
+                        rawColName = headers[numericColIdentifier]; // 中文
                     }
                     else {
-                        rawColName = colIdentifier; // 可能中文也可能英文
+                        rawColName = String(normalizedColIdentifier); // 可能中文也可能英文
                     }
                     // 统一翻译为英文+中文双形态
                     const { englishColName, chineseColName } = resolveColumnForSheet(englishTableName, rawColName);
                     // 校验列名：用中文形态和 headers 比对（headers 是中文），
                     // 这样用户传英文列名也能通过校验
-                    if (typeof colIdentifier !== 'number') {
+                    if (numericColIdentifier === null) {
                         const headers = targetSheet.content[0] || [];
                         if (!headers.includes(chineseColName)) {
-                            logError_ACU(`updateCell: Column "${colIdentifier}" not found in table "${tableName}".`);
+                            logError_ACU(`updateCell: Column "${normalizedColIdentifier}" not found in table "${tableName}".`);
                             return false;
                         }
                     }
-                    if (rowIndex < 1 || rowIndex >= targetSheet.content.length) {
-                        logError_ACU(`updateCell: Row index ${rowIndex} out of bounds in table "${tableName}".`);
+                    if (normalizedRowIndex < 1 || normalizedRowIndex >= targetSheet.content.length) {
+                        logError_ACU(`updateCell: Row index ${normalizedRowIndex} out of bounds in table "${tableName}".`);
                         return false;
                     }
                     if (isSqliteMode()) {
                         // SQLite 模式：用英文物理表名和英文列名生成 UPDATE SQL；值统一走参数绑定，避免 row_id/单元格值字符串破坏 SQL。
-                        const rowId = targetSheet.content[rowIndex][0]; // row_id 是第一列
+                        const rowId = targetSheet.content[normalizedRowIndex][0]; // row_id 是第一列
                         if (rowId === undefined || rowId === null) {
-                            logError_ACU(`updateCell: row_id not found at index ${rowIndex}`);
+                            logError_ACU(`updateCell: row_id not found at index ${normalizedRowIndex}`);
                             return false;
                         }
                         const sql = `UPDATE ${quoteIdentifier(englishTableName)} SET ${quoteIdentifier(englishColName)} = ? WHERE ${quoteIdentifier('row_id')} = ?;`;
                         const result = getStorageProvider().executeMutation(sql, [
-                            toSqlValueParam_ACU(value),
+                            toSqlValueParam_ACU(normalizedValue),
                             toSqlValueParam_ACU(rowId),
                         ]);
                         if (!assertSqlMutationChanged_ACU('updateCell', `table=${englishTableName}, row_id=${rowId}, col=${englishColName}`, result)) {
@@ -45542,19 +45658,19 @@ $CONTENT
                     else {
                         // 原生模式：直接操作 JSON 数组，用中文列名在 headers 中定位
                         let colIndex = -1;
-                        if (typeof colIdentifier === 'number') {
-                            colIndex = colIdentifier;
+                        if (numericColIdentifier !== null) {
+                            colIndex = numericColIdentifier;
                         }
                         else {
                             const headers = targetSheet.content[0] || [];
                             colIndex = headers.indexOf(chineseColName);
                         }
                         if (colIndex < 0) {
-                            logError_ACU(`updateCell: Column "${colIdentifier}" not found in table "${tableName}".`);
+                            logError_ACU(`updateCell: Column "${normalizedColIdentifier}" not found in table "${tableName}".`);
                             return false;
                         }
-                        targetSheet.content[rowIndex][colIndex] = value;
-                        logDebug_ACU(`updateCell: Updated [${tableName}] row ${rowIndex}, col ${colIdentifier} = ${value}`);
+                        targetSheet.content[normalizedRowIndex][colIndex] = normalizedValue;
+                        logDebug_ACU(`updateCell: Updated [${tableName}] row ${normalizedRowIndex}, col ${normalizedColIdentifier} = ${normalizedValue}`);
                     }
                     await saveToLatestFloorAndRefresh(targetSheetKey, targetSheet.name, ctx, 'updateCell');
                     return true;
@@ -45564,13 +45680,17 @@ $CONTENT
                     return false;
                 }
             },
-            updateRow: async function (tableName, rowIndex, data) {
+            updateRow: async function (tableNameOrOptions, rowIndex, data) {
                 try {
                     if (!currentJsonTableData_ACU) {
                         logError_ACU('updateRow: No table data loaded.');
                         return false;
                     }
-                    if (rowIndex < 1) {
+                    const args = parseUpdateRowArgs_ACU(tableNameOrOptions, rowIndex, data);
+                    if (!args)
+                        return false;
+                    const { tableName, rowIndex: normalizedRowIndex, data: normalizedData } = args;
+                    if (normalizedRowIndex < 1) {
                         logError_ACU('updateRow: Cannot modify header row (index 0).');
                         return false;
                     }
@@ -45582,15 +45702,15 @@ $CONTENT
                     const { sheet: targetSheet, sheetKey: targetSheetKey, englishTableName } = target;
                     if (isSqliteMode()) {
                         // SQLite 模式：用英文物理表名和英文列名生成 UPDATE SQL
-                        const rowId = targetSheet.content[rowIndex]?.[0];
+                        const rowId = targetSheet.content[normalizedRowIndex]?.[0];
                         if (rowId === undefined || rowId === null) {
-                            logError_ACU(`updateRow: row_id not found at index ${rowIndex}`);
+                            logError_ACU(`updateRow: row_id not found at index ${normalizedRowIndex}`);
                             return false;
                         }
                         const setClauses = [];
                         const params = [];
                         const headers = targetSheet.content[0] || [];
-                        for (const colName in data) {
+                        for (const colName in normalizedData) {
                             if (colName === 'isImportMode')
                                 continue; // 跳过内部标记
                             const { englishColName, chineseColName } = resolveColumnForSheet(englishTableName, colName);
@@ -45599,7 +45719,7 @@ $CONTENT
                                 continue;
                             }
                             setClauses.push(`${quoteIdentifier(englishColName)} = ?`);
-                            params.push(toSqlValueParam_ACU(data[colName]));
+                            params.push(toSqlValueParam_ACU(normalizedData[colName]));
                         }
                         if (setClauses.length === 0) {
                             logWarn_ACU('updateRow: No valid columns to update.');
@@ -45615,14 +45735,14 @@ $CONTENT
                     }
                     else {
                         // 原生模式：直接操作 JSON 数组
-                        while (targetSheet.content.length <= rowIndex) {
+                        while (targetSheet.content.length <= normalizedRowIndex) {
                             const newRow = new Array((targetSheet.content[0] || []).length).fill('');
                             targetSheet.content.push(newRow);
                         }
                         const headers = targetSheet.content[0] || [];
-                        const row = targetSheet.content[rowIndex];
+                        const row = targetSheet.content[normalizedRowIndex];
                         let updated = 0;
-                        for (const colName in data) {
+                        for (const colName in normalizedData) {
                             if (colName === 'isImportMode')
                                 continue;
                             // 将用户传入的列名翻译为中文（原生模式 headers 是中文）。
@@ -45631,7 +45751,7 @@ $CONTENT
                             const { chineseColName } = resolveColumnForSheet(englishTableName, colName);
                             const colIndex = headers.indexOf(chineseColName);
                             if (colIndex !== -1) {
-                                row[colIndex] = data[colName];
+                                row[colIndex] = normalizedData[colName];
                                 updated++;
                             }
                             else {
@@ -45639,12 +45759,12 @@ $CONTENT
                             }
                         }
                         if (updated === 0) {
-                            logWarn_ACU(`updateRow: No valid columns updated in [${tableName}] row ${rowIndex}.`);
+                            logWarn_ACU(`updateRow: No valid columns updated in [${tableName}] row ${normalizedRowIndex}.`);
                             return false;
                         }
-                        logDebug_ACU(`updateRow: Updated ${updated} cells in [${tableName}] row ${rowIndex}`);
+                        logDebug_ACU(`updateRow: Updated ${updated} cells in [${tableName}] row ${normalizedRowIndex}`);
                     }
-                    await saveToLatestFloorAndRefresh(targetSheetKey, targetSheet.name, ctx, 'updateRow', !!data?.isImportMode);
+                    await saveToLatestFloorAndRefresh(targetSheetKey, targetSheet.name, ctx, 'updateRow', !!normalizedData?.isImportMode);
                     return true;
                 }
                 catch (e) {
@@ -45652,12 +45772,16 @@ $CONTENT
                     return false;
                 }
             },
-            insertRow: async function (tableName, data) {
+            insertRow: async function (tableNameOrOptions, data) {
                 try {
                     if (!currentJsonTableData_ACU) {
                         logError_ACU('insertRow: No table data loaded.');
                         return -1;
                     }
+                    const args = parseInsertRowArgs_ACU(tableNameOrOptions, data);
+                    if (!args)
+                        return -1;
+                    const { tableName, data: normalizedData } = args;
                     const target = findTargetSheet(tableName);
                     if (!target) {
                         logError_ACU(`insertRow: Table "${tableName}" not found.`);
@@ -45670,7 +45794,7 @@ $CONTENT
                         const beforeLength = targetSheet.content.length;
                         const colNames = [];
                         const params = [];
-                        for (const colName in data) {
+                        for (const colName in normalizedData) {
                             const { englishColName, chineseColName } = resolveColumnForSheet(englishTableName, colName);
                             // 跳过 row_id（自增主键），同时检查英文形态和原始名，防止用户传中文"行号"等变体
                             if (englishColName === 'row_id' || colName === 'row_id')
@@ -45678,7 +45802,7 @@ $CONTENT
                             if (!headers.includes(chineseColName))
                                 continue;
                             colNames.push(quoteIdentifier(englishColName));
-                            params.push(toSqlValueParam_ACU(data[colName]));
+                            params.push(toSqlValueParam_ACU(normalizedData[colName]));
                         }
                         const placeholders = colNames.map(() => '?').join(', ');
                         const sql = colNames.length > 0
@@ -45702,11 +45826,11 @@ $CONTENT
                     else {
                         // 原生模式：直接操作 JSON 数组，用中文列名在 headers 中定位
                         const newRow = new Array(headers.length).fill('');
-                        for (const colName in data) {
+                        for (const colName in normalizedData) {
                             const { chineseColName } = resolveColumnForSheet(englishTableName, colName);
                             const colIndex = headers.indexOf(chineseColName);
                             if (colIndex !== -1) {
-                                newRow[colIndex] = data[colName];
+                                newRow[colIndex] = normalizedData[colName];
                             }
                         }
                         targetSheet.content.push(newRow);
@@ -45721,13 +45845,17 @@ $CONTENT
                     return -1;
                 }
             },
-            deleteRow: async function (tableName, rowIndex) {
+            deleteRow: async function (tableNameOrOptions, rowIndex) {
                 try {
                     if (!currentJsonTableData_ACU) {
                         logError_ACU('deleteRow: No table data loaded.');
                         return false;
                     }
-                    if (rowIndex < 1) {
+                    const args = parseDeleteRowArgs_ACU(tableNameOrOptions, rowIndex);
+                    if (!args)
+                        return false;
+                    const { tableName, rowIndex: normalizedRowIndex } = args;
+                    if (normalizedRowIndex < 1) {
                         logError_ACU('deleteRow: Cannot delete header row (index 0).');
                         return false;
                     }
@@ -45737,15 +45865,15 @@ $CONTENT
                         return false;
                     }
                     const { sheet: targetSheet, sheetKey: targetSheetKey, englishTableName } = target;
-                    if (rowIndex >= targetSheet.content.length) {
-                        logError_ACU(`deleteRow: Row index ${rowIndex} out of bounds.`);
+                    if (normalizedRowIndex >= targetSheet.content.length) {
+                        logError_ACU(`deleteRow: Row index ${normalizedRowIndex} out of bounds.`);
                         return false;
                     }
                     if (isSqliteMode()) {
                         // SQLite 模式：用英文物理表名生成 DELETE SQL；row_id 走参数绑定，避免字符串 row_id 删除失效。
-                        const rowId = targetSheet.content[rowIndex]?.[0];
+                        const rowId = targetSheet.content[normalizedRowIndex]?.[0];
                         if (rowId === undefined || rowId === null) {
-                            logError_ACU(`deleteRow: row_id not found at index ${rowIndex}`);
+                            logError_ACU(`deleteRow: row_id not found at index ${normalizedRowIndex}`);
                             return false;
                         }
                         const sql = `DELETE FROM ${quoteIdentifier(englishTableName)} WHERE ${quoteIdentifier('row_id')} = ?;`;
@@ -45757,8 +45885,8 @@ $CONTENT
                     }
                     else {
                         // 原生模式：直接操作 JSON 数组
-                        targetSheet.content.splice(rowIndex, 1);
-                        logDebug_ACU(`deleteRow: Deleted row ${rowIndex} from [${tableName}]`);
+                        targetSheet.content.splice(normalizedRowIndex, 1);
+                        logDebug_ACU(`deleteRow: Deleted row ${normalizedRowIndex} from [${tableName}]`);
                     }
                     await saveToLatestFloorAndRefresh(targetSheetKey, targetSheet.name, ctx, 'deleteRow');
                     return true;
@@ -46962,7 +47090,11 @@ $CONTENT
                     const effectiveApiConfig = apiPresetConfig.apiConfig || {};
                     const effectiveTavernProfile = apiPresetConfig.tavernProfile;
                     logDebug_ACU(`[callAI] Calling AI with ${messages.length} messages, preset: ${presetName || '当前配置'}, mode: ${effectiveApiMode}`);
-                    const maxTokens = options.max_tokens || effectiveApiConfig.max_tokens || effectiveApiConfig.maxTokens || 4096;
+                    const maxTokensRaw = options.max_tokens ?? options.maxTokens ?? effectiveApiConfig.max_tokens ?? effectiveApiConfig.maxTokens ?? 4096;
+                    const maxTokensNumber = Number(maxTokensRaw);
+                    const maxTokens = Number.isFinite(maxTokensNumber) && maxTokensNumber > 0
+                        ? Math.trunc(maxTokensNumber)
+                        : 4096;
                     if (effectiveApiMode === 'tavern') {
                         const profileId = effectiveTavernProfile || settings_ACU.tavernProfile;
                         const response = await sendConnectionManagerRequest_ACU(profileId, messages, maxTokens);

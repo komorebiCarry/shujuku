@@ -9,8 +9,8 @@ import { saveSettingsAndNotify_ACU } from './settings-ui-helpers';
 import { SCRIPT_ID_PREFIX_ACU } from '../../shared/constants';
 import { escapeHtml_ACU } from '../../shared/html-helpers';
 import { logWarn_ACU, normalizePositiveInteger_ACU } from '../../shared/utils';
-import { ensurePlotTasksCompat_ACU, getActivePlotEditorSettings_ACU, getPlotPromptGroupFromSource_ACU, normalizePlotTask_ACU, normalizePlotTasks_ACU, syncLegacyPlotSettingsFromTask_ACU } from '../../service/plot/plot-logic';
-import { activePlotEditorSettings_ACU, currentPlotTaskEditorId_ACU, _set_currentPlotTaskEditorId_ACU, buildDefaultPlotPromptGroup_ACU, ensurePlotPromptGroup_ACU } from '../../service/plot/plot-state';
+import { ensurePlotTasksCompat_ACU, getActivePlotEditorSettings_ACU, getPlotPromptGroupFromSource_ACU, normalizePlotTask_ACU, normalizePlotTasks_ACU, persistCurrentChatPlotEditorSnapshot_ACU, syncLegacyPlotSettingsFromTask_ACU } from '../../service/plot/plot-logic';
+import { activePlotEditorSettings_ACU, currentEditablePlotPresetState_ACU, currentPlotTaskEditorId_ACU, _set_currentPlotTaskEditorId_ACU, buildDefaultPlotPromptGroup_ACU, ensurePlotPromptGroup_ACU } from '../../service/plot/plot-state';
 import { $popupInstance_ACU, $charCardPromptSegmentsContainer_ACU, $plotPromptSegmentsContainer_ACU, $plotTaskListContainer_ACU, _assignUIPlaceholders_ACU } from '../state/ui-refs';
 import { DEFAULT_PLOT_SETTINGS_ACU } from '../../shared/defaults-json.js';
 import { jQuery_API_ACU } from '../dom-utils';
@@ -317,6 +317,14 @@ import { jQuery_API_ACU } from '../dom-utils';
       $popupInstance_ACU.find(`#${SCRIPT_ID_PREFIX_ACU}-plot-task-api-preset`).val(selectedTask.taskApiPreset || '');
   }
 
+  function persistPlotTaskEditorSettings_ACU(source = 'ui_task_edit') {
+      if (currentEditablePlotPresetState_ACU?.scope === 'global') {
+          saveSettingsAndNotify_ACU();
+          return;
+      }
+      persistCurrentChatPlotEditorSnapshot_ACU({ source, save: true });
+  }
+
   export function saveCurrentPlotTaskFromUI_ACU({ silent = false, renderTaskList = false, persist = true } = {}) {
       if (!$popupInstance_ACU) return null;
       const plotSettings = getActivePlotEditorSettings_ACU();
@@ -357,7 +365,9 @@ import { jQuery_API_ACU } from '../dom-utils';
       _set_currentPlotTaskEditorId_ACU(updatedTask.id);
       syncLegacyPlotSettingsFromPrimaryTask_ACU(plotSettings);
 
-      if (persist) saveSettingsAndNotify_ACU();
+      if (persist) {
+          persistPlotTaskEditorSettings_ACU('ui_task_edit');
+      }
       if (renderTaskList) renderPlotTaskList_ACU(plotSettings);
       if (!silent) showToastr_ACU('success', '当前剧情任务已保存。');
       return updatedTask;
@@ -419,7 +429,7 @@ import { jQuery_API_ACU } from '../dom-utils';
       plotSettings.plotTasks = nextTasks;
       _set_currentPlotTaskEditorId_ACU(nextTasks[nextTasks.length - 1]?.id || currentPlotTaskEditorId_ACU);
       syncLegacyPlotSettingsFromPrimaryTask_ACU(plotSettings);
-      saveSettingsAndNotify_ACU();
+      persistPlotTaskEditorSettings_ACU('ui_task_add');
       renderPlotTaskList_ACU(plotSettings);
       loadCurrentPlotTaskToUI_ACU(plotSettings);
       showToastr_ACU('success', '已新增一个剧情任务。');
@@ -443,7 +453,7 @@ import { jQuery_API_ACU } from '../dom-utils';
       plotSettings.plotTasks = nextTasks;
       _set_currentPlotTaskEditorId_ACU(nextTasks[fallbackIndex]?.id || nextTasks[0]?.id || '');
       syncLegacyPlotSettingsFromPrimaryTask_ACU(plotSettings);
-      saveSettingsAndNotify_ACU();
+      persistPlotTaskEditorSettings_ACU('ui_task_delete');
       renderPlotTaskList_ACU(plotSettings);
       loadCurrentPlotTaskToUI_ACU(plotSettings);
       showToastr_ACU('success', '剧情任务已删除。');
@@ -466,7 +476,7 @@ import { jQuery_API_ACU } from '../dom-utils';
       plotSettings.plotTasks = normalizePlotTaskListForEditor_ACU(reordered);
       _set_currentPlotTaskEditorId_ACU(movedTask?.id || currentPlotTaskEditorId_ACU);
       syncLegacyPlotSettingsFromPrimaryTask_ACU(plotSettings);
-      saveSettingsAndNotify_ACU();
+      persistPlotTaskEditorSettings_ACU('ui_task_move');
       renderPlotTaskList_ACU(plotSettings);
       loadCurrentPlotTaskToUI_ACU(plotSettings);
   }
