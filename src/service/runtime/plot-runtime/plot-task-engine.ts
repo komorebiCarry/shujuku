@@ -26,9 +26,7 @@ import { abortableDelay } from '../../../shared/abortable-delay';
     }
   }
 
-  function resolvePlotTaskApiPreset_ACU(task: any): string {
-    const taskPreset = String(task?.taskApiPreset || '').trim();
-    if (taskPreset) return taskPreset;
+  function resolvePlotTaskApiPreset_ACU(_task: any): string {
     return String(settings_ACU.plotApiPreset || '').trim();
   }
 

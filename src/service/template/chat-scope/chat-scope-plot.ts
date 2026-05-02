@@ -3,7 +3,7 @@
  * 从 chat-scope.ts 拆出的 A 组：剧情作用域的读取、构建、设置、清除
  */
 import { cloneScopedConfigData_ACU, getChatFirstLayerMessage_ACU } from '../../../shared/utils';
-import { ensurePlotPromptsArray_ACU, ensureLoopPromptsArray_ACU, ensurePlotTasksCompat_ACU, getPlotFinalDirectiveFromSource_ACU, normalizePlotPresetSelectionValue_ACU, setPlotPromptContentByIdForSettings_ACU } from '../../plot/plot-logic';
+import { ensurePlotPromptsArray_ACU, ensureLoopPromptsArray_ACU, ensurePlotTasksCompat_ACU, getPlotFinalDirectiveFromSource_ACU, normalizePlotPresetSelectionValue_ACU, setPlotPromptContentByIdForSettings_ACU, stripPlotTaskRuntimeApiPresetFields_ACU } from '../../plot/plot-logic';
 import { getChatArray_ACU } from '../../../data/gateways/chat-gateway';
 import { CHAT_SCOPED_CONFIG_FIELD_ACU, getChatScopedConfigContainer_ACU, normalizeChatScopedConfigContainer_ACU } from '../../../data/storage/chat-history';
 import { normalizeChatScopedConfigSource_ACU } from './chat-scope-base';
@@ -24,6 +24,7 @@ import { normalizeChatScopedConfigSource_ACU } from './chat-scope-base';
       ensurePlotPromptsArray_ACU(snapshot);
       ensureLoopPromptsArray_ACU(snapshot);
       ensurePlotTasksCompat_ACU(snapshot, { syncLegacy: true });
+      snapshot.plotTasks = stripPlotTaskRuntimeApiPresetFields_ACU(snapshot.plotTasks);
       snapshot.finalSystemDirective = getPlotFinalDirectiveFromSource_ACU(snapshot);
       setPlotPromptContentByIdForSettings_ACU(snapshot, 'finalSystemDirective', snapshot.finalSystemDirective || '');
       return snapshot;

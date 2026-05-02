@@ -164,7 +164,13 @@ export async function bindPlotEvents_ACU(): Promise<void> {
         loadCurrentPlotTaskToUI_ACU();
       });
       $popupInstance_ACU.on('change', `#${SCRIPT_ID_PREFIX_ACU}-plot-task-api-preset`, function(this: HTMLElement) {
-        saveCurrentPlotTaskFromUI_ACU({ silent: true, renderTaskList: false, persist: true });
+        settings_ACU.plotApiPreset = String(jQuery_API_ACU(this).val() || '').trim();
+        saveSettingsAndNotify_ACU();
+        const $plotApiPresetSelect = $popupInstance_ACU.find(`#${SCRIPT_ID_PREFIX_ACU}-plot-api-preset-select`);
+        if ($plotApiPresetSelect.length) {
+          $plotApiPresetSelect.val(settings_ACU.plotApiPreset || '');
+        }
+        saveCurrentPlotTaskFromUI_ACU({ silent: true, renderTaskList: false, persist: false });
       });
 
       // 匹配替换速率保存

@@ -14258,10 +14258,7 @@ $CONTENT
             throw new Error('TaskAbortedByUser');
         }
     }
-    function resolvePlotTaskApiPreset_ACU(task) {
-        const taskPreset = String(task?.taskApiPreset || '').trim();
-        if (taskPreset)
-            return taskPreset;
+    function resolvePlotTaskApiPreset_ACU(_task) {
         return String(settings_ACU.plotApiPreset || '').trim();
     }
     function willPlotUseMainApiGenerateRaw_ACU(taskApiPreset = '') {
@@ -17465,6 +17462,7 @@ $CONTENT
         ensurePlotPromptsArray_ACU(snapshot);
         ensureLoopPromptsArray_ACU(snapshot);
         ensurePlotTasksCompat_ACU(snapshot, { syncLegacy: true });
+        snapshot.plotTasks = stripPlotTaskRuntimeApiPresetFields_ACU(snapshot.plotTasks);
         snapshot.finalSystemDirective = getPlotFinalDirectiveFromSource_ACU(snapshot);
         setPlotPromptContentByIdForSettings_ACU(snapshot, 'finalSystemDirective', snapshot.finalSystemDirective || '');
         return snapshot;
@@ -19607,7 +19605,6 @@ $CONTENT
             promptGroup,
             extractTags: typeof cloned.extractTags === 'string' ? cloned.extractTags : (fallback?.extractTags || ''),
             extractInjectTags: typeof cloned.extractInjectTags === 'string' ? cloned.extractInjectTags : (fallback?.extractInjectTags || ''),
-            taskApiPreset: typeof cloned.taskApiPreset === 'string' ? cloned.taskApiPreset : (fallback?.taskApiPreset || ''),
             finalDirectiveTemplate: typeof cloned.finalDirectiveTemplate === 'string' ? cloned.finalDirectiveTemplate : (fallback?.finalDirectiveTemplate || ''),
             minLength: normalizeNonNegativeInteger_ACU$1(cloned.minLength, fallback?.minLength ?? 0),
             maxRetries: normalizePositiveInteger_ACU$1(cloned.maxRetries ?? cloned.loopSettings?.maxRetries, fallback?.maxRetries ?? DEFAULT_PLOT_SETTINGS_ACU.loopSettings?.maxRetries ?? 3),
@@ -19945,15 +19942,27 @@ $CONTENT
         return plotSettings;
     }
     // ═══ 排除规则 ═══
+    function stripPlotTaskRuntimeApiPresetFields_ACU(tasks) {
+        if (!Array.isArray(tasks))
+            return [];
+        return tasks.map((task) => {
+            if (!task || typeof task !== 'object')
+                return task;
+            const clonedTask = { ...task };
+            delete clonedTask.taskApiPreset;
+            return clonedTask;
+        });
+    }
     function normalizePlotPresetExcludeRules_ACU(preset) {
         if (!preset || typeof preset !== 'object')
             return preset;
         const cloned = JSON.parse(JSON.stringify(preset));
         cloned.contextExtractRules = normalizeExtractRules_ACU(cloned.contextExtractRules, cloned.contextExtractTags || '');
         cloned.contextExcludeRules = normalizeExcludeRules_ACU(cloned.contextExcludeRules, cloned.contextExcludeTags || '');
-        cloned.plotTasks = normalizePlotTasks_ACU(cloned);
+        cloned.plotTasks = stripPlotTaskRuntimeApiPresetFields_ACU(normalizePlotTasks_ACU(cloned));
         cloned.finalSystemDirective = getPlotFinalDirectiveFromSource_ACU(cloned);
         ensurePlotTasksCompat_ACU(cloned, { syncLegacy: true });
+        cloned.plotTasks = stripPlotTaskRuntimeApiPresetFields_ACU(normalizePlotTasks_ACU(cloned));
         setPlotPromptContentByIdForSettings_ACU(cloned, 'finalSystemDirective', cloned.finalSystemDirective || '');
         delete cloned.contextExtractTags;
         delete cloned.contextExcludeTags;
@@ -23486,6 +23495,25 @@ $CONTENT
 
     // plot-editors.ts
     // 从 02_shared_editors_and_selectors.js 整体迁入
+    function normalizePlotApiPresetValue_ACU(value) {
+        return String(value ?? '').trim();
+    }
+    function persistGlobalPlotApiPresetFromTaskSelector_ACU(rawValue) {
+        const nextPreset = normalizePlotApiPresetValue_ACU(rawValue);
+        const currentPreset = normalizePlotApiPresetValue_ACU(settings_ACU.plotApiPreset);
+        if (nextPreset === currentPreset)
+            return false;
+        settings_ACU.plotApiPreset = nextPreset;
+        saveSettingsAndNotify_ACU();
+        return true;
+    }
+    function stripTaskApiPresetFromPlotTask_ACU(task) {
+        if (!task || typeof task !== 'object')
+            return task;
+        const cloned = { ...task };
+        delete cloned.taskApiPreset;
+        return cloned;
+    }
     function renderPromptSegments_ACU(segments) {
         if (!$charCardPromptSegmentsContainer_ACU)
             return;
@@ -23755,7 +23783,7 @@ $CONTENT
             $popupInstance_ACU.find(`#${SCRIPT_ID_PREFIX_ACU}-plot-min-length`).val(plotSettings?.minLength ?? 0);
             $popupInstance_ACU.find(`#${SCRIPT_ID_PREFIX_ACU}-plot-task-stage`).val(1);
             $popupInstance_ACU.find(`#${SCRIPT_ID_PREFIX_ACU}-plot-task-max-retries`).val(plotSettings?.loopSettings?.maxRetries ?? DEFAULT_PLOT_SETTINGS_ACU.loopSettings?.maxRetries ?? 3);
-            $popupInstance_ACU.find(`#${SCRIPT_ID_PREFIX_ACU}-plot-task-api-preset`).val('');
+            $popupInstance_ACU.find(`#${SCRIPT_ID_PREFIX_ACU}-plot-task-api-preset`).val(settings_ACU.plotApiPreset || '');
             return;
         }
         renderPlotPromptSegments_ACU(JSON.parse(JSON.stringify(selectedTask.promptGroup || [])));
@@ -23766,7 +23794,7 @@ $CONTENT
         $popupInstance_ACU.find(`#${SCRIPT_ID_PREFIX_ACU}-plot-min-length`).val(selectedTask.minLength ?? 0);
         $popupInstance_ACU.find(`#${SCRIPT_ID_PREFIX_ACU}-plot-task-stage`).val(normalizePositiveInteger_ACU$1(selectedTask.stage, 1));
         $popupInstance_ACU.find(`#${SCRIPT_ID_PREFIX_ACU}-plot-task-max-retries`).val(selectedTask.maxRetries ?? DEFAULT_PLOT_SETTINGS_ACU.loopSettings?.maxRetries ?? 3);
-        $popupInstance_ACU.find(`#${SCRIPT_ID_PREFIX_ACU}-plot-task-api-preset`).val(selectedTask.taskApiPreset || '');
+        $popupInstance_ACU.find(`#${SCRIPT_ID_PREFIX_ACU}-plot-task-api-preset`).val(settings_ACU.plotApiPreset || '');
     }
     function persistPlotTaskEditorSettings_ACU(source = 'ui_task_edit') {
         if (currentEditablePlotPresetState_ACU?.scope === 'global') {
@@ -23791,14 +23819,14 @@ $CONTENT
         const taskStageRaw = parseInt($popupInstance_ACU.find(`#${SCRIPT_ID_PREFIX_ACU}-plot-task-stage`).val(), 10);
         const taskMaxRetriesRaw = parseInt($popupInstance_ACU.find(`#${SCRIPT_ID_PREFIX_ACU}-plot-task-max-retries`).val(), 10);
         const taskApiPresetRaw = $popupInstance_ACU.find(`#${SCRIPT_ID_PREFIX_ACU}-plot-task-api-preset`).val();
+        persistGlobalPlotApiPresetFromTaskSelector_ACU(taskApiPresetRaw);
         const updatedTask = normalizePlotTask_ACU({
-            ...selectedTask,
+            ...stripTaskApiPresetFromPlotTask_ACU(selectedTask),
             name: String(taskNameRaw || '').trim() || selectedTask.name || `剧情任务${selectedIndex + 1}`,
             enabled: $popupInstance_ACU.find(`#${SCRIPT_ID_PREFIX_ACU}-plot-task-enabled`).is(':checked'),
             promptGroup: getPlotPromptGroupFromUI_ACU(),
             extractTags: String(taskExtractTagsRaw || ''),
             extractInjectTags: String(taskExtractInjectTagsRaw || ''),
-            taskApiPreset: String(taskApiPresetRaw || ''),
             minLength: Number.isFinite(taskMinLengthRaw) ? taskMinLengthRaw : selectedTask.minLength,
             stage: Number.isFinite(taskStageRaw) && taskStageRaw > 0
                 ? taskStageRaw
@@ -25626,15 +25654,14 @@ $CONTENT
             });
             $plotApiPresetSelect.val(settings_ACU.plotApiPreset || '');
         }
-        // 刷新任务级数据库API预设选择器
+        // 刷新任务级数据库API预设选择器：该选择器直接写入全局剧情推进 API 预设，不随任务/预设保存。
         const $plotTaskApiPresetSelect = $popupInstance_ACU.find(`#${SCRIPT_ID_PREFIX_ACU}-plot-task-api-preset`);
         if ($plotTaskApiPresetSelect.length) {
-            const currentTaskApiPreset = $plotTaskApiPresetSelect.val() || '';
-            $plotTaskApiPresetSelect.empty().append('<option value="">继承全局剧情推进API预设</option>');
+            $plotTaskApiPresetSelect.empty().append('<option value="">使用当前API配置</option>');
             presets.forEach((p) => {
                 $plotTaskApiPresetSelect.append(renderOption_ACU(p.name, p.name));
             });
-            $plotTaskApiPresetSelect.val(currentTaskApiPreset);
+            $plotTaskApiPresetSelect.val(settings_ACU.plotApiPreset || '');
         }
         // 刷新正文替换的API预设选择器
         const $optimizationApiPresetSelect = $popupInstance_ACU.find(`#${SCRIPT_ID_PREFIX_ACU}-optimization-api-preset`);
@@ -38878,7 +38905,13 @@ $CONTENT
             loadCurrentPlotTaskToUI_ACU();
         });
         $popupInstance_ACU.on('change', `#${SCRIPT_ID_PREFIX_ACU}-plot-task-api-preset`, function () {
-            saveCurrentPlotTaskFromUI_ACU({ silent: true, renderTaskList: false, persist: true });
+            settings_ACU.plotApiPreset = String(jQuery_API_ACU(this).val() || '').trim();
+            saveSettingsAndNotify_ACU();
+            const $plotApiPresetSelect = $popupInstance_ACU.find(`#${SCRIPT_ID_PREFIX_ACU}-plot-api-preset-select`);
+            if ($plotApiPresetSelect.length) {
+                $plotApiPresetSelect.val(settings_ACU.plotApiPreset || '');
+            }
+            saveCurrentPlotTaskFromUI_ACU({ silent: true, renderTaskList: false, persist: false });
         });
         // 匹配替换速率保存
         const plotRateInputs = [
@@ -41634,11 +41667,11 @@ $CONTENT
                                     </div>
                                     <div style="margin-bottom:15px;">
                                         <div class="qrf_settings_block" style="margin-bottom:0;">
-                                            <label for="${SCRIPT_ID_PREFIX_ACU}-plot-task-api-preset" style="font-weight:500;">任务数据库API预设</label>
+                                            <label for="${SCRIPT_ID_PREFIX_ACU}-plot-task-api-preset" style="font-weight:500;">剧情任务全局API预设</label>
                                             <select id="${SCRIPT_ID_PREFIX_ACU}-plot-task-api-preset" class="text_pole" style="width:100%;">
-                                                <option value="">继承全局剧情推进API预设</option>
+                                                <option value="">使用当前API配置</option>
                                             </select>
-                                            <small class="notes">仅保存到数据库设置，不随模板导出</small>
+                                            <small class="notes">变更后直接作为全局剧情推进 API 配置使用，不保存到任务、聊天快照或预设。</small>
                                         </div>
                                     </div>
                                     <div id="${SCRIPT_ID_PREFIX_ACU}-plot-prompt-constructor-area">

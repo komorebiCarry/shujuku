@@ -154,7 +154,6 @@ export function normalizePlotTask_ACU(task: Record<string, any> | null, { index 
       promptGroup,
       extractTags: typeof cloned.extractTags === 'string' ? cloned.extractTags : (fallback?.extractTags || ''),
       extractInjectTags: typeof cloned.extractInjectTags === 'string' ? cloned.extractInjectTags : (fallback?.extractInjectTags || ''),
-      taskApiPreset: typeof cloned.taskApiPreset === 'string' ? cloned.taskApiPreset : (fallback?.taskApiPreset || ''),
       finalDirectiveTemplate: typeof cloned.finalDirectiveTemplate === 'string' ? cloned.finalDirectiveTemplate : (fallback?.finalDirectiveTemplate || ''),
       minLength: normalizeNonNegativeInteger_ACU(cloned.minLength, fallback?.minLength ?? 0),
       maxRetries: normalizePositiveInteger_ACU(
@@ -509,14 +508,25 @@ export function replaceCurrentPlotSettingsWithSnapshot_ACU(plotSettings: Record<
 
 // ═══ 排除规则 ═══
 
+export function stripPlotTaskRuntimeApiPresetFields_ACU(tasks: any[]) {
+    if (!Array.isArray(tasks)) return [];
+    return tasks.map((task: any) => {
+      if (!task || typeof task !== 'object') return task;
+      const clonedTask = { ...task };
+      delete clonedTask.taskApiPreset;
+      return clonedTask;
+    });
+}
+
 export function normalizePlotPresetExcludeRules_ACU(preset: Record<string, any> | null) {
     if (!preset || typeof preset !== 'object') return preset;
     const cloned = JSON.parse(JSON.stringify(preset));
     cloned.contextExtractRules = normalizeExtractRules_ACU(cloned.contextExtractRules, cloned.contextExtractTags || '');
     cloned.contextExcludeRules = normalizeExcludeRules_ACU(cloned.contextExcludeRules, cloned.contextExcludeTags || '');
-    cloned.plotTasks = normalizePlotTasks_ACU(cloned);
+    cloned.plotTasks = stripPlotTaskRuntimeApiPresetFields_ACU(normalizePlotTasks_ACU(cloned));
     cloned.finalSystemDirective = getPlotFinalDirectiveFromSource_ACU(cloned);
     ensurePlotTasksCompat_ACU(cloned, { syncLegacy: true });
+    cloned.plotTasks = stripPlotTaskRuntimeApiPresetFields_ACU(normalizePlotTasks_ACU(cloned));
     setPlotPromptContentByIdForSettings_ACU(cloned, 'finalSystemDirective', cloned.finalSystemDirective || '');
     delete cloned.contextExtractTags;
     delete cloned.contextExcludeTags;
