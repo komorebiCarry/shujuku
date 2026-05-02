@@ -160,11 +160,11 @@ export function generateCoreFuncTabHTML(): string {
                                     </div>
                                     <div style="margin-bottom:15px;">
                                         <div class="qrf_settings_block" style="margin-bottom:0;">
-                                            <label for="${SCRIPT_ID_PREFIX_ACU}-plot-task-api-preset" style="font-weight:500;">剧情任务全局API预设</label>
+                                            <label for="${SCRIPT_ID_PREFIX_ACU}-plot-task-api-preset" style="font-weight:500;">当前任务API预设</label>
                                             <select id="${SCRIPT_ID_PREFIX_ACU}-plot-task-api-preset" class="text_pole" style="width:100%;">
-                                                <option value="">使用当前API配置</option>
+                                                <option value="">继承全局剧情推进API预设</option>
                                             </select>
-                                            <small class="notes">变更后直接作为全局剧情推进 API 配置使用，不保存到任务、聊天快照或预设。</small>
+                                            <small class="notes">仅作用于当前剧情任务；未选择时继承全局剧情推进 API 预设，不会联动修改其他任务。</small>
                                         </div>
                                     </div>
                                     <div id="${SCRIPT_ID_PREFIX_ACU}-plot-prompt-constructor-area">

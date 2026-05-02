@@ -15,26 +15,6 @@ import { $popupInstance_ACU, $charCardPromptSegmentsContainer_ACU, $plotPromptSe
 import { DEFAULT_PLOT_SETTINGS_ACU } from '../../shared/defaults-json.js';
 import { jQuery_API_ACU } from '../dom-utils';
 
-function normalizePlotApiPresetValue_ACU(value: any): string {
-    return String(value ?? '').trim();
-}
-
-function persistGlobalPlotApiPresetFromTaskSelector_ACU(rawValue: any): boolean {
-    const nextPreset = normalizePlotApiPresetValue_ACU(rawValue);
-    const currentPreset = normalizePlotApiPresetValue_ACU(settings_ACU.plotApiPreset);
-    if (nextPreset === currentPreset) return false;
-    settings_ACU.plotApiPreset = nextPreset;
-    saveSettingsAndNotify_ACU();
-    return true;
-}
-
-function stripTaskApiPresetFromPlotTask_ACU(task: any) {
-    if (!task || typeof task !== 'object') return task;
-    const cloned = { ...task };
-    delete cloned.taskApiPreset;
-    return cloned;
-}
-
   export function renderPromptSegments_ACU(segments: any) {
       if (!$charCardPromptSegmentsContainer_ACU) return;
       $charCardPromptSegmentsContainer_ACU.empty();
@@ -320,22 +300,22 @@ function stripTaskApiPresetFromPlotTask_ACU(task: any) {
           $popupInstance_ACU.find(`#${SCRIPT_ID_PREFIX_ACU}-plot-extract-tags`).val('');
           $popupInstance_ACU.find(`#${SCRIPT_ID_PREFIX_ACU}-plot-extract-inject-tags`).val('');
           $popupInstance_ACU.find(`#${SCRIPT_ID_PREFIX_ACU}-plot-min-length`).val(plotSettings?.minLength ?? 0);
-      $popupInstance_ACU.find(`#${SCRIPT_ID_PREFIX_ACU}-plot-task-stage`).val(1);
-      $popupInstance_ACU.find(`#${SCRIPT_ID_PREFIX_ACU}-plot-task-max-retries`).val(plotSettings?.loopSettings?.maxRetries ?? DEFAULT_PLOT_SETTINGS_ACU.loopSettings?.maxRetries ?? 3);
-      $popupInstance_ACU.find(`#${SCRIPT_ID_PREFIX_ACU}-plot-task-api-preset`).val(settings_ACU.plotApiPreset || '');
-      return;
-  }
+          $popupInstance_ACU.find(`#${SCRIPT_ID_PREFIX_ACU}-plot-task-stage`).val(1);
+          $popupInstance_ACU.find(`#${SCRIPT_ID_PREFIX_ACU}-plot-task-max-retries`).val(plotSettings?.loopSettings?.maxRetries ?? DEFAULT_PLOT_SETTINGS_ACU.loopSettings?.maxRetries ?? 3);
+          $popupInstance_ACU.find(`#${SCRIPT_ID_PREFIX_ACU}-plot-task-api-preset`).val('');
+          return;
+      }
 
-  renderPlotPromptSegments_ACU(JSON.parse(JSON.stringify(selectedTask.promptGroup || [])));
-  $popupInstance_ACU.find(`#${SCRIPT_ID_PREFIX_ACU}-plot-task-name`).val(selectedTask.name || '');
-  $popupInstance_ACU.find(`#${SCRIPT_ID_PREFIX_ACU}-plot-task-enabled`).prop('checked', selectedTask.enabled !== false);
-  $popupInstance_ACU.find(`#${SCRIPT_ID_PREFIX_ACU}-plot-extract-tags`).val(selectedTask.extractTags || '');
-  $popupInstance_ACU.find(`#${SCRIPT_ID_PREFIX_ACU}-plot-extract-inject-tags`).val(selectedTask.extractInjectTags || '');
-  $popupInstance_ACU.find(`#${SCRIPT_ID_PREFIX_ACU}-plot-min-length`).val(selectedTask.minLength ?? 0);
-  $popupInstance_ACU.find(`#${SCRIPT_ID_PREFIX_ACU}-plot-task-stage`).val(normalizePositiveInteger_ACU(selectedTask.stage, 1));
-  $popupInstance_ACU.find(`#${SCRIPT_ID_PREFIX_ACU}-plot-task-max-retries`).val(selectedTask.maxRetries ?? DEFAULT_PLOT_SETTINGS_ACU.loopSettings?.maxRetries ?? 3);
-  $popupInstance_ACU.find(`#${SCRIPT_ID_PREFIX_ACU}-plot-task-api-preset`).val(settings_ACU.plotApiPreset || '');
-}
+      renderPlotPromptSegments_ACU(JSON.parse(JSON.stringify(selectedTask.promptGroup || [])));
+      $popupInstance_ACU.find(`#${SCRIPT_ID_PREFIX_ACU}-plot-task-name`).val(selectedTask.name || '');
+      $popupInstance_ACU.find(`#${SCRIPT_ID_PREFIX_ACU}-plot-task-enabled`).prop('checked', selectedTask.enabled !== false);
+      $popupInstance_ACU.find(`#${SCRIPT_ID_PREFIX_ACU}-plot-extract-tags`).val(selectedTask.extractTags || '');
+      $popupInstance_ACU.find(`#${SCRIPT_ID_PREFIX_ACU}-plot-extract-inject-tags`).val(selectedTask.extractInjectTags || '');
+      $popupInstance_ACU.find(`#${SCRIPT_ID_PREFIX_ACU}-plot-min-length`).val(selectedTask.minLength ?? 0);
+      $popupInstance_ACU.find(`#${SCRIPT_ID_PREFIX_ACU}-plot-task-stage`).val(normalizePositiveInteger_ACU(selectedTask.stage, 1));
+      $popupInstance_ACU.find(`#${SCRIPT_ID_PREFIX_ACU}-plot-task-max-retries`).val(selectedTask.maxRetries ?? DEFAULT_PLOT_SETTINGS_ACU.loopSettings?.maxRetries ?? 3);
+      $popupInstance_ACU.find(`#${SCRIPT_ID_PREFIX_ACU}-plot-task-api-preset`).val(selectedTask.taskApiPreset || '');
+  }
 
 function persistPlotTaskEditorSettings_ACU(source = 'ui_task_edit') {
       if (currentEditablePlotPresetState_ACU?.scope === 'global') {
@@ -359,14 +339,14 @@ function persistPlotTaskEditorSettings_ACU(source = 'ui_task_edit') {
       const taskStageRaw = parseInt($popupInstance_ACU.find(`#${SCRIPT_ID_PREFIX_ACU}-plot-task-stage`).val() as string, 10);
       const taskMaxRetriesRaw = parseInt($popupInstance_ACU.find(`#${SCRIPT_ID_PREFIX_ACU}-plot-task-max-retries`).val() as string, 10);
       const taskApiPresetRaw = $popupInstance_ACU.find(`#${SCRIPT_ID_PREFIX_ACU}-plot-task-api-preset`).val();
-      persistGlobalPlotApiPresetFromTaskSelector_ACU(taskApiPresetRaw);
       const updatedTask = normalizePlotTask_ACU({
-          ...stripTaskApiPresetFromPlotTask_ACU(selectedTask),
+          ...selectedTask,
           name: String(taskNameRaw || '').trim() || selectedTask.name || `剧情任务${selectedIndex + 1}`,
           enabled: $popupInstance_ACU.find(`#${SCRIPT_ID_PREFIX_ACU}-plot-task-enabled`).is(':checked'),
           promptGroup: getPlotPromptGroupFromUI_ACU(),
           extractTags: String(taskExtractTagsRaw || ''),
           extractInjectTags: String(taskExtractInjectTagsRaw || ''),
+          taskApiPreset: String(taskApiPresetRaw || ''),
           minLength: Number.isFinite(taskMinLengthRaw) ? taskMinLengthRaw : selectedTask.minLength,
           stage: Number.isFinite(taskStageRaw) && taskStageRaw > 0
               ? taskStageRaw

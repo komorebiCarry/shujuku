@@ -296,14 +296,15 @@ $plotApiPresetSelect.append(renderOption_ACU(p.name, p.name));
       $plotApiPresetSelect.val(settings_ACU.plotApiPreset || '');
     }
 
-    // 刷新任务级数据库API预设选择器：该选择器直接写入全局剧情推进 API 预设，不随任务/预设保存。
+    // 刷新任务级数据库API预设选择器
     const $plotTaskApiPresetSelect = $popupInstance_ACU.find(`#${SCRIPT_ID_PREFIX_ACU}-plot-task-api-preset`);
     if ($plotTaskApiPresetSelect.length) {
-      $plotTaskApiPresetSelect.empty().append('<option value="">使用当前API配置</option>');
+      const currentTaskApiPreset = $plotTaskApiPresetSelect.val() || '';
+      $plotTaskApiPresetSelect.empty().append('<option value="">继承全局剧情推进API预设</option>');
       presets.forEach((p: any) => {
 $plotTaskApiPresetSelect.append(renderOption_ACU(p.name, p.name));
       });
-      $plotTaskApiPresetSelect.val(settings_ACU.plotApiPreset || '');
+      $plotTaskApiPresetSelect.val(currentTaskApiPreset);
     }
 
     // 刷新正文替换的API预设选择器
