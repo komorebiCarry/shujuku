@@ -21957,13 +21957,14 @@ $CONTENT
             await deleteVectorIndexCacheByIndex_ACU(previousManifest.indexId);
         }
     }
-    function isSameIsolationSourceTableVectorFile_ACU(path, manifest) {
+    function isSameChatIsolationSourceTableVectorFile_ACU(path, manifest) {
         const normalizedPath = String(path || '');
         if (!normalizedPath.startsWith('TavernDB_ACU_vector_'))
             return false;
+        const chatPart = normalizeVectorFileNamePart_ACU(manifest.chatKey || 'current-chat');
         const isolationPart = normalizeVectorFileNamePart_ACU(manifest.isolationKey || 'default');
         const sourceTablePart = normalizeVectorFileNamePart_ACU(manifest.sourceTableKey || 'summary');
-        return normalizedPath.includes(`_${isolationPart}_${sourceTablePart}_`);
+        return normalizedPath.startsWith(`TavernDB_ACU_vector_${chatPart}_${isolationPart}_${sourceTablePart}_`);
     }
     async function cleanupSnapshotScopeFilesExcept_ACU(manifest, retainedPaths, options = {}) {
         const legacyScopePrefix = buildVectorIndexScopePrefix_ACU(manifest.chatKey, manifest.isolationKey);
@@ -21974,7 +21975,7 @@ $CONTENT
             const inSameScope = path.startsWith(legacyScopePrefix)
                 || path.startsWith(stableScopePrefix)
                 || path.startsWith(legacyStableScopePrefix)
-                || (options.includeSameSourceTableFallback === true && isSameIsolationSourceTableVectorFile_ACU(path, manifest));
+                || (options.includeSameSourceTableFallback === true && isSameChatIsolationSourceTableVectorFile_ACU(path, manifest));
             return inSameScope && !retainedPaths.has(path);
         });
         if (removedPaths.length > 0) {
@@ -21988,8 +21989,10 @@ $CONTENT
         const legacyScopePrefix = buildVectorIndexScopePrefix_ACU(chatKey, isolationKey);
         const stableScopePrefix = buildVectorIndexStableScopePrefix_ACU(chatKey, isolationKey, sourceTableKey);
         const legacyStableScopePrefix = buildLegacyVectorIndexStableScopePrefix_ACU(chatKey, isolationKey, sourceTableKey);
+        const chatPart = normalizeVectorFileNamePart_ACU(chatKey || 'current-chat');
         const isolationPart = normalizeVectorFileNamePart_ACU(isolationKey || 'default');
         const sourceTablePart = normalizeVectorFileNamePart_ACU(sourceTableKey || 'summary');
+        const strictFlatScopePrefix = `TavernDB_ACU_vector_${chatPart}_${isolationPart}_${sourceTablePart}_`;
         const removedPaths = await deleteRegisteredVectorIndexFilesWhere_ACU((file) => {
             const path = String(file?.path || '');
             if (!path.startsWith('TavernDB_ACU_vector_'))
@@ -21997,7 +22000,7 @@ $CONTENT
             return path.startsWith(legacyScopePrefix)
                 || path.startsWith(stableScopePrefix)
                 || path.startsWith(legacyStableScopePrefix)
-                || path.includes(`_${isolationPart}_${sourceTablePart}_`);
+                || path.startsWith(strictFlatScopePrefix);
         });
         if (removedPaths.length > 0) {
             logDebug_ACU(`[交火向量索引] 已按当前作用域清理外置文件: count=${removedPaths.length}`);
