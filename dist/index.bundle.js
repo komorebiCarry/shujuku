@@ -27191,13 +27191,16 @@ $CONTENT
      * 刷新合并数据后自动通知前端 + 刷新可视化编辑器 + 刷新 UI 选择器和状态面板
      * presentation 层唯一入口：所有需要"刷新数据+刷新UI"的地方都调这个。
      */
-    async function refreshMergedDataAndNotifyWithUI_ACU() {
+    async function refreshMergedDataAndNotifyWithUI_ACU({ skipNotify = false } = {}) {
         const result = await refreshMergedDataAndNotify_ACU();
         // 1. 通知前端 (iframe context)
         try {
-            if (topLevelWindow_ACU.AutoCardUpdaterAPI) {
+            if (!skipNotify && topLevelWindow_ACU.AutoCardUpdaterAPI) {
                 topLevelWindow_ACU.AutoCardUpdaterAPI._notifyTableUpdate();
                 logDebug_ACU('Notified frontend to refresh UI after data merge.');
+            }
+            else if (skipNotify) {
+                logDebug_ACU('Skipped frontend table update notification after data merge.');
             }
         }
         catch (_) { }
@@ -45544,6 +45547,50 @@ $CONTENT
      * presentation/bootstrap/api-groups/callback-api.ts
      * 回调管理 API — 表格更新和填表开始的回调注册/注销/通知
      */
+    let isNotifyingTableUpdate_ACU = false;
+    let hasPendingTableUpdateNotification_ACU = false;
+    function notifyTableUpdateCallbacksOnce_ACU(ctx) {
+        const callbacksSnapshot = [...ctx.tableUpdateCallbacks];
+        const callbackCount = callbacksSnapshot.length;
+        logDebug_ACU(`Notifying ${callbackCount} callbacks about table update.`);
+        if (callbackCount === 0)
+            return;
+        // 修复：确保回调函数永远不会收到 null，而是收到一个空对象，增加稳健性。
+        const dataToSend = currentJsonTableData_ACU || {};
+        callbacksSnapshot.forEach((callback, callbackIndex) => {
+            try {
+                // 将最新的数据作为参数传给回调
+                callback(dataToSend);
+            }
+            catch (e) {
+                logError_ACU('[回调管理] Error executing a table update callback:', {
+                    callbackIndex,
+                    callbackName: callback?.name || 'anonymous',
+                    callbackCount,
+                    error: e,
+                });
+            }
+        });
+    }
+    function notifyTableUpdateCallbacksSafely_ACU(ctx) {
+        if (isNotifyingTableUpdate_ACU) {
+            hasPendingTableUpdateNotification_ACU = true;
+            logDebug_ACU('[回调管理] Table update notification is already running; queued one coalesced follow-up notification.');
+            return;
+        }
+        isNotifyingTableUpdate_ACU = true;
+        try {
+            hasPendingTableUpdateNotification_ACU = false;
+            notifyTableUpdateCallbacksOnce_ACU(ctx);
+            if (hasPendingTableUpdateNotification_ACU) {
+                hasPendingTableUpdateNotification_ACU = false;
+                notifyTableUpdateCallbacksOnce_ACU(ctx);
+            }
+        }
+        finally {
+            isNotifyingTableUpdate_ACU = false;
+        }
+    }
     function createCallbackApi(ctx) {
         return {
             // 注册表格更新回调
@@ -45563,24 +45610,7 @@ $CONTENT
             },
             // 内部使用：通知更新
             _notifyTableUpdate: function () {
-                const callbackCount = ctx.tableUpdateCallbacks.length;
-                logDebug_ACU(`Notifying ${callbackCount} callbacks about table update.`);
-                // 修复：确保回调函数永远不会收到 null，而是收到一个空对象，增加稳健性。
-                const dataToSend = currentJsonTableData_ACU || {};
-                ctx.tableUpdateCallbacks.forEach((callback, callbackIndex) => {
-                    try {
-                        // 将最新的数据作为参数传给回调
-                        callback(dataToSend);
-                    }
-                    catch (e) {
-                        logError_ACU('[回调管理] Error executing a table update callback:', {
-                            callbackIndex,
-                            callbackName: callback?.name || 'anonymous',
-                            callbackCount,
-                            error: e,
-                        });
-                    }
-                });
+                notifyTableUpdateCallbacksSafely_ACU(ctx);
             },
             // 注册"填表开始"回调
             registerTableFillStartCallback: function (callback) {
@@ -45921,6 +45951,20 @@ $CONTENT
         }
         return tableName;
     }
+    function toBooleanOption_ACU(value) {
+        if (value === true)
+            return true;
+        if (typeof value === 'string') {
+            const normalized = value.trim().toLowerCase();
+            return normalized === 'true' || normalized === '1' || normalized === 'yes';
+        }
+        return value === 1;
+    }
+    function parseMutationOptions_ACU(options, rowData) {
+        const skipChatSave = toBooleanOption_ACU(firstDefined_ACU(options?.skipChatSave, options?.skipSave, options?.isImportMode, rowData?.isImportMode));
+        const skipNotify = toBooleanOption_ACU(firstDefined_ACU(options?.skipNotify, options?.silent, options?.isSilent, options?.suppressNotify, options?.suppressNotification, rowData?.skipNotify, rowData?.silent));
+        return { skipChatSave, skipNotify };
+    }
     function parseUpdateCellArgs_ACU(tableNameOrOptions, rowIndex, colIdentifier, value) {
         const options = isPlainObjectArg_ACU(tableNameOrOptions) ? tableNameOrOptions : null;
         const tableName = normalizeTableNameArg_ACU(options ? firstDefined_ACU(options.tableName, options.table, options.sheetName, options.name) : tableNameOrOptions, 'updateCell');
@@ -45937,6 +45981,7 @@ $CONTENT
             rowIndex: normalizedRowIndex,
             colIdentifier: rawColIdentifier,
             value: options ? options.value : value,
+            ...parseMutationOptions_ACU(options),
         };
     }
     function parseUpdateRowArgs_ACU(tableNameOrOptions, rowIndex, data) {
@@ -45950,7 +45995,12 @@ $CONTENT
         }
         if (!tableName || normalizedRowIndex === null)
             return null;
-        return { tableName, rowIndex: normalizedRowIndex, data: rowData };
+        return {
+            tableName,
+            rowIndex: normalizedRowIndex,
+            data: rowData,
+            ...parseMutationOptions_ACU(options, rowData),
+        };
     }
     function parseInsertRowArgs_ACU(tableNameOrOptions, data) {
         const options = isPlainObjectArg_ACU(tableNameOrOptions) ? tableNameOrOptions : null;
@@ -45962,7 +46012,11 @@ $CONTENT
         }
         if (!tableName)
             return null;
-        return { tableName, data: rowData };
+        return {
+            tableName,
+            data: rowData,
+            ...parseMutationOptions_ACU(options, rowData),
+        };
     }
     function parseDeleteRowArgs_ACU(tableNameOrOptions, rowIndex) {
         const options = isPlainObjectArg_ACU(tableNameOrOptions) ? tableNameOrOptions : null;
@@ -45970,7 +46024,11 @@ $CONTENT
         const normalizedRowIndex = normalizeRowIndexArg_ACU(options ? firstDefined_ACU(options.rowIndex, options.row, options.index) : rowIndex, 'deleteRow');
         if (!tableName || normalizedRowIndex === null)
             return null;
-        return { tableName, rowIndex: normalizedRowIndex };
+        return {
+            tableName,
+            rowIndex: normalizedRowIndex,
+            ...parseMutationOptions_ACU(options),
+        };
     }
     function assertSqlMutationChanged_ACU(methodName, actionLabel, result) {
         if (result.errors.length > 0) {
@@ -46033,10 +46091,11 @@ $CONTENT
     /**
      * 保存表格到最新楼层并刷新世界书（updateCell / updateRow / insertRow / deleteRow 共享）
      */
-    async function saveToLatestFloorAndRefresh(targetSheetKey, tableName, ctx, methodName, skipChatSave) {
+    async function saveToLatestFloorAndRefresh(targetSheetKey, tableName, ctx, methodName, options = { skipChatSave: false, skipNotify: false }) {
         const tableLatestFloorIndex = findTableLatestFloor(targetSheetKey, tableName);
+        let didNotifyThroughRefresh = false;
         if (tableLatestFloorIndex !== -1) {
-            if (!skipChatSave) {
+            if (!options.skipChatSave) {
                 logDebug_ACU(`${methodName}: Saving [${tableName}] to its latest floor ${tableLatestFloorIndex}`);
                 const chat = SillyTavern_API_ACU.chat;
                 const history = resolveTableHistoryStateFromChat_ACU(chat, {
@@ -46048,15 +46107,21 @@ $CONTENT
                 const shouldTrackAsUpdate = history.latestDataMessageIndex === -1;
                 await saveIndependentTableToChatHistory_ACU(tableLatestFloorIndex, [targetSheetKey], shouldTrackAsUpdate ? [targetSheetKey] : null, true);
             }
-            await refreshMergedDataAndNotifyWithUI_ACU();
+            await refreshMergedDataAndNotifyWithUI_ACU({ skipNotify: options.skipNotify });
+            didNotifyThroughRefresh = !options.skipNotify;
             logDebug_ACU(`${methodName}: Worldbook refreshed after saving [${tableName}]`);
         }
         else {
             logDebug_ACU(`${methodName}: No AI floor found, falling back to saveCurrentDataForTable_ACU`);
             await saveCurrentDataForTable_ACU(targetSheetKey);
         }
-        await syncSummaryVectorIndexAfterTableEdit_ACU(tableName, methodName, tableLatestFloorIndex, skipChatSave);
-        topLevelWindow_ACU.AutoCardUpdaterAPI._notifyTableUpdate();
+        await syncSummaryVectorIndexAfterTableEdit_ACU(tableName, methodName, tableLatestFloorIndex, options.skipChatSave);
+        if (!options.skipNotify && !didNotifyThroughRefresh) {
+            topLevelWindow_ACU.AutoCardUpdaterAPI._notifyTableUpdate();
+        }
+        else if (options.skipNotify) {
+            logDebug_ACU(`${methodName}: Skip table update notification for [${tableName}] because this edit is marked as silent.`);
+        }
     }
     function createTableCrudApi(ctx) {
         return {
@@ -46069,7 +46134,7 @@ $CONTENT
                     const args = parseUpdateCellArgs_ACU(tableNameOrOptions, rowIndex, colIdentifier, value);
                     if (!args)
                         return false;
-                    const { tableName, rowIndex: normalizedRowIndex, colIdentifier: normalizedColIdentifier, value: normalizedValue } = args;
+                    const { tableName, rowIndex: normalizedRowIndex, colIdentifier: normalizedColIdentifier, value: normalizedValue, skipChatSave, skipNotify, } = args;
                     const target = findTargetSheet(tableName);
                     if (!target) {
                         logError_ACU(`updateCell: Table "${tableName}" not found.`);
@@ -46145,7 +46210,7 @@ $CONTENT
                         targetSheet.content[normalizedRowIndex][colIndex] = normalizedValue;
                         logDebug_ACU(`updateCell: Updated [${tableName}] row ${normalizedRowIndex}, col ${normalizedColIdentifier} = ${normalizedValue}`);
                     }
-                    await saveToLatestFloorAndRefresh(targetSheetKey, targetSheet.name, ctx, 'updateCell');
+                    await saveToLatestFloorAndRefresh(targetSheetKey, targetSheet.name, ctx, 'updateCell', { skipChatSave, skipNotify });
                     return true;
                 }
                 catch (e) {
@@ -46162,7 +46227,7 @@ $CONTENT
                     const args = parseUpdateRowArgs_ACU(tableNameOrOptions, rowIndex, data);
                     if (!args)
                         return false;
-                    const { tableName, rowIndex: normalizedRowIndex, data: normalizedData } = args;
+                    const { tableName, rowIndex: normalizedRowIndex, data: normalizedData, skipChatSave, skipNotify, } = args;
                     if (normalizedRowIndex < 1) {
                         logError_ACU('updateRow: Cannot modify header row (index 0).');
                         return false;
@@ -46237,7 +46302,7 @@ $CONTENT
                         }
                         logDebug_ACU(`updateRow: Updated ${updated} cells in [${tableName}] row ${normalizedRowIndex}`);
                     }
-                    await saveToLatestFloorAndRefresh(targetSheetKey, targetSheet.name, ctx, 'updateRow', !!normalizedData?.isImportMode);
+                    await saveToLatestFloorAndRefresh(targetSheetKey, targetSheet.name, ctx, 'updateRow', { skipChatSave, skipNotify });
                     return true;
                 }
                 catch (e) {
@@ -46254,7 +46319,7 @@ $CONTENT
                     const args = parseInsertRowArgs_ACU(tableNameOrOptions, data);
                     if (!args)
                         return -1;
-                    const { tableName, data: normalizedData } = args;
+                    const { tableName, data: normalizedData, skipChatSave, skipNotify, } = args;
                     const target = findTargetSheet(tableName);
                     if (!target) {
                         logError_ACU(`insertRow: Table "${tableName}" not found.`);
@@ -46293,7 +46358,7 @@ $CONTENT
                         }
                         const newIndex = refreshedLength - 1;
                         logDebug_ACU(`insertRow: [SQLite] Inserted row in [${englishTableName}] at index ${newIndex}`);
-                        await saveToLatestFloorAndRefresh(targetSheetKey, targetSheet.name, ctx, 'insertRow');
+                        await saveToLatestFloorAndRefresh(targetSheetKey, targetSheet.name, ctx, 'insertRow', { skipChatSave, skipNotify });
                         return newIndex;
                     }
                     else {
@@ -46309,7 +46374,7 @@ $CONTENT
                         targetSheet.content.push(newRow);
                         const newIndex = targetSheet.content.length - 1;
                         logDebug_ACU(`insertRow: Inserted row at index ${newIndex} in [${tableName}]`);
-                        await saveToLatestFloorAndRefresh(targetSheetKey, targetSheet.name, ctx, 'insertRow');
+                        await saveToLatestFloorAndRefresh(targetSheetKey, targetSheet.name, ctx, 'insertRow', { skipChatSave, skipNotify });
                         return newIndex;
                     }
                 }
@@ -46327,7 +46392,7 @@ $CONTENT
                     const args = parseDeleteRowArgs_ACU(tableNameOrOptions, rowIndex);
                     if (!args)
                         return false;
-                    const { tableName, rowIndex: normalizedRowIndex } = args;
+                    const { tableName, rowIndex: normalizedRowIndex, skipChatSave, skipNotify, } = args;
                     if (normalizedRowIndex < 1) {
                         logError_ACU('deleteRow: Cannot delete header row (index 0).');
                         return false;
@@ -46361,7 +46426,7 @@ $CONTENT
                         targetSheet.content.splice(normalizedRowIndex, 1);
                         logDebug_ACU(`deleteRow: Deleted row ${normalizedRowIndex} from [${tableName}]`);
                     }
-                    await saveToLatestFloorAndRefresh(targetSheetKey, targetSheet.name, ctx, 'deleteRow');
+                    await saveToLatestFloorAndRefresh(targetSheetKey, targetSheet.name, ctx, 'deleteRow', { skipChatSave, skipNotify });
                     return true;
                 }
                 catch (e) {

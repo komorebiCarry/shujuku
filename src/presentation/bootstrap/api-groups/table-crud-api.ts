@@ -146,12 +146,68 @@ function normalizeTableNameArg_ACU(value: any, methodName: string): string | nul
     return tableName;
 }
 
+type TableCrudMutationOptions_ACU = {
+    skipChatSave: boolean;
+    skipNotify: boolean;
+};
+
+type ParsedUpdateCellArgs_ACU = TableCrudMutationOptions_ACU & {
+    tableName: string;
+    rowIndex: number;
+    colIdentifier: string | number;
+    value: any;
+};
+
+type ParsedUpdateRowArgs_ACU = TableCrudMutationOptions_ACU & {
+    tableName: string;
+    rowIndex: number;
+    data: Record<string, any>;
+};
+
+type ParsedInsertRowArgs_ACU = TableCrudMutationOptions_ACU & {
+    tableName: string;
+    data: Record<string, any>;
+};
+
+type ParsedDeleteRowArgs_ACU = TableCrudMutationOptions_ACU & {
+    tableName: string;
+    rowIndex: number;
+};
+
+function toBooleanOption_ACU(value: any): boolean {
+    if (value === true) return true;
+    if (typeof value === 'string') {
+        const normalized = value.trim().toLowerCase();
+        return normalized === 'true' || normalized === '1' || normalized === 'yes';
+    }
+    return value === 1;
+}
+
+function parseMutationOptions_ACU(options: Record<string, any> | null, rowData?: Record<string, any> | null): TableCrudMutationOptions_ACU {
+    const skipChatSave = toBooleanOption_ACU(firstDefined_ACU(
+        options?.skipChatSave,
+        options?.skipSave,
+        options?.isImportMode,
+        rowData?.isImportMode,
+    ));
+    const skipNotify = toBooleanOption_ACU(firstDefined_ACU(
+        options?.skipNotify,
+        options?.silent,
+        options?.isSilent,
+        options?.suppressNotify,
+        options?.suppressNotification,
+        rowData?.skipNotify,
+        rowData?.silent,
+    ));
+    return { skipChatSave, skipNotify };
+}
+
 function parseUpdateCellArgs_ACU(
     tableNameOrOptions: any,
     rowIndex?: any,
     colIdentifier?: any,
     value?: any,
-): { tableName: string; rowIndex: number; colIdentifier: string | number; value: any } | null {
+): ParsedUpdateCellArgs_ACU | null {
     const options = isPlainObjectArg_ACU(tableNameOrOptions) ? tableNameOrOptions : null;
     const tableName = normalizeTableNameArg_ACU(
         options ? firstDefined_ACU(options.tableName, options.table, options.sheetName, options.name) : tableNameOrOptions,
@@ -172,6 +228,7 @@ function parseUpdateCellArgs_ACU(
         rowIndex: normalizedRowIndex,
         colIdentifier: rawColIdentifier,
         value: options ? options.value : value,
+        ...parseMutationOptions_ACU(options),
     };
 }
 
@@ -179,7 +236,7 @@ function parseUpdateRowArgs_ACU(
     tableNameOrOptions: any,
     rowIndex?: any,
     data?: any,
-): { tableName: string; rowIndex: number; data: Record<string, any> } | null {
+): ParsedUpdateRowArgs_ACU | null {
     const options = isPlainObjectArg_ACU(tableNameOrOptions) ? tableNameOrOptions : null;
     const tableName = normalizeTableNameArg_ACU(
         options ? firstDefined_ACU(options.tableName, options.table, options.sheetName, options.name) : tableNameOrOptions,
@@ -195,13 +252,18 @@ function parseUpdateRowArgs_ACU(
         return null;
     }
     if (!tableName || normalizedRowIndex === null) return null;
-    return { tableName, rowIndex: normalizedRowIndex, data: rowData };
+    return {
+        tableName,
+        rowIndex: normalizedRowIndex,
+        data: rowData,
+        ...parseMutationOptions_ACU(options, rowData),
+    };
 }
 
 function parseInsertRowArgs_ACU(
     tableNameOrOptions: any,
     data?: any,
-): { tableName: string; data: Record<string, any> } | null {
+): ParsedInsertRowArgs_ACU | null {
     const options = isPlainObjectArg_ACU(tableNameOrOptions) ? tableNameOrOptions : null;
     const tableName = normalizeTableNameArg_ACU(
         options ? firstDefined_ACU(options.tableName, options.table, options.sheetName, options.name) : tableNameOrOptions,
@@ -213,13 +275,17 @@ function parseInsertRowArgs_ACU(
         return null;
     }
     if (!tableName) return null;
-    return { tableName, data: rowData };
+    return {
+        tableName,
+        data: rowData,
+        ...parseMutationOptions_ACU(options, rowData),
+    };
 }
 
 function parseDeleteRowArgs_ACU(
     tableNameOrOptions: any,
     rowIndex?: any,
-): { tableName: string; rowIndex: number } | null {
+): ParsedDeleteRowArgs_ACU | null {
     const options = isPlainObjectArg_ACU(tableNameOrOptions) ? tableNameOrOptions : null;
     const tableName = normalizeTableNameArg_ACU(
         options ? firstDefined_ACU(options.tableName, options.table, options.sheetName, options.name) : tableNameOrOptions,
@@ -230,7 +296,11 @@ function parseDeleteRowArgs_ACU(
         'deleteRow',
     );
     if (!tableName || normalizedRowIndex === null) return null;
-    return { tableName, rowIndex: normalizedRowIndex };
+    return {
+        tableName,
+        rowIndex: normalizedRowIndex,
+        ...parseMutationOptions_ACU(options),
+    };
 }
 
 function assertSqlMutationChanged_ACU(
@@ -307,12 +377,13 @@ async function saveToLatestFloorAndRefresh(
     tableName: string,
     ctx: ApiGroupContext,
     methodName: string,
-    skipChatSave?: boolean,
+    options: TableCrudMutationOptions_ACU = { skipChatSave: false, skipNotify: false },
 ): Promise<void> {
     const tableLatestFloorIndex = findTableLatestFloor(targetSheetKey, tableName);
+    let didNotifyThroughRefresh = false;
 
     if (tableLatestFloorIndex !== -1) {
-        if (!skipChatSave) {
+        if (!options.skipChatSave) {
             logDebug_ACU(`${methodName}: Saving [${tableName}] to its latest floor ${tableLatestFloorIndex}`);
             const chat = SillyTavern_API_ACU.chat as ACUMessage[];
             const history = resolveTableHistoryStateFromChat_ACU(chat, {
@@ -329,15 +400,20 @@ async function saveToLatestFloorAndRefresh(
                 true,
             );
         }
-        await refreshMergedDataAndNotifyWithUI_ACU();
+        await refreshMergedDataAndNotifyWithUI_ACU({ skipNotify: options.skipNotify });
+        didNotifyThroughRefresh = !options.skipNotify;
         logDebug_ACU(`${methodName}: Worldbook refreshed after saving [${tableName}]`);
     } else {
         logDebug_ACU(`${methodName}: No AI floor found, falling back to saveCurrentDataForTable_ACU`);
         await saveCurrentDataForTable_ACU(targetSheetKey);
     }
 
-    await syncSummaryVectorIndexAfterTableEdit_ACU(tableName, methodName, tableLatestFloorIndex, skipChatSave);
-    (topLevelWindow_ACU as any).AutoCardUpdaterAPI._notifyTableUpdate();
+    await syncSummaryVectorIndexAfterTableEdit_ACU(tableName, methodName, tableLatestFloorIndex, options.skipChatSave);
+    if (!options.skipNotify && !didNotifyThroughRefresh) {
+        (topLevelWindow_ACU as any).AutoCardUpdaterAPI._notifyTableUpdate();
+    } else if (options.skipNotify) {
+        logDebug_ACU(`${methodName}: Skip table update notification for [${tableName}] because this edit is marked as silent.`);
+    }
 }
 
 export function createTableCrudApi(ctx: ApiGroupContext): Record<string, Function> {
@@ -351,7 +427,14 @@ export function createTableCrudApi(ctx: ApiGroupContext): Record<string, Functio
 
                 const args = parseUpdateCellArgs_ACU(tableNameOrOptions, rowIndex, colIdentifier, value);
                 if (!args) return false;
-                const { tableName, rowIndex: normalizedRowIndex, colIdentifier: normalizedColIdentifier, value: normalizedValue } = args;
+                const {
+                    tableName,
+                    rowIndex: normalizedRowIndex,
+                    colIdentifier: normalizedColIdentifier,
+                    value: normalizedValue,
+                    skipChatSave,
+                    skipNotify,
+                } = args;
 
                 const target = findTargetSheet(tableName);
                 if (!target) {
@@ -433,7 +516,7 @@ export function createTableCrudApi(ctx: ApiGroupContext): Record<string, Functio
                     logDebug_ACU(`updateCell: Updated [${tableName}] row ${normalizedRowIndex}, col ${normalizedColIdentifier} = ${normalizedValue}`);
                 }
 
-                await saveToLatestFloorAndRefresh(targetSheetKey, targetSheet.name, ctx, 'updateCell');
+                await saveToLatestFloorAndRefresh(targetSheetKey, targetSheet.name, ctx, 'updateCell', { skipChatSave, skipNotify });
 
                 return true;
             } catch (e) {
@@ -451,7 +534,13 @@ export function createTableCrudApi(ctx: ApiGroupContext): Record<string, Functio
 
                 const args = parseUpdateRowArgs_ACU(tableNameOrOptions, rowIndex, data);
                 if (!args) return false;
-                const { tableName, rowIndex: normalizedRowIndex, data: normalizedData } = args;
+                const {
+                    tableName,
+                    rowIndex: normalizedRowIndex,
+                    data: normalizedData,
+                    skipChatSave,
+                    skipNotify,
+                } = args;
 
                 if (normalizedRowIndex < 1) {
                     logError_ACU('updateRow: Cannot modify header row (index 0).');
@@ -530,7 +619,7 @@ export function createTableCrudApi(ctx: ApiGroupContext): Record<string, Functio
                     logDebug_ACU(`updateRow: Updated ${updated} cells in [${tableName}] row ${normalizedRowIndex}`);
                 }
 
-                await saveToLatestFloorAndRefresh(targetSheetKey, targetSheet.name, ctx, 'updateRow', !!normalizedData?.isImportMode);
+                await saveToLatestFloorAndRefresh(targetSheetKey, targetSheet.name, ctx, 'updateRow', { skipChatSave, skipNotify });
 
                 return true;
             } catch (e) {
@@ -548,7 +637,12 @@ export function createTableCrudApi(ctx: ApiGroupContext): Record<string, Functio
 
                 const args = parseInsertRowArgs_ACU(tableNameOrOptions, data);
                 if (!args) return -1;
-                const { tableName, data: normalizedData } = args;
+                const {
+                    tableName,
+                    data: normalizedData,
+                    skipChatSave,
+                    skipNotify,
+                } = args;
 
                 const target = findTargetSheet(tableName);
                 if (!target) {
@@ -589,7 +683,7 @@ export function createTableCrudApi(ctx: ApiGroupContext): Record<string, Functio
                     const newIndex = refreshedLength - 1;
                     logDebug_ACU(`insertRow: [SQLite] Inserted row in [${englishTableName}] at index ${newIndex}`);
 
-                    await saveToLatestFloorAndRefresh(targetSheetKey, targetSheet.name, ctx, 'insertRow');
+                    await saveToLatestFloorAndRefresh(targetSheetKey, targetSheet.name, ctx, 'insertRow', { skipChatSave, skipNotify });
                     return newIndex;
                 } else {
                     // 原生模式：直接操作 JSON 数组，用中文列名在 headers 中定位
@@ -608,7 +702,7 @@ export function createTableCrudApi(ctx: ApiGroupContext): Record<string, Functio
 
                     logDebug_ACU(`insertRow: Inserted row at index ${newIndex} in [${tableName}]`);
 
-                    await saveToLatestFloorAndRefresh(targetSheetKey, targetSheet.name, ctx, 'insertRow');
+                    await saveToLatestFloorAndRefresh(targetSheetKey, targetSheet.name, ctx, 'insertRow', { skipChatSave, skipNotify });
 
                     return newIndex;
                 }
@@ -627,7 +721,12 @@ export function createTableCrudApi(ctx: ApiGroupContext): Record<string, Functio
 
                 const args = parseDeleteRowArgs_ACU(tableNameOrOptions, rowIndex);
                 if (!args) return false;
-                const { tableName, rowIndex: normalizedRowIndex } = args;
+                const {
+                    tableName,
+                    rowIndex: normalizedRowIndex,
+                    skipChatSave,
+                    skipNotify,
+                } = args;
 
                 if (normalizedRowIndex < 1) {
                     logError_ACU('deleteRow: Cannot delete header row (index 0).');
@@ -666,7 +765,7 @@ export function createTableCrudApi(ctx: ApiGroupContext): Record<string, Functio
                     logDebug_ACU(`deleteRow: Deleted row ${normalizedRowIndex} from [${tableName}]`);
                 }
 
-                await saveToLatestFloorAndRefresh(targetSheetKey, targetSheet.name, ctx, 'deleteRow');
+                await saveToLatestFloorAndRefresh(targetSheetKey, targetSheet.name, ctx, 'deleteRow', { skipChatSave, skipNotify });
 
                 return true;
             } catch (e) {

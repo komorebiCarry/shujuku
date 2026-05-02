@@ -18,14 +18,18 @@ import { loadPlotSettingsToUI_ACU } from '../pages/popup-helpers';
  * 刷新合并数据后自动通知前端 + 刷新可视化编辑器 + 刷新 UI 选择器和状态面板
  * presentation 层唯一入口：所有需要"刷新数据+刷新UI"的地方都调这个。
  */
-export async function refreshMergedDataAndNotifyWithUI_ACU() {
+export async function refreshMergedDataAndNotifyWithUI_ACU(
+    { skipNotify = false }: { skipNotify?: boolean } = {},
+) {
     const result = await refreshMergedDataAndNotify_ACU();
 
     // 1. 通知前端 (iframe context)
     try {
-        if ((topLevelWindow_ACU as any).AutoCardUpdaterAPI) {
+        if (!skipNotify && (topLevelWindow_ACU as any).AutoCardUpdaterAPI) {
             (topLevelWindow_ACU as any).AutoCardUpdaterAPI._notifyTableUpdate();
             logDebug_ACU('Notified frontend to refresh UI after data merge.');
+        } else if (skipNotify) {
+            logDebug_ACU('Skipped frontend table update notification after data merge.');
         }
     } catch (_) {}
 
