@@ -21,16 +21,56 @@ export type SummaryVectorIndexExternalFileRole_ACU =
     | 'tombstone'
     | 'base_shard'
     | 'delta_shard'
+    | 'vector_chunk'
     | 'registry';
 
 export interface ChatSummaryVectorIndexChunk_ACU {
     chunkId: string;
     rowKey: string;
+    rowOrder: number;
     text: string;
     vector: number[];
     sequence: number;
+    sourceFingerprint?: string;
+    textHash?: string;
     shardId?: string;
     shardRole?: 'base' | 'delta';
+    chunkKeys?: string[];
+}
+
+export interface SummaryVectorIndexChunkRef_ACU {
+    chunkKey: string;
+    chunkId: string;
+    rowKey: string;
+    path: string;
+    checksum: string;
+    byteSize: number;
+    embeddingModel: string;
+    dimension: number;
+    sourceFingerprint?: string;
+    textHash?: string;
+    createdAt: string;
+    updatedAt: string;
+    status: SummaryVectorIndexManifestStatus_ACU;
+}
+
+export interface SummaryVectorIndexContentAddressedInfo_ACU {
+    version: number;
+    mode: 'content_addressed_chunks';
+    chunkRefs: SummaryVectorIndexChunkRef_ACU[];
+    activeChunkKeys: string[];
+}
+
+export interface SummaryVectorIndexCheckpoint_ACU {
+    version: number;
+    checkpointId: string;
+    manifestKey: string;
+    sourceTableKey: string;
+    snapshotMessageId: string;
+    rowCount: number;
+    chunkCount: number;
+    activeRowKeys: string[];
+    createdAt: string;
 }
 
 export interface ChatSummaryVectorIndexRow_ACU {
@@ -45,6 +85,7 @@ export interface ChatSummaryVectorIndexRow_ACU {
     chunkIds: string[];
     sourceFingerprint?: string;
     shardIds?: string[];
+    chunkKeys?: string[];
     status?: 'active' | 'removed' | 'replaced';
     updatedAt?: string;
 }
@@ -143,6 +184,12 @@ export interface ChatSummaryVectorIndexManifest_ACU {
      */
     snapshot?: SummaryVectorIndexSnapshotInfo_ACU;
     batchRefs?: SummaryVectorIndexBatchRef_ACU[];
+    /**
+     * v3 内容寻址协议：聊天楼层保存轻量 checkpoint，manifest 保存 row -> chunkKey 引用，
+     * 向量 chunk 按内容 hash 外置去重。旧版读取端忽略该字段，新版读取端优先使用该字段。
+     */
+    checkpoint?: SummaryVectorIndexCheckpoint_ACU;
+    contentAddressed?: SummaryVectorIndexContentAddressedInfo_ACU;
 }
 
 export interface SummaryVectorIndexRowIndexEntry_ACU {
@@ -154,6 +201,7 @@ export interface SummaryVectorIndexRowIndexEntry_ACU {
     indexCode: string;
     chunkIds: string[];
     shardIds: string[];
+    chunkKeys?: string[];
     status: 'active' | 'removed' | 'replaced';
     updatedAt: string;
 }

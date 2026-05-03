@@ -36,8 +36,8 @@ import type {
 import { SUMMARY_VECTOR_INDEX_MANIFEST_VERSION_ACU } from './summary-vector-index-types';
 
 const DEFAULT_SHARD_CHUNK_LIMIT_ACU = 128;
-// 只保留最新一版版本化快照；当前 manifest.indexId 仍由清理逻辑强制保留。
-const SUMMARY_VECTOR_INDEX_SNAPSHOT_RETENTION_LIMIT_ACU = 1;
+// 第一版保守止血：不再按 retention 删除历史快照，避免回退到旧楼层时找不到外置文件。
+const SUMMARY_VECTOR_INDEX_SNAPSHOT_RETENTION_LIMIT_ACU = 0;
 
 export interface PersistSummaryVectorIndexExternalOptions_ACU {
     chatKey?: string;
@@ -145,9 +145,11 @@ function normalizeRows_ACU(rows: ChatSummaryVectorIndexRow_ACU[]): ChatSummaryVe
             const status: ChatSummaryVectorIndexRow_ACU['status'] = row.status === 'removed' || row.status === 'replaced'
                 ? row.status
                 : 'active';
+            const chunkKeys = Array.isArray(row.chunkKeys) ? row.chunkKeys.map((item) => String(item)).filter(Boolean) : undefined;
             return {
                 ...row,
                 chunkIds: row.chunkIds.filter(Boolean),
+                ...(chunkKeys && chunkKeys.length > 0 ? { chunkKeys } : {}),
                 status,
                 updatedAt: row.updatedAt || new Date().toISOString(),
             };
@@ -159,6 +161,79 @@ function normalizeChunks_ACU(chunks: ChatSummaryVectorIndexChunk_ACU[]): ChatSum
     return (Array.isArray(chunks) ? chunks : [])
         .filter((chunk) => chunk?.chunkId && chunk?.rowKey && chunk?.text && Array.isArray(chunk.vector) && chunk.vector.length > 0)
         .map((chunk, index) => ({ ...chunk, sequence: index }));
+}
+
+interface VectorIndexChunkBlob_ACU {
+    version: number;
+    chunkKey: string;
+    chunkId: string;
+    rowKey: string;
+    rowOrder: number;
+    text: string;
+    vector: number[];
+    sequence: number;
+    embeddingModel: string;
+    dimension: number;
+    sourceFingerprint?: string;
+    textHash?: string;
+    createdAt: string;
+    updatedAt: string;
+}
+
+function buildVectorChunkKey_ACU(params: {
+    embeddingModel: string;
+    dimension: number;
+    rowKey: string;
+    sourceFingerprint?: string;
+    text: string;
+}): string {
+    return `chunk_${hashUserInput_ACU([
+        params.embeddingModel,
+        String(Math.max(0, Math.floor(Number(params.dimension) || 0))),
+        params.rowKey,
+        params.sourceFingerprint || '',
+        params.text,
+    ].join('\n'))}`;
+}
+
+function buildVectorChunkPath_ACU(parts: {
+    chatKey: string;
+    isolationKey: string;
+    sourceTableKey: string;
+    chunkKey: string;
+}): string {
+    return buildVectorIndexSnapshotFilePath_ACU({
+        chatKey: parts.chatKey,
+        isolationKey: parts.isolationKey,
+        sourceTableKey: parts.sourceTableKey,
+        indexId: parts.chunkKey,
+        role: 'vector_chunk',
+    });
+}
+
+function buildVectorChunkBlob_ACU(chunk: ChatSummaryVectorIndexChunk_ACU, options: {
+    chunkKey: string;
+    embeddingModel: string;
+    dimension: number;
+    sourceFingerprint?: string;
+}): VectorIndexChunkBlob_ACU {
+    const now = new Date().toISOString();
+    return {
+        version: SUMMARY_VECTOR_INDEX_MANIFEST_VERSION_ACU,
+        chunkKey: options.chunkKey,
+        chunkId: chunk.chunkId,
+        rowKey: chunk.rowKey,
+        rowOrder: Number.isFinite(Number((chunk as any).rowOrder)) ? Number((chunk as any).rowOrder) : 0,
+        text: chunk.text,
+        vector: Array.isArray(chunk.vector) ? chunk.vector.map((item) => Number(item)).filter((item) => Number.isFinite(item)) : [],
+        sequence: Number.isFinite(Number(chunk.sequence)) ? Number(chunk.sequence) : 0,
+        embeddingModel: options.embeddingModel,
+        dimension: Math.max(0, Math.floor(Number(options.dimension) || 0)),
+        sourceFingerprint: options.sourceFingerprint,
+        textHash: hashUserInput_ACU(chunk.text),
+        createdAt: now,
+        updatedAt: now,
+    };
 }
 
 function chunkArray_ACU<T>(items: T[], limit: number): T[][] {
@@ -285,55 +360,11 @@ async function cleanupSnapshotScopeFilesExcept_ACU(
 
 async function cleanupVersionedSnapshotRetention_ACU(manifest: ChatSummaryVectorIndexManifest_ACU): Promise<number> {
     const scopePrefix = buildVersionedSnapshotScopePrefix_ACU(manifest.chatKey, manifest.isolationKey, manifest.sourceTableKey);
-    const registry = await loadVectorIndexRegistry_ACU();
-    const versionedFiles = registry.files.filter((file) => {
-        const path = String(file?.path || '');
-        return path.startsWith(scopePrefix) && extractVersionedSnapshotIndexIdFromPath_ACU(path, scopePrefix) !== null;
-    });
-    if (versionedFiles.length === 0) return 0;
-
-    const groups = new Map<string, SummaryVectorIndexExternalFileRef_ACU[]>();
-    versionedFiles.forEach((file) => {
-        const indexId = extractVersionedSnapshotIndexIdFromPath_ACU(file.path, scopePrefix);
-        if (!indexId) return;
-        const list = groups.get(indexId) || [];
-        list.push(file);
-        groups.set(indexId, list);
-    });
-
-    const sortedGroups = Array.from(groups.entries())
-        .map(([indexId, files]) => ({
-            indexId,
-            files,
-            timestamp: files.reduce((latest, file) => {
-                const current = getVectorIndexFileTimestamp_ACU(file);
-                return current > latest ? current : latest;
-            }, ''),
-        }))
-        .sort((left, right) => right.timestamp.localeCompare(left.timestamp) || right.indexId.localeCompare(left.indexId));
-
-    const keepIndexIds = new Set<string>(sortedGroups.slice(0, SUMMARY_VECTOR_INDEX_SNAPSHOT_RETENTION_LIMIT_ACU).map((group) => group.indexId));
-    keepIndexIds.add(manifest.indexId);
-
-    const purgePaths = new Set<string>();
-    const purgeIndexIds = new Set<string>();
-    sortedGroups.forEach((group) => {
-        if (keepIndexIds.has(group.indexId)) return;
-        purgeIndexIds.add(group.indexId);
-        group.files.forEach((file) => purgePaths.add(file.path));
-    });
-    if (purgePaths.size === 0 && purgeIndexIds.size === 0) return 0;
-
-    const deletedPaths = purgePaths.size > 0
-        ? await deleteRegisteredVectorIndexFilesWhere_ACU((file) => purgePaths.has(file.path))
-        : [];
-    for (const indexId of purgeIndexIds) {
-        await deleteVectorIndexCacheByIndex_ACU(indexId);
+    if (SUMMARY_VECTOR_INDEX_SNAPSHOT_RETENTION_LIMIT_ACU <= 0) {
+        logDebug_ACU(`[纪要向量索引] 已跳过版本化快照 retention 清理，保留可回退楼层引用: scope=${scopePrefix}, indexId=${manifest.indexId}`);
+        return 0;
     }
-    if (deletedPaths.length > 0 || purgeIndexIds.size > 0) {
-        logDebug_ACU(`[纪要向量索引] 已清理过期版本化快照: scope=${scopePrefix}, keep=${keepIndexIds.size}, removedFiles=${deletedPaths.length}, removedCacheIndexes=${purgeIndexIds.size}`);
-    }
-    return deletedPaths.length;
+    return 0;
 }
 
 export async function deleteSummaryVectorIndexExternalByScope_ACU(options: {
@@ -547,34 +578,69 @@ export async function persistSummaryVectorIndexSnapshot_ACU(
 
     const uploadedFiles: SummaryVectorIndexExternalFileRef_ACU[] = [];
     try {
-        const shardIdsByChunkId = new Map<string, string>();
-        const shardRefs: SummaryVectorIndexExternalFileRef_ACU[] = [];
-        const shardGroups = chunkArray_ACU(chunks, options.shardChunkLimit || DEFAULT_SHARD_CHUNK_LIMIT_ACU);
-        for (let shardIndex = 0; shardIndex < shardGroups.length; shardIndex += 1) {
-            const shardId = `shard_${String(shardIndex + 1).padStart(4, '0')}`;
-            const shardChunks = shardGroups[shardIndex].map((chunk) => ({ ...chunk, shardId, shardRole: 'base' as const }));
-            shardChunks.forEach((chunk) => shardIdsByChunkId.set(chunk.chunkId, shardId));
-            const shard: SummaryVectorIndexShard_ACU = {
-                version: SUMMARY_VECTOR_INDEX_MANIFEST_VERSION_ACU,
-                indexId,
-                shardId,
-                role: 'base',
-                createdAt: indexedAt,
-                updatedAt: indexedAt,
-                chunks: shardChunks,
-            };
-            const path = buildVectorIndexSnapshotFilePath_ACU({ chatKey, isolationKey, sourceTableKey: options.sourceTableKey, indexId, role: 'base_shard', shardId });
-            const written = await uploadVectorIndexJsonFile_ACU({ path, role: 'base_shard', shardId, data: shard, chunkCount: shardChunks.length, status: 'ready' });
-            if (!written.ok || !written.ref) throw new Error(written.error || `快照分片 ${shardId} 写入失败`);
-            uploadedFiles.push(written.ref);
-            shardRefs.push(written.ref);
-            await putVectorIndexCachedShard_ACU(indexId, shardId, shard, written.ref.checksum);
+        const chunkRefs: NonNullable<ChatSummaryVectorIndexManifest_ACU['contentAddressed']>['chunkRefs'] = [];
+        const chunkKeysByChunkId = new Map<string, string>();
+        for (const chunk of chunks) {
+            const row = rows.find((item) => item.rowKey === chunk.rowKey);
+            const chunkKey = buildVectorChunkKey_ACU({
+                embeddingModel: options.embeddingModel,
+                dimension,
+                rowKey: chunk.rowKey,
+                sourceFingerprint: row?.sourceFingerprint,
+                text: chunk.text,
+            });
+            const path = buildVectorChunkPath_ACU({ chatKey, isolationKey, sourceTableKey: options.sourceTableKey, chunkKey });
+            const blob = buildVectorChunkBlob_ACU(chunk, {
+                chunkKey,
+                embeddingModel: options.embeddingModel,
+                dimension,
+                sourceFingerprint: row?.sourceFingerprint,
+            });
+            const existing = await readVectorIndexJsonFile_ACU<VectorIndexChunkBlob_ACU>(path);
+            let ref: SummaryVectorIndexExternalFileRef_ACU | null = null;
+            if (existing.ok && existing.data?.chunkKey === chunkKey && Array.isArray(existing.data.vector) && existing.data.vector.length === dimension) {
+                const json = JSON.stringify(existing.data);
+                ref = {
+                    role: 'vector_chunk',
+                    path,
+                    byteSize: new Blob([json]).size,
+                    checksum: await sha256Text_ACU(json),
+                    chunkCount: 1,
+                    rowCount: 1,
+                    createdAt: String(existing.data.createdAt || indexedAt),
+                    updatedAt: String(existing.data.updatedAt || indexedAt),
+                    status: 'ready',
+                };
+            } else {
+                const written = await uploadVectorIndexJsonFile_ACU({ path, role: 'vector_chunk', data: blob, chunkCount: 1, rowCount: 1, status: 'ready' });
+                if (!written.ok || !written.ref) throw new Error(written.error || `内容寻址向量块 ${chunkKey} 写入失败`);
+                uploadedFiles.push(written.ref);
+                ref = written.ref;
+            }
+            chunkKeysByChunkId.set(chunk.chunkId, chunkKey);
+            chunkRefs.push({
+                chunkKey,
+                chunkId: chunk.chunkId,
+                rowKey: chunk.rowKey,
+                path,
+                checksum: ref.checksum,
+                byteSize: ref.byteSize,
+                embeddingModel: options.embeddingModel,
+                dimension,
+                sourceFingerprint: row?.sourceFingerprint,
+                textHash: hashUserInput_ACU(chunk.text),
+                createdAt: ref.createdAt,
+                updatedAt: ref.updatedAt,
+                status: ref.status,
+            });
         }
 
         const rowsWithShardIds = rows.map((row) => ({
             ...row,
-            shardIds: Array.from(new Set(row.chunkIds.map((chunkId) => shardIdsByChunkId.get(chunkId)).filter((value): value is string => !!value))),
+            shardIds: [] as string[],
+            chunkKeys: Array.from(new Set(row.chunkIds.map((chunkId) => chunkKeysByChunkId.get(chunkId)).filter((value): value is string => !!value))),
         }));
+        const shardIdsByChunkId = new Map<string, string>();
         const rowIndex = buildRowIndex_ACU(indexId, rowsWithShardIds, shardIdsByChunkId, indexedAt);
         const tombstone = buildTombstone_ACU(indexId, options.previousManifest, indexedAt);
         const removedRowKeys = Array.from(new Set(options.removedRowKeys || []));
@@ -596,22 +662,22 @@ export async function persistSummaryVectorIndexSnapshot_ACU(
         if (!tombstoneWritten.ok || !tombstoneWritten.ref) throw new Error(tombstoneWritten.error || '快照 tombstone 写入失败');
         uploadedFiles.push(tombstoneWritten.ref);
 
-        const currentBatchRef = buildBatchRef_ACU({
-            batchId: `snapshot_${indexId}`,
-            indexId,
-            createdAt: indexedAt,
-            updatedAt: indexedAt,
-            rows: rowsWithShardIds,
-            chunks,
-            files: [...shardRefs],
-            sourceMessageIndex: options.sourceMessageIndex,
-            sourceSnapshotMessageId: options.snapshotMessageId,
-        });
-        const batchRefs = [currentBatchRef];
         const replacedRowKeys = Array.from(new Set(options.replacedRowKeys || []));
         const parentIndexIds = Array.from(new Set([...(options.parentIndexIds || []), ...(options.previousManifest?.indexId ? [options.previousManifest.indexId] : [])].filter(Boolean)));
         const manifestPath = buildVectorIndexSnapshotFilePath_ACU({ chatKey, isolationKey, sourceTableKey: options.sourceTableKey, indexId, role: 'manifest' });
-        const manifestFilesWithoutManifest = [...uploadedFiles, ...batchRefs.flatMap((batch) => batch.files || [])];
+        const activeChunkKeys = Array.from(new Set(chunkRefs.map((ref) => ref.chunkKey)));
+        const checkpoint = {
+            version: SUMMARY_VECTOR_INDEX_MANIFEST_VERSION_ACU,
+            checkpointId: `checkpoint_${hashUserInput_ACU(`${indexId}\n${options.snapshotMessageId}\n${indexedAt}`)}`,
+            manifestKey: indexId,
+            sourceTableKey: options.sourceTableKey,
+            snapshotMessageId: options.snapshotMessageId,
+            rowCount: rowsWithShardIds.length,
+            chunkCount: activeChunkKeys.length,
+            activeRowKeys,
+            createdAt: indexedAt,
+        };
+        const manifestFilesWithoutManifest = [...uploadedFiles];
         const externalTotalBytesWithoutManifest = sumUniqueVectorIndexFileBytes_ACU(manifestFilesWithoutManifest);
         const manifestDraft: ChatSummaryVectorIndexManifest_ACU = {
             version: SUMMARY_VECTOR_INDEX_MANIFEST_VERSION_ACU,
@@ -634,7 +700,7 @@ export async function persistSummaryVectorIndexSnapshot_ACU(
             tombstoneFile: tombstonePath,
             manifestFile: manifestPath,
             files: [],
-            baseShardCount: shardRefs.length,
+            baseShardCount: 0,
             deltaShardCount: 0,
             tombstoneRowCount: removedRowKeys.length,
             tombstoneChunkCount: 0,
@@ -647,9 +713,16 @@ export async function persistSummaryVectorIndexSnapshot_ACU(
                 activeChunkIds,
                 removedRowKeys,
                 replacedRowKeys,
-                batchIds: batchRefs.map((batch) => batch.batchId),
+                batchIds: [],
             },
-            batchRefs,
+            batchRefs: [],
+            checkpoint,
+            contentAddressed: {
+                version: SUMMARY_VECTOR_INDEX_MANIFEST_VERSION_ACU,
+                mode: 'content_addressed_chunks',
+                chunkRefs,
+                activeChunkKeys,
+            },
         };
         const manifestWritten = await uploadVectorIndexJsonFile_ACU({ path: manifestPath, role: 'manifest', data: { ...manifestDraft, files: [...uploadedFiles] }, status: 'ready' });
         if (!manifestWritten.ok || !manifestWritten.ref) throw new Error(manifestWritten.error || '快照 manifest 写入失败');
@@ -657,7 +730,7 @@ export async function persistSummaryVectorIndexSnapshot_ACU(
         const manifest: ChatSummaryVectorIndexManifest_ACU = {
             ...manifestDraft,
             files: [...uploadedFiles],
-            externalTotalBytes: sumUniqueVectorIndexFileBytes_ACU([...uploadedFiles, ...batchRefs.flatMap((batch) => batch.files || [])]),
+            externalTotalBytes: sumUniqueVectorIndexFileBytes_ACU(uploadedFiles),
         };
         const state: ChatSummaryVectorIndexState_ACU = {
             version: SUMMARY_VECTOR_INDEX_MANIFEST_VERSION_ACU,
@@ -674,7 +747,7 @@ export async function persistSummaryVectorIndexSnapshot_ACU(
             rows: rowsWithShardIds,
             manifest,
         };
-        await registerVectorIndexFiles_ACU([...uploadedFiles, ...batchRefs.flatMap((batch) => batch.files || [])]);
+        await registerVectorIndexFiles_ACU(uploadedFiles);
         try {
             await cleanupVersionedSnapshotRetention_ACU(manifest);
         } catch (error) {
@@ -724,11 +797,57 @@ async function loadChunksFromShardRefs_ACU(
     return chunks.filter((chunk) => Array.isArray(chunk.vector) && chunk.vector.length > 0);
 }
 
+async function loadChunksFromContentAddressedRefs_ACU(
+    manifest: ChatSummaryVectorIndexManifest_ACU,
+    options: LoadSummaryVectorIndexChunksOptions_ACU = {},
+): Promise<ChatSummaryVectorIndexChunk_ACU[]> {
+    const info = manifest.contentAddressed;
+    if (!info?.chunkRefs?.length) return [];
+    const activeChunkKeys = new Set((info.activeChunkKeys || []).map((item) => String(item)));
+        const chunks: ChatSummaryVectorIndexChunk_ACU[] = [];
+        for (const ref of info.chunkRefs) {
+            if (activeChunkKeys.size > 0 && !activeChunkKeys.has(ref.chunkKey)) continue;
+            const loaded = await readVectorIndexJsonFile_ACU<VectorIndexChunkBlob_ACU>(ref.path);
+            if (!loaded.ok || !loaded.data) {
+                throw new Error(`交火向量索引内容块读取失败: ${ref.path} ${loaded.error || ''}`.trim());
+            }
+            const blob = loaded.data;
+            if (String(blob.chunkKey || '') !== ref.chunkKey || String(blob.chunkId || '') !== ref.chunkId || String(blob.rowKey || '') !== ref.rowKey) {
+                throw new Error(`交火向量索引内容块身份不匹配: ${ref.path} expectedChunk=${ref.chunkKey} actualChunk=${String(blob.chunkKey || 'empty')} expectedRow=${ref.rowKey} actualRow=${String(blob.rowKey || 'empty')}`);
+            }
+            const checksum = await sha256Text_ACU(JSON.stringify(blob));
+            if (ref.checksum && checksum !== ref.checksum) {
+                throw new Error(`交火向量索引内容块校验失败: ${ref.path} expected=${ref.checksum} actual=${checksum}`);
+            }
+            const vector = Array.isArray(blob.vector) ? blob.vector.map((value) => Number(value)) : [];
+            if (vector.length === 0) continue;
+            chunks.push({
+                chunkId: String(blob.chunkId || ref.chunkId),
+                rowKey: String(blob.rowKey || ref.rowKey),
+                rowOrder: Number(blob.rowOrder || 0),
+                text: String(blob.text || ''),
+                vector,
+                sequence: Number(blob.sequence || 0),
+                sourceFingerprint: blob.sourceFingerprint || ref.sourceFingerprint,
+                textHash: blob.textHash || ref.textHash,
+                shardId: undefined,
+                shardRole: undefined,
+                chunkKeys: [ref.chunkKey],
+            });
+        }
+return chunks.sort((left, right) => left.sequence - right.sequence || left.chunkId.localeCompare(right.chunkId));
+}
+
 export async function loadSummaryVectorIndexChunksFromManifest_ACU(
     manifest: ChatSummaryVectorIndexManifest_ACU | null | undefined,
     options: LoadSummaryVectorIndexChunksOptions_ACU = {},
 ): Promise<ChatSummaryVectorIndexChunk_ACU[]> {
     if (!manifest) return [];
+    if (manifest.contentAddressed?.chunkRefs?.length) {
+        const chunks = await loadChunksFromContentAddressedRefs_ACU(manifest, options);
+        logDebug_ACU('[交火向量索引] 已按内容寻址 manifest 加载向量块。');
+        return chunks;
+    }
     if (Array.isArray(manifest.batchRefs) && manifest.batchRefs.length > 0) {
         const activeRowKeys = new Set(manifest.snapshot?.activeRowKeys || []);
         const activeChunkIds = new Set(manifest.snapshot?.activeChunkIds || []);
@@ -758,7 +877,6 @@ export async function deleteSummaryVectorIndexExternal_ACU(manifest: ChatSummary
     if (!manifest) return;
     const retainedPaths = new Set<string>();
     await cleanupManifestFilesExcept_ACU(manifest, retainedPaths);
-    await cleanupSnapshotScopeFilesExcept_ACU(manifest, retainedPaths, { includeSameSourceTableFallback: true });
     if (manifest.indexId) {
         await deleteVectorIndexCacheByIndex_ACU(manifest.indexId);
     }

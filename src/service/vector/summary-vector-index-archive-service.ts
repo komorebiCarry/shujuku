@@ -477,6 +477,7 @@ async function buildChunksWithEmbeddings_ACU(
         chunks.push({
             chunkId: source.chunkId,
             rowKey: source.rowKey,
+            rowOrder: source.rowIndex,
             text: source.text,
             vector,
             sequence: source.sequence,
@@ -696,7 +697,7 @@ async function writeSummaryVectorIndexCheckpoint_ACU(options: {
             sourceMessageIndex: options.targetMessageIndex,
         });
         assignSummaryVectorIndexStateToTagData_ACU(nextTagData, persisted.state, persisted.manifest);
-        logDebug_ACU(`[纪要向量索引] 已写入最新层完整快照 manifest：rows=${persisted.manifest.rowCount}, chunks=${persisted.manifest.chunkCount}, batches=${persisted.manifest.batchRefs?.length || 0}`);
+        logDebug_ACU(`[纪要向量索引] 已写入最新层内容寻址 manifest：rows=${persisted.manifest.rowCount}, chunks=${persisted.manifest.chunkCount}, chunkRefs=${persisted.manifest.contentAddressed?.chunkRefs?.length || 0}`);
     } else {
         assignSummaryVectorIndexStateToTagData_ACU(nextTagData, null);
     }

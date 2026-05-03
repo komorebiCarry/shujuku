@@ -1,8 +1,6 @@
 import { logDebug_ACU, logWarn_ACU } from '../../shared/utils';
-import { getChatArray_ACU, saveChatToHost_ACU } from '../chat/chat-service';
-import { readIsolatedTagData_ACU, writeIsolatedTagData_ACU } from '../../data/repositories/chat-message-data-repo';
 import { deleteVectorIndexCacheByIndex_ACU } from '../../data/storage/vector-index-temp-cache';
-import { assignSummaryVectorIndexStateToTagData_ACU, getLatestSummaryVectorIndexSnapshotState_ACU } from './summary-vector-index-state-service';
+import { getLatestSummaryVectorIndexSnapshotState_ACU } from './summary-vector-index-state-service';
 import { loadSummaryVectorIndexChunksFromManifest_ACU } from './summary-vector-index-storage-service';
 
 export interface SummaryVectorIndexCachePreloadResult_ACU {
@@ -33,28 +31,15 @@ export function isMissingExternalVectorFileError_ACU(message: string): boolean {
         && (text.includes('404') || text.includes('not found') || text.includes('读取失败'));
 }
 
-async function clearLatestSummaryVectorIndexState_ACU(params: { messageIndex: number; isolationKey: string }): Promise<boolean> {
-    const chat = getChatArray_ACU();
-    const message = chat?.[params.messageIndex];
-    if (!message || message.is_user) return false;
-    const tagData = readIsolatedTagData_ACU(message, params.isolationKey);
-    if (!tagData) return false;
-    assignSummaryVectorIndexStateToTagData_ACU(tagData, null);
-    writeIsolatedTagData_ACU(message, params.isolationKey, tagData);
-    await saveChatToHost_ACU();
-    return true;
-}
-
 export async function clearLatestSummaryVectorIndexStateForMissingExternalFiles_ACU(params: {
     messageIndex: number;
     isolationKey: string;
     indexId: string;
 }): Promise<boolean> {
+    void params.messageIndex;
+    void params.isolationKey;
     await deleteVectorIndexCacheByIndex_ACU(params.indexId);
-    return clearLatestSummaryVectorIndexState_ACU({
-        messageIndex: params.messageIndex,
-        isolationKey: params.isolationKey,
-    });
+    return false;
 }
 
 export async function clearLatestSummaryVectorIndexStateForInvalidExternalFiles_ACU(params: {
@@ -62,11 +47,10 @@ export async function clearLatestSummaryVectorIndexStateForInvalidExternalFiles_
     isolationKey: string;
     indexId: string;
 }): Promise<boolean> {
+    void params.messageIndex;
+    void params.isolationKey;
     await deleteVectorIndexCacheByIndex_ACU(params.indexId);
-    return clearLatestSummaryVectorIndexState_ACU({
-        messageIndex: params.messageIndex,
-        isolationKey: params.isolationKey,
-    });
+    return false;
 }
 
 export function isInvalidExternalVectorFileError_ACU(message: string): boolean {
@@ -119,11 +103,11 @@ export async function preloadSummaryVectorIndexCacheForCurrentChat_ACU(): Promis
                     indexId: manifest.indexId,
                 })
                 : false;
-            logWarn_ACU('[交火向量索引] 当前聊天外置向量文件缺失，已清空对应缓存与聊天索引状态:', message);
+            logWarn_ACU('[交火向量索引] 当前聊天外置向量文件缺失，已清空对应缓存并保留聊天索引状态:', message);
             return {
                 success: true,
                 skipped: true,
-                reason: 'external_files_missing_cache_cleared',
+                reason: 'external_files_missing_cache_cleared_state_retained',
                 chunkCount: 0,
                 indexId: manifest.indexId,
                 error: message,
@@ -139,11 +123,11 @@ export async function preloadSummaryVectorIndexCacheForCurrentChat_ACU(): Promis
                     indexId: manifest.indexId,
                 })
                 : false;
-            logWarn_ACU('[交火向量索引] 当前聊天外置向量文件校验失败且不可自愈，已清空对应缓存与聊天索引状态:', message);
+            logWarn_ACU('[交火向量索引] 当前聊天外置向量文件校验失败，已清空对应缓存并保留聊天索引状态:', message);
             return {
                 success: true,
                 skipped: true,
-                reason: 'external_files_invalid_cache_cleared',
+                reason: 'external_files_invalid_cache_cleared_state_retained',
                 chunkCount: 0,
                 indexId: manifest.indexId,
                 error: message,

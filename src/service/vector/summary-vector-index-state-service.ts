@@ -35,6 +35,7 @@ function normalizeRows_ACU(rows: any): ChatSummaryVectorIndexRow_ACU[] {
             chunkIds: Array.isArray(row.chunkIds) ? row.chunkIds.map((item: any) => String(item)) : [],
             sourceFingerprint: typeof row.sourceFingerprint === 'string' ? row.sourceFingerprint : undefined,
             shardIds: Array.isArray(row.shardIds) ? row.shardIds.map((item: any) => String(item)) : undefined,
+            chunkKeys: Array.isArray(row.chunkKeys) ? row.chunkKeys.map((item: any) => String(item)) : undefined,
             status: row.status === 'removed' || row.status === 'replaced' ? row.status : 'active',
             updatedAt: typeof row.updatedAt === 'string' ? row.updatedAt : undefined,
         }));
@@ -52,11 +53,15 @@ function normalizeChunks_ACU(chunks: any): ChatSummaryVectorIndexChunk_ACU[] {
             return {
                 chunkId: String(chunk.chunkId),
                 rowKey: String(chunk.rowKey || ''),
+                rowOrder: Number.isFinite(Number(chunk.rowOrder)) ? Number(chunk.rowOrder) : 0,
                 text: String(chunk.text || ''),
                 vector: Array.isArray(chunk.vector) ? chunk.vector.map((item: any) => Number(item)).filter((item: number) => Number.isFinite(item)) : [],
                 sequence: Number.isFinite(Number(chunk.sequence)) ? Number(chunk.sequence) : 0,
+                sourceFingerprint: typeof chunk.sourceFingerprint === 'string' ? chunk.sourceFingerprint : undefined,
+                textHash: typeof chunk.textHash === 'string' ? chunk.textHash : undefined,
                 shardId: typeof chunk.shardId === 'string' ? chunk.shardId : undefined,
                 shardRole,
+                chunkKeys: Array.isArray(chunk.chunkKeys) ? chunk.chunkKeys.map((item: any) => String(item)) : undefined,
             };
         })
         .filter((chunk) => chunk.rowKey && chunk.text);

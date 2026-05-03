@@ -290,7 +290,7 @@ export async function processSummaryVectorIndexBeforeGeneration_ACU(
                         indexId: state.manifest.indexId,
                     });
                 }
-                logWarn_ACU('[交火模式纪要索引] 外置向量文件缺失，已清空缓存与聊天索引状态，跳过本次发送前注入:', message);
+                logWarn_ACU('[交火模式纪要索引] 外置向量文件缺失，已清空缓存并保留聊天索引指针，跳过本次发送前注入:', message);
                 return { success: false, skipped: true, reason: 'external_vector_files_missing' };
             }
             if (isInvalidExternalVectorFileError_ACU(message)) {
@@ -301,7 +301,7 @@ export async function processSummaryVectorIndexBeforeGeneration_ACU(
                         indexId: state.manifest.indexId,
                     });
                 }
-                logWarn_ACU('[交火模式纪要索引] 外置向量文件校验失败且不可自愈，已清空缓存与聊天索引状态，需要重新归档:', message);
+                logWarn_ACU('[交火模式纪要索引] 外置向量文件校验失败，已清空缓存并保留聊天索引指针，等待修复或重归档:', message);
                 return { success: false, skipped: true, reason: 'vector_index_corrupted_rebuild_required' };
             }
             throw error;
