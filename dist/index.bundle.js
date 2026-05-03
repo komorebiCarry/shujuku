@@ -22134,11 +22134,19 @@ $CONTENT
             manifestCount,
         };
     }
-    async function cleanupUnreachableSummaryVectorIndexFiles_ACU() {
+    async function cleanupUnreachableSummaryVectorIndexFiles_ACU(options = {}) {
         const reachability = await collectSummaryVectorIndexReachability_ACU();
         const registry = await loadVectorIndexRegistry_ACU();
         const reachablePathSet = new Set(reachability.reachablePaths);
         const scopePrefixes = new Set();
+        const scopeHints = Array.isArray(options.scopeHints) ? options.scopeHints : [];
+        scopeHints.forEach((hint) => {
+            scopePrefixes.add(buildVectorIndexStableDirectory_ACU({
+                chatKey: String(hint.chatKey || reachability.chatKey),
+                isolationKey: hint.isolationKey,
+                sourceTableKey: hint.sourceTableKey,
+            }));
+        });
         reachability.reachableFiles.forEach((file) => {
             scopePrefixes.add(buildVectorIndexStableDirectory_ACU({
                 chatKey: reachability.chatKey,
@@ -22156,7 +22164,7 @@ $CONTENT
             const path = String(file?.path || '').trim();
             if (!path)
                 continue;
-            const inScope = Array.from(scopePrefixes).some((prefix) => path.startsWith(prefix));
+            const inScope = scopePrefixes.size > 0 && Array.from(scopePrefixes).some((prefix) => path.startsWith(prefix));
             if (!inScope) {
                 retainedPaths.push(path);
                 continue;
@@ -38300,6 +38308,7 @@ $CONTENT
     async function deleteCurrentVectorIndexFromChat_ACU() {
         const snapshot = getAggregatedSummaryVectorIndexSnapshot_ACU();
         const chat = getChatArray_ACU();
+        const scopeHints = new Map();
         let changed = false;
         if (snapshot?.layers?.length) {
             for (const layer of snapshot.layers) {
@@ -38309,6 +38318,15 @@ $CONTENT
                 const tagData = readIsolatedTagData_ACU(message, layer.isolationKey);
                 if (!tagData)
                     continue;
+                const manifest = tagData.summaryVectorIndexManifest || tagData.summaryVectorIndexState?.manifest || null;
+                if (manifest) {
+                    const hint = {
+                        chatKey: manifest.chatKey || currentChatFileIdentifier_ACU,
+                        isolationKey: manifest.isolationKey || layer.isolationKey,
+                        sourceTableKey: manifest.sourceTableKey || getCurrentSummaryVectorIndexSourceTableKey_ACU(),
+                    };
+                    scopeHints.set(`${hint.chatKey || ''}\n${hint.isolationKey}\n${hint.sourceTableKey}`, hint);
+                }
                 assignSummaryVectorIndexStateToTagData_ACU(tagData, null);
                 writeIsolatedTagData_ACU(message, layer.isolationKey, tagData);
                 changed = true;
@@ -38317,7 +38335,7 @@ $CONTENT
         if (changed) {
             await saveChatToHost_ACU();
         }
-        const gcResult = await cleanupUnreachableSummaryVectorIndexFiles_ACU();
+        const gcResult = await cleanupUnreachableSummaryVectorIndexFiles_ACU({ scopeHints: Array.from(scopeHints.values()) });
         return changed || gcResult.deletedPaths.length > 0 || gcResult.failedDeletes.length > 0;
     }
     /**

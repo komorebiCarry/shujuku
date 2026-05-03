@@ -326,6 +326,16 @@ export interface SummaryVectorIndexHealthReport_ACU {
     issues: SummaryVectorIndexHealthIssue_ACU[];
 }
 
+export interface SummaryVectorIndexSafeGcScopeHint_ACU {
+    chatKey?: string;
+    isolationKey: string;
+    sourceTableKey: string;
+}
+
+export interface SummaryVectorIndexSafeGcOptions_ACU {
+    scopeHints?: SummaryVectorIndexSafeGcScopeHint_ACU[];
+}
+
 export interface SummaryVectorIndexSafeGcResult_ACU {
     scannedRegisteredFileCount: number;
     reachableFileCount: number;

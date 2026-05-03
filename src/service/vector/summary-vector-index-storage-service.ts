@@ -32,6 +32,7 @@ import type {
     SummaryVectorIndexReachableFile_ACU,
     SummaryVectorIndexRowIndex_ACU,
     SummaryVectorIndexRowIndexEntry_ACU,
+    SummaryVectorIndexSafeGcOptions_ACU,
     SummaryVectorIndexSafeGcResult_ACU,
     SummaryVectorIndexShard_ACU,
     SummaryVectorIndexStats_ACU,
@@ -429,11 +430,19 @@ export async function collectSummaryVectorIndexReachability_ACU(): Promise<Summa
     };
 }
 
-export async function cleanupUnreachableSummaryVectorIndexFiles_ACU(): Promise<SummaryVectorIndexSafeGcResult_ACU> {
+export async function cleanupUnreachableSummaryVectorIndexFiles_ACU(options: SummaryVectorIndexSafeGcOptions_ACU = {}): Promise<SummaryVectorIndexSafeGcResult_ACU> {
     const reachability = await collectSummaryVectorIndexReachability_ACU();
     const registry = await loadVectorIndexRegistry_ACU();
     const reachablePathSet = new Set(reachability.reachablePaths);
     const scopePrefixes = new Set<string>();
+    const scopeHints = Array.isArray(options.scopeHints) ? options.scopeHints : [];
+    scopeHints.forEach((hint) => {
+        scopePrefixes.add(buildVectorIndexStableDirectory_ACU({
+            chatKey: String(hint.chatKey || reachability.chatKey),
+            isolationKey: hint.isolationKey,
+            sourceTableKey: hint.sourceTableKey,
+        }));
+    });
     reachability.reachableFiles.forEach((file) => {
         scopePrefixes.add(buildVectorIndexStableDirectory_ACU({
             chatKey: reachability.chatKey,
@@ -450,7 +459,7 @@ export async function cleanupUnreachableSummaryVectorIndexFiles_ACU(): Promise<S
     for (const file of registry.files) {
         const path = String(file?.path || '').trim();
         if (!path) continue;
-        const inScope = Array.from(scopePrefixes).some((prefix) => path.startsWith(prefix));
+        const inScope = scopePrefixes.size > 0 && Array.from(scopePrefixes).some((prefix) => path.startsWith(prefix));
         if (!inScope) {
             retainedPaths.push(path);
             continue;

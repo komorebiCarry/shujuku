@@ -84,6 +84,7 @@ function getCurrentSummaryVectorIndexSourceTableKey_ACU(): string {
 async function deleteCurrentVectorIndexFromChat_ACU(): Promise<boolean> {
     const snapshot = getAggregatedSummaryVectorIndexSnapshot_ACU();
     const chat = getChatArray_ACU();
+    const scopeHints = new Map<string, { chatKey?: string; isolationKey: string; sourceTableKey: string }>();
     let changed = false;
 
     if (snapshot?.layers?.length) {
@@ -92,6 +93,15 @@ async function deleteCurrentVectorIndexFromChat_ACU(): Promise<boolean> {
             if (!message || message.is_user) continue;
             const tagData = readIsolatedTagData_ACU(message, layer.isolationKey);
             if (!tagData) continue;
+            const manifest = tagData.summaryVectorIndexManifest || tagData.summaryVectorIndexState?.manifest || null;
+            if (manifest) {
+                const hint = {
+                    chatKey: manifest.chatKey || currentChatFileIdentifier_ACU,
+                    isolationKey: manifest.isolationKey || layer.isolationKey,
+                    sourceTableKey: manifest.sourceTableKey || getCurrentSummaryVectorIndexSourceTableKey_ACU(),
+                };
+                scopeHints.set(`${hint.chatKey || ''}\n${hint.isolationKey}\n${hint.sourceTableKey}`, hint);
+            }
             assignSummaryVectorIndexStateToTagData_ACU(tagData, null);
             writeIsolatedTagData_ACU(message, layer.isolationKey, tagData);
             changed = true;
@@ -102,7 +112,7 @@ async function deleteCurrentVectorIndexFromChat_ACU(): Promise<boolean> {
         await saveChatToHost_ACU();
     }
 
-    const gcResult = await cleanupUnreachableSummaryVectorIndexFiles_ACU();
+    const gcResult = await cleanupUnreachableSummaryVectorIndexFiles_ACU({ scopeHints: Array.from(scopeHints.values()) });
     return changed || gcResult.deletedPaths.length > 0 || gcResult.failedDeletes.length > 0;
 }
 
