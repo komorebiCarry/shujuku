@@ -36,7 +36,8 @@ import type {
 import { SUMMARY_VECTOR_INDEX_MANIFEST_VERSION_ACU } from './summary-vector-index-types';
 
 const DEFAULT_SHARD_CHUNK_LIMIT_ACU = 128;
-const SUMMARY_VECTOR_INDEX_SNAPSHOT_RETENTION_LIMIT_ACU = 5;
+// 只保留最新一版版本化快照；当前 manifest.indexId 仍由清理逻辑强制保留。
+const SUMMARY_VECTOR_INDEX_SNAPSHOT_RETENTION_LIMIT_ACU = 1;
 
 export interface PersistSummaryVectorIndexExternalOptions_ACU {
     chatKey?: string;
