@@ -269,6 +269,10 @@ export interface SummaryVectorIndexStats_ACU {
     tombstoneChunkCount: number;
     externalTotalBytes: number;
     cacheTotalBytes: number;
+    tempCacheBytes?: number;
+    tempCacheCount?: number;
+    hotCacheBytes?: number;
+    hotCacheCount?: number;
     updatedAt: string;
     error?: string;
 }

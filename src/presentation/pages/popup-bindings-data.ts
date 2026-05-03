@@ -24,7 +24,7 @@ import { getTemplatePreset_ACU, applyTemplatePresetToCurrent_ACU, applyTemplateS
 import { getChatSheetGuideDataForIsolationKey_ACU, getCurrentChatTemplateScopeState_ACU, sanitizeTemplateSnapshotForChat_ACU } from '../../service/template/chat-scope';
 import { loadTemplatePresetSelect_ACU } from '../components/template-preset-ui';
 import { openNewVisualizer_ACU } from './visualizer';
-import { deleteLocalDataInChat_ACU, exportCurrentJsonData_ACU, exportTableTemplate_ACU, importTableTemplate_ACU, overrideLatestLayerWithTemplate_ACU, resetAllToDefaults_ACU, resetTableTemplate_ACU } from '../triggers/data-admin-ui';
+import { deleteLocalDataInChat_ACU, exportCurrentJsonData_ACU, exportTableTemplate_ACU, importTableTemplate_ACU, migrateLegacySummaryVectorIndex_ACU, overrideLatestLayerWithTemplate_ACU, resetAllToDefaults_ACU, resetTableTemplate_ACU } from '../triggers/data-admin-ui';
 import { exportCombinedSettings_ACU, handleManualMergeSummary_ACU } from '../triggers/update-trigger';
 import { formatJsonToReadable_ACU } from '../../service/runtime/helpers-remaining';
 import { appendExcludeRuleRow_ACU, readExcludeRulesFromRows_ACU } from '../components/optimization-ui';
@@ -38,6 +38,7 @@ import { getCurrentWorldbookConfig_ACU } from '../../service/settings/settings-r
 import { syncManualUpdateButtonAvailability_ACU } from '../components/status-display';
 import { cleanupUnreachableSummaryVectorIndexFiles_ACU, getSummaryVectorIndexStats_ACU, inspectSummaryVectorIndexHealth_ACU } from '../../service/vector/summary-vector-index-storage-service';
 import { clearVectorIndexTempCache_ACU } from '../../data/storage/vector-index-temp-cache';
+import { clearSummaryVectorHotCache_ACU, deleteSummaryVectorHotCacheByScope_ACU } from '../../data/storage/vector-index-hot-cache';
 import { getChatArray_ACU, getLastMessageIndex_ACU, saveChatToHost_ACU } from '../../service/chat/chat-service';
 import { readIsolatedTagData_ACU, writeIsolatedTagData_ACU } from '../../data/repositories/chat-message-data-repo';
 import { assignSummaryVectorIndexStateToTagData_ACU } from '../../service/vector/summary-vector-index-state-service';
@@ -112,7 +113,11 @@ async function deleteCurrentVectorIndexFromChat_ACU(): Promise<boolean> {
         await saveChatToHost_ACU();
     }
 
-    const gcResult = await cleanupUnreachableSummaryVectorIndexFiles_ACU({ scopeHints: Array.from(scopeHints.values()) });
+    const scopeHintList = Array.from(scopeHints.values());
+    for (const hint of scopeHintList) {
+        await deleteSummaryVectorHotCacheByScope_ACU(hint);
+    }
+    const gcResult = await cleanupUnreachableSummaryVectorIndexFiles_ACU({ scopeHints: scopeHintList });
     return changed || gcResult.deletedPaths.length > 0 || gcResult.failedDeletes.length > 0;
 }
 
@@ -156,6 +161,7 @@ export async function bindDataEvents_ACU(): Promise<void> {
       const $vectorIndexHealthCheckButton_ACU = $popupInstance_ACU.find(`#${SCRIPT_ID_PREFIX_ACU}-vector-index-health-check`);
       const $vectorIndexClearCacheButton_ACU = $popupInstance_ACU.find(`#${SCRIPT_ID_PREFIX_ACU}-vector-index-clear-cache`);
       const $vectorIndexDeleteCurrentButton_ACU = $popupInstance_ACU.find(`#${SCRIPT_ID_PREFIX_ACU}-vector-index-delete-current`);
+      const $vectorIndexMigrateLegacyButton_ACU = $popupInstance_ACU.find(`#${SCRIPT_ID_PREFIX_ACU}-vector-index-migrate-legacy`);
       const $buildVectorIndexNowButton_ACU = $popupInstance_ACU.find(`#${SCRIPT_ID_PREFIX_ACU}-build-vector-index-now`);
 
       const syncSummaryVectorIndexModeToggles_ACU = (modeEnabled: boolean): void => {
@@ -232,8 +238,9 @@ export async function bindDataEvents_ACU(): Promise<void> {
       if ($vectorIndexClearCacheButton_ACU.length) {
           $vectorIndexClearCacheButton_ACU.off('click.acu_vector_index').on('click.acu_vector_index', async () => {
               await clearVectorIndexTempCache_ACU();
+              await clearSummaryVectorHotCache_ACU();
               await refreshVectorIndexStatsPanel_ACU();
-              showToastr_ACU('success', '交火模式临时缓存已清空。');
+              showToastr_ACU('success', '交火模式临时缓存与热缓存已清空。');
           });
       }
       if ($buildVectorIndexNowButton_ACU.length) {
@@ -270,6 +277,32 @@ export async function bindDataEvents_ACU(): Promise<void> {
                   showToastr_ACU('error', `交火索引快照重建失败: ${e?.message || '未知错误'}`);
               } finally {
                   $buildVectorIndexNowButton_ACU.prop('disabled', false).html('<i class="fa-solid fa-brain"></i> 立即重建交火索引快照');
+              }
+          });
+      }
+      if ($vectorIndexMigrateLegacyButton_ACU.length) {
+          $vectorIndexMigrateLegacyButton_ACU.off('click.acu_vector_index_migrate').on('click.acu_vector_index_migrate', async () => {
+              $vectorIndexMigrateLegacyButton_ACU.prop('disabled', true).text('正在迁移...');
+              try {
+                  const report = await inspectSummaryVectorIndexHealth_ACU();
+                  const legacyCount = report.legacyManifestCount || 0;
+                  if (legacyCount === 0) {
+                      showToastr_ACU('info', '当前没有可迁移的旧交火索引。');
+                      return;
+                  }
+                  const result = await migrateLegacySummaryVectorIndex_ACU();
+                  await refreshVectorIndexStatsPanel_ACU();
+                  if (result.success && !result.skipped) {
+                      showToastr_ACU('success', `旧交火索引非破坏迁移完成：${result.indexedRowCount || 0} 行，${result.chunkCount || 0} 个 chunks。旧楼层引用保持不变。`);
+                      return;
+                  }
+                  const reasonText = result.errors?.length ? result.errors.join('；') : (result.reason || '无可迁移内容');
+                  showToastr_ACU(result.success ? 'info' : 'warning', `旧交火索引迁移未执行：${reasonText}`);
+              } catch (e: any) {
+                  logError_ACU('旧交火索引迁移按钮执行失败:', e);
+                  showToastr_ACU('error', `旧交火索引迁移失败: ${e?.message || '未知错误'}`);
+              } finally {
+                  $vectorIndexMigrateLegacyButton_ACU.prop('disabled', false).text('非破坏迁移旧索引');
               }
           });
       }

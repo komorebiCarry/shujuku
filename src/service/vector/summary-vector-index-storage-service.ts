@@ -20,6 +20,12 @@ import {
     getVectorIndexCachedShard_ACU,
     putVectorIndexCachedShard_ACU,
 } from '../../data/storage/vector-index-temp-cache';
+import {
+    deleteSummaryVectorHotCacheByIndex_ACU,
+    estimateSummaryVectorHotCache_ACU,
+    getSummaryVectorHotCacheChunks_ACU,
+    putSummaryVectorHotCacheChunks_ACU,
+} from '../../data/storage/vector-index-hot-cache';
 import type {
     ChatSummaryVectorIndexChunk_ACU,
     ChatSummaryVectorIndexManifest_ACU,
@@ -295,7 +301,95 @@ async function cleanupPreviousManifest_ACU(previousManifest: ChatSummaryVectorIn
     await deleteVectorIndexCacheByIndex_ACU(previousManifest.indexId);
 }
 
+export function normalizeSummaryVectorIndexManifestForRead_ACU(
+    manifest: ChatSummaryVectorIndexManifest_ACU | null | undefined,
+): ChatSummaryVectorIndexManifest_ACU | null {
+    if (!manifest || typeof manifest !== 'object') return null;
+    const files = Array.isArray(manifest.files)
+        ? manifest.files.filter((file) => file && typeof file === 'object' && String(file.path || '').trim())
+        : [];
+    const batchRefs = Array.isArray(manifest.batchRefs)
+        ? manifest.batchRefs.map((batch) => ({
+            ...batch,
+            files: Array.isArray(batch?.files)
+                ? batch.files.filter((file) => file && typeof file === 'object' && String(file.path || '').trim())
+                : [],
+            rowKeys: Array.isArray(batch?.rowKeys) ? batch.rowKeys.map((item) => String(item || '')).filter(Boolean) : [],
+            chunkIds: Array.isArray(batch?.chunkIds) ? batch.chunkIds.map((item) => String(item || '')).filter(Boolean) : [],
+            status: batch?.status || 'ready',
+        }))
+        : [];
+    const contentAddressed = manifest.contentAddressed && typeof manifest.contentAddressed === 'object'
+        ? {
+            ...manifest.contentAddressed,
+            chunkRefs: Array.isArray(manifest.contentAddressed.chunkRefs)
+                ? manifest.contentAddressed.chunkRefs.filter((ref) => ref && String(ref.path || '').trim() && String(ref.chunkKey || '').trim())
+                : [],
+            activeChunkKeys: Array.isArray(manifest.contentAddressed.activeChunkKeys)
+                ? manifest.contentAddressed.activeChunkKeys.map((item) => String(item || '')).filter(Boolean)
+                : [],
+        }
+        : undefined;
+    const activeRowKeys = Array.isArray(manifest.snapshot?.activeRowKeys)
+        ? manifest.snapshot!.activeRowKeys.map((item) => String(item || '')).filter(Boolean)
+        : [];
+    const activeChunkIds = Array.isArray(manifest.snapshot?.activeChunkIds)
+        ? manifest.snapshot!.activeChunkIds.map((item) => String(item || '')).filter(Boolean)
+        : undefined;
+    const removedRowKeys = Array.isArray(manifest.snapshot?.removedRowKeys)
+        ? manifest.snapshot!.removedRowKeys.map((item) => String(item || '')).filter(Boolean)
+        : [];
+    const replacedRowKeys = Array.isArray(manifest.snapshot?.replacedRowKeys)
+        ? manifest.snapshot!.replacedRowKeys.map((item) => String(item || '')).filter(Boolean)
+        : [];
+    const batchIds = Array.isArray(manifest.snapshot?.batchIds)
+        ? manifest.snapshot!.batchIds.map((item) => String(item || '')).filter(Boolean)
+        : batchRefs.map((batch) => String(batch.batchId || '')).filter(Boolean);
+    const normalized: ChatSummaryVectorIndexManifest_ACU = {
+        ...manifest,
+        version: Number.isFinite(Number(manifest.version)) ? Number(manifest.version) : 1,
+        backend: 'st-files',
+        status: manifest.status || 'ready',
+        indexId: String(manifest.indexId || ''),
+        chatKey: String(manifest.chatKey || currentChatFileIdentifier_ACU || 'current-chat'),
+        isolationKey: String(manifest.isolationKey || getCurrentIsolationKey_ACU() || 'default'),
+        snapshotMessageId: String(manifest.snapshotMessageId || ''),
+        sourceTableKey: String(manifest.sourceTableKey || 'summary'),
+        sourceTableName: String(manifest.sourceTableName || '纪要表'),
+        indexedAt: String(manifest.indexedAt || manifest.updatedAt || new Date().toISOString()),
+        updatedAt: String(manifest.updatedAt || manifest.indexedAt || new Date().toISOString()),
+        rowCount: Math.max(0, Math.floor(Number(manifest.rowCount) || 0)),
+        chunkCount: Math.max(0, Math.floor(Number(manifest.chunkCount) || 0)),
+        skippedRowCount: Math.max(0, Math.floor(Number(manifest.skippedRowCount) || 0)),
+        embeddingModel: String(manifest.embeddingModel || ''),
+        dimension: Math.max(0, Math.floor(Number(manifest.dimension) || 0)),
+        rowsFile: String(manifest.rowsFile || ''),
+        tombstoneFile: String(manifest.tombstoneFile || ''),
+        manifestFile: String(manifest.manifestFile || ''),
+        files,
+        baseShardCount: Math.max(0, Math.floor(Number(manifest.baseShardCount) || files.filter((file) => file.role === 'base_shard').length)),
+        deltaShardCount: Math.max(0, Math.floor(Number(manifest.deltaShardCount) || files.filter((file) => file.role === 'delta_shard').length)),
+        tombstoneRowCount: Math.max(0, Math.floor(Number(manifest.tombstoneRowCount) || 0)),
+        tombstoneChunkCount: Math.max(0, Math.floor(Number(manifest.tombstoneChunkCount) || 0)),
+        externalTotalBytes: Math.max(0, Math.floor(Number(manifest.externalTotalBytes) || sumUniqueVectorIndexFileBytes_ACU(files))),
+        snapshot: manifest.snapshot ? {
+            revision: Math.max(1, Math.floor(Number(manifest.snapshot.revision) || 1)),
+            mode: 'snapshot',
+            parentIndexIds: Array.isArray(manifest.snapshot.parentIndexIds) ? manifest.snapshot.parentIndexIds.map((item) => String(item || '')).filter(Boolean) : [],
+            activeRowKeys,
+            activeChunkIds,
+            removedRowKeys,
+            replacedRowKeys,
+            batchIds,
+        } : undefined,
+        batchRefs,
+        ...(contentAddressed ? { contentAddressed } : {}),
+    };
+    return normalized.indexId ? normalized : null;
+}
+
 function collectManifestFilePaths_ACU(manifest: ChatSummaryVectorIndexManifest_ACU | null | undefined): Set<string> {
+    manifest = normalizeSummaryVectorIndexManifestForRead_ACU(manifest);
     const paths = new Set<string>();
     const addPath = (path: any): void => {
         const normalizedPath = String(path || '').trim();
@@ -309,6 +403,7 @@ function collectManifestFilePaths_ACU(manifest: ChatSummaryVectorIndexManifest_A
     addPath(manifest?.tombstoneFile);
     (manifest?.files || []).forEach(addFile);
     (manifest?.batchRefs || []).forEach((batch) => (batch.files || []).forEach(addFile));
+    (manifest?.contentAddressed?.chunkRefs || []).forEach((ref) => addPath(ref.path));
     return paths;
 }
 
@@ -365,9 +460,11 @@ async function cleanupSnapshotScopeFilesExcept_ACU(
 }
 
 function collectManifestReachableFiles_ACU(
-    manifest: ChatSummaryVectorIndexManifest_ACU,
+    rawManifest: ChatSummaryVectorIndexManifest_ACU,
     context: { messageIndex: number; isolationKey: string },
 ): SummaryVectorIndexReachableFile_ACU[] {
+    const manifest = normalizeSummaryVectorIndexManifestForRead_ACU(rawManifest);
+    if (!manifest) return [];
     const reachableFiles: SummaryVectorIndexReachableFile_ACU[] = [];
     const seen = new Set<string>();
     const pushFile = (file: Partial<SummaryVectorIndexReachableFile_ACU> & { path?: string }): void => {
@@ -879,6 +976,7 @@ export async function persistSummaryVectorIndexSnapshot_ACU(
             rows: rowsWithShardIds,
             manifest,
         };
+        await putSummaryVectorHotCacheChunks_ACU({ manifest, chunks });
         await registerVectorIndexFiles_ACU(uploadedFiles);
         try {
             await cleanupVersionedSnapshotRetention_ACU(manifest);
@@ -970,14 +1068,40 @@ async function loadChunksFromContentAddressedRefs_ACU(
 return chunks.sort((left, right) => left.sequence - right.sequence || left.chunkId.localeCompare(right.chunkId));
 }
 
+function sortAndDedupeVectorChunks_ACU(chunks: ChatSummaryVectorIndexChunk_ACU[]): ChatSummaryVectorIndexChunk_ACU[] {
+    const byChunkId = new Map<string, ChatSummaryVectorIndexChunk_ACU>();
+    (Array.isArray(chunks) ? chunks : []).forEach((chunk) => {
+        if (!chunk?.chunkId || !chunk.rowKey || !Array.isArray(chunk.vector) || chunk.vector.length === 0) return;
+        byChunkId.set(chunk.chunkId, { ...chunk });
+    });
+    return Array.from(byChunkId.values()).sort((left, right) => left.sequence - right.sequence || left.chunkId.localeCompare(right.chunkId));
+}
+
+export function isLegacySummaryVectorIndexManifest_ACU(manifest: ChatSummaryVectorIndexManifest_ACU | null | undefined): boolean {
+    const normalized = normalizeSummaryVectorIndexManifestForRead_ACU(manifest);
+    if (!normalized) return false;
+    if (normalized.contentAddressed?.chunkRefs?.length) return false;
+    return normalized.files.some((file) => file.role === 'base_shard' || file.role === 'delta_shard')
+        || normalized.batchRefs.some((batch) => (batch.files || []).some((file) => file.role === 'base_shard' || file.role === 'delta_shard'));
+}
+
 export async function loadSummaryVectorIndexChunksFromManifest_ACU(
     manifest: ChatSummaryVectorIndexManifest_ACU | null | undefined,
     options: LoadSummaryVectorIndexChunksOptions_ACU = {},
 ): Promise<ChatSummaryVectorIndexChunk_ACU[]> {
+    manifest = normalizeSummaryVectorIndexManifestForRead_ACU(manifest);
     if (!manifest) return [];
     if (manifest.contentAddressed?.chunkRefs?.length) {
+        if (options.preferExternalFiles !== true) {
+            const cachedChunks = await getSummaryVectorHotCacheChunks_ACU({ manifest });
+            if (cachedChunks?.length) {
+                logDebug_ACU('[交火向量索引] 已从 IndexedDB 热缓存加载内容寻址向量块。');
+                return cachedChunks;
+            }
+        }
         const chunks = await loadChunksFromContentAddressedRefs_ACU(manifest, options);
-        logDebug_ACU('[交火向量索引] 已按内容寻址 manifest 加载向量块。');
+        await putSummaryVectorHotCacheChunks_ACU({ manifest, chunks });
+        logDebug_ACU('[交火向量索引] 已按内容寻址 manifest 加载向量块并回填热缓存。');
         return chunks;
     }
     if (Array.isArray(manifest.batchRefs) && manifest.batchRefs.length > 0) {
@@ -995,14 +1119,12 @@ export async function loadSummaryVectorIndexChunksFromManifest_ACU(
                 chunks.push(chunk);
             });
         }
-        const byChunkId = new Map<string, ChatSummaryVectorIndexChunk_ACU>();
-        chunks.forEach((chunk) => byChunkId.set(chunk.chunkId, chunk));
         logDebug_ACU('[交火向量索引] 已按最新快照 manifest 拼接批次向量库。');
-        return Array.from(byChunkId.values()).sort((left, right) => left.sequence - right.sequence || left.chunkId.localeCompare(right.chunkId));
+        return sortAndDedupeVectorChunks_ACU(chunks);
     }
     if (!manifest.files?.length) return [];
     const shardRefs = manifest.files.filter((file) => file.role === 'base_shard' || file.role === 'delta_shard');
-    return loadChunksFromShardRefs_ACU(manifest.indexId, shardRefs, options);
+    return sortAndDedupeVectorChunks_ACU(await loadChunksFromShardRefs_ACU(manifest.indexId, shardRefs, options));
 }
 
 export async function deleteSummaryVectorIndexExternal_ACU(manifest: ChatSummaryVectorIndexManifest_ACU | null | undefined): Promise<void> {
@@ -1011,6 +1133,7 @@ export async function deleteSummaryVectorIndexExternal_ACU(manifest: ChatSummary
     await cleanupManifestFilesExcept_ACU(manifest, retainedPaths);
     if (manifest.indexId) {
         await deleteVectorIndexCacheByIndex_ACU(manifest.indexId);
+        await deleteSummaryVectorHotCacheByIndex_ACU(manifest.indexId);
     }
 }
 
@@ -1164,7 +1287,10 @@ export async function inspectSummaryVectorIndexHealth_ACU(): Promise<SummaryVect
 }
 
 export async function getSummaryVectorIndexStats_ACU(manifest: ChatSummaryVectorIndexManifest_ACU | null | undefined): Promise<SummaryVectorIndexStats_ACU> {
-    const cache = await estimateVectorIndexTempCache_ACU(manifest?.indexId);
+    manifest = normalizeSummaryVectorIndexManifestForRead_ACU(manifest);
+    const tempCache = await estimateVectorIndexTempCache_ACU(manifest?.indexId);
+    const hotCache = await estimateSummaryVectorHotCache_ACU(manifest?.indexId);
+    const cacheTotalBytes = tempCache.bytes + hotCache.bytes;
     if (!manifest) {
         return {
             status: 'none',
@@ -1177,7 +1303,11 @@ export async function getSummaryVectorIndexStats_ACU(manifest: ChatSummaryVector
             tombstoneRowCount: 0,
             tombstoneChunkCount: 0,
             externalTotalBytes: 0,
-            cacheTotalBytes: cache.bytes,
+            cacheTotalBytes,
+            tempCacheBytes: tempCache.bytes,
+            tempCacheCount: tempCache.count,
+            hotCacheBytes: hotCache.bytes,
+            hotCacheCount: hotCache.count,
             updatedAt: '',
         };
     }
@@ -1192,7 +1322,11 @@ export async function getSummaryVectorIndexStats_ACU(manifest: ChatSummaryVector
         tombstoneRowCount: manifest.tombstoneRowCount,
         tombstoneChunkCount: manifest.tombstoneChunkCount,
         externalTotalBytes: manifest.externalTotalBytes,
-        cacheTotalBytes: cache.bytes,
+        cacheTotalBytes,
+        tempCacheBytes: tempCache.bytes,
+        tempCacheCount: tempCache.count,
+        hotCacheBytes: hotCache.bytes,
+        hotCacheCount: hotCache.count,
         updatedAt: manifest.updatedAt,
         error: manifest.error,
     };

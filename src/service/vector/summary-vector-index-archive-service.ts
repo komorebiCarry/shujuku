@@ -30,7 +30,9 @@ import {
 } from './summary-vector-index-state-service';
 import {
     deleteSummaryVectorIndexExternal_ACU,
+    isLegacySummaryVectorIndexManifest_ACU,
     loadSummaryVectorIndexChunksFromManifest_ACU,
+    normalizeSummaryVectorIndexManifestForRead_ACU,
     persistSummaryVectorIndexSnapshot_ACU,
 } from './summary-vector-index-storage-service';
 import { hashUserInput_ACU, isSummaryOrOutlineTable_ACU, logDebug_ACU, logWarn_ACU } from '../../shared/utils';
@@ -762,6 +764,145 @@ async function clearSummaryVectorIndexCheckpoint_ACU(params: {
     await saveChatToHost_ACU();
     logDebug_ACU(`[纪要向量索引] 当前纪要表无有效条目，已清理目标楼层交火索引 manifest: messageIndex=${params.targetMessageIndex}`);
     return true;
+}
+
+export async function migrateLegacySummaryVectorIndexToContentAddressed_ACU(options: { saveChatAfterWrite?: boolean } = {}): Promise<SummaryVectorIndexArchiveResult_ACU> {
+    const config = getEffectiveSummaryVectorIndexConfig_ACU();
+    const validation = validateSummaryVectorIndexConfig_ACU(config);
+    if (!validation.valid) {
+        return buildResult_ACU({
+            success: false,
+            reason: 'summary_vector_index_config_invalid',
+            errors: validation.errors,
+        });
+    }
+
+    const aggregatedSnapshot = await hydrateAggregatedSummaryVectorIndexSnapshot_ACU(getAggregatedSummaryVectorIndexSnapshot_ACU());
+    const latestLayer = aggregatedSnapshot?.layers?.[aggregatedSnapshot.layers.length - 1] || null;
+    const latestState = cloneSummaryVectorIndexState_ACU(latestLayer?.summaryVectorIndexState || aggregatedSnapshot?.summaryVectorIndexState);
+    const manifest = normalizeSummaryVectorIndexManifestForRead_ACU(latestState?.manifest || latestLayer?.tagData?.summaryVectorIndexManifest || null);
+    if (!latestLayer || !latestState || !manifest) {
+        return buildResult_ACU({
+            success: true,
+            skipped: true,
+            reason: 'no_manifest',
+        });
+    }
+    if (!isLegacySummaryVectorIndexManifest_ACU(manifest)) {
+        return buildResult_ACU({
+            success: true,
+            skipped: true,
+            indexedRowCount: latestState.rowCount || 0,
+            chunkCount: latestState.chunkCount || 0,
+            messageIndex: latestLayer.messageIndex,
+            summaryKey: manifest.sourceTableKey,
+            reason: 'already_content_addressed',
+        });
+    }
+
+    const chunks = await loadSummaryVectorIndexChunksFromManifest_ACU(manifest, { preferExternalFiles: true });
+    const chunksById = new Map(chunks.map((chunk) => [chunk.chunkId, chunk]));
+    const activeRowKeys = new Set(manifest.snapshot?.activeRowKeys || []);
+    const activeChunkIds = new Set(manifest.snapshot?.activeChunkIds || []);
+    const rows = (Array.isArray(latestState.rows) ? latestState.rows : [])
+        .filter((row) => row && row.status !== 'removed')
+        .filter((row) => activeRowKeys.size === 0 || activeRowKeys.has(row.rowKey))
+        .map((row) => {
+            const chunkIds = (Array.isArray(row.chunkIds) ? row.chunkIds : [])
+                .filter((chunkId) => chunksById.has(chunkId))
+                .filter((chunkId) => activeChunkIds.size === 0 || activeChunkIds.has(chunkId));
+            return { ...row, chunkIds };
+        })
+        .filter((row) => row.rowKey && row.rowId && row.summary && row.indexCode && row.chunkIds.length > 0);
+    const validChunkIds = new Set(rows.flatMap((row) => row.chunkIds));
+    const finalChunks = chunks
+        .filter((chunk) => validChunkIds.has(chunk.chunkId))
+        .map((chunk, index) => ({ ...chunk, sequence: index }));
+
+    if (rows.length === 0 || finalChunks.length === 0) {
+        return buildResult_ACU({
+            success: false,
+            messageIndex: latestLayer.messageIndex,
+            summaryKey: manifest.sourceTableKey,
+            reason: 'legacy_manifest_missing_rows_or_chunks',
+            errors: ['旧交火索引可读取外置分片，但楼层缺少可迁移的行状态；为避免破坏旧数据，已拒绝半迁移。'],
+        });
+    }
+
+    const chat = getChatArray_ACU();
+    const message = chat?.[latestLayer.messageIndex];
+    if (!message || message.is_user) {
+        return buildResult_ACU({
+            success: false,
+            reason: 'target_message_invalid',
+            errors: ['旧交火索引所在楼层不存在或不是 AI 楼层，无法安全写入迁移 manifest。'],
+        });
+    }
+
+    const isolationKey = latestLayer.isolationKey || getCurrentIsolationKey_ACU();
+    const existingTagData = readIsolatedTagData_ACU(message, isolationKey) || {
+        independentData: {},
+        modifiedKeys: [],
+        updateGroupKeys: [],
+    };
+    const indexedAt = new Date().toISOString();
+    const persisted = await persistSummaryVectorIndexSnapshot_ACU({
+        chatKey: manifest.chatKey || currentChatFileIdentifier_ACU,
+        isolationKey,
+        previousManifest: manifest,
+        rows,
+        chunks: finalChunks,
+        snapshotMessageId: manifest.snapshotMessageId || latestState.snapshotMessageId || String(latestLayer.messageIndex),
+        sourceTableKey: manifest.sourceTableKey || latestState.sourceTableKey || 'summary',
+        sourceTableName: manifest.sourceTableName || latestState.sourceTableName || '纪要表',
+        indexedAt,
+        skippedRowCount: latestState.skippedRowCount || manifest.skippedRowCount || 0,
+        embeddingModel: manifest.embeddingModel || config.embeddingModel,
+        activeRowKeys: rows.map((row) => row.rowKey),
+        activeChunkIds: finalChunks.map((chunk) => chunk.chunkId),
+        removedRowKeys: manifest.snapshot?.removedRowKeys || [],
+        replacedRowKeys: [],
+        parentIndexIds: manifest.indexId ? [manifest.indexId] : [],
+        snapshotRevision: manifest.snapshot?.revision || 0,
+        sourceMessageIndex: latestLayer.messageIndex,
+    });
+
+    const nextIsolatedData = cloneIsolatedData_ACU(message);
+    const nextTagData = {
+        independentData: existingTagData.independentData || {},
+        modifiedKeys: Array.isArray(existingTagData.modifiedKeys) ? [...existingTagData.modifiedKeys] : [],
+        updateGroupKeys: Array.isArray(existingTagData.updateGroupKeys) ? [...existingTagData.updateGroupKeys] : [],
+        ...(existingTagData.vectorMemoryState ? { vectorMemoryState: existingTagData.vectorMemoryState } : {}),
+        ...(existingTagData._acu_base_state ? { _acu_base_state: existingTagData._acu_base_state } : {}),
+    } as any;
+    assignSummaryVectorIndexStateToTagData_ACU(nextTagData, persisted.state, persisted.manifest);
+    nextIsolatedData[isolationKey] = nextTagData;
+    message.TavernDB_ACU_IsolatedData = nextIsolatedData;
+    writeIsolatedTagData_ACU(message, isolationKey, nextTagData);
+    writeMessageIdentity_ACU(message, {
+        enabled: settings_ACU.dataIsolationEnabled,
+        code: settings_ACU.dataIsolationCode,
+    });
+    writeLegacyCompatData_ACU(
+        message,
+        nextTagData.independentData || {},
+        nextTagData.modifiedKeys || [],
+        nextTagData.updateGroupKeys || [],
+    );
+    if (options.saveChatAfterWrite !== false) {
+        await saveChatToHost_ACU();
+    }
+    logDebug_ACU(`[纪要向量索引] 已非破坏迁移旧 shard manifest 到内容寻址协议：old=${manifest.indexId}, new=${persisted.manifest.indexId}, rows=${persisted.manifest.rowCount}, chunks=${persisted.manifest.chunkCount}`);
+    return buildResult_ACU({
+        success: true,
+        skipped: false,
+        indexedRowCount: persisted.manifest.rowCount,
+        skippedRowCount: persisted.manifest.skippedRowCount,
+        chunkCount: persisted.manifest.chunkCount,
+        messageIndex: latestLayer.messageIndex,
+        summaryKey: persisted.manifest.sourceTableKey,
+        reason: 'legacy_manifest_migrated_non_destructive',
+    });
 }
 
 export async function archiveSummaryVectorIndexNow_ACU(options: SummaryVectorIndexArchiveOptions_ACU = {}): Promise<SummaryVectorIndexArchiveResult_ACU> {

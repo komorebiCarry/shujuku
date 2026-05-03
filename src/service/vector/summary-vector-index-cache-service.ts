@@ -1,5 +1,6 @@
 import { logDebug_ACU, logWarn_ACU } from '../../shared/utils';
 import { deleteVectorIndexCacheByIndex_ACU } from '../../data/storage/vector-index-temp-cache';
+import { deleteSummaryVectorHotCacheByIndex_ACU } from '../../data/storage/vector-index-hot-cache';
 import { getLatestSummaryVectorIndexSnapshotState_ACU } from './summary-vector-index-state-service';
 import { loadSummaryVectorIndexChunksFromManifest_ACU } from './summary-vector-index-storage-service';
 
@@ -27,7 +28,9 @@ function normalizeErrorMessage_ACU(error: unknown): string {
 
 export function isMissingExternalVectorFileError_ACU(message: string): boolean {
     const text = String(message || '').toLowerCase();
-    return text.includes('交火向量索引分片读取失败')
+    const isVectorFileReadFailure = text.includes('交火向量索引分片读取失败')
+        || text.includes('交火向量索引内容块读取失败');
+    return isVectorFileReadFailure
         && (text.includes('404') || text.includes('not found') || text.includes('读取失败'));
 }
 
@@ -39,6 +42,7 @@ export async function clearLatestSummaryVectorIndexStateForMissingExternalFiles_
     void params.messageIndex;
     void params.isolationKey;
     await deleteVectorIndexCacheByIndex_ACU(params.indexId);
+    await deleteSummaryVectorHotCacheByIndex_ACU(params.indexId);
     return false;
 }
 
@@ -50,13 +54,16 @@ export async function clearLatestSummaryVectorIndexStateForInvalidExternalFiles_
     void params.messageIndex;
     void params.isolationKey;
     await deleteVectorIndexCacheByIndex_ACU(params.indexId);
+    await deleteSummaryVectorHotCacheByIndex_ACU(params.indexId);
     return false;
 }
 
 export function isInvalidExternalVectorFileError_ACU(message: string): boolean {
     const text = String(message || '').toLowerCase();
     return text.includes('交火向量索引分片身份不匹配')
-        || text.includes('交火向量索引分片校验失败');
+        || text.includes('交火向量索引分片校验失败')
+        || text.includes('交火向量索引内容块身份不匹配')
+        || text.includes('交火向量索引内容块校验失败');
 }
 
 export async function preloadSummaryVectorIndexCacheForCurrentChat_ACU(): Promise<SummaryVectorIndexCachePreloadResult_ACU> {
@@ -86,7 +93,7 @@ export async function preloadSummaryVectorIndexCacheForCurrentChat_ACU(): Promis
         const chunks = await loadSummaryVectorIndexChunksFromManifest_ACU(manifest, {
             preferExternalFiles: true,
         });
-        logDebug_ACU(`[交火向量索引] 当前聊天向量缓存预热完成：indexId=${manifest.indexId}, chunks=${chunks.length}`);
+        logDebug_ACU(`[交火向量索引] 当前聊天向量缓存预热完成：indexId=${manifest.indexId}, chunks=${chunks.length}，已从外置文件恢复热缓存。`);
         return {
             success: true,
             skipped: false,
