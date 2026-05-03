@@ -42186,6 +42186,9 @@ $CONTENT
                             <button id="${SCRIPT_ID_PREFIX_ACU}-build-vector-index-now" class="acu-btn-medium" style="width: 100%; display: flex; align-items: center; justify-content: center; gap: 10px;">
                                 <i class="fa-solid fa-brain"></i> 立即构建交火纪要索引
                             </button>
+                            <button id="${SCRIPT_ID_PREFIX_ACU}-vector-index-health-check" class="acu-btn-medium" style="width: 100%; display: flex; align-items: center; justify-content: center; gap: 10px;">
+                                <i class="fa-solid fa-stethoscope"></i> 健康检查交火索引
+                            </button>
                         </div>
                         <p class="notes" style="text-align: center; margin-top: 10px;">点击上方按钮打开全新的可视化界面，支持直接编辑数据、修改表头及更新参数。</p>
                         <p class="notes" style="text-align: center; margin-top: 6px;">“立即构建交火纪要索引”会把当前纪要表生成外置向量索引文件；后续纪要增删改会同步更新对应索引分片。</p>
