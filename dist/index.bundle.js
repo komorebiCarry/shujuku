@@ -20276,6 +20276,22 @@ $CONTENT
     // 这两个函数混合了数据读写 + UI 同步 + 运行时状态操作，
     // 属于 service 层（业务编排），不是纯 data 层。
     // ═══════════════════════════════════════════════════════════════
+    let settingsStorageReadyForSave_ACU = false;
+    let settingsReloadAfterIdbScheduled_ACU = false;
+    function scheduleSettingsReloadAfterIdbReady_ACU(reason) {
+        if (settingsReloadAfterIdbScheduled_ACU)
+            return;
+        settingsReloadAfterIdbScheduled_ACU = true;
+        _set_pendingSettingsReloadFromIdb_ACU(true);
+        logDebug_ACU(`[设置加载] IndexedDB 配置缓存尚未就绪，暂停本轮加载并等待重载：${reason}`);
+        void ensureConfigIdbCacheLoaded_ACU().then(() => {
+            settingsReloadAfterIdbScheduled_ACU = false;
+            if (pendingSettingsReloadFromIdb_ACU) {
+                _set_pendingSettingsReloadFromIdb_ACU(false);
+                loadSettings_ACU();
+            }
+        });
+    }
     function applyGlobalPlotEnabledSetting_ACU() {
         if (!settings_ACU.plotSettings || typeof settings_ACU.plotSettings !== 'object' || Array.isArray(settings_ACU.plotSettings)) {
             settings_ACU.plotSettings = JSON.parse(JSON.stringify(DEFAULT_PLOT_SETTINGS_ACU));
@@ -20288,6 +20304,16 @@ $CONTENT
         return settings_ACU.plotSettings.enabled;
     }
     function saveSettings_ACU() {
+        if (!settingsStorageReadyForSave_ACU) {
+            if (isIndexedDbAvailable_ACU() && !configIdbCacheLoaded_ACU) {
+                scheduleSettingsReloadAfterIdbReady_ACU('save_before_config_cache_ready');
+            }
+            else {
+                void initTavernSettingsBridge_ACU();
+            }
+            logWarn_ACU('[设置保存] 设置尚未完成可靠加载，已拒绝本次保存以避免默认配置覆盖真实配置。');
+            return { saved: false, storageType: 'memory', warning: '设置仍在加载中，本次保存已被阻止以避免覆盖原配置。请稍后重试。' };
+        }
         // 业务编排：同步隔离码到 globalMeta + 持久化
         const code = normalizeIsolationCode_ACU(settings_ACU?.dataIsolationCode || globalMeta_ACU?.activeIsolationCode || '');
         if (globalMeta_ACU && typeof globalMeta_ACU === 'object') {
@@ -20321,13 +20347,11 @@ $CONTENT
     function loadSettings_ACU() {
         // 确保酒馆设置桥接已就绪（best-effort，不阻塞）
         void initTavernSettingsBridge_ACU();
-        // 尝试预载 IndexedDB 配置缓存（best-effort，不阻塞）
-        void ensureConfigIdbCacheLoaded_ACU().then(() => {
-            if (pendingSettingsReloadFromIdb_ACU) {
-                _set_pendingSettingsReloadFromIdb_ACU(false);
-                loadSettings_ACU();
-            }
-        });
+        if (!configIdbCacheLoaded_ACU && isIndexedDbAvailable_ACU()) {
+            scheduleSettingsReloadAfterIdbReady_ACU('load_before_config_cache_ready');
+            return;
+        }
+        _set_pendingSettingsReloadFromIdb_ACU(false);
         // 可选迁移：把旧 localStorage 的设置/模板搬迁到酒馆设置（迁移开关默认为 false）
         migrateKeyToTavernStorageIfNeeded_ACU(STORAGE_KEY_ALL_SETTINGS_ACU);
         migrateKeyToTavernStorageIfNeeded_ACU(STORAGE_KEY_CUSTOM_TEMPLATE_ACU);
@@ -20335,17 +20359,6 @@ $CONTENT
         loadGlobalMeta_ACU();
         const store = getConfigStorage_ACU();
         const legacySettingsJson = store?.getItem?.(STORAGE_KEY_ALL_SETTINGS_ACU);
-        if (!legacySettingsJson && !configIdbCacheLoaded_ACU && isIndexedDbAvailable_ACU()) {
-            if (!pendingSettingsReloadFromIdb_ACU) {
-                _set_pendingSettingsReloadFromIdb_ACU(true);
-                void ensureConfigIdbCacheLoaded_ACU().then(() => {
-                    if (pendingSettingsReloadFromIdb_ACU) {
-                        _set_pendingSettingsReloadFromIdb_ACU(false);
-                        loadSettings_ACU();
-                    }
-                });
-            }
-        }
         const legacySettingsObj = legacySettingsJson ? safeJsonParse_ACU(legacySettingsJson, null) : null;
         const legacyCode = normalizeIsolationCode_ACU(legacySettingsObj?.dataIsolationCode || '');
         // 2) 一次性迁移：旧版"单份设置/单份模板" -> 当前标识对应 profile
@@ -20517,6 +20530,7 @@ $CONTENT
         }
         // [兼容] 旧标签排除字段自动迁移为新规则组结构
         ensureTagRulesCompat_ACU(settings_ACU);
+        settingsStorageReadyForSave_ACU = true;
         // [交火模式配置] 权威配置存放在 globalMeta.vectorMemoryConfigGlobal（跨 profile 全局）。
         // settings_ACU.vectorMemoryConfig 只保留为运行时投影，兼容旧调用方。
         if (!globalMeta_ACU.vectorMemoryConfigGlobal || typeof globalMeta_ACU.vectorMemoryConfigGlobal !== 'object' || Array.isArray(globalMeta_ACU.vectorMemoryConfigGlobal)) {
@@ -20646,6 +20660,7 @@ $CONTENT
             }
         }
         settings_ACU.vectorMemoryConfig = globalMeta_ACU.vectorMemoryConfigGlobal;
+        settingsStorageReadyForSave_ACU = true;
         refreshDefaultTableTemplateOnce_ACU(activeCode);
         if (shouldPersistSettingsAfterLoad_ACU) {
             saveGlobalMeta_ACU();
