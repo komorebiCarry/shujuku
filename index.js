@@ -20312,7 +20312,12 @@ $CONTENT
                 void initTavernSettingsBridge_ACU();
             }
             logWarn_ACU('[设置保存] 设置尚未完成可靠加载，已拒绝本次保存以避免默认配置覆盖真实配置。');
-            return { saved: false, storageType: 'memory', warning: '设置仍在加载中，本次保存已被阻止以避免覆盖原配置。请稍后重试。' };
+            return {
+                saved: false,
+                storageType: 'memory',
+                code: 'settings_loading',
+                warning: '设置仍在加载中，本次保存已被阻止以避免覆盖原配置。请稍后重试。',
+            };
         }
         // 业务编排：同步隔离码到 globalMeta + 持久化
         const code = normalizeIsolationCode_ACU(settings_ACU?.dataIsolationCode || globalMeta_ACU?.activeIsolationCode || '');
@@ -20330,18 +20335,18 @@ $CONTENT
             if (store && !store._isTavern) {
                 if ((isIndexedDbAvailable_ACU)()) {
                     void (initTavernSettingsBridge_ACU)();
-                    return { saved: true, storageType: 'indexeddb', warning: '当前未连接酒馆设置：已保存到 IndexedDB（仅本浏览器可用）。' };
+                    return { saved: true, storageType: 'indexeddb', code: 'tavern_unavailable', warning: '当前未连接酒馆设置：已保存到 IndexedDB（仅本浏览器可用）。' };
                 }
                 else {
                     void (initTavernSettingsBridge_ACU)();
-                    return { saved: true, storageType: 'memory', warning: '⚠️ 当前未连接酒馆设置且 IndexedDB 不可用，本次修改刷新后会丢失。' };
+                    return { saved: true, storageType: 'memory', code: 'tavern_unavailable', warning: '⚠️ 当前未连接酒馆设置且 IndexedDB 不可用，本次修改刷新后会丢失。' };
                 }
             }
             return { saved: true, storageType: 'tavern' };
         }
         catch (error) {
             logError_ACU('Failed to save settings:', error);
-            return { saved: false, storageType: 'memory', error: '保存设置时发生浏览器存储错误。' };
+            return { saved: false, storageType: 'memory', code: 'storage_error', error: '保存设置时发生浏览器存储错误。' };
         }
     }
     function loadSettings_ACU() {
@@ -29182,13 +29187,20 @@ $CONTENT
     /**
      * 保存设置并根据返回值弹 toast 通知（presentation 层便捷函数）
      * service 层 saveSettings_ACU 只返回结果，UI 通知由此函数处理。
+     *
+     * 后台自动流程可能在设置加载门闸尚未放行时触发保存。那类保护性拒绝必须保留，
+     * 但不能把正常填表/世界书同步流程刷成连续 toast；用户主动保存仍然保留提示。
      */
-    function saveSettingsAndNotify_ACU() {
+    function saveSettingsAndNotify_ACU(options = {}) {
         const result = saveSettings_ACU();
         if (result.error) {
             showToastr_ACU('error', result.error);
         }
         else if (result.warning) {
+            if (options.silentWarnings)
+                return result;
+            if (options.suppressLoadingWarning !== false && result.code === 'settings_loading')
+                return result;
             const toastType = result.storageType === 'memory' ? 'warning' : 'info';
             const timeOut = result.storageType === 'memory' ? 8000 : 6000;
             showToastr_ACU(toastType, result.warning, { timeOut });

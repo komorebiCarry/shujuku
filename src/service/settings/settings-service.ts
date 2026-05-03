@@ -24,6 +24,14 @@ import { getCurrentChatTemplateScopeState_ACU, getGlobalTemplateSnapshotForCurre
 import { safeJsonParse_ACU } from '../../shared/json-helpers';
 import { deepMerge_ACU, ensureSheetOrderNumbers_ACU, logDebug_ACU, logError_ACU, logWarn_ACU } from '../../shared/utils';
 
+export type SaveSettingsResult_ACU = {
+  saved: boolean;
+  storageType: 'tavern' | 'indexeddb' | 'memory';
+  warning?: string;
+  error?: string;
+  code?: 'settings_loading' | 'tavern_unavailable' | 'storage_error';
+};
+
 let settingsStorageReadyForSave_ACU = false;
 let settingsReloadAfterIdbScheduled_ACU = false;
 
@@ -55,7 +63,7 @@ function applyGlobalPlotEnabledSetting_ACU(): boolean {
   return settings_ACU.plotSettings.enabled;
 }
 
-export function saveSettings_ACU(): { saved: boolean; storageType: 'tavern' | 'indexeddb' | 'memory'; warning?: string; error?: string } {
+export function saveSettings_ACU(): SaveSettingsResult_ACU {
   if (!settingsStorageReadyForSave_ACU) {
       if (isIndexedDbAvailable_ACU() && !configIdbCacheLoaded_ACU) {
           scheduleSettingsReloadAfterIdbReady_ACU('save_before_config_cache_ready');
@@ -63,7 +71,12 @@ export function saveSettings_ACU(): { saved: boolean; storageType: 'tavern' | 'i
           void initTavernSettingsBridge_ACU();
       }
       logWarn_ACU('[设置保存] 设置尚未完成可靠加载，已拒绝本次保存以避免默认配置覆盖真实配置。');
-      return { saved: false, storageType: 'memory', warning: '设置仍在加载中，本次保存已被阻止以避免覆盖原配置。请稍后重试。' };
+      return {
+          saved: false,
+          storageType: 'memory',
+          code: 'settings_loading',
+          warning: '设置仍在加载中，本次保存已被阻止以避免覆盖原配置。请稍后重试。',
+      };
   }
 
   // 业务编排：同步隔离码到 globalMeta + 持久化
@@ -83,16 +96,16 @@ export function saveSettings_ACU(): { saved: boolean; storageType: 'tavern' | 'i
       if (store && !store._isTavern) {
           if ((isIndexedDbAvailable_ACU)()) {
               void (initTavernSettingsBridge_ACU)();
-              return { saved: true, storageType: 'indexeddb', warning: '当前未连接酒馆设置：已保存到 IndexedDB（仅本浏览器可用）。' };
+              return { saved: true, storageType: 'indexeddb', code: 'tavern_unavailable', warning: '当前未连接酒馆设置：已保存到 IndexedDB（仅本浏览器可用）。' };
           } else {
               void (initTavernSettingsBridge_ACU)();
-              return { saved: true, storageType: 'memory', warning: '⚠️ 当前未连接酒馆设置且 IndexedDB 不可用，本次修改刷新后会丢失。' };
+              return { saved: true, storageType: 'memory', code: 'tavern_unavailable', warning: '⚠️ 当前未连接酒馆设置且 IndexedDB 不可用，本次修改刷新后会丢失。' };
           }
       }
       return { saved: true, storageType: 'tavern' };
   } catch (error) {
       logError_ACU('Failed to save settings:', error);
-      return { saved: false, storageType: 'memory', error: '保存设置时发生浏览器存储错误。' };
+      return { saved: false, storageType: 'memory', code: 'storage_error', error: '保存设置时发生浏览器存储错误。' };
   }
 }
 
