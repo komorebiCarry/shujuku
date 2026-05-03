@@ -89,6 +89,24 @@ export function buildVectorIndexStableFilePath_ACU(parts: {
     return `${scope}_${role}`;
 }
 
+export function buildVectorIndexSnapshotFilePath_ACU(parts: {
+    chatKey: string;
+    isolationKey: string;
+    sourceTableKey: string;
+    indexId: string;
+    role: SummaryVectorIndexExternalFileRole_ACU;
+    shardId?: string;
+}): string {
+    const scope = buildVectorIndexStableDirectory_ACU(parts);
+    const indexId = normalizePathSegment_ACU(parts.indexId || 'snapshot');
+    const role = normalizePathSegment_ACU(parts.role || 'manifest');
+    if (parts.role === 'base_shard' || parts.role === 'delta_shard') {
+        const shardName = normalizePathSegment_ACU(parts.shardId || 'shard_0001');
+        return `${scope}_${indexId}_${role}_${shardName}`;
+    }
+    return `${scope}_${indexId}_${role}`;
+}
+
 function encodeUserFilePath_ACU(path: string): string {
     return String(path || '')
         .split('/')

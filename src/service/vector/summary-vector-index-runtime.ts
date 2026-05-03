@@ -13,13 +13,12 @@ import {
 } from '../worldbook/worldbook-service';
 import { getEffectiveSummaryVectorIndexConfig_ACU, validateSummaryVectorIndexConfig_ACU } from './vector-memory-config';
 import { getLatestSummaryVectorIndexSnapshotState_ACU } from './summary-vector-index-state-service';
-import { loadSummaryVectorIndexChunksFromManifest_ACU, type SummaryVectorIndexManifestRepair_ACU } from './summary-vector-index-storage-service';
+import { loadSummaryVectorIndexChunksFromManifest_ACU } from './summary-vector-index-storage-service';
 import {
     clearLatestSummaryVectorIndexStateForInvalidExternalFiles_ACU,
     clearLatestSummaryVectorIndexStateForMissingExternalFiles_ACU,
     isInvalidExternalVectorFileError_ACU,
     isMissingExternalVectorFileError_ACU,
-    persistLatestSummaryVectorIndexManifestRepair_ACU,
 } from './summary-vector-index-cache-service';
 import type { ChatSummaryVectorIndexChunk_ACU, ChatSummaryVectorIndexRow_ACU } from './summary-vector-index-types';
 
@@ -280,20 +279,7 @@ export async function processSummaryVectorIndexBeforeGeneration_ACU(
     let chunks: ChatSummaryVectorIndexChunk_ACU[] = Array.isArray(state.chunks) ? state.chunks : [];
     if (state.manifest) {
         try {
-            const repairs: SummaryVectorIndexManifestRepair_ACU[] = [];
-            chunks = await loadSummaryVectorIndexChunksFromManifest_ACU(state.manifest, {
-                allowChecksumRepair: true,
-                repairs,
-            });
-            if (repairs.length > 0 && latestLayer) {
-                await persistLatestSummaryVectorIndexManifestRepair_ACU({
-                    messageIndex: latestLayer.messageIndex,
-                    isolationKey: latestLayer.isolationKey,
-                    currentState: state,
-                    manifest: state.manifest,
-                    repairs,
-                });
-            }
+            chunks = await loadSummaryVectorIndexChunksFromManifest_ACU(state.manifest);
         } catch (error) {
             const message = error instanceof Error ? error.message : String(error || '未知错误');
             if (isMissingExternalVectorFileError_ACU(message)) {
