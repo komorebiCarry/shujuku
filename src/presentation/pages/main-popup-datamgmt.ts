@@ -95,8 +95,8 @@ export function generateDataMgmtTabHTML(): string {
                             <div>行 / 块：<span data-acu-vector-index-field="rowsChunks">0 / 0</span></div>
                             <div>Base / Delta 分片：<span data-acu-vector-index-field="shards">0 / 0</span></div>
                             <div>Tombstone 行 / 块：<span data-acu-vector-index-field="tombstones">0 / 0</span></div>
-                            <div>外置文件体积：<span data-acu-vector-index-field="externalBytes">0 B</span></div>
-                            <div>临时缓存体积：<span data-acu-vector-index-field="cacheBytes">0 B</span></div>
+                            <div>当前外置快照体积：<span data-acu-vector-index-field="externalBytes">0 B</span></div>
+                            <div>当前索引临时缓存体积：<span data-acu-vector-index-field="cacheBytes">0 B</span></div>
                             <div>更新时间：<span data-acu-vector-index-field="updatedAt">-</span></div>
                         </div>
                         <div class="button-group acu-data-mgmt-buttons">

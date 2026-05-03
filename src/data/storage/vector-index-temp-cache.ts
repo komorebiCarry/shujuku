@@ -135,15 +135,19 @@ export async function clearVectorIndexTempCache_ACU(): Promise<void> {
     } catch {}
 }
 
-export async function estimateVectorIndexTempCache_ACU(): Promise<{ bytes: number; count: number }> {
+export async function estimateVectorIndexTempCache_ACU(indexId?: string): Promise<{ bytes: number; count: number }> {
     try {
+        const targetIndexId = String(indexId || '').trim();
         const db = await openDb_ACU();
         return await new Promise((resolve, reject) => {
             let bytes = 0;
             let count = 0;
             const tx = db.transaction(STORE_NAME_ACU, 'readonly');
             const store = tx.objectStore(STORE_NAME_ACU);
-            const request = store.openCursor();
+            const source = targetIndexId ? store.index('indexId') : store;
+            const request = targetIndexId
+                ? source.openCursor(IDBKeyRange.only(targetIndexId))
+                : source.openCursor();
             request.onsuccess = () => {
                 const cursor = request.result;
                 if (cursor) {

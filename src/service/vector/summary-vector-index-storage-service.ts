@@ -128,6 +128,16 @@ function getVectorIndexFileTimestamp_ACU(file: SummaryVectorIndexExternalFileRef
     return String(file?.updatedAt || file?.createdAt || '');
 }
 
+function sumUniqueVectorIndexFileBytes_ACU(files: Array<SummaryVectorIndexExternalFileRef_ACU | null | undefined>): number {
+    const byPath = new Map<string, SummaryVectorIndexExternalFileRef_ACU>();
+    files.forEach((file) => {
+        const path = String(file?.path || '').trim();
+        if (!path) return;
+        byPath.set(path, file as SummaryVectorIndexExternalFileRef_ACU);
+    });
+    return Array.from(byPath.values()).reduce((sum, file) => sum + Math.max(0, Number(file.byteSize) || 0), 0);
+}
+
 function normalizeRows_ACU(rows: ChatSummaryVectorIndexRow_ACU[]): ChatSummaryVectorIndexRow_ACU[] {
     return (Array.isArray(rows) ? rows : [])
         .filter((row) => row?.rowKey && Array.isArray(row.chunkIds) && row.chunkIds.length > 0)
@@ -306,15 +316,22 @@ async function cleanupVersionedSnapshotRetention_ACU(manifest: ChatSummaryVector
     keepIndexIds.add(manifest.indexId);
 
     const purgePaths = new Set<string>();
+    const purgeIndexIds = new Set<string>();
     sortedGroups.forEach((group) => {
         if (keepIndexIds.has(group.indexId)) return;
+        purgeIndexIds.add(group.indexId);
         group.files.forEach((file) => purgePaths.add(file.path));
     });
-    if (purgePaths.size === 0) return 0;
+    if (purgePaths.size === 0 && purgeIndexIds.size === 0) return 0;
 
-    const deletedPaths = await deleteRegisteredVectorIndexFilesWhere_ACU((file) => purgePaths.has(file.path));
-    if (deletedPaths.length > 0) {
-        logDebug_ACU(`[纪要向量索引] 已清理过期版本化快照: scope=${scopePrefix}, keep=${keepIndexIds.size}, removed=${deletedPaths.length}`);
+    const deletedPaths = purgePaths.size > 0
+        ? await deleteRegisteredVectorIndexFilesWhere_ACU((file) => purgePaths.has(file.path))
+        : [];
+    for (const indexId of purgeIndexIds) {
+        await deleteVectorIndexCacheByIndex_ACU(indexId);
+    }
+    if (deletedPaths.length > 0 || purgeIndexIds.size > 0) {
+        logDebug_ACU(`[纪要向量索引] 已清理过期版本化快照: scope=${scopePrefix}, keep=${keepIndexIds.size}, removedFiles=${deletedPaths.length}, removedCacheIndexes=${purgeIndexIds.size}`);
     }
     return deletedPaths.length;
 }
@@ -595,7 +612,7 @@ export async function persistSummaryVectorIndexSnapshot_ACU(
         const parentIndexIds = Array.from(new Set([...(options.parentIndexIds || []), ...(options.previousManifest?.indexId ? [options.previousManifest.indexId] : [])].filter(Boolean)));
         const manifestPath = buildVectorIndexSnapshotFilePath_ACU({ chatKey, isolationKey, sourceTableKey: options.sourceTableKey, indexId, role: 'manifest' });
         const manifestFilesWithoutManifest = [...uploadedFiles, ...batchRefs.flatMap((batch) => batch.files || [])];
-        const externalTotalBytesWithoutManifest = manifestFilesWithoutManifest.reduce((sum, file) => sum + Math.max(0, Number(file.byteSize) || 0), 0);
+        const externalTotalBytesWithoutManifest = sumUniqueVectorIndexFileBytes_ACU(manifestFilesWithoutManifest);
         const manifestDraft: ChatSummaryVectorIndexManifest_ACU = {
             version: SUMMARY_VECTOR_INDEX_MANIFEST_VERSION_ACU,
             backend: 'st-files',
@@ -640,7 +657,7 @@ export async function persistSummaryVectorIndexSnapshot_ACU(
         const manifest: ChatSummaryVectorIndexManifest_ACU = {
             ...manifestDraft,
             files: [...uploadedFiles],
-            externalTotalBytes: [...uploadedFiles, ...batchRefs.flatMap((batch) => batch.files || [])].reduce((sum, file) => sum + Math.max(0, Number(file.byteSize) || 0), 0),
+            externalTotalBytes: sumUniqueVectorIndexFileBytes_ACU([...uploadedFiles, ...batchRefs.flatMap((batch) => batch.files || [])]),
         };
         const state: ChatSummaryVectorIndexState_ACU = {
             version: SUMMARY_VECTOR_INDEX_MANIFEST_VERSION_ACU,
@@ -748,7 +765,7 @@ export async function deleteSummaryVectorIndexExternal_ACU(manifest: ChatSummary
 }
 
 export async function getSummaryVectorIndexStats_ACU(manifest: ChatSummaryVectorIndexManifest_ACU | null | undefined): Promise<SummaryVectorIndexStats_ACU> {
-    const cache = await estimateVectorIndexTempCache_ACU();
+    const cache = await estimateVectorIndexTempCache_ACU(manifest?.indexId);
     if (!manifest) {
         return {
             status: 'none',

@@ -21784,15 +21784,19 @@ $CONTENT
         }
         catch { }
     }
-    async function estimateVectorIndexTempCache_ACU() {
+    async function estimateVectorIndexTempCache_ACU(indexId) {
         try {
+            const targetIndexId = String(indexId || '').trim();
             const db = await openDb_ACU();
             return await new Promise((resolve, reject) => {
                 let bytes = 0;
                 let count = 0;
                 const tx = db.transaction(STORE_NAME_ACU, 'readonly');
                 const store = tx.objectStore(STORE_NAME_ACU);
-                const request = store.openCursor();
+                const source = targetIndexId ? store.index('indexId') : store;
+                const request = targetIndexId
+                    ? source.openCursor(IDBKeyRange.only(targetIndexId))
+                    : source.openCursor();
                 request.onsuccess = () => {
                     const cursor = request.result;
                     if (cursor) {
@@ -21865,6 +21869,16 @@ $CONTENT
     }
     function getVectorIndexFileTimestamp_ACU(file) {
         return String(file?.updatedAt || file?.createdAt || '');
+    }
+    function sumUniqueVectorIndexFileBytes_ACU(files) {
+        const byPath = new Map();
+        files.forEach((file) => {
+            const path = String(file?.path || '').trim();
+            if (!path)
+                return;
+            byPath.set(path, file);
+        });
+        return Array.from(byPath.values()).reduce((sum, file) => sum + Math.max(0, Number(file.byteSize) || 0), 0);
     }
     function normalizeRows_ACU$1(rows) {
         return (Array.isArray(rows) ? rows : [])
@@ -22030,16 +22044,23 @@ $CONTENT
         const keepIndexIds = new Set(sortedGroups.slice(0, SUMMARY_VECTOR_INDEX_SNAPSHOT_RETENTION_LIMIT_ACU).map((group) => group.indexId));
         keepIndexIds.add(manifest.indexId);
         const purgePaths = new Set();
+        const purgeIndexIds = new Set();
         sortedGroups.forEach((group) => {
             if (keepIndexIds.has(group.indexId))
                 return;
+            purgeIndexIds.add(group.indexId);
             group.files.forEach((file) => purgePaths.add(file.path));
         });
-        if (purgePaths.size === 0)
+        if (purgePaths.size === 0 && purgeIndexIds.size === 0)
             return 0;
-        const deletedPaths = await deleteRegisteredVectorIndexFilesWhere_ACU((file) => purgePaths.has(file.path));
-        if (deletedPaths.length > 0) {
-            logDebug_ACU(`[纪要向量索引] 已清理过期版本化快照: scope=${scopePrefix}, keep=${keepIndexIds.size}, removed=${deletedPaths.length}`);
+        const deletedPaths = purgePaths.size > 0
+            ? await deleteRegisteredVectorIndexFilesWhere_ACU((file) => purgePaths.has(file.path))
+            : [];
+        for (const indexId of purgeIndexIds) {
+            await deleteVectorIndexCacheByIndex_ACU(indexId);
+        }
+        if (deletedPaths.length > 0 || purgeIndexIds.size > 0) {
+            logDebug_ACU(`[纪要向量索引] 已清理过期版本化快照: scope=${scopePrefix}, keep=${keepIndexIds.size}, removedFiles=${deletedPaths.length}, removedCacheIndexes=${purgeIndexIds.size}`);
         }
         return deletedPaths.length;
     }
@@ -22299,7 +22320,7 @@ $CONTENT
             const parentIndexIds = Array.from(new Set([...(options.parentIndexIds || []), ...(options.previousManifest?.indexId ? [options.previousManifest.indexId] : [])].filter(Boolean)));
             const manifestPath = buildVectorIndexSnapshotFilePath_ACU({ chatKey, isolationKey, sourceTableKey: options.sourceTableKey, indexId, role: 'manifest' });
             const manifestFilesWithoutManifest = [...uploadedFiles, ...batchRefs.flatMap((batch) => batch.files || [])];
-            const externalTotalBytesWithoutManifest = manifestFilesWithoutManifest.reduce((sum, file) => sum + Math.max(0, Number(file.byteSize) || 0), 0);
+            const externalTotalBytesWithoutManifest = sumUniqueVectorIndexFileBytes_ACU(manifestFilesWithoutManifest);
             const manifestDraft = {
                 version: SUMMARY_VECTOR_INDEX_MANIFEST_VERSION_ACU,
                 backend: 'st-files',
@@ -22345,7 +22366,7 @@ $CONTENT
             const manifest = {
                 ...manifestDraft,
                 files: [...uploadedFiles],
-                externalTotalBytes: [...uploadedFiles, ...batchRefs.flatMap((batch) => batch.files || [])].reduce((sum, file) => sum + Math.max(0, Number(file.byteSize) || 0), 0),
+                externalTotalBytes: sumUniqueVectorIndexFileBytes_ACU([...uploadedFiles, ...batchRefs.flatMap((batch) => batch.files || [])]),
             };
             const state = {
                 version: SUMMARY_VECTOR_INDEX_MANIFEST_VERSION_ACU,
@@ -22451,7 +22472,7 @@ $CONTENT
         }
     }
     async function getSummaryVectorIndexStats_ACU(manifest) {
-        const cache = await estimateVectorIndexTempCache_ACU();
+        const cache = await estimateVectorIndexTempCache_ACU(manifest?.indexId);
         if (!manifest) {
             return {
                 status: 'none',
@@ -42309,8 +42330,8 @@ $CONTENT
                             <div>行 / 块：<span data-acu-vector-index-field="rowsChunks">0 / 0</span></div>
                             <div>Base / Delta 分片：<span data-acu-vector-index-field="shards">0 / 0</span></div>
                             <div>Tombstone 行 / 块：<span data-acu-vector-index-field="tombstones">0 / 0</span></div>
-                            <div>外置文件体积：<span data-acu-vector-index-field="externalBytes">0 B</span></div>
-                            <div>临时缓存体积：<span data-acu-vector-index-field="cacheBytes">0 B</span></div>
+                            <div>当前外置快照体积：<span data-acu-vector-index-field="externalBytes">0 B</span></div>
+                            <div>当前索引临时缓存体积：<span data-acu-vector-index-field="cacheBytes">0 B</span></div>
                             <div>更新时间：<span data-acu-vector-index-field="updatedAt">-</span></div>
                         </div>
                         <div class="button-group acu-data-mgmt-buttons">
