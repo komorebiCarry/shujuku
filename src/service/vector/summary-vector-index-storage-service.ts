@@ -7,6 +7,7 @@ import {
     buildVectorIndexStableFilePath_ACU,
     deleteRegisteredVectorIndexFilesWhere_ACU,
     deleteVectorIndexFile_ACU,
+    loadVectorIndexRegistry_ACU,
     readVectorIndexJsonFile_ACU,
     registerVectorIndexFiles_ACU,
     sha256Text_ACU,
@@ -35,6 +36,7 @@ import type {
 import { SUMMARY_VECTOR_INDEX_MANIFEST_VERSION_ACU } from './summary-vector-index-types';
 
 const DEFAULT_SHARD_CHUNK_LIMIT_ACU = 128;
+const SUMMARY_VECTOR_INDEX_SNAPSHOT_RETENTION_LIMIT_ACU = 5;
 
 export interface PersistSummaryVectorIndexExternalOptions_ACU {
     chatKey?: string;
@@ -107,6 +109,22 @@ function buildIndexId_ACU(params: { chatKey: string; isolationKey: string; sourc
 function buildVersionedSnapshotIndexId_ACU(params: { chatKey: string; isolationKey: string; sourceTableKey: string; snapshotRevision: number }): string {
     const revision = Math.max(1, Math.floor(Number(params.snapshotRevision) || 0));
     return `snap_${hashUserInput_ACU(`${params.chatKey}\n${params.isolationKey}\n${params.sourceTableKey}\n${revision}`)}`;
+}
+
+function buildVersionedSnapshotScopePrefix_ACU(chatKey: string, isolationKey: string, sourceTableKey: string): string {
+    return `${buildVectorIndexStableDirectory_ACU({ chatKey, isolationKey, sourceTableKey })}_`;
+}
+
+function extractVersionedSnapshotIndexIdFromPath_ACU(path: string, scopePrefix: string): string | null {
+    const normalizedPath = String(path || '');
+    if (!normalizedPath.startsWith(scopePrefix)) return null;
+    const remainder = normalizedPath.slice(scopePrefix.length);
+    const match = remainder.match(/^(snap_[^_]+)_/);
+    return match?.[1] || null;
+}
+
+function getVectorIndexFileTimestamp_ACU(file: SummaryVectorIndexExternalFileRef_ACU | null | undefined): string {
+    return String(file?.updatedAt || file?.createdAt || '');
 }
 
 function normalizeRows_ACU(rows: ChatSummaryVectorIndexRow_ACU[]): ChatSummaryVectorIndexRow_ACU[] {
@@ -252,6 +270,52 @@ async function cleanupSnapshotScopeFilesExcept_ACU(
     if (removedPaths.length > 0) {
         logDebug_ACU(`[交火向量索引] 已清理最新快照未引用的同作用域外置文件: count=${removedPaths.length}`);
     }
+}
+
+async function cleanupVersionedSnapshotRetention_ACU(manifest: ChatSummaryVectorIndexManifest_ACU): Promise<number> {
+    const scopePrefix = buildVersionedSnapshotScopePrefix_ACU(manifest.chatKey, manifest.isolationKey, manifest.sourceTableKey);
+    const registry = await loadVectorIndexRegistry_ACU();
+    const versionedFiles = registry.files.filter((file) => {
+        const path = String(file?.path || '');
+        return path.startsWith(scopePrefix) && extractVersionedSnapshotIndexIdFromPath_ACU(path, scopePrefix) !== null;
+    });
+    if (versionedFiles.length === 0) return 0;
+
+    const groups = new Map<string, SummaryVectorIndexExternalFileRef_ACU[]>();
+    versionedFiles.forEach((file) => {
+        const indexId = extractVersionedSnapshotIndexIdFromPath_ACU(file.path, scopePrefix);
+        if (!indexId) return;
+        const list = groups.get(indexId) || [];
+        list.push(file);
+        groups.set(indexId, list);
+    });
+
+    const sortedGroups = Array.from(groups.entries())
+        .map(([indexId, files]) => ({
+            indexId,
+            files,
+            timestamp: files.reduce((latest, file) => {
+                const current = getVectorIndexFileTimestamp_ACU(file);
+                return current > latest ? current : latest;
+            }, ''),
+        }))
+        .sort((left, right) => right.timestamp.localeCompare(left.timestamp) || right.indexId.localeCompare(left.indexId));
+
+    const keepIndexIds = new Set<string>(sortedGroups.slice(0, SUMMARY_VECTOR_INDEX_SNAPSHOT_RETENTION_LIMIT_ACU).map((group) => group.indexId));
+    keepIndexIds.add(manifest.indexId);
+
+    const purgePaths = new Set<string>();
+    sortedGroups.forEach((group) => {
+        if (keepIndexIds.has(group.indexId)) return;
+        group.files.forEach((file) => purgePaths.add(file.path));
+    });
+    if (purgePaths.size === 0) return 0;
+
+    const deletedPaths = await deleteRegisteredVectorIndexFilesWhere_ACU((file) => purgePaths.has(file.path));
+    if (deletedPaths.length > 0) {
+        logDebug_ACU(`[纪要向量索引] 已清理过期版本化快照: scope=${scopePrefix}, keep=${keepIndexIds.size}, removed=${deletedPaths.length}`);
+    }
+    return deletedPaths.length;
 }
 
 export async function deleteSummaryVectorIndexExternalByScope_ACU(options: {
@@ -593,6 +657,11 @@ export async function persistSummaryVectorIndexSnapshot_ACU(
             manifest,
         };
         await registerVectorIndexFiles_ACU([...uploadedFiles, ...batchRefs.flatMap((batch) => batch.files || [])]);
+        try {
+            await cleanupVersionedSnapshotRetention_ACU(manifest);
+        } catch (error) {
+            logWarn_ACU('[纪要向量索引] 版本化快照保留清理失败，保留当前快照继续运行:', error);
+        }
         return { state, manifest, uploadedFiles };
     } catch (error) {
         await rollbackUploadedFiles_ACU(uploadedFiles);
