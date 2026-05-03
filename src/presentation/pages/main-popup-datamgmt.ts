@@ -101,6 +101,7 @@ export function generateDataMgmtTabHTML(): string {
                         </div>
                         <div class="button-group acu-data-mgmt-buttons">
                             <button id="${SCRIPT_ID_PREFIX_ACU}-vector-index-refresh">刷新索引状态</button>
+                            <button id="${SCRIPT_ID_PREFIX_ACU}-vector-index-health-check">健康检查</button>
                             <button id="${SCRIPT_ID_PREFIX_ACU}-vector-index-clear-cache" class="btn-warning">清空临时缓存</button>
                             <button id="${SCRIPT_ID_PREFIX_ACU}-vector-index-delete-current" class="btn-danger">删除当前交火索引</button>
                         </div>

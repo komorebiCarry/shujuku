@@ -273,5 +273,67 @@ export interface SummaryVectorIndexStats_ACU {
     error?: string;
 }
 
+export interface SummaryVectorIndexReachableFile_ACU {
+    path: string;
+    role?: SummaryVectorIndexExternalFileRole_ACU;
+    indexId?: string;
+    messageIndex: number;
+    isolationKey: string;
+    sourceTableKey: string;
+    manifestKey: string;
+    checksum?: string;
+    chunkKey?: string;
+    chunkId?: string;
+    rowKey?: string;
+}
+
+export interface SummaryVectorIndexReachabilityReport_ACU {
+    chatKey: string;
+    isolationKey?: string;
+    sourceTableKey?: string;
+    reachablePaths: string[];
+    reachableFiles: SummaryVectorIndexReachableFile_ACU[];
+    manifestCount: number;
+}
+
+export interface SummaryVectorIndexHealthIssue_ACU {
+    severity: 'warning' | 'error';
+    code: 'missing_file' | 'checksum_mismatch' | 'identity_mismatch' | 'legacy_manifest' | 'unreachable_registered_file' | 'read_error';
+    path: string;
+    role?: SummaryVectorIndexExternalFileRole_ACU;
+    rowKey?: string;
+    chunkId?: string;
+    chunkKey?: string;
+    messageIndex?: number;
+    isolationKey?: string;
+    expected?: string;
+    actual?: string;
+    message: string;
+}
+
+export interface SummaryVectorIndexHealthReport_ACU {
+    status: 'healthy' | 'degraded' | 'missing' | 'empty';
+    checkedAt: string;
+    manifestCount: number;
+    reachableFileCount: number;
+    registeredFileCount: number;
+    missingFileCount: number;
+    checksumMismatchCount: number;
+    identityMismatchCount: number;
+    legacyManifestCount: number;
+    unreachableRegisteredFileCount: number;
+    repairableRowKeys: string[];
+    issues: SummaryVectorIndexHealthIssue_ACU[];
+}
+
+export interface SummaryVectorIndexSafeGcResult_ACU {
+    scannedRegisteredFileCount: number;
+    reachableFileCount: number;
+    deletedPaths: string[];
+    retainedPaths: string[];
+    blockedByReachability: string[];
+    failedDeletes: Array<{ path: string; error: string }>;
+}
+
 export const SUMMARY_VECTOR_INDEX_MANIFEST_VERSION_ACU = 1;
 export const SUMMARY_VECTOR_INDEX_REGISTRY_PATH_ACU = 'TavernDB_ACU_vector_registry';

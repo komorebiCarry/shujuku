@@ -22072,6 +22072,121 @@ $CONTENT
             logDebug_ACU(`[交火向量索引] 已清理最新快照未引用的同作用域外置文件: count=${removedPaths.length}`);
         }
     }
+    function collectManifestReachableFiles_ACU(manifest, context) {
+        const reachableFiles = [];
+        const seen = new Set();
+        const pushFile = (file) => {
+            const path = String(file.path || '').trim();
+            if (!path || seen.has(path))
+                return;
+            seen.add(path);
+            reachableFiles.push({
+                path,
+                role: file.role,
+                indexId: file.indexId || manifest.indexId,
+                messageIndex: context.messageIndex,
+                isolationKey: context.isolationKey,
+                sourceTableKey: manifest.sourceTableKey,
+                manifestKey: manifest.indexId,
+                checksum: file.checksum,
+                chunkKey: file.chunkKey,
+                chunkId: file.chunkId,
+                rowKey: file.rowKey,
+            });
+        };
+        pushFile({ path: manifest.manifestFile, role: 'manifest' });
+        pushFile({ path: manifest.rowsFile, role: 'row_index' });
+        pushFile({ path: manifest.tombstoneFile, role: 'tombstone' });
+        (manifest.files || []).forEach((file) => pushFile({ ...file, indexId: manifest.indexId }));
+        (manifest.batchRefs || []).forEach((batch) => (batch.files || []).forEach((file) => pushFile({ ...file, indexId: batch.indexId || manifest.indexId })));
+        (manifest.contentAddressed?.chunkRefs || []).forEach((ref) => pushFile({
+            path: ref.path,
+            role: 'vector_chunk',
+            indexId: manifest.indexId,
+            checksum: ref.checksum,
+            chunkKey: ref.chunkKey,
+            chunkId: ref.chunkId,
+            rowKey: ref.rowKey,
+        }));
+        return reachableFiles;
+    }
+    async function collectSummaryVectorIndexReachability_ACU() {
+        const snapshot = await (async () => getAggregatedSummaryVectorIndexSnapshot_ACU())();
+        const chatKey = normalizeChatKey_ACU();
+        const reachabilityByPath = new Map();
+        let manifestCount = 0;
+        if (snapshot?.layers?.length) {
+            snapshot.layers.forEach((layer) => {
+                const manifest = layer.summaryVectorIndexState?.manifest || layer.tagData?.summaryVectorIndexManifest || null;
+                if (!manifest)
+                    return;
+                manifestCount += 1;
+                collectManifestReachableFiles_ACU(manifest, {
+                    messageIndex: layer.messageIndex,
+                    isolationKey: layer.isolationKey,
+                }).forEach((file) => reachabilityByPath.set(file.path, file));
+            });
+        }
+        return {
+            chatKey,
+            reachablePaths: Array.from(reachabilityByPath.keys()),
+            reachableFiles: Array.from(reachabilityByPath.values()),
+            manifestCount,
+        };
+    }
+    async function cleanupUnreachableSummaryVectorIndexFiles_ACU() {
+        const reachability = await collectSummaryVectorIndexReachability_ACU();
+        const registry = await loadVectorIndexRegistry_ACU();
+        const reachablePathSet = new Set(reachability.reachablePaths);
+        const scopePrefixes = new Set();
+        reachability.reachableFiles.forEach((file) => {
+            scopePrefixes.add(buildVectorIndexStableDirectory_ACU({
+                chatKey: reachability.chatKey,
+                isolationKey: file.isolationKey,
+                sourceTableKey: file.sourceTableKey,
+            }));
+        });
+        const deletedPaths = [];
+        const retainedPaths = [];
+        const blockedByReachability = [];
+        const failedDeletes = [];
+        const scannedRegisteredFileCount = registry.files.length;
+        let reachableFileCount = 0;
+        for (const file of registry.files) {
+            const path = String(file?.path || '').trim();
+            if (!path)
+                continue;
+            const inScope = Array.from(scopePrefixes).some((prefix) => path.startsWith(prefix));
+            if (!inScope) {
+                retainedPaths.push(path);
+                continue;
+            }
+            if (reachablePathSet.has(path)) {
+                reachableFileCount += 1;
+                retainedPaths.push(path);
+                blockedByReachability.push(path);
+                continue;
+            }
+            const result = await deleteVectorIndexFile_ACU(path);
+            if (result.ok) {
+                deletedPaths.push(result.path);
+            }
+            else {
+                failedDeletes.push({ path, error: result.error || '删除失败' });
+            }
+        }
+        if (deletedPaths.length > 0) {
+            await unregisterVectorIndexFiles_ACU(deletedPaths);
+        }
+        return {
+            scannedRegisteredFileCount,
+            reachableFileCount,
+            deletedPaths,
+            retainedPaths,
+            blockedByReachability,
+            failedDeletes,
+        };
+    }
     async function cleanupVersionedSnapshotRetention_ACU(manifest) {
         const scopePrefix = buildVersionedSnapshotScopePrefix_ACU(manifest.chatKey, manifest.isolationKey, manifest.sourceTableKey);
         if (SUMMARY_VECTOR_INDEX_SNAPSHOT_RETENTION_LIMIT_ACU <= 0) {
@@ -22573,6 +22688,154 @@ $CONTENT
         if (manifest.indexId) {
             await deleteVectorIndexCacheByIndex_ACU(manifest.indexId);
         }
+    }
+    function collectManifestRowsForRepair_ACU(manifest) {
+        const rowsByChunkKey = new Map();
+        (manifest.contentAddressed?.chunkRefs || []).forEach((ref) => {
+            if (!ref.chunkKey || !ref.rowKey)
+                return;
+            const rowKeys = rowsByChunkKey.get(ref.chunkKey) || [];
+            rowKeys.push(ref.rowKey);
+            rowsByChunkKey.set(ref.chunkKey, rowKeys);
+        });
+        return rowsByChunkKey;
+    }
+    async function inspectSummaryVectorIndexHealth_ACU() {
+        const checkedAt = new Date().toISOString();
+        const reachability = await collectSummaryVectorIndexReachability_ACU();
+        const registry = await loadVectorIndexRegistry_ACU();
+        const reachablePathSet = new Set(reachability.reachablePaths);
+        const issues = [];
+        const repairableRowKeys = new Set();
+        const seenLegacyManifestIndexes = new Set();
+        for (const file of reachability.reachableFiles) {
+            const loaded = await readVectorIndexJsonFile_ACU(file.path);
+            if (!loaded.ok || !loaded.data) {
+                issues.push({
+                    severity: 'error',
+                    code: 'missing_file',
+                    path: file.path,
+                    role: file.role,
+                    messageIndex: file.messageIndex,
+                    isolationKey: file.isolationKey,
+                    message: loaded.error || '外置文件不存在或无法读取',
+                });
+                continue;
+            }
+            const json = JSON.stringify(loaded.data);
+            const checksum = await sha256Text_ACU(json);
+            const registryRef = registry.files.find((item) => item.path === file.path);
+            if (registryRef?.checksum && registryRef.checksum !== checksum) {
+                issues.push({
+                    severity: 'error',
+                    code: 'checksum_mismatch',
+                    path: file.path,
+                    role: file.role,
+                    messageIndex: file.messageIndex,
+                    isolationKey: file.isolationKey,
+                    expected: registryRef.checksum,
+                    actual: checksum,
+                    message: 'registry checksum 与实际文件内容不一致',
+                });
+            }
+            if (file.role === 'vector_chunk') {
+                const blob = loaded.data;
+                const vector = Array.isArray(blob.vector) ? blob.vector : [];
+                const identityMismatch = !blob.chunkKey
+                    || !blob.chunkId
+                    || !blob.rowKey
+                    || vector.length === 0
+                    || String(blob.chunkKey || '') !== String(file.chunkKey || '')
+                    || String(blob.chunkId || '') !== String(file.chunkId || '')
+                    || String(blob.rowKey || '') !== String(file.rowKey || '');
+                if (identityMismatch) {
+                    issues.push({
+                        severity: 'error',
+                        code: 'identity_mismatch',
+                        path: file.path,
+                        role: file.role,
+                        messageIndex: file.messageIndex,
+                        isolationKey: file.isolationKey,
+                        chunkKey: file.chunkKey || blob.chunkKey,
+                        chunkId: file.chunkId || blob.chunkId,
+                        rowKey: file.rowKey || blob.rowKey,
+                        expected: `${file.chunkKey || ''}/${file.chunkId || ''}/${file.rowKey || ''}`,
+                        actual: `${String(blob.chunkKey || '')}/${String(blob.chunkId || '')}/${String(blob.rowKey || '')}`,
+                        message: '内容寻址向量块身份与 manifest 引用不一致，或缺少有效向量',
+                    });
+                    if (file.rowKey || blob.rowKey)
+                        repairableRowKeys.add(String(file.rowKey || blob.rowKey));
+                }
+                if (file.checksum && checksum !== file.checksum) {
+                    issues.push({
+                        severity: 'error',
+                        code: 'checksum_mismatch',
+                        path: file.path,
+                        role: file.role,
+                        messageIndex: file.messageIndex,
+                        isolationKey: file.isolationKey,
+                        chunkKey: file.chunkKey,
+                        chunkId: file.chunkId,
+                        rowKey: file.rowKey,
+                        expected: file.checksum,
+                        actual: checksum,
+                        message: 'manifest chunkRef checksum 与实际内容不一致',
+                    });
+                    if (file.rowKey)
+                        repairableRowKeys.add(file.rowKey);
+                }
+            }
+            else if ((file.role === 'base_shard' || file.role === 'delta_shard') && !seenLegacyManifestIndexes.has(file.indexId || file.manifestKey)) {
+                seenLegacyManifestIndexes.add(file.indexId || file.manifestKey);
+                issues.push({
+                    severity: 'warning',
+                    code: 'legacy_manifest',
+                    path: file.path,
+                    role: file.role,
+                    messageIndex: file.messageIndex,
+                    isolationKey: file.isolationKey,
+                    message: '旧 shard 协议仍可读，但建议迁移到内容寻址 chunk 协议',
+                });
+            }
+        }
+        registry.files.forEach((file) => {
+            const path = String(file?.path || '').trim();
+            if (!path || reachablePathSet.has(path) || path === 'TavernDB_ACU_vector_registry')
+                return;
+            issues.push({
+                severity: 'warning',
+                code: 'unreachable_registered_file',
+                path,
+                role: file.role,
+                message: 'registry 中存在当前聊天快照不可达的外置文件，可由安全 GC 清理',
+            });
+        });
+        const missingFileCount = issues.filter((issue) => issue.code === 'missing_file').length;
+        const checksumMismatchCount = issues.filter((issue) => issue.code === 'checksum_mismatch').length;
+        const identityMismatchCount = issues.filter((issue) => issue.code === 'identity_mismatch').length;
+        const legacyManifestCount = issues.filter((issue) => issue.code === 'legacy_manifest').length;
+        const unreachableRegisteredFileCount = issues.filter((issue) => issue.code === 'unreachable_registered_file').length;
+        const status = reachability.manifestCount === 0
+            ? 'empty'
+            : missingFileCount > 0 || checksumMismatchCount > 0 || identityMismatchCount > 0
+                ? 'missing'
+                : issues.length > 0
+                    ? 'degraded'
+                    : 'healthy';
+        return {
+            status,
+            checkedAt,
+            manifestCount: reachability.manifestCount,
+            reachableFileCount: reachability.reachableFiles.length,
+            registeredFileCount: registry.files.length,
+            missingFileCount,
+            checksumMismatchCount,
+            identityMismatchCount,
+            legacyManifestCount,
+            unreachableRegisteredFileCount,
+            repairableRowKeys: Array.from(repairableRowKeys),
+            issues,
+        };
     }
     async function getSummaryVectorIndexStats_ACU(manifest) {
         const cache = await estimateVectorIndexTempCache_ACU(manifest?.indexId);
@@ -38037,7 +38300,6 @@ $CONTENT
     async function deleteCurrentVectorIndexFromChat_ACU() {
         const snapshot = getAggregatedSummaryVectorIndexSnapshot_ACU();
         const chat = getChatArray_ACU();
-        const sourceTableKeys = new Set();
         let changed = false;
         if (snapshot?.layers?.length) {
             for (const layer of snapshot.layers) {
@@ -38045,32 +38307,18 @@ $CONTENT
                 if (!message || message.is_user)
                     continue;
                 const tagData = readIsolatedTagData_ACU(message, layer.isolationKey);
-                const manifest = tagData?.summaryVectorIndexManifest || tagData?.summaryVectorIndexState?.manifest || null;
-                if (manifest) {
-                    sourceTableKeys.add(manifest.sourceTableKey || 'summary');
-                    await deleteSummaryVectorIndexExternal_ACU(manifest);
-                }
-                if (tagData) {
-                    assignSummaryVectorIndexStateToTagData_ACU(tagData, null);
-                    writeIsolatedTagData_ACU(message, layer.isolationKey, tagData);
-                    changed = true;
-                }
+                if (!tagData)
+                    continue;
+                assignSummaryVectorIndexStateToTagData_ACU(tagData, null);
+                writeIsolatedTagData_ACU(message, layer.isolationKey, tagData);
+                changed = true;
             }
         }
-        sourceTableKeys.add(getCurrentSummaryVectorIndexSourceTableKey_ACU());
-        let orphanDeleted = false;
-        for (const sourceTableKey of sourceTableKeys) {
-            const removedPaths = await deleteSummaryVectorIndexExternalByScope_ACU({
-                chatKey: currentChatFileIdentifier_ACU,
-                isolationKey: getCurrentIsolationKey_ACU(),
-                sourceTableKey,
-            });
-            if (removedPaths.length > 0)
-                orphanDeleted = true;
-        }
-        if (changed)
+        if (changed) {
             await saveChatToHost_ACU();
-        return changed || orphanDeleted;
+        }
+        const gcResult = await cleanupUnreachableSummaryVectorIndexFiles_ACU();
+        return changed || gcResult.deletedPaths.length > 0 || gcResult.failedDeletes.length > 0;
     }
     /**
      * 绑定数据管理标签页的所有事件（数据隔离 + 外部导入 + 模板预设 + 数据管理按钮）
@@ -38109,6 +38357,7 @@ $CONTENT
         const $openNewVisualizerButton_ACU = $popupInstance_ACU.find(`#${SCRIPT_ID_PREFIX_ACU}-open-new-visualizer`);
         const $vectorIndexModeEnabled_ACU = $popupInstance_ACU.find(`#${SCRIPT_ID_PREFIX_ACU}-vector-index-mode-enabled`);
         const $vectorIndexRefreshButton_ACU = $popupInstance_ACU.find(`#${SCRIPT_ID_PREFIX_ACU}-vector-index-refresh`);
+        const $vectorIndexHealthCheckButton_ACU = $popupInstance_ACU.find(`#${SCRIPT_ID_PREFIX_ACU}-vector-index-health-check`);
         const $vectorIndexClearCacheButton_ACU = $popupInstance_ACU.find(`#${SCRIPT_ID_PREFIX_ACU}-vector-index-clear-cache`);
         const $vectorIndexDeleteCurrentButton_ACU = $popupInstance_ACU.find(`#${SCRIPT_ID_PREFIX_ACU}-vector-index-delete-current`);
         const $buildVectorIndexNowButton_ACU = $popupInstance_ACU.find(`#${SCRIPT_ID_PREFIX_ACU}-build-vector-index-now`);
@@ -38156,6 +38405,26 @@ $CONTENT
             $vectorIndexRefreshButton_ACU.off('click.acu_vector_index').on('click.acu_vector_index', async () => {
                 await refreshVectorIndexStatsPanel_ACU();
                 showToastr_ACU('success', '交火模式索引状态已刷新。');
+            });
+        }
+        if ($vectorIndexHealthCheckButton_ACU.length) {
+            $vectorIndexHealthCheckButton_ACU.off('click.acu_vector_index_health').on('click.acu_vector_index_health', async () => {
+                $vectorIndexHealthCheckButton_ACU.prop('disabled', true).text('正在检查...');
+                try {
+                    const report = await inspectSummaryVectorIndexHealth_ACU();
+                    const errorCount = report.missingFileCount + report.checksumMismatchCount + report.identityMismatchCount;
+                    const warningCount = report.legacyManifestCount + report.unreachableRegisteredFileCount;
+                    const repairHint = report.repairableRowKeys.length > 0 ? `，可修复行 ${report.repairableRowKeys.length} 条` : '';
+                    const message = `状态=${report.status}，manifest=${report.manifestCount}，可达文件=${report.reachableFileCount}，错误=${errorCount}，警告=${warningCount}${repairHint}`;
+                    showToastr_ACU(errorCount > 0 ? 'warning' : 'success', `交火索引健康检查完成：${message}`);
+                }
+                catch (e) {
+                    logError_ACU('交火索引健康检查失败:', e);
+                    showToastr_ACU('error', `交火索引健康检查失败: ${e?.message || '未知错误'}`);
+                }
+                finally {
+                    $vectorIndexHealthCheckButton_ACU.prop('disabled', false).text('健康检查');
+                }
             });
         }
         if ($vectorIndexClearCacheButton_ACU.length) {
@@ -42458,6 +42727,7 @@ $CONTENT
                         </div>
                         <div class="button-group acu-data-mgmt-buttons">
                             <button id="${SCRIPT_ID_PREFIX_ACU}-vector-index-refresh">刷新索引状态</button>
+                            <button id="${SCRIPT_ID_PREFIX_ACU}-vector-index-health-check">健康检查</button>
                             <button id="${SCRIPT_ID_PREFIX_ACU}-vector-index-clear-cache" class="btn-warning">清空临时缓存</button>
                             <button id="${SCRIPT_ID_PREFIX_ACU}-vector-index-delete-current" class="btn-danger">删除当前交火索引</button>
                         </div>

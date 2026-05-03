@@ -36,7 +36,7 @@ import { getAggregatedSummaryVectorIndexSnapshot_ACU, getLatestSummaryVectorInde
 import { archiveSummaryVectorIndexNow_ACU } from '../../service/vector/summary-vector-index-archive-service';
 import { getCurrentWorldbookConfig_ACU } from '../../service/settings/settings-readers';
 import { syncManualUpdateButtonAvailability_ACU } from '../components/status-display';
-import { deleteSummaryVectorIndexExternal_ACU, deleteSummaryVectorIndexExternalByScope_ACU, getSummaryVectorIndexStats_ACU } from '../../service/vector/summary-vector-index-storage-service';
+import { cleanupUnreachableSummaryVectorIndexFiles_ACU, getSummaryVectorIndexStats_ACU, inspectSummaryVectorIndexHealth_ACU } from '../../service/vector/summary-vector-index-storage-service';
 import { clearVectorIndexTempCache_ACU } from '../../data/storage/vector-index-temp-cache';
 import { getChatArray_ACU, getLastMessageIndex_ACU, saveChatToHost_ACU } from '../../service/chat/chat-service';
 import { readIsolatedTagData_ACU, writeIsolatedTagData_ACU } from '../../data/repositories/chat-message-data-repo';
@@ -84,7 +84,6 @@ function getCurrentSummaryVectorIndexSourceTableKey_ACU(): string {
 async function deleteCurrentVectorIndexFromChat_ACU(): Promise<boolean> {
     const snapshot = getAggregatedSummaryVectorIndexSnapshot_ACU();
     const chat = getChatArray_ACU();
-    const sourceTableKeys = new Set<string>();
     let changed = false;
 
     if (snapshot?.layers?.length) {
@@ -92,32 +91,19 @@ async function deleteCurrentVectorIndexFromChat_ACU(): Promise<boolean> {
             const message = chat[layer.messageIndex];
             if (!message || message.is_user) continue;
             const tagData = readIsolatedTagData_ACU(message, layer.isolationKey);
-            const manifest = tagData?.summaryVectorIndexManifest || tagData?.summaryVectorIndexState?.manifest || null;
-            if (manifest) {
-                sourceTableKeys.add(manifest.sourceTableKey || 'summary');
-                await deleteSummaryVectorIndexExternal_ACU(manifest);
-            }
-            if (tagData) {
-                assignSummaryVectorIndexStateToTagData_ACU(tagData, null);
-                writeIsolatedTagData_ACU(message, layer.isolationKey, tagData);
-                changed = true;
-            }
+            if (!tagData) continue;
+            assignSummaryVectorIndexStateToTagData_ACU(tagData, null);
+            writeIsolatedTagData_ACU(message, layer.isolationKey, tagData);
+            changed = true;
         }
     }
 
-    sourceTableKeys.add(getCurrentSummaryVectorIndexSourceTableKey_ACU());
-    let orphanDeleted = false;
-    for (const sourceTableKey of sourceTableKeys) {
-        const removedPaths = await deleteSummaryVectorIndexExternalByScope_ACU({
-            chatKey: currentChatFileIdentifier_ACU,
-            isolationKey: getCurrentIsolationKey_ACU(),
-            sourceTableKey,
-        });
-        if (removedPaths.length > 0) orphanDeleted = true;
+    if (changed) {
+        await saveChatToHost_ACU();
     }
 
-    if (changed) await saveChatToHost_ACU();
-    return changed || orphanDeleted;
+    const gcResult = await cleanupUnreachableSummaryVectorIndexFiles_ACU();
+    return changed || gcResult.deletedPaths.length > 0 || gcResult.failedDeletes.length > 0;
 }
 
 /**
@@ -157,6 +143,7 @@ export async function bindDataEvents_ACU(): Promise<void> {
       const $openNewVisualizerButton_ACU = $popupInstance_ACU.find(`#${SCRIPT_ID_PREFIX_ACU}-open-new-visualizer`);
       const $vectorIndexModeEnabled_ACU = $popupInstance_ACU.find(`#${SCRIPT_ID_PREFIX_ACU}-vector-index-mode-enabled`);
       const $vectorIndexRefreshButton_ACU = $popupInstance_ACU.find(`#${SCRIPT_ID_PREFIX_ACU}-vector-index-refresh`);
+      const $vectorIndexHealthCheckButton_ACU = $popupInstance_ACU.find(`#${SCRIPT_ID_PREFIX_ACU}-vector-index-health-check`);
       const $vectorIndexClearCacheButton_ACU = $popupInstance_ACU.find(`#${SCRIPT_ID_PREFIX_ACU}-vector-index-clear-cache`);
       const $vectorIndexDeleteCurrentButton_ACU = $popupInstance_ACU.find(`#${SCRIPT_ID_PREFIX_ACU}-vector-index-delete-current`);
       const $buildVectorIndexNowButton_ACU = $popupInstance_ACU.find(`#${SCRIPT_ID_PREFIX_ACU}-build-vector-index-now`);
@@ -212,6 +199,24 @@ export async function bindDataEvents_ACU(): Promise<void> {
           $vectorIndexRefreshButton_ACU.off('click.acu_vector_index').on('click.acu_vector_index', async () => {
               await refreshVectorIndexStatsPanel_ACU();
               showToastr_ACU('success', '交火模式索引状态已刷新。');
+          });
+      }
+      if ($vectorIndexHealthCheckButton_ACU.length) {
+          $vectorIndexHealthCheckButton_ACU.off('click.acu_vector_index_health').on('click.acu_vector_index_health', async () => {
+              $vectorIndexHealthCheckButton_ACU.prop('disabled', true).text('正在检查...');
+              try {
+                  const report = await inspectSummaryVectorIndexHealth_ACU();
+                  const errorCount = report.missingFileCount + report.checksumMismatchCount + report.identityMismatchCount;
+                  const warningCount = report.legacyManifestCount + report.unreachableRegisteredFileCount;
+                  const repairHint = report.repairableRowKeys.length > 0 ? `，可修复行 ${report.repairableRowKeys.length} 条` : '';
+                  const message = `状态=${report.status}，manifest=${report.manifestCount}，可达文件=${report.reachableFileCount}，错误=${errorCount}，警告=${warningCount}${repairHint}`;
+                  showToastr_ACU(errorCount > 0 ? 'warning' : 'success', `交火索引健康检查完成：${message}`);
+              } catch (e: any) {
+                  logError_ACU('交火索引健康检查失败:', e);
+                  showToastr_ACU('error', `交火索引健康检查失败: ${e?.message || '未知错误'}`);
+              } finally {
+                  $vectorIndexHealthCheckButton_ACU.prop('disabled', false).text('健康检查');
+              }
           });
       }
       if ($vectorIndexClearCacheButton_ACU.length) {

@@ -27,13 +27,18 @@ import type {
     ChatSummaryVectorIndexState_ACU,
     SummaryVectorIndexBatchRef_ACU,
     SummaryVectorIndexExternalFileRef_ACU,
+    SummaryVectorIndexHealthReport_ACU,
+    SummaryVectorIndexReachabilityReport_ACU,
+    SummaryVectorIndexReachableFile_ACU,
     SummaryVectorIndexRowIndex_ACU,
     SummaryVectorIndexRowIndexEntry_ACU,
+    SummaryVectorIndexSafeGcResult_ACU,
     SummaryVectorIndexShard_ACU,
     SummaryVectorIndexStats_ACU,
     SummaryVectorIndexTombstone_ACU,
 } from './summary-vector-index-types';
 import { SUMMARY_VECTOR_INDEX_MANIFEST_VERSION_ACU } from './summary-vector-index-types';
+import { getAggregatedSummaryVectorIndexSnapshot_ACU } from './summary-vector-index-state-service';
 
 const DEFAULT_SHARD_CHUNK_LIMIT_ACU = 128;
 // 第一版保守止血：不再按 retention 删除历史快照，避免回退到旧楼层时找不到外置文件。
@@ -356,6 +361,124 @@ async function cleanupSnapshotScopeFilesExcept_ACU(
     if (removedPaths.length > 0) {
         logDebug_ACU(`[交火向量索引] 已清理最新快照未引用的同作用域外置文件: count=${removedPaths.length}`);
     }
+}
+
+function collectManifestReachableFiles_ACU(
+    manifest: ChatSummaryVectorIndexManifest_ACU,
+    context: { messageIndex: number; isolationKey: string },
+): SummaryVectorIndexReachableFile_ACU[] {
+    const reachableFiles: SummaryVectorIndexReachableFile_ACU[] = [];
+    const seen = new Set<string>();
+    const pushFile = (file: Partial<SummaryVectorIndexReachableFile_ACU> & { path?: string }): void => {
+        const path = String(file.path || '').trim();
+        if (!path || seen.has(path)) return;
+        seen.add(path);
+        reachableFiles.push({
+            path,
+            role: file.role,
+            indexId: file.indexId || manifest.indexId,
+            messageIndex: context.messageIndex,
+            isolationKey: context.isolationKey,
+            sourceTableKey: manifest.sourceTableKey,
+            manifestKey: manifest.indexId,
+            checksum: file.checksum,
+            chunkKey: file.chunkKey,
+            chunkId: file.chunkId,
+            rowKey: file.rowKey,
+        });
+    };
+
+    pushFile({ path: manifest.manifestFile, role: 'manifest' });
+    pushFile({ path: manifest.rowsFile, role: 'row_index' });
+    pushFile({ path: manifest.tombstoneFile, role: 'tombstone' });
+    (manifest.files || []).forEach((file) => pushFile({ ...file, indexId: manifest.indexId }));
+    (manifest.batchRefs || []).forEach((batch) => (batch.files || []).forEach((file) => pushFile({ ...file, indexId: batch.indexId || manifest.indexId })));
+    (manifest.contentAddressed?.chunkRefs || []).forEach((ref) => pushFile({
+        path: ref.path,
+        role: 'vector_chunk',
+        indexId: manifest.indexId,
+        checksum: ref.checksum,
+        chunkKey: ref.chunkKey,
+        chunkId: ref.chunkId,
+        rowKey: ref.rowKey,
+    }));
+    return reachableFiles;
+}
+
+export async function collectSummaryVectorIndexReachability_ACU(): Promise<SummaryVectorIndexReachabilityReport_ACU> {
+    const snapshot = await (async () => getAggregatedSummaryVectorIndexSnapshot_ACU())();
+    const chatKey = normalizeChatKey_ACU();
+    const reachabilityByPath = new Map<string, SummaryVectorIndexReachableFile_ACU>();
+    let manifestCount = 0;
+    if (snapshot?.layers?.length) {
+        snapshot.layers.forEach((layer) => {
+            const manifest = layer.summaryVectorIndexState?.manifest || layer.tagData?.summaryVectorIndexManifest || null;
+            if (!manifest) return;
+            manifestCount += 1;
+            collectManifestReachableFiles_ACU(manifest, {
+                messageIndex: layer.messageIndex,
+                isolationKey: layer.isolationKey,
+            }).forEach((file) => reachabilityByPath.set(file.path, file));
+        });
+    }
+    return {
+        chatKey,
+        reachablePaths: Array.from(reachabilityByPath.keys()),
+        reachableFiles: Array.from(reachabilityByPath.values()),
+        manifestCount,
+    };
+}
+
+export async function cleanupUnreachableSummaryVectorIndexFiles_ACU(): Promise<SummaryVectorIndexSafeGcResult_ACU> {
+    const reachability = await collectSummaryVectorIndexReachability_ACU();
+    const registry = await loadVectorIndexRegistry_ACU();
+    const reachablePathSet = new Set(reachability.reachablePaths);
+    const scopePrefixes = new Set<string>();
+    reachability.reachableFiles.forEach((file) => {
+        scopePrefixes.add(buildVectorIndexStableDirectory_ACU({
+            chatKey: reachability.chatKey,
+            isolationKey: file.isolationKey,
+            sourceTableKey: file.sourceTableKey,
+        }));
+    });
+    const deletedPaths: string[] = [];
+    const retainedPaths: string[] = [];
+    const blockedByReachability: string[] = [];
+    const failedDeletes: Array<{ path: string; error: string }> = [];
+    const scannedRegisteredFileCount = registry.files.length;
+    let reachableFileCount = 0;
+    for (const file of registry.files) {
+        const path = String(file?.path || '').trim();
+        if (!path) continue;
+        const inScope = Array.from(scopePrefixes).some((prefix) => path.startsWith(prefix));
+        if (!inScope) {
+            retainedPaths.push(path);
+            continue;
+        }
+        if (reachablePathSet.has(path)) {
+            reachableFileCount += 1;
+            retainedPaths.push(path);
+            blockedByReachability.push(path);
+            continue;
+        }
+        const result = await deleteVectorIndexFile_ACU(path);
+        if (result.ok) {
+            deletedPaths.push(result.path);
+        } else {
+            failedDeletes.push({ path, error: result.error || '删除失败' });
+        }
+    }
+    if (deletedPaths.length > 0) {
+        await unregisterVectorIndexFiles_ACU(deletedPaths);
+    }
+    return {
+        scannedRegisteredFileCount,
+        reachableFileCount,
+        deletedPaths,
+        retainedPaths,
+        blockedByReachability,
+        failedDeletes,
+    };
 }
 
 async function cleanupVersionedSnapshotRetention_ACU(manifest: ChatSummaryVectorIndexManifest_ACU): Promise<number> {
@@ -880,6 +1003,155 @@ export async function deleteSummaryVectorIndexExternal_ACU(manifest: ChatSummary
     if (manifest.indexId) {
         await deleteVectorIndexCacheByIndex_ACU(manifest.indexId);
     }
+}
+
+function collectManifestRowsForRepair_ACU(manifest: ChatSummaryVectorIndexManifest_ACU): Map<string, string[]> {
+    const rowsByChunkKey = new Map<string, string[]>();
+    (manifest.contentAddressed?.chunkRefs || []).forEach((ref) => {
+        if (!ref.chunkKey || !ref.rowKey) return;
+        const rowKeys = rowsByChunkKey.get(ref.chunkKey) || [];
+        rowKeys.push(ref.rowKey);
+        rowsByChunkKey.set(ref.chunkKey, rowKeys);
+    });
+    return rowsByChunkKey;
+}
+
+export async function inspectSummaryVectorIndexHealth_ACU(): Promise<SummaryVectorIndexHealthReport_ACU> {
+    const checkedAt = new Date().toISOString();
+    const reachability = await collectSummaryVectorIndexReachability_ACU();
+    const registry = await loadVectorIndexRegistry_ACU();
+    const reachablePathSet = new Set(reachability.reachablePaths);
+    const issues: SummaryVectorIndexHealthReport_ACU['issues'] = [];
+    const repairableRowKeys = new Set<string>();
+    const seenLegacyManifestIndexes = new Set<string>();
+
+    for (const file of reachability.reachableFiles) {
+        const loaded = await readVectorIndexJsonFile_ACU<any>(file.path);
+        if (!loaded.ok || !loaded.data) {
+            issues.push({
+                severity: 'error',
+                code: 'missing_file',
+                path: file.path,
+                role: file.role,
+                messageIndex: file.messageIndex,
+                isolationKey: file.isolationKey,
+                message: loaded.error || '外置文件不存在或无法读取',
+            });
+            continue;
+        }
+        const json = JSON.stringify(loaded.data);
+        const checksum = await sha256Text_ACU(json);
+        const registryRef = registry.files.find((item) => item.path === file.path);
+        if (registryRef?.checksum && registryRef.checksum !== checksum) {
+            issues.push({
+                severity: 'error',
+                code: 'checksum_mismatch',
+                path: file.path,
+                role: file.role,
+                messageIndex: file.messageIndex,
+                isolationKey: file.isolationKey,
+                expected: registryRef.checksum,
+                actual: checksum,
+                message: 'registry checksum 与实际文件内容不一致',
+            });
+        }
+        if (file.role === 'vector_chunk') {
+            const blob = loaded.data as VectorIndexChunkBlob_ACU;
+            const vector = Array.isArray(blob.vector) ? blob.vector : [];
+            const identityMismatch = !blob.chunkKey
+                || !blob.chunkId
+                || !blob.rowKey
+                || vector.length === 0
+                || String(blob.chunkKey || '') !== String(file.chunkKey || '')
+                || String(blob.chunkId || '') !== String(file.chunkId || '')
+                || String(blob.rowKey || '') !== String(file.rowKey || '');
+            if (identityMismatch) {
+                issues.push({
+                    severity: 'error',
+                    code: 'identity_mismatch',
+                    path: file.path,
+                    role: file.role,
+                    messageIndex: file.messageIndex,
+                    isolationKey: file.isolationKey,
+                    chunkKey: file.chunkKey || blob.chunkKey,
+                    chunkId: file.chunkId || blob.chunkId,
+                    rowKey: file.rowKey || blob.rowKey,
+                    expected: `${file.chunkKey || ''}/${file.chunkId || ''}/${file.rowKey || ''}`,
+                    actual: `${String(blob.chunkKey || '')}/${String(blob.chunkId || '')}/${String(blob.rowKey || '')}`,
+                    message: '内容寻址向量块身份与 manifest 引用不一致，或缺少有效向量',
+                });
+                if (file.rowKey || blob.rowKey) repairableRowKeys.add(String(file.rowKey || blob.rowKey));
+            }
+            if (file.checksum && checksum !== file.checksum) {
+                issues.push({
+                    severity: 'error',
+                    code: 'checksum_mismatch',
+                    path: file.path,
+                    role: file.role,
+                    messageIndex: file.messageIndex,
+                    isolationKey: file.isolationKey,
+                    chunkKey: file.chunkKey,
+                    chunkId: file.chunkId,
+                    rowKey: file.rowKey,
+                    expected: file.checksum,
+                    actual: checksum,
+                    message: 'manifest chunkRef checksum 与实际内容不一致',
+                });
+                if (file.rowKey) repairableRowKeys.add(file.rowKey);
+            }
+        } else if ((file.role === 'base_shard' || file.role === 'delta_shard') && !seenLegacyManifestIndexes.has(file.indexId || file.manifestKey)) {
+            seenLegacyManifestIndexes.add(file.indexId || file.manifestKey);
+            issues.push({
+                severity: 'warning',
+                code: 'legacy_manifest',
+                path: file.path,
+                role: file.role,
+                messageIndex: file.messageIndex,
+                isolationKey: file.isolationKey,
+                message: '旧 shard 协议仍可读，但建议迁移到内容寻址 chunk 协议',
+            });
+        }
+    }
+
+    registry.files.forEach((file) => {
+        const path = String(file?.path || '').trim();
+        if (!path || reachablePathSet.has(path) || path === 'TavernDB_ACU_vector_registry') return;
+        issues.push({
+            severity: 'warning',
+            code: 'unreachable_registered_file',
+            path,
+            role: file.role,
+            message: 'registry 中存在当前聊天快照不可达的外置文件，可由安全 GC 清理',
+        });
+    });
+
+    const missingFileCount = issues.filter((issue) => issue.code === 'missing_file').length;
+    const checksumMismatchCount = issues.filter((issue) => issue.code === 'checksum_mismatch').length;
+    const identityMismatchCount = issues.filter((issue) => issue.code === 'identity_mismatch').length;
+    const legacyManifestCount = issues.filter((issue) => issue.code === 'legacy_manifest').length;
+    const unreachableRegisteredFileCount = issues.filter((issue) => issue.code === 'unreachable_registered_file').length;
+    const status: SummaryVectorIndexHealthReport_ACU['status'] = reachability.manifestCount === 0
+        ? 'empty'
+        : missingFileCount > 0 || checksumMismatchCount > 0 || identityMismatchCount > 0
+            ? 'missing'
+            : issues.length > 0
+                ? 'degraded'
+                : 'healthy';
+
+    return {
+        status,
+        checkedAt,
+        manifestCount: reachability.manifestCount,
+        reachableFileCount: reachability.reachableFiles.length,
+        registeredFileCount: registry.files.length,
+        missingFileCount,
+        checksumMismatchCount,
+        identityMismatchCount,
+        legacyManifestCount,
+        unreachableRegisteredFileCount,
+        repairableRowKeys: Array.from(repairableRowKeys),
+        issues,
+    };
 }
 
 export async function getSummaryVectorIndexStats_ACU(manifest: ChatSummaryVectorIndexManifest_ACU | null | undefined): Promise<SummaryVectorIndexStats_ACU> {
