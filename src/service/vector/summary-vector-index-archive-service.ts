@@ -947,24 +947,6 @@ async function archiveSummaryVectorIndexNowUnlocked_ACU(options: { targetMessage
                 [...reusable.reusableRows, ...embeddedRows],
                 [...reusable.reusableChunks, ...embeddedChunks],
             );
-            if (checkpointResult.rows.length > 0 && checkpointResult.chunks.length > 0) {
-                await writeSummaryVectorIndexCheckpoint_ACU({
-                    chat,
-                    aggregatedSnapshot,
-                    embeddingModel: config.embeddingModel,
-                    preparedRows: prepared.rows,
-                    finalRows: checkpointResult.rows,
-                    finalChunks: checkpointResult.chunks,
-                    targetMessageIndex,
-                    snapshotMessageId,
-                    sourceTableKey: selectedSummary.summaryKey,
-                    sourceTableName,
-                    indexedAt,
-                    skippedRowCount: prepared.skippedRowCount,
-                    mode: archiveMode,
-                    saveChatAfterWrite: false,
-                });
-            }
         }
 
         const finalResult = buildFinalSummaryVectorIndexRowsAndChunks_ACU(
