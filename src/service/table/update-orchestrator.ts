@@ -42,6 +42,7 @@ import { buildGuidedBaseDataFromSheetGuide_ACU, getSortedSheetKeys_ACU } from '.
 import { isSqliteMode } from './storage-mode';
 import { reloadStorageProvider } from './table-storage-strategy';
 import { clearTableDataAtFloors_ACU } from '../chat/chat-service';
+import { applySpecialIndexSequenceToSummaryTables_ACU } from '../runtime/helpers-remaining';
 
 // ============================================================
 // 类型定义：返回值 + 进度事件（service 层不驱动 UI）
@@ -357,6 +358,10 @@ export async function executeCardUpdateCore_ACU(
                 if (!parseSuccess) {
                     throw new Error('解析或应用AI更新时出错');
                 }
+
+                // [spv3.6.5] 填表完成后统一强制应用编码索引列特殊锁定（AM序列）
+                // 无论 SQL 模式还是原生模式，都在这里兜底确保编码索引列被强制修正
+                applySpecialIndexSequenceToSummaryTables_ACU(currentJsonTableData_ACU);
 
                 success = true;
                 break;
