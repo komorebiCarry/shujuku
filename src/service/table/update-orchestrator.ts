@@ -441,22 +441,22 @@ export async function executeCardUpdateCore_ACU(
 
                     if (getCurrentWorldbookConfig_ACU().summaryVectorIndexModeEnabled === true) {
                         try {
-                            logDebug_ACU('[交火模式纪要索引] 填表完成，直接触发纪要向量索引归档...');
-                            const archiveResult = await archiveSummaryVectorIndexNow_ACU({
+                            logDebug_ACU('[交火模式纪要索引] 填表完成，触发增量向量化...');
+                            const vectorizeResult = await archiveSummaryVectorIndexNow_ACU({
                                 targetMessageIndex: saveTargetIndex,
                                 mode: 'sync',
-                                saveChatAfterWrite: true,
+                                vectorizeOnly: true,
                                 force: true,
                             });
-                            if (archiveResult.success && !archiveResult.skipped) {
-                                logDebug_ACU(`[交火模式纪要索引] 归档完成：rows=${archiveResult.indexedRowCount}, chunks=${archiveResult.chunkCount}, floor=${archiveResult.messageIndex}`);
-                            } else if (archiveResult.skipped) {
-                                logDebug_ACU(`[交火模式纪要索引] 归档跳过：${archiveResult.reason || 'unknown'}`);
+                            if (vectorizeResult.success && !vectorizeResult.skipped) {
+                                logDebug_ACU(`[交火模式纪要索引] 向量化完成，已调度防抖归档：rows=${vectorizeResult.indexedRowCount}, chunks=${vectorizeResult.chunkCount}`);
+                            } else if (vectorizeResult.skipped) {
+                                logDebug_ACU(`[交火模式纪要索引] 向量化跳过：${vectorizeResult.reason || 'unknown'}`);
                             } else {
-                                logWarn_ACU('[交火模式纪要索引] 归档失败:', archiveResult.reason || 'unknown', archiveResult.errors?.join('; ') || '');
+                                logWarn_ACU('[交火模式纪要索引] 向量化失败:', vectorizeResult.reason || 'unknown', vectorizeResult.errors?.join('; ') || '');
                             }
                         } catch (archiveError) {
-                            logWarn_ACU('[交火模式纪要索引] 填表完成后归档异常，已保留本次表格保存结果:', archiveError);
+                            logWarn_ACU('[交火模式纪要索引] 填表完成后向量化异常，已保留本次表格保存结果:', archiveError);
                         }
                     }
             } else {

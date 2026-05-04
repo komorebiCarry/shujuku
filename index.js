@@ -31058,6 +31058,64 @@ $CONTENT
 
     const summaryVectorIndexArchiveLocks_ACU = new Map();
     const summaryVectorIndexArchivePendingTasks_ACU = new Map();
+    // ============================================================
+    // 向量化→防抖归档 pipeline（参考 Engram 数据层 hook 触发模式）
+    // 向量化阶段立即执行，归档阶段由向量数据变更触发防抖
+    // ============================================================
+    const VECTOR_INDEX_PERSIST_DEBOUNCE_MS_ACU = 2500;
+    const pendingVectorIndexArchives_ACU = new Map();
+    const vectorIndexPersistTimers_ACU = new Map();
+    function scheduleDebouncedVectorIndexPersist_ACU(scopeKey) {
+        const existing = vectorIndexPersistTimers_ACU.get(scopeKey);
+        if (existing)
+            clearTimeout(existing);
+        const timer = setTimeout(() => {
+            vectorIndexPersistTimers_ACU.delete(scopeKey);
+            void persistPendingVectorIndexArchive_ACU(scopeKey);
+        }, VECTOR_INDEX_PERSIST_DEBOUNCE_MS_ACU);
+        vectorIndexPersistTimers_ACU.set(scopeKey, timer);
+        logDebug_ACU(`[纪要向量索引] 防抖归档已调度：scope=${scopeKey}, debounceMs=${VECTOR_INDEX_PERSIST_DEBOUNCE_MS_ACU}`);
+    }
+    async function persistPendingVectorIndexArchive_ACU(scopeKey) {
+        const pending = pendingVectorIndexArchives_ACU.get(scopeKey);
+        if (!pending) {
+            logDebug_ACU(`[纪要向量索引] 防抖归档触发但无 pending 数据：scope=${scopeKey}`);
+            return;
+        }
+        pendingVectorIndexArchives_ACU.delete(scopeKey);
+        try {
+            logDebug_ACU(`[纪要向量索引] 防抖归档开始：scope=${scopeKey}, rows=${pending.finalRows.length}, chunks=${pending.finalChunks.length}`);
+            await writeSummaryVectorIndexCheckpoint_ACU({
+                chat: pending.chat,
+                aggregatedSnapshot: pending.aggregatedSnapshot,
+                embeddingModel: pending.embeddingModel,
+                preparedRows: pending.preparedRows,
+                finalRows: pending.finalRows,
+                finalChunks: pending.finalChunks,
+                targetMessageIndex: pending.targetMessageIndex,
+                snapshotMessageId: pending.snapshotMessageId,
+                sourceTableKey: pending.sourceTableKey,
+                sourceTableName: pending.sourceTableName,
+                indexedAt: pending.indexedAt,
+                skippedRowCount: pending.skippedRowCount,
+                mode: pending.mode,
+                saveChatAfterWrite: true,
+            });
+            logDebug_ACU(`[纪要向量索引] 防抖归档完成：scope=${scopeKey}, rows=${pending.finalRows.length}, chunks=${pending.finalChunks.length}`);
+        }
+        catch (error) {
+            logWarn_ACU('[纪要向量索引] 防抖归档失败:', error);
+        }
+    }
+    function flushPendingVectorIndexArchives_ACU() {
+        for (const [scopeKey] of pendingVectorIndexArchives_ACU) {
+            const timer = vectorIndexPersistTimers_ACU.get(scopeKey);
+            if (timer)
+                clearTimeout(timer);
+            vectorIndexPersistTimers_ACU.delete(scopeKey);
+            void persistPendingVectorIndexArchive_ACU(scopeKey);
+        }
+    }
     function buildSummaryVectorIndexArchiveScopeKey_ACU(parts) {
         return [
             String(parts.chatKey || 'current-chat'),
@@ -31967,6 +32025,42 @@ $CONTENT
                     errors: ['纪要向量索引 embedding 结果为空。'],
                 });
             }
+            // ── vectorizeOnly 模式：只向量化，归档由防抖触发 ──
+            if (options.vectorizeOnly) {
+                const scopeKey = buildSummaryVectorIndexArchiveScopeKey_ACU({
+                    chatKey: currentChatFileIdentifier_ACU,
+                    isolationKey: getCurrentIsolationKey_ACU(),
+                    sourceTableKey: selectedSummary.summaryKey,
+                });
+                pendingVectorIndexArchives_ACU.set(scopeKey, {
+                    chat,
+                    aggregatedSnapshot,
+                    embeddingModel: config.embeddingModel,
+                    preparedRows: prepared.rows,
+                    finalRows: finalResult.rows,
+                    finalChunks: finalResult.chunks,
+                    targetMessageIndex,
+                    snapshotMessageId,
+                    sourceTableKey: selectedSummary.summaryKey,
+                    sourceTableName,
+                    indexedAt,
+                    skippedRowCount: prepared.skippedRowCount,
+                    mode: archiveMode,
+                });
+                scheduleDebouncedVectorIndexPersist_ACU(scopeKey);
+                logDebug_ACU(`[纪要向量索引] 向量化完成，已存入待归档队列：scope=${scopeKey}, rows=${finalResult.rows.length}, chunks=${finalResult.chunks.length}`);
+                return buildResult_ACU({
+                    success: true,
+                    skipped: false,
+                    indexedRowCount: finalResult.rows.length,
+                    skippedRowCount: prepared.skippedRowCount + (prepared.rows.length - finalResult.rows.length),
+                    chunkCount: finalResult.chunks.length,
+                    messageIndex: targetMessageIndex,
+                    summaryKey: selectedSummary.summaryKey,
+                    reason: 'vectorized_pending_debounced_archive',
+                });
+            }
+            // ── 立即归档模式：向量化后直接写入外置文件 ──
             await writeSummaryVectorIndexCheckpoint_ACU({
                 chat,
                 aggregatedSnapshot,
@@ -32331,25 +32425,25 @@ $CONTENT
                     await updateReadableLorebookEntry_ACU(true);
                     if (getCurrentWorldbookConfig_ACU().summaryVectorIndexModeEnabled === true) {
                         try {
-                            logDebug_ACU('[交火模式纪要索引] 填表完成，直接触发纪要向量索引归档...');
-                            const archiveResult = await archiveSummaryVectorIndexNow_ACU({
+                            logDebug_ACU('[交火模式纪要索引] 填表完成，触发增量向量化...');
+                            const vectorizeResult = await archiveSummaryVectorIndexNow_ACU({
                                 targetMessageIndex: saveTargetIndex,
                                 mode: 'sync',
-                                saveChatAfterWrite: true,
+                                vectorizeOnly: true,
                                 force: true,
                             });
-                            if (archiveResult.success && !archiveResult.skipped) {
-                                logDebug_ACU(`[交火模式纪要索引] 归档完成：rows=${archiveResult.indexedRowCount}, chunks=${archiveResult.chunkCount}, floor=${archiveResult.messageIndex}`);
+                            if (vectorizeResult.success && !vectorizeResult.skipped) {
+                                logDebug_ACU(`[交火模式纪要索引] 向量化完成，已调度防抖归档：rows=${vectorizeResult.indexedRowCount}, chunks=${vectorizeResult.chunkCount}`);
                             }
-                            else if (archiveResult.skipped) {
-                                logDebug_ACU(`[交火模式纪要索引] 归档跳过：${archiveResult.reason || 'unknown'}`);
+                            else if (vectorizeResult.skipped) {
+                                logDebug_ACU(`[交火模式纪要索引] 向量化跳过：${vectorizeResult.reason || 'unknown'}`);
                             }
                             else {
-                                logWarn_ACU('[交火模式纪要索引] 归档失败:', archiveResult.reason || 'unknown', archiveResult.errors?.join('; ') || '');
+                                logWarn_ACU('[交火模式纪要索引] 向量化失败:', vectorizeResult.reason || 'unknown', vectorizeResult.errors?.join('; ') || '');
                             }
                         }
                         catch (archiveError) {
-                            logWarn_ACU('[交火模式纪要索引] 填表完成后归档异常，已保留本次表格保存结果:', archiveError);
+                            logWarn_ACU('[交火模式纪要索引] 填表完成后向量化异常，已保留本次表格保存结果:', archiveError);
                         }
                     }
                 }
