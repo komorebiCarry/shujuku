@@ -1,4 +1,4 @@
-import { currentChatFileIdentifier_ACU, getCurrentIsolationKey_ACU } from '../runtime/state-manager';
+import { currentChatFileIdentifier_ACU } from '../runtime/state-manager';
 import { logDebug_ACU, logWarn_ACU } from '../../shared/utils';
 import {
     deleteSummaryVectorFlushTask_ACU,
@@ -42,14 +42,9 @@ function normalizeKeyPart_ACU(value: any): string {
     return String(value || '').trim();
 }
 
-export function buildSummaryVectorIndexFlushScopeKey_ACU(parts: {
-    chatKey: string;
-    isolationKey: string;
-    sourceTableKey: string;
-}): string {
-    return [parts.chatKey, parts.isolationKey, parts.sourceTableKey]
-        .map((part) => normalizeKeyPart_ACU(part) || 'default')
-        .join('::');
+/** scope key 只用 chatKey，与 spv3.6.7+ 外部快照路径设计一致 */
+export function buildSummaryVectorIndexFlushScopeKey_ACU(chatKey: string): string {
+    return `flush::${normalizeKeyPart_ACU(chatKey) || 'default'}`;
 }
 
 function normalizeErrorMessage_ACU(error: unknown): string {
@@ -87,7 +82,9 @@ async function markFlushTaskFailure_ACU(task: SummaryVectorIndexFlushTaskRecord_
 function scheduleFlushTaskTimer_ACU(task: SummaryVectorIndexFlushTaskRecord_ACU): void {
     clearFlushTimer_ACU(task.scopeKey);
     const delay = Math.max(0, Math.min(Math.max(0, task.debounceUntil - Date.now()), 2_147_483_647));
+    logDebug_ACU(`[交火向量索引] 防抖定时器已设置：scope=${task.scopeKey}, delay=${delay}ms, mode=${task.mode}`);
     const timer = setTimeout(() => {
+        logDebug_ACU(`[交火向量索引] 防抖定时器触发：scope=${task.scopeKey}, 开始执行 flush`);
         summaryVectorFlushTimers_ACU.delete(task.scopeKey);
         void flushSummaryVectorIndexTaskNow_ACU(task.scopeKey);
     }, delay);
@@ -100,20 +97,18 @@ export async function enqueueSummaryVectorIndexFlush_ACU(options: SummaryVectorI
         return { queued: false, skipped: true, reason: 'summary_table_not_found' };
     }
     const chatKey = normalizeKeyPart_ACU(currentChatFileIdentifier_ACU);
-    const isolationKey = normalizeKeyPart_ACU(getCurrentIsolationKey_ACU());
-    const sourceTableKey = normalizeKeyPart_ACU(selectedSummary.summaryKey);
-    if (!chatKey || !isolationKey || !sourceTableKey) {
+    if (!chatKey) {
         return { queued: false, skipped: true, reason: 'flush_scope_unresolved' };
     }
 
     const now = Date.now();
     const debounceMs = Math.max(0, Number(options.debounceMs ?? SUMMARY_VECTOR_INDEX_FLUSH_DEBOUNCE_MS_ACU) || SUMMARY_VECTOR_INDEX_FLUSH_DEBOUNCE_MS_ACU);
-    const scopeKey = buildSummaryVectorIndexFlushScopeKey_ACU({ chatKey, isolationKey, sourceTableKey });
+    const scopeKey = buildSummaryVectorIndexFlushScopeKey_ACU(chatKey);
     const task = await upsertSummaryVectorFlushTask_ACU({
         scopeKey,
         chatKey,
-        isolationKey,
-        sourceTableKey,
+        isolationKey: '',
+        sourceTableKey: normalizeKeyPart_ACU(selectedSummary.summaryKey),
         targetMessageIndex: options.targetMessageIndex,
         mode: options.mode === 'append' ? 'append' : 'sync',
         status: 'queued',
@@ -136,9 +131,8 @@ export async function flushSummaryVectorIndexTaskNow_ACU(scopeKey: string): Prom
     }
 
     const activeChatKey = normalizeKeyPart_ACU(currentChatFileIdentifier_ACU);
-    const activeIsolationKey = normalizeKeyPart_ACU(getCurrentIsolationKey_ACU());
-    if (task.chatKey !== activeChatKey || task.isolationKey !== activeIsolationKey) {
-        const message = `flush scope 与当前聊天上下文不一致：task=${task.chatKey}/${task.isolationKey}, active=${activeChatKey}/${activeIsolationKey}`;
+    if (task.chatKey !== activeChatKey) {
+        const message = `flush scope 与当前聊天上下文不一致：task=${task.chatKey}, active=${activeChatKey}`;
         await markFlushTaskFailure_ACU(task, message, false);
         logWarn_ACU('[交火向量索引] 跳过防抖 flush，当前上下文不匹配:', message);
         return { success: false, reason: 'flush_scope_mismatch', error: message };
@@ -166,10 +160,13 @@ export async function flushSummaryVectorIndexTaskNow_ACU(scopeKey: string): Prom
             requestedAt: task.requestedAt,
             debounceUntil: task.debounceUntil,
         });
+        // [spv3.6.9] force=true：填表完成后必须强制写入外部文件，跳过"无变更"检测
+        // 因为填表后数据已变化，但 fingerprint 比对可能误判为无变更
         const result = await archiveSummaryVectorIndexNow_ACU({
             targetMessageIndex: task.targetMessageIndex,
             mode: task.mode,
             saveChatAfterWrite: true,
+            force: true,
         });
         if (result.success) {
             await deleteSummaryVectorFlushTask_ACU(task.scopeKey);
@@ -192,9 +189,8 @@ export async function flushSummaryVectorIndexTaskNow_ACU(scopeKey: string): Prom
 
 export async function restoreSummaryVectorIndexFlushQueueForCurrentChat_ACU(): Promise<number> {
     const chatKey = normalizeKeyPart_ACU(currentChatFileIdentifier_ACU);
-    const isolationKey = normalizeKeyPart_ACU(getCurrentIsolationKey_ACU());
-    if (!chatKey || !isolationKey) return 0;
-    const tasks = await listSummaryVectorFlushTasks_ACU({ chatKey, isolationKey });
+    if (!chatKey) return 0;
+    const tasks = await listSummaryVectorFlushTasks_ACU({ chatKey });
     let restored = 0;
     const now = Date.now();
     for (const task of tasks) {

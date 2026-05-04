@@ -18459,7 +18459,7 @@ $CONTENT
             const chatKey = normalizeKeyPart_ACU$1(input.chatKey);
             const isolationKey = normalizeKeyPart_ACU$1(input.isolationKey);
             const sourceTableKey = normalizeKeyPart_ACU$1(input.sourceTableKey);
-            if (!scopeKey || !chatKey || !isolationKey || !sourceTableKey)
+            if (!scopeKey || !chatKey)
                 return null;
             const now = Date.now();
             const db = await openDb_ACU();
@@ -32196,10 +32196,9 @@ $CONTENT
     function normalizeKeyPart_ACU(value) {
         return String(value || '').trim();
     }
-    function buildSummaryVectorIndexFlushScopeKey_ACU(parts) {
-        return [parts.chatKey, parts.isolationKey, parts.sourceTableKey]
-            .map((part) => normalizeKeyPart_ACU(part) || 'default')
-            .join('::');
+    /** scope key 只用 chatKey，与 spv3.6.7+ 外部快照路径设计一致 */
+    function buildSummaryVectorIndexFlushScopeKey_ACU(chatKey) {
+        return `flush::${normalizeKeyPart_ACU(chatKey) || 'default'}`;
     }
     function normalizeErrorMessage_ACU$1(error) {
         if (error instanceof Error)
@@ -32237,7 +32236,9 @@ $CONTENT
     function scheduleFlushTaskTimer_ACU(task) {
         clearFlushTimer_ACU(task.scopeKey);
         const delay = Math.max(0, Math.min(Math.max(0, task.debounceUntil - Date.now()), 2147483647));
+        logDebug_ACU(`[交火向量索引] 防抖定时器已设置：scope=${task.scopeKey}, delay=${delay}ms, mode=${task.mode}`);
         const timer = setTimeout(() => {
+            logDebug_ACU(`[交火向量索引] 防抖定时器触发：scope=${task.scopeKey}, 开始执行 flush`);
             summaryVectorFlushTimers_ACU.delete(task.scopeKey);
             void flushSummaryVectorIndexTaskNow_ACU(task.scopeKey);
         }, delay);
@@ -32249,19 +32250,17 @@ $CONTENT
             return { queued: false, skipped: true, reason: 'summary_table_not_found' };
         }
         const chatKey = normalizeKeyPart_ACU(currentChatFileIdentifier_ACU);
-        const isolationKey = normalizeKeyPart_ACU(getCurrentIsolationKey_ACU());
-        const sourceTableKey = normalizeKeyPart_ACU(selectedSummary.summaryKey);
-        if (!chatKey || !isolationKey || !sourceTableKey) {
+        if (!chatKey) {
             return { queued: false, skipped: true, reason: 'flush_scope_unresolved' };
         }
         const now = Date.now();
         const debounceMs = Math.max(0, Number(options.debounceMs ?? SUMMARY_VECTOR_INDEX_FLUSH_DEBOUNCE_MS_ACU) || SUMMARY_VECTOR_INDEX_FLUSH_DEBOUNCE_MS_ACU);
-        const scopeKey = buildSummaryVectorIndexFlushScopeKey_ACU({ chatKey, isolationKey, sourceTableKey });
+        const scopeKey = buildSummaryVectorIndexFlushScopeKey_ACU(chatKey);
         const task = await upsertSummaryVectorFlushTask_ACU({
             scopeKey,
             chatKey,
-            isolationKey,
-            sourceTableKey,
+            isolationKey: '',
+            sourceTableKey: normalizeKeyPart_ACU(selectedSummary.summaryKey),
             targetMessageIndex: options.targetMessageIndex,
             mode: options.mode === 'append' ? 'append' : 'sync',
             status: 'queued',
@@ -32283,9 +32282,8 @@ $CONTENT
             return { success: true, skipped: true, reason: 'flush_already_running' };
         }
         const activeChatKey = normalizeKeyPart_ACU(currentChatFileIdentifier_ACU);
-        const activeIsolationKey = normalizeKeyPart_ACU(getCurrentIsolationKey_ACU());
-        if (task.chatKey !== activeChatKey || task.isolationKey !== activeIsolationKey) {
-            const message = `flush scope 与当前聊天上下文不一致：task=${task.chatKey}/${task.isolationKey}, active=${activeChatKey}/${activeIsolationKey}`;
+        if (task.chatKey !== activeChatKey) {
+            const message = `flush scope 与当前聊天上下文不一致：task=${task.chatKey}, active=${activeChatKey}`;
             await markFlushTaskFailure_ACU(task, message, false);
             logWarn_ACU('[交火向量索引] 跳过防抖 flush，当前上下文不匹配:', message);
             return { success: false, reason: 'flush_scope_mismatch', error: message };
@@ -32311,10 +32309,13 @@ $CONTENT
                 requestedAt: task.requestedAt,
                 debounceUntil: task.debounceUntil,
             });
+            // [spv3.6.9] force=true：填表完成后必须强制写入外部文件，跳过"无变更"检测
+            // 因为填表后数据已变化，但 fingerprint 比对可能误判为无变更
             const result = await archiveSummaryVectorIndexNow_ACU({
                 targetMessageIndex: task.targetMessageIndex,
                 mode: task.mode,
                 saveChatAfterWrite: true,
+                force: true,
             });
             if (result.success) {
                 await deleteSummaryVectorFlushTask_ACU(task.scopeKey);
@@ -32338,10 +32339,9 @@ $CONTENT
     }
     async function restoreSummaryVectorIndexFlushQueueForCurrentChat_ACU() {
         const chatKey = normalizeKeyPart_ACU(currentChatFileIdentifier_ACU);
-        const isolationKey = normalizeKeyPart_ACU(getCurrentIsolationKey_ACU());
-        if (!chatKey || !isolationKey)
+        if (!chatKey)
             return 0;
-        const tasks = await listSummaryVectorFlushTasks_ACU({ chatKey, isolationKey });
+        const tasks = await listSummaryVectorFlushTasks_ACU({ chatKey });
         let restored = 0;
         const now = Date.now();
         for (const task of tasks) {
@@ -32696,11 +32696,19 @@ $CONTENT
                 // 将 embedding + 归档写入从 saving 阶段移到 complete 之后，
                 // 避免 embedding API 调用阻塞"正在保存"提示框。
                 // 使用 flush queue 替代直接调用，由防抖定时器统一调度。
+                // [spv3.6.9] 增加诊断日志，记录入队结果（queued/skipped）
                 if (!isImportMode && success && getCurrentWorldbookConfig_ACU().summaryVectorIndexModeEnabled === true) {
                     enqueueSummaryVectorIndexFlush_ACU({
                         targetMessageIndex: saveTargetIndex,
                         mode: 'sync',
                         reason: 'table_fill_complete',
+                    }).then(result => {
+                        if (result.skipped) {
+                            logWarn_ACU(`[交火模式纪要索引] 填表完成后防抖归档被跳过：${result.reason || 'unknown'}, scopeKey=${result.scopeKey || ''}`);
+                        }
+                        else if (result.queued) {
+                            logDebug_ACU(`[交火模式纪要索引] 填表完成后已入队防抖归档, scopeKey=${result.scopeKey}, debounceUntil=${result.debounceUntil}`);
+                        }
                     }).catch(err => {
                         logWarn_ACU('[交火模式纪要索引] 填表完成后防抖归档入队异常:', err);
                     });

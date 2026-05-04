@@ -455,11 +455,18 @@ export async function executeCardUpdateCore_ACU(
             // 将 embedding + 归档写入从 saving 阶段移到 complete 之后，
             // 避免 embedding API 调用阻塞"正在保存"提示框。
             // 使用 flush queue 替代直接调用，由防抖定时器统一调度。
+            // [spv3.6.9] 增加诊断日志，记录入队结果（queued/skipped）
             if (!isImportMode && success && getCurrentWorldbookConfig_ACU().summaryVectorIndexModeEnabled === true) {
                 enqueueSummaryVectorIndexFlush_ACU({
                     targetMessageIndex: saveTargetIndex,
                     mode: 'sync',
                     reason: 'table_fill_complete',
+                }).then(result => {
+                    if (result.skipped) {
+                        logWarn_ACU(`[交火模式纪要索引] 填表完成后防抖归档被跳过：${result.reason || 'unknown'}, scopeKey=${result.scopeKey || ''}`);
+                    } else if (result.queued) {
+                        logDebug_ACU(`[交火模式纪要索引] 填表完成后已入队防抖归档, scopeKey=${result.scopeKey}, debounceUntil=${result.debounceUntil}`);
+                    }
                 }).catch(err => {
                     logWarn_ACU('[交火模式纪要索引] 填表完成后防抖归档入队异常:', err);
                 });

@@ -517,7 +517,7 @@ export async function upsertSummaryVectorFlushTask_ACU(input: SummaryVectorIndex
         const chatKey = normalizeKeyPart_ACU(input.chatKey);
         const isolationKey = normalizeKeyPart_ACU(input.isolationKey);
         const sourceTableKey = normalizeKeyPart_ACU(input.sourceTableKey);
-        if (!scopeKey || !chatKey || !isolationKey || !sourceTableKey) return null;
+        if (!scopeKey || !chatKey) return null;
         const now = Date.now();
         const db = await openDb_ACU();
         return await new Promise((resolve, reject) => {
