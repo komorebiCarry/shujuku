@@ -60,10 +60,15 @@ async function refreshVectorIndexStatsPanel_ACU(): Promise<void> {
     const setField = (field: string, value: string): void => {
         $panel.find(`[data-acu-vector-index-field="${field}"]`).text(value);
     };
+    // 优先使用 state 层的实际行/块数量，而非 manifest 的可能过时的计数
+    const stateRowCount = Array.isArray(state?.rows) ? state.rows.filter((r: any) => r.status !== 'removed').length : 0;
+    const stateChunkCount = Array.isArray(state?.chunks) ? state.chunks.length : 0;
+    const displayRowCount = stateRowCount > 0 ? stateRowCount : stats.rowCount;
+    const displayChunkCount = stateChunkCount > 0 ? stateChunkCount : stats.chunkCount;
     setField('status', stats.status || 'none');
     setField('indexId', stats.indexId || '-');
     setField('backend', stats.backend || 'none');
-    setField('rowsChunks', `${stats.rowCount} / ${stats.chunkCount}`);
+    setField('rowsChunks', `${displayRowCount} / ${displayChunkCount}`);
     setField('shards', `${stats.baseShardCount} / ${stats.deltaShardCount}`);
     setField('tombstones', `${stats.tombstoneRowCount} / ${stats.tombstoneChunkCount}`);
     setField('externalBytes', formatBytes_ACU(stats.externalTotalBytes));
@@ -162,7 +167,6 @@ export async function bindDataEvents_ACU(): Promise<void> {
       const $openNewVisualizerButton_ACU = $popupInstance_ACU.find(`#${SCRIPT_ID_PREFIX_ACU}-open-new-visualizer`);
       const $vectorIndexModeEnabled_ACU = $popupInstance_ACU.find(`#${SCRIPT_ID_PREFIX_ACU}-vector-index-mode-enabled`);
       const $vectorIndexRefreshButton_ACU = $popupInstance_ACU.find(`#${SCRIPT_ID_PREFIX_ACU}-vector-index-refresh`);
-      const $vectorIndexHealthCheckButton_ACU = $popupInstance_ACU.find(`#${SCRIPT_ID_PREFIX_ACU}-vector-index-health-check`);
       const $vectorIndexClearCacheButton_ACU = $popupInstance_ACU.find(`#${SCRIPT_ID_PREFIX_ACU}-vector-index-clear-cache`);
       const $vectorIndexDeleteCurrentButton_ACU = $popupInstance_ACU.find(`#${SCRIPT_ID_PREFIX_ACU}-vector-index-delete-current`);
       const $vectorIndexMigrateLegacyButton_ACU = $popupInstance_ACU.find(`#${SCRIPT_ID_PREFIX_ACU}-vector-index-migrate-legacy`);
@@ -219,27 +223,6 @@ export async function bindDataEvents_ACU(): Promise<void> {
           $vectorIndexRefreshButton_ACU.off('click.acu_vector_index').on('click.acu_vector_index', async () => {
               await refreshVectorIndexStatsPanel_ACU();
               showToastr_ACU('success', '交火模式索引状态已刷新。');
-          });
-      }
-      if ($vectorIndexHealthCheckButton_ACU.length) {
-          $vectorIndexHealthCheckButton_ACU.off('click.acu_vector_index_health').on('click.acu_vector_index_health', async () => {
-              $vectorIndexHealthCheckButton_ACU.prop('disabled', true).text('正在检查...');
-              try {
-                  const report = await inspectSummaryVectorIndexHealth_ACU();
-                  const errorCount = report.missingFileCount + report.checksumMismatchCount + report.identityMismatchCount;
-                  const warningCount = report.legacyManifestCount + report.unreachableRegisteredFileCount;
-                  const pendingFlushCount = (report.flushTaskDirtyCount || 0) + (report.flushTaskQueuedCount || 0) + (report.flushTaskFlushingCount || 0);
-                  const failedFlushCount = report.flushTaskFailedCount || 0;
-                  const repairHint = report.repairableRowKeys.length > 0 ? `，可修复行 ${report.repairableRowKeys.length} 条` : '';
-                  const flushHint = pendingFlushCount > 0 || failedFlushCount > 0 ? `，防抖队列 pending=${pendingFlushCount}, failed=${failedFlushCount}` : '';
-                  const message = `状态=${report.status}，manifest=${report.manifestCount}，可达文件=${report.reachableFileCount}，错误=${errorCount}，警告=${warningCount}${flushHint}${repairHint}`;
-                  showToastr_ACU(errorCount > 0 || failedFlushCount > 0 ? 'warning' : 'success', `交火索引健康检查完成：${message}`);
-              } catch (e: any) {
-                  logError_ACU('交火索引健康检查失败:', e);
-                  showToastr_ACU('error', `交火索引健康检查失败: ${e?.message || '未知错误'}`);
-              } finally {
-                  $vectorIndexHealthCheckButton_ACU.prop('disabled', false).text('健康检查');
-              }
           });
       }
       if ($vectorIndexClearCacheButton_ACU.length) {

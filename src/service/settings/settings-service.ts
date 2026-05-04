@@ -416,14 +416,57 @@ export   function loadSettings_ACU() {
               fillMissing_ACU('archiveBatchSize', defaultVectorMemoryConfig_ACU.archiveBatchSize);
               fillMissing_ACU('archiveMaxConcurrency', defaultVectorMemoryConfig_ACU.archiveMaxConcurrency);
               fillMissing_ACU('summaryIndexArchiveMaxConcurrency', (defaultVectorMemoryConfig_ACU as any).summaryIndexArchiveMaxConcurrency || 30);
-              fillMissingOrLegacyDefault_ACU('topK', defaultVectorMemoryConfig_ACU.topK, [10]);
+              // [spv3.5.21] 一次性覆盖：topK / recallCandidateLimit / summaryIndexKeywordMinRows 强制更新到新默认值
+              const forceOverride_ACU = (key: string, newValue: any, legacyValues: any[]) => {
+                  const current = vectorConfig[key];
+                  const isLegacy = legacyValues.some((v) => current === v);
+                  if (isLegacy) {
+                      vectorConfig[key] = cloneDefaultValue_ACU(newValue);
+                      shouldPersistSettingsAfterLoad_ACU = true;
+                  }
+              };
+              fillMissingOrLegacyDefault_ACU('topK', defaultVectorMemoryConfig_ACU.topK, [10, 100]);
+              forceOverride_ACU('topK', defaultVectorMemoryConfig_ACU.topK, [100]);
               fillMissingOrLegacyDefault_ACU('minScore', defaultVectorMemoryConfig_ACU.minScore, [0.4, 0.6]);
               fillMissingOrLegacyDefault_ACU('recallCandidateLimit', defaultVectorMemoryConfig_ACU.recallCandidateLimit, [100]);
+              forceOverride_ACU('recallCandidateLimit', defaultVectorMemoryConfig_ACU.recallCandidateLimit, [100, 500]);
+              fillMissingOrLegacyDefault_ACU('summaryIndexKeywordMinRows', (defaultVectorMemoryConfig_ACU as any).summaryIndexKeywordMinRows, [100]);
+              forceOverride_ACU('summaryIndexKeywordMinRows', (defaultVectorMemoryConfig_ACU as any).summaryIndexKeywordMinRows, [100]);
+              fillMissing_ACU('recentFixedInjectCount', (defaultVectorMemoryConfig_ACU as any).recentFixedInjectCount || 50);
               fillMissingPromptGroup_ACU('summaryPromptGroup', defaultVectorMemoryConfig_ACU.summaryPromptGroup || []);
-              if (isLegacyKeywordPromptGroup_ACU || !Array.isArray(vectorConfig.keywordPromptGroup) || vectorConfig.keywordPromptGroup.length === 0) {
+              // [spv3.5.21] 关键词提示词：旧版（无 <keywords> 标签）强制刷新为新版（<keywords> 标签包裹）
+              const legacyKeywordPromptGroupsV2_ACU = [
+                  ...legacyKeywordPromptGroups_ACU,
+                  [
+                      {
+                          role: 'system',
+                          content: '你负责为交火模式纪要索引召回生成检索关键词。\n'
+                              + '你会看到最近对话上下文和当前用户输入。\n'
+                              + '目标：输出最相关的 12 个简洁关键词或短语，用于纪要索引召回与重排序。\n'
+                              + '优先级：人物、地点、时间、事件、目标、冲突、道具、组织、关系变化、未解决问题。\n'
+                              + '输出必须包含显示思维链条，并严格使用以下结构：\n'
+                              + '<thinking>\n'
+                              + '逐步分析最近上下文、当前用户输入、涉及人物、地点、时间、事件、目标、冲突、道具、组织、关系变化和未解决问题。\n'
+                              + '</thinking>\n'
+                              + '关键词：关键词1，关键词2，关键词3\n'
+                              + '硬性要求：关键词行只放关键词或短语，不要放解释句；多个关键词必须使用中文逗号分隔；尽量输出 12 个，最多 24 个。',
+                      },
+                      {
+                          role: 'user',
+                          content: '最近上下文：\n$RECENT_CONTEXT\n\n当前用户输入：\n$USER_INPUT\n\n请根据以上内容生成交火模式纪要索引召回关键词。先在 <thinking> 中显示你的检索分析，再输出"关键词："行。',
+                      },
+                      {
+                          role: 'assistant',
+                          content: '<thinking>\n交火关键词检索思维：我将逐步分析当前输入需要召回的纪要索引关键词。',
+                      },
+                  ],
+              ];
+              const isLegacyKeywordPromptGroupV2_ACU = legacyKeywordPromptGroupsV2_ACU
+                  .some((legacyGroup) => currentKeywordPromptSignature_ACU === normalizePromptGroupForCompare_ACU(legacyGroup));
+              if (isLegacyKeywordPromptGroupV2_ACU || !Array.isArray(vectorConfig.keywordPromptGroup) || vectorConfig.keywordPromptGroup.length === 0) {
                   vectorConfig.keywordPromptGroup = cloneDefaultValue_ACU(defaultVectorMemoryConfig_ACU.keywordPromptGroup || []);
                   shouldPersistSettingsAfterLoad_ACU = true;
-                  logDebug_ACU('[交火模式配置] 已一次性刷新旧版关键词生成提示词为 <thinking> 预填充版本');
+                  logDebug_ACU('[交火模式配置] 已一次性刷新旧版关键词生成提示词为 <keywords> 标签版本');
               } else {
                   fillMissingPromptGroup_ACU('keywordPromptGroup', defaultVectorMemoryConfig_ACU.keywordPromptGroup || []);
                   logDebug_ACU('[交火模式配置] 检测到用户自定义关键词提示词，保留现有配置，仅记录默认刷新版本');

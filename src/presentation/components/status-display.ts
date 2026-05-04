@@ -178,6 +178,7 @@ import { $popupInstance_ACU, $statusMessageSpan_ACU, $manualUpdateCardButton_ACU
       setVal('worldbook-vector-memory-overview-sentence-limit', vectorMemoryConfig.summaryChunkSentenceCount);
       setChecked('worldbook-vector-memory-archive-without-summary', (vectorMemoryConfig as any).archiveWithoutSummary === true);
       setVal('worldbook-vector-memory-recall-candidate-limit', vectorMemoryConfig.recallCandidateLimit);
+      setVal('worldbook-vector-memory-recent-fixed-inject-count', (vectorMemoryConfig as any).recentFixedInjectCount || 50);
       setVal('worldbook-vector-memory-entry-comment', vectorMemoryConfig.entryComment);
       setVal('worldbook-vector-memory-entry-key', vectorMemoryConfig.entryKey);
       setVal('worldbook-vector-memory-keyword-api-preset', vectorMemoryConfig.keywordApiPreset);

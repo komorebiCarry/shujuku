@@ -266,6 +266,10 @@ export async function bindWorldbookEvents_ACU(): Promise<void> {
           const defaults = getDefaultVectorMemoryConfig_ACU();
           updateVectorMemoryField_ACU('recallCandidateLimit', parseIntegerField_ACU($input.val(), defaults.recallCandidateLimit));
       });
+      bindVectorMemoryInput_ACU(`#${SCRIPT_ID_PREFIX_ACU}-worldbook-vector-memory-recent-fixed-inject-count`, 'input change', ($input) => {
+          const defaults = getDefaultVectorMemoryConfig_ACU();
+          updateVectorMemoryField_ACU('recentFixedInjectCount', parseIntegerField_ACU($input.val(), (defaults as any).recentFixedInjectCount || 50));
+      });
       bindVectorMemoryInput_ACU(`#${SCRIPT_ID_PREFIX_ACU}-worldbook-vector-memory-entry-comment`, 'input change', ($input) => {
           updateVectorMemoryField_ACU('entryComment', String($input.val() ?? '').trim());
       });

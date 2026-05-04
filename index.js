@@ -2755,7 +2755,7 @@ $CONTENT
     const DEFAULT_AUTO_UPDATE_TOKEN_THRESHOLD_ACU = 500;
     const AUTO_UPDATE_FLOOR_INCREASE_DELAY_ACU = 2000;
     // --- 一次性默认值刷新版本标记 ---
-    const VECTOR_MEMORY_DEFAULTS_REFRESH_VERSION_ACU = 'spv3.2-crossfire-default-summary-index-params';
+    const VECTOR_MEMORY_DEFAULTS_REFRESH_VERSION_ACU = 'spv3.5.21-crossfire-default-params-and-keyword-tags';
     const TABLE_TEMPLATE_DEFAULTS_REFRESH_VERSION_ACU = 'spv2.1.2-table-template-defaults';
     // --- 交火模式纪要索引全局默认配置（独立于世界书配置，跟随数据库全局设置） ---
     const defaultVectorMemoryConfig_ACU = {
@@ -2765,7 +2765,7 @@ $CONTENT
         archiveBatchSize: 3,
         archiveMaxConcurrency: 3,
         summaryIndexArchiveMaxConcurrency: 30,
-        topK: 100,
+        topK: 200,
         minScore: 0.45,
         embeddingEndpoint: '',
         embeddingApiKey: '',
@@ -2776,10 +2776,11 @@ $CONTENT
         vectorNamespace: 'chat',
         entryComment: 'TavernDB-ACU-VectorMemory',
         entryKey: 'TavernDB-ACU-VectorMemory-Key',
-        summaryIndexKeywordMinRows: 100,
+        summaryIndexKeywordMinRows: 200,
         summaryChunkSentenceCount: 2,
         summaryPromptGroupId: 'remote-memory-archive-default',
         archiveWithoutSummary: false,
+        recentFixedInjectCount: 50,
         summaryPromptGroup: [
             {
                 role: 'system',
@@ -2806,26 +2807,30 @@ $CONTENT
                     + '你会看到最近对话上下文和当前用户输入。\n'
                     + '目标：输出最相关的 12 个简洁关键词或短语，用于纪要索引召回与重排序。\n'
                     + '优先级：人物、地点、时间、事件、目标、冲突、道具、组织、关系变化、未解决问题。\n'
-                    + '输出必须包含显示思维链条，并严格使用以下结构：\n'
+                    + '输出必须严格使用以下 XML 结构：\n'
                     + '<thinking>\n'
                     + '逐步分析最近上下文、当前用户输入、涉及人物、地点、时间、事件、目标、冲突、道具、组织、关系变化和未解决问题。\n'
                     + '</thinking>\n'
-                    + '关键词：关键词1，关键词2，关键词3\n'
-                    + '硬性要求：关键词行只放关键词或短语，不要放解释句；多个关键词必须使用中文逗号分隔；尽量输出 12 个，最多 24 个。',
+                    + '<keywords>关键词1，关键词2，关键词3</keywords>\n'
+                    + '硬性要求：\n'
+                    + '- <keywords> 标签内只放关键词或短语，不要放解释句、编号、前后缀说明。\n'
+                    + '- 多个关键词必须使用中文逗号分隔。\n'
+                    + '- 尽量输出 12 个，最多 24 个。\n'
+                    + '- <keywords> 标签外的任何内容都不会被用于检索匹配。',
                 deletable: false,
             },
             {
                 role: 'user',
-                content: '最近上下文：\n$RECENT_CONTEXT\n\n当前用户输入：\n$USER_INPUT\n\n请根据以上内容生成交火模式纪要索引召回关键词。先在 <thinking> 中显示你的检索分析，再输出“关键词：”行。',
+                content: '最近上下文：\n$RECENT_CONTEXT\n\n当前用户输入：\n$USER_INPUT\n\n请根据以上内容生成交火模式纪要索引召回关键词。先在 <thinking> 中显示你的检索分析，然后在 <keywords> 标签中输出关键词。',
                 deletable: true,
             },
             {
                 role: 'assistant',
-                content: '<thinking>\n交火关键词检索思维：我将逐步分析当前输入需要召回的纪要索引关键词。',
+                content: '<thinking>\n交火关键词检索思维：我将逐步分析当前输入需要召回的纪要索引关键词。\n</thinking>\n<keywords>',
                 deletable: true,
             },
         ],
-        recallCandidateLimit: 500,
+        recallCandidateLimit: 1000,
     };
     // --- 全局世界书默认配置 ---
     const defaultWorldbookConfig_ACU = {
@@ -3637,6 +3642,7 @@ $CONTENT
             keywordGenerationMaxAttempts: normalizePositiveInteger_ACU$1(source.keywordGenerationMaxAttempts, defaults.keywordGenerationMaxAttempts || 3),
             keywordPromptGroup: normalizeKeywordPromptGroup_ACU(source.keywordPromptGroup, defaults.keywordPromptGroup),
             recallCandidateLimit: normalizePositiveInteger_ACU$1(source.recallCandidateLimit, defaults.recallCandidateLimit),
+            recentFixedInjectCount: normalizePositiveInteger_ACU$1(source.recentFixedInjectCount, defaults.recentFixedInjectCount || 50),
         };
     }
     /**
@@ -3768,6 +3774,7 @@ $CONTENT
         const summaryChunkSentenceCount = normalizePositiveInteger_ACU$1(config.summaryChunkSentenceCount, defaults.summaryChunkSentenceCount || 2);
         const summaryIndexArchiveMaxConcurrency = normalizePositiveInteger_ACU$1(config.summaryIndexArchiveMaxConcurrency, Number(defaults.summaryIndexArchiveMaxConcurrency) || 30);
         const summaryIndexKeywordMinRows = normalizePositiveInteger_ACU$1(config.summaryIndexKeywordMinRows, Number(defaults.summaryIndexKeywordMinRows) || 100);
+        const recentFixedInjectCount = normalizePositiveInteger_ACU$1(config.recentFixedInjectCount, Number(defaults.recentFixedInjectCount) || 50);
         return {
             ...config,
             enabled: true,
@@ -3780,6 +3787,7 @@ $CONTENT
             summaryIndexChunkSentenceCount: summaryChunkSentenceCount,
             summaryIndexArchiveMaxConcurrency,
             summaryIndexKeywordMinRows,
+            summaryIndexRecentFixedInjectCount: recentFixedInjectCount,
         };
     }
     function validateSummaryVectorIndexConfig_ACU(configInput) {
@@ -20645,14 +20653,57 @@ $CONTENT
                 fillMissing_ACU('archiveBatchSize', defaultVectorMemoryConfig_ACU.archiveBatchSize);
                 fillMissing_ACU('archiveMaxConcurrency', defaultVectorMemoryConfig_ACU.archiveMaxConcurrency);
                 fillMissing_ACU('summaryIndexArchiveMaxConcurrency', defaultVectorMemoryConfig_ACU.summaryIndexArchiveMaxConcurrency || 30);
-                fillMissingOrLegacyDefault_ACU('topK', defaultVectorMemoryConfig_ACU.topK, [10]);
+                // [spv3.5.21] 一次性覆盖：topK / recallCandidateLimit / summaryIndexKeywordMinRows 强制更新到新默认值
+                const forceOverride_ACU = (key, newValue, legacyValues) => {
+                    const current = vectorConfig[key];
+                    const isLegacy = legacyValues.some((v) => current === v);
+                    if (isLegacy) {
+                        vectorConfig[key] = cloneDefaultValue_ACU(newValue);
+                        shouldPersistSettingsAfterLoad_ACU = true;
+                    }
+                };
+                fillMissingOrLegacyDefault_ACU('topK', defaultVectorMemoryConfig_ACU.topK, [10, 100]);
+                forceOverride_ACU('topK', defaultVectorMemoryConfig_ACU.topK, [100]);
                 fillMissingOrLegacyDefault_ACU('minScore', defaultVectorMemoryConfig_ACU.minScore, [0.4, 0.6]);
                 fillMissingOrLegacyDefault_ACU('recallCandidateLimit', defaultVectorMemoryConfig_ACU.recallCandidateLimit, [100]);
+                forceOverride_ACU('recallCandidateLimit', defaultVectorMemoryConfig_ACU.recallCandidateLimit, [100, 500]);
+                fillMissingOrLegacyDefault_ACU('summaryIndexKeywordMinRows', defaultVectorMemoryConfig_ACU.summaryIndexKeywordMinRows, [100]);
+                forceOverride_ACU('summaryIndexKeywordMinRows', defaultVectorMemoryConfig_ACU.summaryIndexKeywordMinRows, [100]);
+                fillMissing_ACU('recentFixedInjectCount', defaultVectorMemoryConfig_ACU.recentFixedInjectCount || 50);
                 fillMissingPromptGroup_ACU('summaryPromptGroup', defaultVectorMemoryConfig_ACU.summaryPromptGroup || []);
-                if (isLegacyKeywordPromptGroup_ACU || !Array.isArray(vectorConfig.keywordPromptGroup) || vectorConfig.keywordPromptGroup.length === 0) {
+                // [spv3.5.21] 关键词提示词：旧版（无 <keywords> 标签）强制刷新为新版（<keywords> 标签包裹）
+                const legacyKeywordPromptGroupsV2_ACU = [
+                    ...legacyKeywordPromptGroups_ACU,
+                    [
+                        {
+                            role: 'system',
+                            content: '你负责为交火模式纪要索引召回生成检索关键词。\n'
+                                + '你会看到最近对话上下文和当前用户输入。\n'
+                                + '目标：输出最相关的 12 个简洁关键词或短语，用于纪要索引召回与重排序。\n'
+                                + '优先级：人物、地点、时间、事件、目标、冲突、道具、组织、关系变化、未解决问题。\n'
+                                + '输出必须包含显示思维链条，并严格使用以下结构：\n'
+                                + '<thinking>\n'
+                                + '逐步分析最近上下文、当前用户输入、涉及人物、地点、时间、事件、目标、冲突、道具、组织、关系变化和未解决问题。\n'
+                                + '</thinking>\n'
+                                + '关键词：关键词1，关键词2，关键词3\n'
+                                + '硬性要求：关键词行只放关键词或短语，不要放解释句；多个关键词必须使用中文逗号分隔；尽量输出 12 个，最多 24 个。',
+                        },
+                        {
+                            role: 'user',
+                            content: '最近上下文：\n$RECENT_CONTEXT\n\n当前用户输入：\n$USER_INPUT\n\n请根据以上内容生成交火模式纪要索引召回关键词。先在 <thinking> 中显示你的检索分析，再输出"关键词："行。',
+                        },
+                        {
+                            role: 'assistant',
+                            content: '<thinking>\n交火关键词检索思维：我将逐步分析当前输入需要召回的纪要索引关键词。',
+                        },
+                    ],
+                ];
+                const isLegacyKeywordPromptGroupV2_ACU = legacyKeywordPromptGroupsV2_ACU
+                    .some((legacyGroup) => currentKeywordPromptSignature_ACU === normalizePromptGroupForCompare_ACU(legacyGroup));
+                if (isLegacyKeywordPromptGroupV2_ACU || !Array.isArray(vectorConfig.keywordPromptGroup) || vectorConfig.keywordPromptGroup.length === 0) {
                     vectorConfig.keywordPromptGroup = cloneDefaultValue_ACU(defaultVectorMemoryConfig_ACU.keywordPromptGroup || []);
                     shouldPersistSettingsAfterLoad_ACU = true;
-                    logDebug_ACU('[交火模式配置] 已一次性刷新旧版关键词生成提示词为 <thinking> 预填充版本');
+                    logDebug_ACU('[交火模式配置] 已一次性刷新旧版关键词生成提示词为 <keywords> 标签版本');
                 }
                 else {
                     fillMissingPromptGroup_ACU('keywordPromptGroup', defaultVectorMemoryConfig_ACU.keywordPromptGroup || []);
@@ -26527,6 +26578,10 @@ $CONTENT
             const defaults = getDefaultVectorMemoryConfig_ACU();
             updateVectorMemoryField_ACU('recallCandidateLimit', parseIntegerField_ACU($input.val(), defaults.recallCandidateLimit));
         });
+        bindVectorMemoryInput_ACU(`#${SCRIPT_ID_PREFIX_ACU}-worldbook-vector-memory-recent-fixed-inject-count`, 'input change', ($input) => {
+            const defaults = getDefaultVectorMemoryConfig_ACU();
+            updateVectorMemoryField_ACU('recentFixedInjectCount', parseIntegerField_ACU($input.val(), defaults.recentFixedInjectCount || 50));
+        });
         bindVectorMemoryInput_ACU(`#${SCRIPT_ID_PREFIX_ACU}-worldbook-vector-memory-entry-comment`, 'input change', ($input) => {
             updateVectorMemoryField_ACU('entryComment', String($input.val() ?? '').trim());
         });
@@ -30409,6 +30464,7 @@ $CONTENT
         setVal('worldbook-vector-memory-overview-sentence-limit', vectorMemoryConfig.summaryChunkSentenceCount);
         setChecked('worldbook-vector-memory-archive-without-summary', vectorMemoryConfig.archiveWithoutSummary === true);
         setVal('worldbook-vector-memory-recall-candidate-limit', vectorMemoryConfig.recallCandidateLimit);
+        setVal('worldbook-vector-memory-recent-fixed-inject-count', vectorMemoryConfig.recentFixedInjectCount || 50);
         setVal('worldbook-vector-memory-entry-comment', vectorMemoryConfig.entryComment);
         setVal('worldbook-vector-memory-entry-key', vectorMemoryConfig.entryKey);
         setVal('worldbook-vector-memory-keyword-api-preset', vectorMemoryConfig.keywordApiPreset);
@@ -39655,10 +39711,15 @@ $CONTENT
         const setField = (field, value) => {
             $panel.find(`[data-acu-vector-index-field="${field}"]`).text(value);
         };
+        // 优先使用 state 层的实际行/块数量，而非 manifest 的可能过时的计数
+        const stateRowCount = Array.isArray(state?.rows) ? state.rows.filter((r) => r.status !== 'removed').length : 0;
+        const stateChunkCount = Array.isArray(state?.chunks) ? state.chunks.length : 0;
+        const displayRowCount = stateRowCount > 0 ? stateRowCount : stats.rowCount;
+        const displayChunkCount = stateChunkCount > 0 ? stateChunkCount : stats.chunkCount;
         setField('status', stats.status || 'none');
         setField('indexId', stats.indexId || '-');
         setField('backend', stats.backend || 'none');
-        setField('rowsChunks', `${stats.rowCount} / ${stats.chunkCount}`);
+        setField('rowsChunks', `${displayRowCount} / ${displayChunkCount}`);
         setField('shards', `${stats.baseShardCount} / ${stats.deltaShardCount}`);
         setField('tombstones', `${stats.tombstoneRowCount} / ${stats.tombstoneChunkCount}`);
         setField('externalBytes', formatBytes_ACU(stats.externalTotalBytes));
@@ -39754,7 +39815,6 @@ $CONTENT
         const $openNewVisualizerButton_ACU = $popupInstance_ACU.find(`#${SCRIPT_ID_PREFIX_ACU}-open-new-visualizer`);
         const $vectorIndexModeEnabled_ACU = $popupInstance_ACU.find(`#${SCRIPT_ID_PREFIX_ACU}-vector-index-mode-enabled`);
         const $vectorIndexRefreshButton_ACU = $popupInstance_ACU.find(`#${SCRIPT_ID_PREFIX_ACU}-vector-index-refresh`);
-        const $vectorIndexHealthCheckButton_ACU = $popupInstance_ACU.find(`#${SCRIPT_ID_PREFIX_ACU}-vector-index-health-check`);
         const $vectorIndexClearCacheButton_ACU = $popupInstance_ACU.find(`#${SCRIPT_ID_PREFIX_ACU}-vector-index-clear-cache`);
         const $vectorIndexDeleteCurrentButton_ACU = $popupInstance_ACU.find(`#${SCRIPT_ID_PREFIX_ACU}-vector-index-delete-current`);
         const $vectorIndexMigrateLegacyButton_ACU = $popupInstance_ACU.find(`#${SCRIPT_ID_PREFIX_ACU}-vector-index-migrate-legacy`);
@@ -39803,29 +39863,6 @@ $CONTENT
             $vectorIndexRefreshButton_ACU.off('click.acu_vector_index').on('click.acu_vector_index', async () => {
                 await refreshVectorIndexStatsPanel_ACU();
                 showToastr_ACU('success', '交火模式索引状态已刷新。');
-            });
-        }
-        if ($vectorIndexHealthCheckButton_ACU.length) {
-            $vectorIndexHealthCheckButton_ACU.off('click.acu_vector_index_health').on('click.acu_vector_index_health', async () => {
-                $vectorIndexHealthCheckButton_ACU.prop('disabled', true).text('正在检查...');
-                try {
-                    const report = await inspectSummaryVectorIndexHealth_ACU();
-                    const errorCount = report.missingFileCount + report.checksumMismatchCount + report.identityMismatchCount;
-                    const warningCount = report.legacyManifestCount + report.unreachableRegisteredFileCount;
-                    const pendingFlushCount = (report.flushTaskDirtyCount || 0) + (report.flushTaskQueuedCount || 0) + (report.flushTaskFlushingCount || 0);
-                    const failedFlushCount = report.flushTaskFailedCount || 0;
-                    const repairHint = report.repairableRowKeys.length > 0 ? `，可修复行 ${report.repairableRowKeys.length} 条` : '';
-                    const flushHint = pendingFlushCount > 0 || failedFlushCount > 0 ? `，防抖队列 pending=${pendingFlushCount}, failed=${failedFlushCount}` : '';
-                    const message = `状态=${report.status}，manifest=${report.manifestCount}，可达文件=${report.reachableFileCount}，错误=${errorCount}，警告=${warningCount}${flushHint}${repairHint}`;
-                    showToastr_ACU(errorCount > 0 || failedFlushCount > 0 ? 'warning' : 'success', `交火索引健康检查完成：${message}`);
-                }
-                catch (e) {
-                    logError_ACU('交火索引健康检查失败:', e);
-                    showToastr_ACU('error', `交火索引健康检查失败: ${e?.message || '未知错误'}`);
-                }
-                finally {
-                    $vectorIndexHealthCheckButton_ACU.prop('disabled', false).text('健康检查');
-                }
             });
         }
         if ($vectorIndexClearCacheButton_ACU.length) {
@@ -43496,8 +43533,13 @@ $CONTENT
                                         </div>
                                         <div class="acu-col-sm">
                                             <label for="${SCRIPT_ID_PREFIX_ACU}-worldbook-vector-memory-recall-candidate-limit">预筛候选上限</label>
-                                            <input type="number" id="${SCRIPT_ID_PREFIX_ACU}-worldbook-vector-memory-recall-candidate-limit" min="1" step="1" placeholder="100">
+                                            <input type="number" id="${SCRIPT_ID_PREFIX_ACU}-worldbook-vector-memory-recall-candidate-limit" min="1" step="1" placeholder="1000">
                                             <small class="notes">Embedding 本地预筛后保留的候选数量，也是 Rerank 的最大输入数；不能小于 TopK。</small>
+                                        </div>
+                                        <div class="acu-col-sm">
+                                            <label for="${SCRIPT_ID_PREFIX_ACU}-worldbook-vector-memory-recent-fixed-inject-count">最近固定注入条数</label>
+                                            <input type="number" id="${SCRIPT_ID_PREFIX_ACU}-worldbook-vector-memory-recent-fixed-inject-count" min="0" step="1" placeholder="50">
+                                            <small class="notes">最近 X 条纪要固定注入，不参与排序；X 计入触发阈值但不计入 TopK。例如阈值200、X=50，则最近50条固定注入，较早的行参与向量召回。</small>
                                         </div>
                                         <div class="acu-col-sm">
                                             <label for="${SCRIPT_ID_PREFIX_ACU}-worldbook-vector-memory-namespace">索引命名空间前缀</label>
@@ -43615,9 +43657,6 @@ $CONTENT
                             </button>
                             <button id="${SCRIPT_ID_PREFIX_ACU}-build-vector-index-now" class="acu-btn-medium" style="width: 100%; display: flex; align-items: center; justify-content: center; gap: 10px;">
                                 <i class="fa-solid fa-brain"></i> 立即构建交火纪要索引
-                            </button>
-                            <button id="${SCRIPT_ID_PREFIX_ACU}-vector-index-health-check" class="acu-btn-medium" style="width: 100%; display: flex; align-items: center; justify-content: center; gap: 10px;">
-                                <i class="fa-solid fa-stethoscope"></i> 健康检查交火索引
                             </button>
                         </div>
                         <p class="notes" style="text-align: center; margin-top: 10px;">点击上方按钮打开全新的可视化界面，支持直接编辑数据、修改表头及更新参数。</p>
@@ -44162,7 +44201,6 @@ $CONTENT
                         </div>
                         <div class="button-group acu-data-mgmt-buttons">
                             <button id="${SCRIPT_ID_PREFIX_ACU}-vector-index-refresh">刷新索引状态</button>
-                            <button id="${SCRIPT_ID_PREFIX_ACU}-vector-index-health-check">健康检查</button>
                             <button id="${SCRIPT_ID_PREFIX_ACU}-vector-index-migrate-legacy">非破坏迁移旧索引</button>
                             <button id="${SCRIPT_ID_PREFIX_ACU}-vector-index-clear-cache" class="btn-warning">清空临时缓存</button>
                             <button id="${SCRIPT_ID_PREFIX_ACU}-vector-index-delete-current" class="btn-danger">删除当前交火索引</button>
@@ -46650,16 +46688,14 @@ $CONTENT
     function parseKeywords_ACU(text) {
         const normalized = normalizeText_ACU(text);
         const explicitKeywords = extractTaggedContent_ACU(normalized, 'keywords');
-        let keywordText = explicitKeywords || stripThinkingBlocks_ACU(normalized);
-        const keywordMarkerMatch = keywordText.match(/(?:关键词|檢索詞|检索词)\s*[:：]/g);
-        if (keywordMarkerMatch && keywordMarkerMatch.length > 0) {
-            const marker = keywordMarkerMatch[keywordMarkerMatch.length - 1];
-            keywordText = keywordText.slice(keywordText.lastIndexOf(marker) + marker.length);
+        if (!explicitKeywords) {
+            logWarn_ACU('[交火模式纪要索引] AI 回复中未找到 <keywords> 标签，跳过关键词提取。');
+            return [];
         }
-        return Array.from(new Set(keywordText
+        return Array.from(new Set(explicitKeywords
             .replace(/<[^>]+>/g, '')
             .split(/[，,、\n;；|]/g)
-            .map((item) => item.replace(/^[-*\d.、\s]+/, '').replace(/^(关键词|檢索詞|检索词)\s*[:：]/, '').trim())
+            .map((item) => item.replace(/^[-*\d.、\s]+/, '').trim())
             .filter((item) => item.length > 0)
             .slice(0, 24)));
     }
@@ -46862,6 +46898,13 @@ $CONTENT
             return { success: false, skipped: true, reason: 'no_chunks' };
         }
         const rowByKey = new Map(rows.map((row) => [row.rowKey, row]));
+        // ── 最近 X 条固定注入：按 rowOrder 降序取最近 X 行 ──
+        const recentFixedCount = Math.max(0, Math.min(config.summaryIndexRecentFixedInjectCount || 0, rows.length));
+        const rowsSortedByOrderDesc = [...rows].sort((left, right) => (Number(right.rowOrder) || 0) - (Number(left.rowOrder) || 0));
+        const recentFixedRows = rowsSortedByOrderDesc.slice(0, recentFixedCount);
+        const recentFixedRowKeys = new Set(recentFixedRows.map((row) => row.rowKey));
+        // 较早的行（不参与排序的候选池）
+        const olderRows = rows.filter((row) => !recentFixedRowKeys.has(row.rowKey));
         const keywords = await generateKeywords_ACU(config, userInput);
         const queryText = [userInput, keywords.join('，')].filter(Boolean).join('\n关键词：');
         const embeddings = await createEmbeddings_ACU({
@@ -46874,7 +46917,10 @@ $CONTENT
         if (queryVector.length === 0) {
             return { success: false, skipped: true, reason: 'empty_query_embedding' };
         }
-        const candidates = chunks
+        // 只对较早行的 chunks 做向量匹配
+        const olderRowKeys = new Set(olderRows.map((row) => row.rowKey));
+        const olderChunks = chunks.filter((chunk) => olderRowKeys.has(chunk.rowKey));
+        const candidates = olderChunks
             .map((chunk) => {
             const row = rowByKey.get(chunk.rowKey);
             if (!row || !Array.isArray(chunk.vector) || chunk.vector.length === 0)
@@ -46887,16 +46933,25 @@ $CONTENT
             .filter((candidate) => !!candidate)
             .sort((left, right) => right.score - left.score)
             .slice(0, config.summaryIndexCandidateLimit);
-        if (candidates.length === 0) {
+        if (candidates.length === 0 && recentFixedRows.length === 0) {
             return { success: false, skipped: true, reason: 'no_candidates', keywordCount: keywords.length };
         }
-        const reranked = await rerankCandidates_ACU(config, queryText, candidates);
+        // Rerank 只处理较早行的候选
+        const reranked = candidates.length > 0
+            ? await rerankCandidates_ACU(config, queryText, candidates)
+            : [];
         const selectedByRow = new Map();
         for (const candidate of reranked) {
             if (!selectedByRow.has(candidate.row.rowKey))
                 selectedByRow.set(candidate.row.rowKey, candidate);
             if (selectedByRow.size >= config.topK)
                 break;
+        }
+        // 合并：最近固定行 + TopK 排序行（去重，固定行优先）
+        for (const row of recentFixedRows) {
+            if (!selectedByRow.has(row.rowKey)) {
+                selectedByRow.set(row.rowKey, { chunk: null, row, score: 1.0 });
+            }
         }
         const selected = Array.from(selectedByRow.values())
             .sort((left, right) => (Number(left.row.rowOrder) || 0) - (Number(right.row.rowOrder) || 0));
@@ -46905,7 +46960,7 @@ $CONTENT
         }
         const content = buildSummaryIndexOverwriteContent_ACU(selected);
         await upsertOriginalSummaryIndexEntry_ACU(content);
-        logDebug_ACU(`[交火模式纪要索引] 已覆盖原概要索引条目：${selected.length} 条纪要候选，关键词 ${keywords.length} 个，输出顺序按纪要表原 rowOrder。`);
+        logDebug_ACU(`[交火模式纪要索引] 已覆盖原概要索引条目：${selected.length} 条（其中固定注入 ${recentFixedRows.length} 条，排序选取 ${selected.length - recentFixedRows.length} 条），关键词 ${keywords.length} 个，输出顺序按纪要表原 rowOrder。`);
         return { success: true, keywordCount: keywords.length, candidateCount: candidates.length, injectedCount: selected.length };
     }
 

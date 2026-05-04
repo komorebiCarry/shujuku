@@ -37,6 +37,7 @@ export interface VectorMemoryConfig_ACU {
     keywordGenerationMaxAttempts: number;
     keywordPromptGroup: VectorMemoryKeywordPromptSegment_ACU[];
     recallCandidateLimit: number;
+    recentFixedInjectCount: number;
 }
 
 function normalizeArchiveTriggerCount_ACU(value: any, fallbackValue: number): number {
@@ -145,6 +146,10 @@ export function normalizeVectorMemoryConfig_ACU(rawConfig: any): VectorMemoryCon
         keywordGenerationMaxAttempts: normalizePositiveInteger_ACU((source as any).keywordGenerationMaxAttempts, (defaults as any).keywordGenerationMaxAttempts || 3),
         keywordPromptGroup: normalizeKeywordPromptGroup_ACU(source.keywordPromptGroup, defaults.keywordPromptGroup),
         recallCandidateLimit: normalizePositiveInteger_ACU(source.recallCandidateLimit, defaults.recallCandidateLimit),
+        recentFixedInjectCount: normalizePositiveInteger_ACU(
+            (source as any).recentFixedInjectCount,
+            (defaults as any).recentFixedInjectCount || 50,
+        ),
     };
 }
 
@@ -292,6 +297,7 @@ export interface SummaryVectorIndexEffectiveConfig_ACU extends VectorMemoryConfi
     summaryIndexChunkSentenceCount: number;
     summaryIndexArchiveMaxConcurrency: number;
     summaryIndexKeywordMinRows: number;
+    summaryIndexRecentFixedInjectCount: number;
 }
 
 export function getEffectiveSummaryVectorIndexConfig_ACU(configInput?: any): SummaryVectorIndexEffectiveConfig_ACU {
@@ -315,6 +321,10 @@ export function getEffectiveSummaryVectorIndexConfig_ACU(configInput?: any): Sum
         (config as any).summaryIndexKeywordMinRows,
         Number((defaults as any).summaryIndexKeywordMinRows) || 100,
     );
+    const recentFixedInjectCount = normalizePositiveInteger_ACU(
+        (config as any).recentFixedInjectCount,
+        Number((defaults as any).recentFixedInjectCount) || 50,
+    );
     return {
         ...config,
         enabled: true,
@@ -327,6 +337,7 @@ export function getEffectiveSummaryVectorIndexConfig_ACU(configInput?: any): Sum
         summaryIndexChunkSentenceCount: summaryChunkSentenceCount,
         summaryIndexArchiveMaxConcurrency,
         summaryIndexKeywordMinRows,
+        summaryIndexRecentFixedInjectCount: recentFixedInjectCount,
     };
 }
 

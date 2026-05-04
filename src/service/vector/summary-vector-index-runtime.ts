@@ -96,17 +96,14 @@ function stripThinkingBlocks_ACU(text: string): string {
 function parseKeywords_ACU(text: string): string[] {
     const normalized = normalizeText_ACU(text);
     const explicitKeywords = extractTaggedContent_ACU(normalized, 'keywords');
-    let keywordText = explicitKeywords || stripThinkingBlocks_ACU(normalized);
-    const keywordMarkerMatch = keywordText.match(/(?:关键词|檢索詞|检索词)\s*[:：]/g);
-    if (keywordMarkerMatch && keywordMarkerMatch.length > 0) {
-        const marker = keywordMarkerMatch[keywordMarkerMatch.length - 1];
-        keywordText = keywordText.slice(keywordText.lastIndexOf(marker) + marker.length);
+    if (!explicitKeywords) {
+        logWarn_ACU('[交火模式纪要索引] AI 回复中未找到 <keywords> 标签，跳过关键词提取。');
+        return [];
     }
-
-    return Array.from(new Set(keywordText
+    return Array.from(new Set(explicitKeywords
         .replace(/<[^>]+>/g, '')
         .split(/[，,、\n;；|]/g)
-        .map((item) => item.replace(/^[-*\d.、\s]+/, '').replace(/^(关键词|檢索詞|检索词)\s*[:：]/, '').trim())
+        .map((item) => item.replace(/^[-*\d.、\s]+/, '').trim())
         .filter((item) => item.length > 0)
         .slice(0, 24)));
 }
@@ -312,6 +309,20 @@ export async function processSummaryVectorIndexBeforeGeneration_ACU(
     }
 
     const rowByKey = new Map(rows.map((row) => [row.rowKey, row]));
+
+    // ── 最近 X 条固定注入：按 rowOrder 降序取最近 X 行 ──
+    const recentFixedCount = Math.max(0, Math.min(
+        config.summaryIndexRecentFixedInjectCount || 0,
+        rows.length,
+    ));
+    const rowsSortedByOrderDesc = [...rows].sort(
+        (left, right) => (Number(right.rowOrder) || 0) - (Number(left.rowOrder) || 0),
+    );
+    const recentFixedRows = rowsSortedByOrderDesc.slice(0, recentFixedCount);
+    const recentFixedRowKeys = new Set(recentFixedRows.map((row) => row.rowKey));
+    // 较早的行（不参与排序的候选池）
+    const olderRows = rows.filter((row) => !recentFixedRowKeys.has(row.rowKey));
+
     const keywords = await generateKeywords_ACU(config, userInput);
     const queryText = [userInput, keywords.join('，')].filter(Boolean).join('\n关键词：');
     const embeddings = await createEmbeddings_ACU({
@@ -325,7 +336,11 @@ export async function processSummaryVectorIndexBeforeGeneration_ACU(
         return { success: false, skipped: true, reason: 'empty_query_embedding' };
     }
 
-    const candidates = chunks
+    // 只对较早行的 chunks 做向量匹配
+    const olderRowKeys = new Set(olderRows.map((row) => row.rowKey));
+    const olderChunks = chunks.filter((chunk) => olderRowKeys.has(chunk.rowKey));
+
+    const candidates = olderChunks
         .map((chunk): RankedSummaryCandidate_ACU | null => {
             const row = rowByKey.get(chunk.rowKey);
             if (!row || !Array.isArray(chunk.vector) || chunk.vector.length === 0) return null;
@@ -337,15 +352,25 @@ export async function processSummaryVectorIndexBeforeGeneration_ACU(
         .sort((left, right) => right.score - left.score)
         .slice(0, config.summaryIndexCandidateLimit);
 
-    if (candidates.length === 0) {
+    if (candidates.length === 0 && recentFixedRows.length === 0) {
         return { success: false, skipped: true, reason: 'no_candidates', keywordCount: keywords.length };
     }
 
-    const reranked = await rerankCandidates_ACU(config, queryText, candidates);
+    // Rerank 只处理较早行的候选
+    const reranked = candidates.length > 0
+        ? await rerankCandidates_ACU(config, queryText, candidates)
+        : [];
     const selectedByRow = new Map<string, RankedSummaryCandidate_ACU>();
     for (const candidate of reranked) {
         if (!selectedByRow.has(candidate.row.rowKey)) selectedByRow.set(candidate.row.rowKey, candidate);
         if (selectedByRow.size >= config.topK) break;
+    }
+
+    // 合并：最近固定行 + TopK 排序行（去重，固定行优先）
+    for (const row of recentFixedRows) {
+        if (!selectedByRow.has(row.rowKey)) {
+            selectedByRow.set(row.rowKey, { chunk: null as any, row, score: 1.0 });
+        }
     }
     const selected = Array.from(selectedByRow.values())
         .sort((left, right) => (Number(left.row.rowOrder) || 0) - (Number(right.row.rowOrder) || 0));
@@ -355,6 +380,8 @@ export async function processSummaryVectorIndexBeforeGeneration_ACU(
 
     const content = buildSummaryIndexOverwriteContent_ACU(selected);
     await upsertOriginalSummaryIndexEntry_ACU(content);
-    logDebug_ACU(`[交火模式纪要索引] 已覆盖原概要索引条目：${selected.length} 条纪要候选，关键词 ${keywords.length} 个，输出顺序按纪要表原 rowOrder。`);
+    logDebug_ACU(
+        `[交火模式纪要索引] 已覆盖原概要索引条目：${selected.length} 条（其中固定注入 ${recentFixedRows.length} 条，排序选取 ${selected.length - recentFixedRows.length} 条），关键词 ${keywords.length} 个，输出顺序按纪要表原 rowOrder。`,
+    );
     return { success: true, keywordCount: keywords.length, candidateCount: candidates.length, injectedCount: selected.length };
 }
