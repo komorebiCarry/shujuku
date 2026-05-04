@@ -41,7 +41,7 @@ import { clearVectorIndexTempCache_ACU } from '../../data/storage/vector-index-t
 import { clearSummaryVectorFlushTasksByScope_ACU, clearSummaryVectorHotCache_ACU, deleteSummaryVectorHotCacheByScope_ACU } from '../../data/storage/vector-index-hot-cache';
 import { getChatArray_ACU, getLastMessageIndex_ACU, saveChatToHost_ACU } from '../../service/chat/chat-service';
 import { readIsolatedTagData_ACU, writeIsolatedTagData_ACU } from '../../data/repositories/chat-message-data-repo';
-import { buildVectorIndexSingleSnapshotFilePath_ACU, readVectorIndexJsonFile_ACU } from '../../data/storage/vector-index-st-files-storage';
+import { buildVectorIndexSingleSnapshotFilePath_ACU, buildLegacyVectorIndexSingleSnapshotFilePath_ACU, readVectorIndexJsonFile_ACU } from '../../data/storage/vector-index-st-files-storage';
 
 function formatBytes_ACU(bytes: number): string {
     const value = Math.max(0, Number(bytes) || 0);
@@ -115,13 +115,25 @@ async function tryRecoverSummaryVectorIndexFromExternalSnapshot_ACU(): Promise<b
 
     for (const sourceTableKey of candidateTableKeys) {
         try {
+            // [spv3.6.7] 先尝试简化路径（只用 chatKey），再回退旧路径（含 isolationKey + sourceTableKey）
             const snapshotPath = buildVectorIndexSingleSnapshotFilePath_ACU({ chatKey, isolationKey, sourceTableKey });
-            const loaded = await readVectorIndexJsonFile_ACU<{
+            let loaded = await readVectorIndexJsonFile_ACU<{
                 schema: string;
                 manifest: any;
                 rows: any[];
                 chunks: any[];
             }>(snapshotPath);
+            if (!loaded.ok || !loaded.data || loaded.data.schema !== 'single_file_snapshot') {
+                const legacyPath = buildLegacyVectorIndexSingleSnapshotFilePath_ACU({ chatKey, isolationKey, sourceTableKey });
+                if (legacyPath !== snapshotPath) {
+                    loaded = await readVectorIndexJsonFile_ACU<{
+                        schema: string;
+                        manifest: any;
+                        rows: any[];
+                        chunks: any[];
+                    }>(legacyPath);
+                }
+            }
             if (!loaded.ok || !loaded.data || loaded.data.schema !== 'single_file_snapshot') continue;
 
             const blob = loaded.data;

@@ -17598,6 +17598,16 @@ $CONTENT
         return `${scope}_${indexId}_${role}`;
     }
     function buildVectorIndexSingleSnapshotFilePath_ACU(parts) {
+        // [spv3.6.7] 简化外置快照路径：只用 chatKey，与聊天记录一对一
+        // 同一个聊天 = 同一个文件路径 = 覆盖写入，不再因 isolationKey/sourceTableKey 变化而丢失
+        const chatKey = normalizePathSegment_ACU(parts.chatKey);
+        return `TavernDB_ACU_vector_${chatKey}_snapshot`;
+    }
+    /**
+     * [spv3.6.7] 构建旧版外置快照路径（含 isolationKey + sourceTableKey）
+     * 仅用于向后兼容：读取旧版文件时回退尝试
+     */
+    function buildLegacyVectorIndexSingleSnapshotFilePath_ACU(parts) {
         return `${buildVectorIndexStableDirectory_ACU(parts)}_snapshot`;
     }
     function encodeUserFilePath_ACU(path) {
@@ -39801,8 +39811,15 @@ $CONTENT
         }
         for (const sourceTableKey of candidateTableKeys) {
             try {
+                // [spv3.6.7] 先尝试简化路径（只用 chatKey），再回退旧路径（含 isolationKey + sourceTableKey）
                 const snapshotPath = buildVectorIndexSingleSnapshotFilePath_ACU({ chatKey, isolationKey, sourceTableKey });
-                const loaded = await readVectorIndexJsonFile_ACU(snapshotPath);
+                let loaded = await readVectorIndexJsonFile_ACU(snapshotPath);
+                if (!loaded.ok || !loaded.data || loaded.data.schema !== 'single_file_snapshot') {
+                    const legacyPath = buildLegacyVectorIndexSingleSnapshotFilePath_ACU({ chatKey, isolationKey, sourceTableKey });
+                    if (legacyPath !== snapshotPath) {
+                        loaded = await readVectorIndexJsonFile_ACU(legacyPath);
+                    }
+                }
                 if (!loaded.ok || !loaded.data || loaded.data.schema !== 'single_file_snapshot')
                     continue;
                 const blob = loaded.data;

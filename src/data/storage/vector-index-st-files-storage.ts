@@ -112,6 +112,21 @@ export function buildVectorIndexSingleSnapshotFilePath_ACU(parts: {
     isolationKey: string;
     sourceTableKey: string;
 }): string {
+    // [spv3.6.7] 简化外置快照路径：只用 chatKey，与聊天记录一对一
+    // 同一个聊天 = 同一个文件路径 = 覆盖写入，不再因 isolationKey/sourceTableKey 变化而丢失
+    const chatKey = normalizePathSegment_ACU(parts.chatKey);
+    return `TavernDB_ACU_vector_${chatKey}_snapshot`;
+}
+
+/**
+ * [spv3.6.7] 构建旧版外置快照路径（含 isolationKey + sourceTableKey）
+ * 仅用于向后兼容：读取旧版文件时回退尝试
+ */
+export function buildLegacyVectorIndexSingleSnapshotFilePath_ACU(parts: {
+    chatKey: string;
+    isolationKey: string;
+    sourceTableKey: string;
+}): string {
     return `${buildVectorIndexStableDirectory_ACU(parts)}_snapshot`;
 }
 
