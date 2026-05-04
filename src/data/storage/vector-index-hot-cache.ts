@@ -146,6 +146,10 @@ function getActiveChunkRefs_ACU(manifest: ChatSummaryVectorIndexManifest_ACU) {
     });
 }
 
+function isSingleFileSnapshotManifest_ACU(manifest: ChatSummaryVectorIndexManifest_ACU): boolean {
+    return manifest.snapshot?.mode === 'single_file_snapshot';
+}
+
 function isRecordCompatible_ACU(record: VectorIndexHotCacheChunkRecord_ACU | null | undefined, manifest: ChatSummaryVectorIndexManifest_ACU, ref: ReturnType<typeof getActiveChunkRefs_ACU>[number]): boolean {
     if (!record?.chunk) return false;
     if (record.chatKey !== normalizeKeyPart_ACU(manifest.chatKey)) return false;
@@ -166,8 +170,55 @@ export async function putSummaryVectorHotCacheChunks_ACU(options: VectorIndexHot
     try {
         const manifest = options.manifest;
         if (!manifest?.indexId || manifest.status !== 'ready') return;
+        if (!Array.isArray(options.chunks) || options.chunks.length === 0) return;
+
+        // ── 单文件快照模式：直接写入所有 chunks，不依赖 contentAddressed.chunkRefs ──
+        if (isSingleFileSnapshotManifest_ACU(manifest)) {
+            const db = await openDb_ACU();
+            await new Promise<void>((resolve, reject) => {
+                const tx = db.transaction(STORE_NAME_ACU, 'readwrite');
+                const store = tx.objectStore(STORE_NAME_ACU);
+                const now = Date.now();
+                options.chunks.forEach((chunk) => {
+                    const chunkId = normalizeKeyPart_ACU(chunk?.chunkId);
+                    const vector = Array.isArray(chunk?.vector) ? chunk.vector : [];
+                    if (!chunkId || vector.length === 0) return;
+                    const chunkKey = normalizeKeyPart_ACU((Array.isArray(chunk.chunkKeys) && chunk.chunkKeys[0]) || chunkId);
+                    const normalizedChunk = cloneChunk_ACU({
+                        ...chunk,
+                        chunkKeys: Array.from(new Set([...(Array.isArray(chunk.chunkKeys) ? chunk.chunkKeys : []), chunkKey].filter(Boolean))),
+                    });
+                    const json = JSON.stringify(normalizedChunk);
+                    const record: VectorIndexHotCacheChunkRecord_ACU = {
+                        key: buildRecordKey_ACU(manifest.indexId, chunkId, chunkKey),
+                        chatKey: normalizeKeyPart_ACU(manifest.chatKey),
+                        isolationKey: normalizeKeyPart_ACU(manifest.isolationKey),
+                        sourceTableKey: normalizeKeyPart_ACU(manifest.sourceTableKey),
+                        indexId: normalizeKeyPart_ACU(manifest.indexId),
+                        checkpointId: getManifestCheckpointId_ACU(manifest),
+                        chunkKey,
+                        chunkId,
+                        rowKey: normalizeKeyPart_ACU(chunk.rowKey),
+                        embeddingModel: normalizeKeyPart_ACU(manifest.embeddingModel),
+                        dimension: Math.max(0, vector.length),
+                        checksum: '',
+                        chunk: normalizedChunk,
+                        byteSize: new Blob([json]).size,
+                        createdAt: now,
+                        updatedAt: now,
+                        lastAccessAt: now,
+                    };
+                    store.put(record);
+                });
+                tx.oncomplete = () => { db.close(); resolve(); };
+                tx.onerror = () => { db.close(); reject(tx.error || new Error('写入交火向量热缓存事务失败（单文件快照）')); };
+            });
+            return;
+        }
+
+        // ── 旧版内容寻址模式：通过 chunkRefs 匹配写入 ──
         const refs = getActiveChunkRefs_ACU(manifest);
-        if (refs.length === 0 || !Array.isArray(options.chunks) || options.chunks.length === 0) return;
+        if (refs.length === 0) return;
         const refsByChunkId = new Map(refs.map((ref) => [normalizeKeyPart_ACU(ref.chunkId), ref]));
         const db = await openDb_ACU();
         await new Promise<void>((resolve, reject) => {
@@ -224,6 +275,49 @@ export async function getSummaryVectorHotCacheChunks_ACU(options: VectorIndexHot
     try {
         const manifest = options.manifest;
         if (!manifest?.indexId || manifest.status !== 'ready') return null;
+
+        // ── 单文件快照模式：通过 indexId 索引扫描所有匹配记录 ──
+        if (isSingleFileSnapshotManifest_ACU(manifest)) {
+            const targetIndexId = normalizeKeyPart_ACU(manifest.indexId);
+            const targetCheckpointId = getManifestCheckpointId_ACU(manifest);
+            const targetChatKey = normalizeKeyPart_ACU(manifest.chatKey);
+            const targetIsolationKey = normalizeKeyPart_ACU(manifest.isolationKey);
+            const targetSourceTableKey = normalizeKeyPart_ACU(manifest.sourceTableKey);
+            const db = await openDb_ACU();
+            const records = await new Promise<Array<VectorIndexHotCacheChunkRecord_ACU>>((resolve, reject) => {
+                const tx = db.transaction(STORE_NAME_ACU, 'readwrite');
+                const store = tx.objectStore(STORE_NAME_ACU);
+                const index = store.index('indexId');
+                const loaded: Array<VectorIndexHotCacheChunkRecord_ACU> = [];
+                const now = Date.now();
+                const request = index.openCursor(IDBKeyRange.only(targetIndexId));
+                request.onsuccess = () => {
+                    const cursor = request.result;
+                    if (cursor) {
+                        const record = cursor.value as VectorIndexHotCacheChunkRecord_ACU;
+                        if (record.chatKey === targetChatKey
+                            && record.isolationKey === targetIsolationKey
+                            && record.sourceTableKey === targetSourceTableKey
+                            && record.checkpointId === targetCheckpointId
+                            && record.chunk?.vector?.length > 0) {
+                            record.lastAccessAt = now;
+                            store.put(record);
+                            loaded.push(record);
+                        }
+                        cursor.continue();
+                    }
+                };
+                request.onerror = () => reject(request.error || new Error('读取交火向量热缓存失败（单文件快照）'));
+                tx.oncomplete = () => { db.close(); resolve(loaded); };
+                tx.onerror = () => { db.close(); reject(tx.error || new Error('读取交火向量热缓存事务失败（单文件快照）')); };
+            });
+            if (records.length === 0) return null;
+            return records
+                .map((record) => cloneChunk_ACU(record.chunk))
+                .sort((left, right) => left.sequence - right.sequence || left.chunkId.localeCompare(right.chunkId));
+        }
+
+        // ── 旧版内容寻址模式：通过 chunkRefs 逐条读取 ──
         const refs = getActiveChunkRefs_ACU(manifest);
         if (refs.length === 0) return null;
         const db = await openDb_ACU();
