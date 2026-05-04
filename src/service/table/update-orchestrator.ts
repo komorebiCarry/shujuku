@@ -11,7 +11,7 @@ import { coreApisAreReady_ACU, currentJsonTableData_ACU, getCurrentIsolationKey_
 import { checkAutoMergeTrigger_ACU, prepareAutoMergeBatches_ACU, executeAutoMergeBatch_ACU, finalizeAutoMerge_ACU } from '../summary/merge-logic';
 import { getChatSheetGuideDataForIsolationKey_ACU } from '../template/chat-scope';
 import { loadAllChatMessages_ACU, updateReadableLorebookEntry_ACU } from '../worldbook/pipeline';
-import { archiveSummaryVectorIndexNow_ACU } from '../vector/summary-vector-index-archive-service';
+import { enqueueSummaryVectorIndexFlush_ACU } from '../vector/summary-vector-index-flush-queue';
 import { getCurrentWorldbookConfig_ACU } from '../settings/settings-readers';
 
 import { isSummaryOrOutlineTable_ACU, logDebug_ACU, logError_ACU, logWarn_ACU, parseTableTemplateJson_ACU } from '../../shared/utils';
@@ -444,32 +444,27 @@ export async function executeCardUpdateCore_ACU(
 
                     await updateReadableLorebookEntry_ACU(true);
 
-                    if (getCurrentWorldbookConfig_ACU().summaryVectorIndexModeEnabled === true) {
-                        try {
-                            logDebug_ACU('[交火模式纪要索引] 填表完成，触发增量向量化...');
-                            const vectorizeResult = await archiveSummaryVectorIndexNow_ACU({
-                                targetMessageIndex: saveTargetIndex,
-                                mode: 'sync',
-                                vectorizeOnly: true,
-                                force: true,
-                            });
-                            if (vectorizeResult.success && !vectorizeResult.skipped) {
-                                logDebug_ACU(`[交火模式纪要索引] 向量化完成，已调度防抖归档：rows=${vectorizeResult.indexedRowCount}, chunks=${vectorizeResult.chunkCount}`);
-                            } else if (vectorizeResult.skipped) {
-                                logDebug_ACU(`[交火模式纪要索引] 向量化跳过：${vectorizeResult.reason || 'unknown'}`);
-                            } else {
-                                logWarn_ACU('[交火模式纪要索引] 向量化失败:', vectorizeResult.reason || 'unknown', vectorizeResult.errors?.join('; ') || '');
-                            }
-                        } catch (archiveError) {
-                            logWarn_ACU('[交火模式纪要索引] 填表完成后向量化异常，已保留本次表格保存结果:', archiveError);
-                        }
-                    }
             } else {
                 emitProgress({ phase: 'chunk_done' });
                 logDebug_ACU("Import mode: skipping save to chat history for this chunk.");
             }
 
             emitProgress({ phase: 'complete' });
+
+            // [spv3.6.6] 填表完成后异步触发交火向量索引防抖归档
+            // 将 embedding + 归档写入从 saving 阶段移到 complete 之后，
+            // 避免 embedding API 调用阻塞"正在保存"提示框。
+            // 使用 flush queue 替代直接调用，由防抖定时器统一调度。
+            if (!isImportMode && success && getCurrentWorldbookConfig_ACU().summaryVectorIndexModeEnabled === true) {
+                enqueueSummaryVectorIndexFlush_ACU({
+                    targetMessageIndex: saveTargetIndex,
+                    mode: 'sync',
+                    reason: 'table_fill_complete',
+                }).catch(err => {
+                    logWarn_ACU('[交火模式纪要索引] 填表完成后防抖归档入队异常:', err);
+                });
+            }
+
         }
         return { success, modifiedKeys };
 

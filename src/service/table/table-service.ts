@@ -179,8 +179,6 @@ export async function persistTablesToChatMessage_ACU(
 
   await saveChatToHost_ACU();
 
-  await new Promise(resolve => setTimeout(resolve, 500));
-
   return { saved: true, messageIndex: finalIndex };
 }
 

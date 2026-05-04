@@ -5696,7 +5696,6 @@ $CONTENT
         });
         writeLegacyStandardAndSummary_ACU(targetMessage, legacyStandardData, legacySummaryData);
         await saveChatToHost_ACU();
-        await new Promise(resolve => setTimeout(resolve, 500));
         return { saved: true, messageIndex: finalIndex };
     }
     /**
@@ -32152,6 +32151,182 @@ $CONTENT
         return `summary-vector-index:${hashUserInput_ACU(source)}`;
     }
 
+    const SUMMARY_VECTOR_INDEX_FLUSH_DEBOUNCE_MS_ACU = 2500;
+    const SUMMARY_VECTOR_INDEX_FLUSHING_STALE_MS_ACU = 60000;
+    const summaryVectorFlushTimers_ACU = new Map();
+    const summaryVectorFlushRunning_ACU = new Set();
+    function normalizeKeyPart_ACU(value) {
+        return String(value || '').trim();
+    }
+    function buildSummaryVectorIndexFlushScopeKey_ACU(parts) {
+        return [parts.chatKey, parts.isolationKey, parts.sourceTableKey]
+            .map((part) => normalizeKeyPart_ACU(part) || 'default')
+            .join('::');
+    }
+    function normalizeErrorMessage_ACU$1(error) {
+        if (error instanceof Error)
+            return error.message || error.name || '未知错误';
+        if (typeof error === 'string')
+            return error;
+        try {
+            const text = JSON.stringify(error);
+            return text && text !== '{}' ? text : String(error || '未知错误');
+        }
+        catch {
+            return String(error || '未知错误');
+        }
+    }
+    function clearFlushTimer_ACU(scopeKey) {
+        const timer = summaryVectorFlushTimers_ACU.get(scopeKey);
+        if (timer)
+            clearTimeout(timer);
+        summaryVectorFlushTimers_ACU.delete(scopeKey);
+    }
+    async function markFlushTaskFailure_ACU(task, error, terminal = false) {
+        await upsertSummaryVectorFlushTask_ACU({
+            scopeKey: task.scopeKey,
+            chatKey: task.chatKey,
+            isolationKey: task.isolationKey,
+            sourceTableKey: task.sourceTableKey,
+            targetMessageIndex: task.targetMessageIndex,
+            mode: task.mode,
+            status: terminal ? 'failed_terminal' : 'failed_retryable',
+            requestedAt: task.requestedAt,
+            debounceUntil: Date.now() + SUMMARY_VECTOR_INDEX_FLUSH_DEBOUNCE_MS_ACU,
+            lastError: error,
+        });
+    }
+    function scheduleFlushTaskTimer_ACU(task) {
+        clearFlushTimer_ACU(task.scopeKey);
+        const delay = Math.max(0, Math.min(Math.max(0, task.debounceUntil - Date.now()), 2147483647));
+        const timer = setTimeout(() => {
+            summaryVectorFlushTimers_ACU.delete(task.scopeKey);
+            void flushSummaryVectorIndexTaskNow_ACU(task.scopeKey);
+        }, delay);
+        summaryVectorFlushTimers_ACU.set(task.scopeKey, timer);
+    }
+    async function enqueueSummaryVectorIndexFlush_ACU(options = {}) {
+        const selectedSummary = findSummaryTable_ACU();
+        if (!selectedSummary?.summaryKey) {
+            return { queued: false, skipped: true, reason: 'summary_table_not_found' };
+        }
+        const chatKey = normalizeKeyPart_ACU(currentChatFileIdentifier_ACU);
+        const isolationKey = normalizeKeyPart_ACU(getCurrentIsolationKey_ACU());
+        const sourceTableKey = normalizeKeyPart_ACU(selectedSummary.summaryKey);
+        if (!chatKey || !isolationKey || !sourceTableKey) {
+            return { queued: false, skipped: true, reason: 'flush_scope_unresolved' };
+        }
+        const now = Date.now();
+        const debounceMs = Math.max(0, Number(options.debounceMs ?? SUMMARY_VECTOR_INDEX_FLUSH_DEBOUNCE_MS_ACU) || SUMMARY_VECTOR_INDEX_FLUSH_DEBOUNCE_MS_ACU);
+        const scopeKey = buildSummaryVectorIndexFlushScopeKey_ACU({ chatKey, isolationKey, sourceTableKey });
+        const task = await upsertSummaryVectorFlushTask_ACU({
+            scopeKey,
+            chatKey,
+            isolationKey,
+            sourceTableKey,
+            targetMessageIndex: options.targetMessageIndex,
+            mode: options.mode === 'append' ? 'append' : 'sync',
+            status: 'queued',
+            requestedAt: now,
+            debounceUntil: now + debounceMs,
+        });
+        if (!task) {
+            return { queued: false, skipped: true, reason: 'flush_task_persist_failed', scopeKey };
+        }
+        scheduleFlushTaskTimer_ACU(task);
+        logDebug_ACU(`[交火向量索引] 已加入防抖 flush 队列：scope=${scopeKey}, mode=${task.mode}, debounceMs=${debounceMs}, reason=${options.reason || ''}`);
+        return { queued: true, scopeKey, debounceUntil: task.debounceUntil };
+    }
+    async function flushSummaryVectorIndexTaskNow_ACU(scopeKey) {
+        const task = await getSummaryVectorFlushTask_ACU(scopeKey);
+        if (!task)
+            return { success: true, skipped: true, reason: 'flush_task_not_found' };
+        if (summaryVectorFlushRunning_ACU.has(task.scopeKey)) {
+            return { success: true, skipped: true, reason: 'flush_already_running' };
+        }
+        const activeChatKey = normalizeKeyPart_ACU(currentChatFileIdentifier_ACU);
+        const activeIsolationKey = normalizeKeyPart_ACU(getCurrentIsolationKey_ACU());
+        if (task.chatKey !== activeChatKey || task.isolationKey !== activeIsolationKey) {
+            const message = `flush scope 与当前聊天上下文不一致：task=${task.chatKey}/${task.isolationKey}, active=${activeChatKey}/${activeIsolationKey}`;
+            await markFlushTaskFailure_ACU(task, message, false);
+            logWarn_ACU('[交火向量索引] 跳过防抖 flush，当前上下文不匹配:', message);
+            return { success: false, reason: 'flush_scope_mismatch', error: message };
+        }
+        const selectedSummary = findSummaryTable_ACU();
+        if (!selectedSummary?.summaryKey || normalizeKeyPart_ACU(selectedSummary.summaryKey) !== task.sourceTableKey) {
+            const message = `flush scope 对应纪要表不可用：sourceTableKey=${task.sourceTableKey}`;
+            await markFlushTaskFailure_ACU(task, message, false);
+            logWarn_ACU('[交火向量索引] 跳过防抖 flush，纪要表不可用:', message);
+            return { success: false, reason: 'summary_table_not_found_for_flush', error: message };
+        }
+        summaryVectorFlushRunning_ACU.add(task.scopeKey);
+        clearFlushTimer_ACU(task.scopeKey);
+        try {
+            await upsertSummaryVectorFlushTask_ACU({
+                scopeKey: task.scopeKey,
+                chatKey: task.chatKey,
+                isolationKey: task.isolationKey,
+                sourceTableKey: task.sourceTableKey,
+                targetMessageIndex: task.targetMessageIndex,
+                mode: task.mode,
+                status: 'flushing',
+                requestedAt: task.requestedAt,
+                debounceUntil: task.debounceUntil,
+            });
+            const result = await archiveSummaryVectorIndexNow_ACU({
+                targetMessageIndex: task.targetMessageIndex,
+                mode: task.mode,
+                saveChatAfterWrite: true,
+            });
+            if (result.success) {
+                await deleteSummaryVectorFlushTask_ACU(task.scopeKey);
+                logDebug_ACU(`[交火向量索引] 防抖 flush 完成：scope=${task.scopeKey}, skipped=${result.skipped}, reason=${result.reason || ''}`);
+                return { success: true, skipped: result.skipped, reason: result.reason, result };
+            }
+            const error = result.errors?.join('; ') || result.reason || 'summary_vector_index_flush_failed';
+            await markFlushTaskFailure_ACU(task, error, result.reason === 'summary_vector_index_config_invalid' || result.reason === 'target_message_invalid' || result.reason === 'target_message_not_found');
+            logWarn_ACU('[交火向量索引] 防抖 flush 失败:', error);
+            return { success: false, reason: result.reason, result, error };
+        }
+        catch (error) {
+            const message = normalizeErrorMessage_ACU$1(error);
+            await markFlushTaskFailure_ACU(task, message, false);
+            logWarn_ACU('[交火向量索引] 防抖 flush 异常:', message);
+            return { success: false, reason: 'flush_exception', error: message };
+        }
+        finally {
+            summaryVectorFlushRunning_ACU.delete(task.scopeKey);
+        }
+    }
+    async function restoreSummaryVectorIndexFlushQueueForCurrentChat_ACU() {
+        const chatKey = normalizeKeyPart_ACU(currentChatFileIdentifier_ACU);
+        const isolationKey = normalizeKeyPart_ACU(getCurrentIsolationKey_ACU());
+        if (!chatKey || !isolationKey)
+            return 0;
+        const tasks = await listSummaryVectorFlushTasks_ACU({ chatKey, isolationKey });
+        let restored = 0;
+        const now = Date.now();
+        for (const task of tasks) {
+            if (task.status === 'ready' || task.status === 'failed_terminal')
+                continue;
+            if (task.status === 'flushing' && now - task.updatedAt > SUMMARY_VECTOR_INDEX_FLUSHING_STALE_MS_ACU) {
+                await markFlushTaskFailure_ACU(task, '上次 flush 在执行中断后超时，已重新排队。', false);
+                const refreshed = await getSummaryVectorFlushTask_ACU(task.scopeKey);
+                if (refreshed) {
+                    scheduleFlushTaskTimer_ACU(refreshed);
+                    restored += 1;
+                }
+                continue;
+            }
+            scheduleFlushTaskTimer_ACU(task);
+            restored += 1;
+        }
+        if (restored > 0) {
+            logDebug_ACU(`[交火向量索引] 已恢复当前聊天防抖 flush 队列：count=${restored}`);
+        }
+        return restored;
+    }
+
     /**
      * service/table/update-orchestrator.ts — 表格更新编排（service 层：纯业务逻辑）
      * 从 presentation/triggers/update-process.ts 提取。
@@ -32473,35 +32648,25 @@ $CONTENT
                         logDebug_ACU("No tables were modified by AI, skipping save to chat history.");
                     }
                     await updateReadableLorebookEntry_ACU(true);
-                    if (getCurrentWorldbookConfig_ACU().summaryVectorIndexModeEnabled === true) {
-                        try {
-                            logDebug_ACU('[交火模式纪要索引] 填表完成，触发增量向量化...');
-                            const vectorizeResult = await archiveSummaryVectorIndexNow_ACU({
-                                targetMessageIndex: saveTargetIndex,
-                                mode: 'sync',
-                                vectorizeOnly: true,
-                                force: true,
-                            });
-                            if (vectorizeResult.success && !vectorizeResult.skipped) {
-                                logDebug_ACU(`[交火模式纪要索引] 向量化完成，已调度防抖归档：rows=${vectorizeResult.indexedRowCount}, chunks=${vectorizeResult.chunkCount}`);
-                            }
-                            else if (vectorizeResult.skipped) {
-                                logDebug_ACU(`[交火模式纪要索引] 向量化跳过：${vectorizeResult.reason || 'unknown'}`);
-                            }
-                            else {
-                                logWarn_ACU('[交火模式纪要索引] 向量化失败:', vectorizeResult.reason || 'unknown', vectorizeResult.errors?.join('; ') || '');
-                            }
-                        }
-                        catch (archiveError) {
-                            logWarn_ACU('[交火模式纪要索引] 填表完成后向量化异常，已保留本次表格保存结果:', archiveError);
-                        }
-                    }
                 }
                 else {
                     emitProgress({ phase: 'chunk_done' });
                     logDebug_ACU("Import mode: skipping save to chat history for this chunk.");
                 }
                 emitProgress({ phase: 'complete' });
+                // [spv3.6.6] 填表完成后异步触发交火向量索引防抖归档
+                // 将 embedding + 归档写入从 saving 阶段移到 complete 之后，
+                // 避免 embedding API 调用阻塞"正在保存"提示框。
+                // 使用 flush queue 替代直接调用，由防抖定时器统一调度。
+                if (!isImportMode && success && getCurrentWorldbookConfig_ACU().summaryVectorIndexModeEnabled === true) {
+                    enqueueSummaryVectorIndexFlush_ACU({
+                        targetMessageIndex: saveTargetIndex,
+                        mode: 'sync',
+                        reason: 'table_fill_complete',
+                    }).catch(err => {
+                        logWarn_ACU('[交火模式纪要索引] 填表完成后防抖归档入队异常:', err);
+                    });
+                }
             }
             return { success, modifiedKeys };
         }
@@ -36923,182 +37088,6 @@ $CONTENT
     // ███ 独立窗口系统结束 ███
     // ═══════════════════════════════════════════════════════════════════════════════
     // --- [Legacy] 旧版"单份设置/单份模板"存储键（仅用于迁移；新版本不再直接读写它们） ---
-
-    const SUMMARY_VECTOR_INDEX_FLUSH_DEBOUNCE_MS_ACU = 2500;
-    const SUMMARY_VECTOR_INDEX_FLUSHING_STALE_MS_ACU = 60000;
-    const summaryVectorFlushTimers_ACU = new Map();
-    const summaryVectorFlushRunning_ACU = new Set();
-    function normalizeKeyPart_ACU(value) {
-        return String(value || '').trim();
-    }
-    function buildSummaryVectorIndexFlushScopeKey_ACU(parts) {
-        return [parts.chatKey, parts.isolationKey, parts.sourceTableKey]
-            .map((part) => normalizeKeyPart_ACU(part) || 'default')
-            .join('::');
-    }
-    function normalizeErrorMessage_ACU$1(error) {
-        if (error instanceof Error)
-            return error.message || error.name || '未知错误';
-        if (typeof error === 'string')
-            return error;
-        try {
-            const text = JSON.stringify(error);
-            return text && text !== '{}' ? text : String(error || '未知错误');
-        }
-        catch {
-            return String(error || '未知错误');
-        }
-    }
-    function clearFlushTimer_ACU(scopeKey) {
-        const timer = summaryVectorFlushTimers_ACU.get(scopeKey);
-        if (timer)
-            clearTimeout(timer);
-        summaryVectorFlushTimers_ACU.delete(scopeKey);
-    }
-    async function markFlushTaskFailure_ACU(task, error, terminal = false) {
-        await upsertSummaryVectorFlushTask_ACU({
-            scopeKey: task.scopeKey,
-            chatKey: task.chatKey,
-            isolationKey: task.isolationKey,
-            sourceTableKey: task.sourceTableKey,
-            targetMessageIndex: task.targetMessageIndex,
-            mode: task.mode,
-            status: terminal ? 'failed_terminal' : 'failed_retryable',
-            requestedAt: task.requestedAt,
-            debounceUntil: Date.now() + SUMMARY_VECTOR_INDEX_FLUSH_DEBOUNCE_MS_ACU,
-            lastError: error,
-        });
-    }
-    function scheduleFlushTaskTimer_ACU(task) {
-        clearFlushTimer_ACU(task.scopeKey);
-        const delay = Math.max(0, Math.min(Math.max(0, task.debounceUntil - Date.now()), 2147483647));
-        const timer = setTimeout(() => {
-            summaryVectorFlushTimers_ACU.delete(task.scopeKey);
-            void flushSummaryVectorIndexTaskNow_ACU(task.scopeKey);
-        }, delay);
-        summaryVectorFlushTimers_ACU.set(task.scopeKey, timer);
-    }
-    async function enqueueSummaryVectorIndexFlush_ACU(options = {}) {
-        const selectedSummary = findSummaryTable_ACU();
-        if (!selectedSummary?.summaryKey) {
-            return { queued: false, skipped: true, reason: 'summary_table_not_found' };
-        }
-        const chatKey = normalizeKeyPart_ACU(currentChatFileIdentifier_ACU);
-        const isolationKey = normalizeKeyPart_ACU(getCurrentIsolationKey_ACU());
-        const sourceTableKey = normalizeKeyPart_ACU(selectedSummary.summaryKey);
-        if (!chatKey || !isolationKey || !sourceTableKey) {
-            return { queued: false, skipped: true, reason: 'flush_scope_unresolved' };
-        }
-        const now = Date.now();
-        const debounceMs = Math.max(0, Number(options.debounceMs ?? SUMMARY_VECTOR_INDEX_FLUSH_DEBOUNCE_MS_ACU) || SUMMARY_VECTOR_INDEX_FLUSH_DEBOUNCE_MS_ACU);
-        const scopeKey = buildSummaryVectorIndexFlushScopeKey_ACU({ chatKey, isolationKey, sourceTableKey });
-        const task = await upsertSummaryVectorFlushTask_ACU({
-            scopeKey,
-            chatKey,
-            isolationKey,
-            sourceTableKey,
-            targetMessageIndex: options.targetMessageIndex,
-            mode: options.mode === 'append' ? 'append' : 'sync',
-            status: 'queued',
-            requestedAt: now,
-            debounceUntil: now + debounceMs,
-        });
-        if (!task) {
-            return { queued: false, skipped: true, reason: 'flush_task_persist_failed', scopeKey };
-        }
-        scheduleFlushTaskTimer_ACU(task);
-        logDebug_ACU(`[交火向量索引] 已加入防抖 flush 队列：scope=${scopeKey}, mode=${task.mode}, debounceMs=${debounceMs}, reason=${options.reason || ''}`);
-        return { queued: true, scopeKey, debounceUntil: task.debounceUntil };
-    }
-    async function flushSummaryVectorIndexTaskNow_ACU(scopeKey) {
-        const task = await getSummaryVectorFlushTask_ACU(scopeKey);
-        if (!task)
-            return { success: true, skipped: true, reason: 'flush_task_not_found' };
-        if (summaryVectorFlushRunning_ACU.has(task.scopeKey)) {
-            return { success: true, skipped: true, reason: 'flush_already_running' };
-        }
-        const activeChatKey = normalizeKeyPart_ACU(currentChatFileIdentifier_ACU);
-        const activeIsolationKey = normalizeKeyPart_ACU(getCurrentIsolationKey_ACU());
-        if (task.chatKey !== activeChatKey || task.isolationKey !== activeIsolationKey) {
-            const message = `flush scope 与当前聊天上下文不一致：task=${task.chatKey}/${task.isolationKey}, active=${activeChatKey}/${activeIsolationKey}`;
-            await markFlushTaskFailure_ACU(task, message, false);
-            logWarn_ACU('[交火向量索引] 跳过防抖 flush，当前上下文不匹配:', message);
-            return { success: false, reason: 'flush_scope_mismatch', error: message };
-        }
-        const selectedSummary = findSummaryTable_ACU();
-        if (!selectedSummary?.summaryKey || normalizeKeyPart_ACU(selectedSummary.summaryKey) !== task.sourceTableKey) {
-            const message = `flush scope 对应纪要表不可用：sourceTableKey=${task.sourceTableKey}`;
-            await markFlushTaskFailure_ACU(task, message, false);
-            logWarn_ACU('[交火向量索引] 跳过防抖 flush，纪要表不可用:', message);
-            return { success: false, reason: 'summary_table_not_found_for_flush', error: message };
-        }
-        summaryVectorFlushRunning_ACU.add(task.scopeKey);
-        clearFlushTimer_ACU(task.scopeKey);
-        try {
-            await upsertSummaryVectorFlushTask_ACU({
-                scopeKey: task.scopeKey,
-                chatKey: task.chatKey,
-                isolationKey: task.isolationKey,
-                sourceTableKey: task.sourceTableKey,
-                targetMessageIndex: task.targetMessageIndex,
-                mode: task.mode,
-                status: 'flushing',
-                requestedAt: task.requestedAt,
-                debounceUntil: task.debounceUntil,
-            });
-            const result = await archiveSummaryVectorIndexNow_ACU({
-                targetMessageIndex: task.targetMessageIndex,
-                mode: task.mode,
-                saveChatAfterWrite: true,
-            });
-            if (result.success) {
-                await deleteSummaryVectorFlushTask_ACU(task.scopeKey);
-                logDebug_ACU(`[交火向量索引] 防抖 flush 完成：scope=${task.scopeKey}, skipped=${result.skipped}, reason=${result.reason || ''}`);
-                return { success: true, skipped: result.skipped, reason: result.reason, result };
-            }
-            const error = result.errors?.join('; ') || result.reason || 'summary_vector_index_flush_failed';
-            await markFlushTaskFailure_ACU(task, error, result.reason === 'summary_vector_index_config_invalid' || result.reason === 'target_message_invalid' || result.reason === 'target_message_not_found');
-            logWarn_ACU('[交火向量索引] 防抖 flush 失败:', error);
-            return { success: false, reason: result.reason, result, error };
-        }
-        catch (error) {
-            const message = normalizeErrorMessage_ACU$1(error);
-            await markFlushTaskFailure_ACU(task, message, false);
-            logWarn_ACU('[交火向量索引] 防抖 flush 异常:', message);
-            return { success: false, reason: 'flush_exception', error: message };
-        }
-        finally {
-            summaryVectorFlushRunning_ACU.delete(task.scopeKey);
-        }
-    }
-    async function restoreSummaryVectorIndexFlushQueueForCurrentChat_ACU() {
-        const chatKey = normalizeKeyPart_ACU(currentChatFileIdentifier_ACU);
-        const isolationKey = normalizeKeyPart_ACU(getCurrentIsolationKey_ACU());
-        if (!chatKey || !isolationKey)
-            return 0;
-        const tasks = await listSummaryVectorFlushTasks_ACU({ chatKey, isolationKey });
-        let restored = 0;
-        const now = Date.now();
-        for (const task of tasks) {
-            if (task.status === 'ready' || task.status === 'failed_terminal')
-                continue;
-            if (task.status === 'flushing' && now - task.updatedAt > SUMMARY_VECTOR_INDEX_FLUSHING_STALE_MS_ACU) {
-                await markFlushTaskFailure_ACU(task, '上次 flush 在执行中断后超时，已重新排队。', false);
-                const refreshed = await getSummaryVectorFlushTask_ACU(task.scopeKey);
-                if (refreshed) {
-                    scheduleFlushTaskTimer_ACU(refreshed);
-                    restored += 1;
-                }
-                continue;
-            }
-            scheduleFlushTaskTimer_ACU(task);
-            restored += 1;
-        }
-        if (restored > 0) {
-            logDebug_ACU(`[交火向量索引] 已恢复当前聊天防抖 flush 队列：count=${restored}`);
-        }
-        return restored;
-    }
 
     /**
      * presentation/pages/visualizer-main-save.ts
