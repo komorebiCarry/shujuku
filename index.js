@@ -39827,7 +39827,17 @@ $CONTENT
         return `${(value / 1024 / 1024).toFixed(2)} MB`;
     }
     async function refreshVectorIndexStatsPanel_ACU() {
-        const snapshot = getLatestSummaryVectorIndexSnapshotState_ACU();
+        let snapshot = getLatestSummaryVectorIndexSnapshotState_ACU();
+        // ── 自动恢复：tag data 无 state 时，从外部单文件快照恢复 ──
+        if (!snapshot?.summaryVectorIndexState?.manifest) {
+            try {
+                const recovered = await tryRecoverSummaryVectorIndexFromExternalSnapshot_ACU();
+                if (recovered) {
+                    snapshot = getLatestSummaryVectorIndexSnapshotState_ACU();
+                }
+            }
+            catch { /* 恢复失败不影响面板显示 */ }
+        }
         const state = snapshot?.summaryVectorIndexState || null;
         const manifest = state?.manifest || null;
         const stats = await getSummaryVectorIndexStats_ACU(manifest);
@@ -39854,6 +39864,61 @@ $CONTENT
         setField('flushQueue', `${pendingFlushCount} pending / ${stats.flushTaskFailedCount || 0} failed`);
         setField('flushError', stats.flushTaskLastError || '-');
         setField('updatedAt', stats.updatedAt || '-');
+    }
+    /**
+     * 当 tag data 中没有向量索引 state 时，尝试从外部单文件快照恢复。
+     * 恢复成功后会将 state 写回最新非用户消息的 tag data 并保存聊天。
+     */
+    async function tryRecoverSummaryVectorIndexFromExternalSnapshot_ACU() {
+        const chatKey = String(currentChatFileIdentifier_ACU || '').trim();
+        const isolationKey = String(getCurrentIsolationKey_ACU() || '').trim();
+        const sourceTableKey = getCurrentSummaryVectorIndexSourceTableKey_ACU();
+        if (!chatKey || !isolationKey)
+            return false;
+        const snapshotPath = buildVectorIndexSingleSnapshotFilePath_ACU({ chatKey, isolationKey, sourceTableKey });
+        const loaded = await readVectorIndexJsonFile_ACU(snapshotPath);
+        if (!loaded.ok || !loaded.data || loaded.data.schema !== 'single_file_snapshot')
+            return false;
+        const blob = loaded.data;
+        const manifest = blob.manifest;
+        if (!manifest?.indexId || manifest.status !== 'ready')
+            return false;
+        const chat = getChatArray_ACU();
+        if (!Array.isArray(chat) || chat.length === 0)
+            return false;
+        // 找到最新的非用户消息
+        let targetIndex = -1;
+        for (let i = chat.length - 1; i >= 0; i--) {
+            if (chat[i] && !chat[i].is_user) {
+                targetIndex = i;
+                break;
+            }
+        }
+        if (targetIndex < 0)
+            return false;
+        const message = chat[targetIndex];
+        const tagData = readIsolatedTagData_ACU(message, isolationKey) || { independentData: {}, modifiedKeys: {}, updateGroupKeys: {} };
+        if (tagData.summaryVectorIndexState?.manifest?.indexId)
+            return false; // 已有 state，不覆盖
+        const rows = Array.isArray(blob.rows) ? blob.rows : [];
+        const chunks = Array.isArray(blob.chunks) ? blob.chunks : [];
+        const recoveredState = {
+            manifest,
+            rows,
+            chunks,
+            rowCount: rows.filter((r) => r.status !== 'removed').length,
+            chunkCount: chunks.length,
+            snapshotMessageId: String(manifest.snapshotMessageId || message.mesId || ''),
+            sourceTableKey: String(manifest.sourceTableKey || sourceTableKey),
+            sourceTableName: String(manifest.sourceTableName || sourceTableKey),
+            indexedAt: String(manifest.indexedAt || new Date().toISOString()),
+            skippedRowCount: 0,
+        };
+        assignSummaryVectorIndexStateToTagData_ACU(tagData, recoveredState);
+        writeIsolatedTagData_ACU(message, isolationKey, tagData);
+        await saveChatToHost_ACU();
+        console.log(`[ACU交火向量索引] 已从外部快照自动恢复 state 到消息 #${targetIndex}（indexId=${manifest.indexId}，${rows.length} 行，${chunks.length} 块）`);
+        return true;
     }
     function getCurrentSummaryVectorIndexSourceTableKey_ACU() {
         const tables = currentJsonTableData_ACU && typeof currentJsonTableData_ACU === 'object'
