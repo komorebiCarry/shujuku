@@ -169,7 +169,7 @@ export async function flushSummaryVectorIndexTaskNow_ACU(scopeKey: string): Prom
         const result = await archiveSummaryVectorIndexNow_ACU({
             targetMessageIndex: task.targetMessageIndex,
             mode: task.mode,
-            saveChatAfterWrite: false,
+            saveChatAfterWrite: true,
         });
         if (result.success) {
             await deleteSummaryVectorFlushTask_ACU(task.scopeKey);
