@@ -17563,26 +17563,17 @@ $CONTENT
         return normalizeFileNamePart_ACU(value);
     }
     /**
-     * [spv3.6.8] 角色名路径段规范化
-     * 保留 Unicode 字符（中文、日文等）以保持可读性，
-     * 仅移除文件系统不安全字符（/ \ : * ? " < > | 和控制字符）。
-     * 空格替换为下划线，连续下划线合并，前后下划线去除。
-     * 截断到 64 字符（按 Unicode 码点计数）。
-     * 清洗后为空则返回空字符串（调用方据此降级到无角色名格式）。
+     * [spv3.6.12] 角色名路径段规范化
+     * SillyTavern 文件上传 API 仅接受 [a-zA-Z0-9_-]，
+     * 因此必须使用 ASCII-only 规范化（与 normalizeFileNamePart_ACU 同策略）。
+     * 非 ASCII 角色名（中文、日文等）清洗后为空则返回空字符串，
+     * 调用方据此降级到无角色名格式（spv3.6.7 格式）。
      */
     function normalizeChatNameSegment_ACU(value) {
-        const cleaned = String(value || '')
-            // 移除文件系统不安全字符和控制字符
-            .replace(/[\\/:\*?"<>|\x00-\x1F\x7F]/g, '')
-            // 空白字符替换为下划线
-            .replace(/\s+/g, '_')
-            // 合并连续下划线
-            .replace(/_+/g, '_')
-            // 去除前后下划线
+        return String(value || '')
+            .replace(/[^a-zA-Z0-9_-]+/g, '_')
             .replace(/^_+|_+$/g, '')
-            // 截断到 64 字符
-            .slice(0, 64);
-        return cleaned;
+            .slice(0, 64) || '';
     }
     function buildVectorIndexFileName_ACU(parts) {
         const chatKey = normalizeFileNamePart_ACU(parts.chatKey);
