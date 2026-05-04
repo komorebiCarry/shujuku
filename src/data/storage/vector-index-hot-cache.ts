@@ -1,8 +1,12 @@
 import type { ChatSummaryVectorIndexChunk_ACU, ChatSummaryVectorIndexManifest_ACU } from '../../service/vector/summary-vector-index-types';
 
 const DB_NAME_ACU = 'TavernDB_ACU_VectorHotCache';
-const DB_VERSION_ACU = 1;
+const DB_VERSION_ACU = 2;
 const STORE_NAME_ACU = 'chunks';
+const FLUSH_TASK_STORE_NAME_ACU = 'flushTasks';
+
+export type SummaryVectorIndexFlushTaskStatus_ACU = 'dirty' | 'queued' | 'flushing' | 'ready' | 'failed_retryable' | 'failed_terminal';
+export type SummaryVectorIndexFlushTaskMode_ACU = 'append' | 'sync';
 
 export interface VectorIndexHotCacheScope_ACU {
     chatKey?: string;
@@ -17,6 +21,47 @@ export interface VectorIndexHotCacheWriteOptions_ACU {
 
 export interface VectorIndexHotCacheLoadOptions_ACU {
     manifest: ChatSummaryVectorIndexManifest_ACU;
+}
+
+export interface SummaryVectorIndexFlushTaskRecord_ACU {
+    scopeKey: string;
+    chatKey: string;
+    isolationKey: string;
+    sourceTableKey: string;
+    targetMessageIndex?: number;
+    mode: SummaryVectorIndexFlushTaskMode_ACU;
+    status: SummaryVectorIndexFlushTaskStatus_ACU;
+    requestedAt: number;
+    debounceUntil: number;
+    attemptCount: number;
+    lastAttemptAt?: number;
+    lastSuccessAt?: number;
+    lastError?: string;
+    updatedAt: number;
+}
+
+export interface SummaryVectorIndexFlushTaskUpsert_ACU {
+    scopeKey: string;
+    chatKey: string;
+    isolationKey: string;
+    sourceTableKey: string;
+    targetMessageIndex?: number;
+    mode: SummaryVectorIndexFlushTaskMode_ACU;
+    status: SummaryVectorIndexFlushTaskStatus_ACU;
+    requestedAt?: number;
+    debounceUntil?: number;
+    lastError?: string;
+}
+
+export interface SummaryVectorIndexFlushTaskEstimate_ACU {
+    total: number;
+    dirty: number;
+    queued: number;
+    flushing: number;
+    ready: number;
+    failedRetryable: number;
+    failedTerminal: number;
+    lastError?: string;
 }
 
 interface VectorIndexHotCacheChunkRecord_ACU {
@@ -66,6 +111,13 @@ function openDb_ACU(): Promise<IDBDatabase> {
                 store.createIndex('checkpointId', 'checkpointId', { unique: false });
                 store.createIndex('scope', ['chatKey', 'isolationKey', 'sourceTableKey'], { unique: false });
                 store.createIndex('lastAccessAt', 'lastAccessAt', { unique: false });
+            }
+            if (!db.objectStoreNames.contains(FLUSH_TASK_STORE_NAME_ACU)) {
+                const taskStore = db.createObjectStore(FLUSH_TASK_STORE_NAME_ACU, { keyPath: 'scopeKey' });
+                taskStore.createIndex('scope', ['chatKey', 'isolationKey', 'sourceTableKey'], { unique: true });
+                taskStore.createIndex('status', 'status', { unique: false });
+                taskStore.createIndex('debounceUntil', 'debounceUntil', { unique: false });
+                taskStore.createIndex('updatedAt', 'updatedAt', { unique: false });
             }
         };
         request.onsuccess = () => resolve(request.result);
@@ -330,4 +382,197 @@ export async function estimateSummaryVectorHotCache_ACU(indexId?: string): Promi
     } catch {
         return { bytes: 0, count: 0 };
     }
+}
+
+function normalizeFlushTaskStatus_ACU(status: any): SummaryVectorIndexFlushTaskStatus_ACU {
+    return status === 'queued'
+        || status === 'flushing'
+        || status === 'ready'
+        || status === 'failed_retryable'
+        || status === 'failed_terminal'
+        ? status
+        : 'dirty';
+}
+
+function normalizeFlushTaskMode_ACU(mode: any): SummaryVectorIndexFlushTaskMode_ACU {
+    return mode === 'append' ? 'append' : 'sync';
+}
+
+function cloneFlushTask_ACU(task: SummaryVectorIndexFlushTaskRecord_ACU): SummaryVectorIndexFlushTaskRecord_ACU {
+    return {
+        scopeKey: normalizeKeyPart_ACU(task.scopeKey),
+        chatKey: normalizeKeyPart_ACU(task.chatKey),
+        isolationKey: normalizeKeyPart_ACU(task.isolationKey),
+        sourceTableKey: normalizeKeyPart_ACU(task.sourceTableKey),
+        ...(Number.isFinite(Number(task.targetMessageIndex)) ? { targetMessageIndex: Number(task.targetMessageIndex) } : {}),
+        mode: normalizeFlushTaskMode_ACU(task.mode),
+        status: normalizeFlushTaskStatus_ACU(task.status),
+        requestedAt: Math.max(0, Number(task.requestedAt) || 0),
+        debounceUntil: Math.max(0, Number(task.debounceUntil) || 0),
+        attemptCount: Math.max(0, Number(task.attemptCount) || 0),
+        ...(Number.isFinite(Number(task.lastAttemptAt)) ? { lastAttemptAt: Number(task.lastAttemptAt) } : {}),
+        ...(Number.isFinite(Number(task.lastSuccessAt)) ? { lastSuccessAt: Number(task.lastSuccessAt) } : {}),
+        ...(task.lastError ? { lastError: String(task.lastError) } : {}),
+        updatedAt: Math.max(0, Number(task.updatedAt) || 0),
+    };
+}
+
+export async function upsertSummaryVectorFlushTask_ACU(input: SummaryVectorIndexFlushTaskUpsert_ACU): Promise<SummaryVectorIndexFlushTaskRecord_ACU | null> {
+    try {
+        const scopeKey = normalizeKeyPart_ACU(input.scopeKey);
+        const chatKey = normalizeKeyPart_ACU(input.chatKey);
+        const isolationKey = normalizeKeyPart_ACU(input.isolationKey);
+        const sourceTableKey = normalizeKeyPart_ACU(input.sourceTableKey);
+        if (!scopeKey || !chatKey || !isolationKey || !sourceTableKey) return null;
+        const now = Date.now();
+        const db = await openDb_ACU();
+        return await new Promise((resolve, reject) => {
+            const tx = db.transaction(FLUSH_TASK_STORE_NAME_ACU, 'readwrite');
+            const store = tx.objectStore(FLUSH_TASK_STORE_NAME_ACU);
+            const getRequest = store.get(scopeKey) as IDBRequest<SummaryVectorIndexFlushTaskRecord_ACU | undefined>;
+            let nextRecord: SummaryVectorIndexFlushTaskRecord_ACU | null = null;
+            getRequest.onsuccess = () => {
+                const previous = getRequest.result ? cloneFlushTask_ACU(getRequest.result) : null;
+                const previousAttemptCount = previous?.attemptCount || 0;
+                const nextStatus = normalizeFlushTaskStatus_ACU(input.status);
+                nextRecord = {
+                    scopeKey,
+                    chatKey,
+                    isolationKey,
+                    sourceTableKey,
+                    ...(Number.isFinite(Number(input.targetMessageIndex)) ? { targetMessageIndex: Number(input.targetMessageIndex) } : previous?.targetMessageIndex != null ? { targetMessageIndex: previous.targetMessageIndex } : {}),
+                    mode: normalizeFlushTaskMode_ACU(input.mode),
+                    status: nextStatus,
+                    requestedAt: Math.max(0, Number(input.requestedAt ?? previous?.requestedAt ?? now) || now),
+                    debounceUntil: Math.max(0, Number(input.debounceUntil ?? previous?.debounceUntil ?? now) || now),
+                    attemptCount: nextStatus === 'flushing' ? previousAttemptCount + 1 : previousAttemptCount,
+                    ...(nextStatus === 'flushing' ? { lastAttemptAt: now } : previous?.lastAttemptAt ? { lastAttemptAt: previous.lastAttemptAt } : {}),
+                    ...(nextStatus === 'ready' ? { lastSuccessAt: now } : previous?.lastSuccessAt ? { lastSuccessAt: previous.lastSuccessAt } : {}),
+                    ...(input.lastError ? { lastError: String(input.lastError) } : nextStatus === 'ready' ? {} : previous?.lastError ? { lastError: previous.lastError } : {}),
+                    updatedAt: now,
+                };
+                store.put(nextRecord);
+            };
+            getRequest.onerror = () => reject(getRequest.error || new Error('读取交火向量 flush task 失败'));
+            tx.oncomplete = () => {
+                db.close();
+                resolve(nextRecord ? cloneFlushTask_ACU(nextRecord) : null);
+            };
+            tx.onerror = () => {
+                db.close();
+                reject(tx.error || new Error('写入交火向量 flush task 事务失败'));
+            };
+        });
+    } catch {
+        return null;
+    }
+}
+
+export async function getSummaryVectorFlushTask_ACU(scopeKey: string): Promise<SummaryVectorIndexFlushTaskRecord_ACU | null> {
+    try {
+        const normalizedScopeKey = normalizeKeyPart_ACU(scopeKey);
+        if (!normalizedScopeKey) return null;
+        const db = await openDb_ACU();
+        return await new Promise((resolve, reject) => {
+            const tx = db.transaction(FLUSH_TASK_STORE_NAME_ACU, 'readonly');
+            const store = tx.objectStore(FLUSH_TASK_STORE_NAME_ACU);
+            const request = store.get(normalizedScopeKey) as IDBRequest<SummaryVectorIndexFlushTaskRecord_ACU | undefined>;
+            request.onsuccess = () => resolve(request.result ? cloneFlushTask_ACU(request.result) : null);
+            request.onerror = () => reject(request.error || new Error('读取交火向量 flush task 失败'));
+            tx.oncomplete = () => db.close();
+            tx.onerror = () => {
+                db.close();
+                reject(tx.error || new Error('读取交火向量 flush task 事务失败'));
+            };
+        });
+    } catch {
+        return null;
+    }
+}
+
+export async function listSummaryVectorFlushTasks_ACU(scope?: VectorIndexHotCacheScope_ACU): Promise<SummaryVectorIndexFlushTaskRecord_ACU[]> {
+    try {
+        const chatKey = normalizeKeyPart_ACU(scope?.chatKey);
+        const isolationKey = normalizeKeyPart_ACU(scope?.isolationKey);
+        const sourceTableKey = normalizeKeyPart_ACU(scope?.sourceTableKey);
+        const db = await openDb_ACU();
+        return await new Promise((resolve, reject) => {
+            const records: SummaryVectorIndexFlushTaskRecord_ACU[] = [];
+            const tx = db.transaction(FLUSH_TASK_STORE_NAME_ACU, 'readonly');
+            const store = tx.objectStore(FLUSH_TASK_STORE_NAME_ACU);
+            const request = store.openCursor();
+            request.onsuccess = () => {
+                const cursor = request.result;
+                if (cursor) {
+                    const record = cloneFlushTask_ACU(cursor.value as SummaryVectorIndexFlushTaskRecord_ACU);
+                    const matches = (!chatKey || record.chatKey === chatKey)
+                        && (!isolationKey || record.isolationKey === isolationKey)
+                        && (!sourceTableKey || record.sourceTableKey === sourceTableKey);
+                    if (matches) records.push(record);
+                    cursor.continue();
+                }
+            };
+            request.onerror = () => reject(request.error || new Error('列出交火向量 flush task 失败'));
+            tx.oncomplete = () => {
+                db.close();
+                resolve(records.sort((left, right) => left.debounceUntil - right.debounceUntil || left.scopeKey.localeCompare(right.scopeKey)));
+            };
+            tx.onerror = () => {
+                db.close();
+                reject(tx.error || new Error('列出交火向量 flush task 事务失败'));
+            };
+        });
+    } catch {
+        return [];
+    }
+}
+
+export async function deleteSummaryVectorFlushTask_ACU(scopeKey: string): Promise<void> {
+    try {
+        const normalizedScopeKey = normalizeKeyPart_ACU(scopeKey);
+        if (!normalizedScopeKey) return;
+        const db = await openDb_ACU();
+        await new Promise<void>((resolve, reject) => {
+            const tx = db.transaction(FLUSH_TASK_STORE_NAME_ACU, 'readwrite');
+            const store = tx.objectStore(FLUSH_TASK_STORE_NAME_ACU);
+            const request = store.delete(normalizedScopeKey);
+            request.onsuccess = () => resolve();
+            request.onerror = () => reject(request.error || new Error('删除交火向量 flush task 失败'));
+            tx.oncomplete = () => db.close();
+            tx.onerror = () => {
+                db.close();
+                reject(tx.error || new Error('删除交火向量 flush task 事务失败'));
+            };
+        });
+    } catch {}
+}
+
+export async function clearSummaryVectorFlushTasksByScope_ACU(scope: VectorIndexHotCacheScope_ACU): Promise<void> {
+    const tasks = await listSummaryVectorFlushTasks_ACU(scope);
+    for (const task of tasks) {
+        await deleteSummaryVectorFlushTask_ACU(task.scopeKey);
+    }
+}
+
+export async function estimateSummaryVectorFlushTasks_ACU(scope?: VectorIndexHotCacheScope_ACU): Promise<SummaryVectorIndexFlushTaskEstimate_ACU> {
+    const tasks = await listSummaryVectorFlushTasks_ACU(scope);
+    const estimate: SummaryVectorIndexFlushTaskEstimate_ACU = {
+        total: tasks.length,
+        dirty: 0,
+        queued: 0,
+        flushing: 0,
+        ready: 0,
+        failedRetryable: 0,
+        failedTerminal: 0,
+    };
+    tasks.forEach((task) => {
+        if (task.status === 'dirty') estimate.dirty += 1;
+        else if (task.status === 'queued') estimate.queued += 1;
+        else if (task.status === 'flushing') estimate.flushing += 1;
+        else if (task.status === 'ready') estimate.ready += 1;
+        else if (task.status === 'failed_retryable') estimate.failedRetryable += 1;
+        else if (task.status === 'failed_terminal') estimate.failedTerminal += 1;
+        if (task.lastError) estimate.lastError = task.lastError;
+    });
+    return estimate;
 }

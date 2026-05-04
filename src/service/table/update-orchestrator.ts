@@ -11,7 +11,7 @@ import { coreApisAreReady_ACU, currentJsonTableData_ACU, getCurrentIsolationKey_
 import { checkAutoMergeTrigger_ACU, prepareAutoMergeBatches_ACU, executeAutoMergeBatch_ACU, finalizeAutoMerge_ACU } from '../summary/merge-logic';
 import { getChatSheetGuideDataForIsolationKey_ACU } from '../template/chat-scope';
 import { loadAllChatMessages_ACU, updateReadableLorebookEntry_ACU } from '../worldbook/pipeline';
-import { archiveSummaryVectorIndexNow_ACU } from '../vector/summary-vector-index-archive-service';
+import { enqueueSummaryVectorIndexFlush_ACU } from '../vector/summary-vector-index-flush-queue';
 import { getCurrentWorldbookConfig_ACU } from '../settings/settings-readers';
 
 import { isSummaryOrOutlineTable_ACU, logDebug_ACU, logError_ACU, logWarn_ACU, parseTableTemplateJson_ACU } from '../../shared/utils';
@@ -441,14 +441,18 @@ export async function executeCardUpdateCore_ACU(
 
                     if (getCurrentWorldbookConfig_ACU().summaryVectorIndexModeEnabled === true) {
                         try {
-                            const archiveResult = await archiveSummaryVectorIndexNow_ACU({ targetMessageIndex: saveTargetIndex, mode: 'append', saveChatAfterWrite: false });
-                            if (!archiveResult.success && !archiveResult.skipped) {
-                                logWarn_ACU('[交火模式纪要索引] 填表完成后自动归档失败:', archiveResult.errors?.join('; ') || archiveResult.reason || 'unknown_error');
+                            const queueResult = await enqueueSummaryVectorIndexFlush_ACU({
+                                targetMessageIndex: saveTargetIndex,
+                                mode: 'append',
+                                reason: 'table_update_completed',
+                            });
+                            if (!queueResult.queued && !queueResult.skipped) {
+                                logWarn_ACU('[交火模式纪要索引] 填表完成后加入防抖归档队列失败:', queueResult.reason || 'unknown_error');
                             } else {
-                                logDebug_ACU(`[交火模式纪要索引] 填表完成后自动归档完成：rows=${archiveResult.indexedRowCount}, chunks=${archiveResult.chunkCount}, skipped=${archiveResult.skipped}, reason=${archiveResult.reason || ''}`);
+                                logDebug_ACU(`[交火模式纪要索引] 填表完成后已加入防抖归档队列：queued=${queueResult.queued}, skipped=${queueResult.skipped}, reason=${queueResult.reason || ''}`);
                             }
                         } catch (archiveError) {
-                            logWarn_ACU('[交火模式纪要索引] 填表完成后自动归档异常，已保留本次表格保存结果:', archiveError);
+                            logWarn_ACU('[交火模式纪要索引] 填表完成后加入防抖归档队列异常，已保留本次表格保存结果:', archiveError);
                         }
                     }
             } else {

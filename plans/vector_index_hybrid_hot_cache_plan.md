@@ -2,9 +2,11 @@
 
 ## 1. 背景
 
-当前项目已经实现内容寻址外置向量索引，核心链路位于 [`src/service/vector/summary-vector-index-storage-service.ts`](../src/service/vector/summary-vector-index-storage-service.ts) 与 [`src/data/storage/vector-index-st-files-storage.ts`](../src/data/storage/vector-index-st-files-storage.ts)。该方案解决了向量数据塞入聊天楼层导致体积膨胀的问题，并提供了 `manifest`、`row_index`、`vector_chunk`、`registry`、安全 GC、健康检查和楼层回退所需的 checkpoint 能力。
+当前项目已经实现内容寻址外置向量索引，核心链路位于 [`src/service/vector/summary-vector-index-storage-service.ts`](../src/service/vector/summary-vector-index-storage-service.ts) 与 [`src/data/storage/vector-index-st-files-storage.ts`](../src/data/storage/vector-index-st-files-storage.ts)。该方案解决了向量数据塞入聊天楼层导致体积膨胀的问题，并提供了 `manifest`、`row_index`、`vector_chunk`、`vector_pack`、`registry`、安全 GC、健康检查和楼层回退所需的 checkpoint 能力。
 
-但当前方案也暴露出明显工程成本：实时更新一行向量时，容易牵动 `manifest`、`row_index`、chunk 引用、registry、GC 和楼层状态。能跑不等于设计合格，把每一次行级变化都变成外置文件协议维护，复杂得像是在给未来事故预留接口。
+当前外置层已经从“逐 chunk 文件”演进为“内容寻址 pack + chunk 引用”的混合协议：chunk 级引用仍保留，pack 作为实际冷备份载体。这样可以减少零散文件数量，同时保留按 chunk 恢复、按 chunk 校验和热缓存回填的能力。
+
+但当前方案也暴露出明显工程成本：实时更新一行向量时，容易牵动 `manifest`、`row_index`、chunk 引用、pack 引用、registry、GC 和楼层状态。能跑不等于设计合格，把每一次行级变化都变成外置文件协议维护，复杂得像是在给未来事故预留接口。
 
 对比 [`Engram`](../Engram-master/Engram-master/README.md) 项目后确认，其向量主存储方案是：
 
@@ -43,7 +45,7 @@ Engram 的行级更新很干净，但如果浏览器清理缓存，IndexedDB 可
 
 - 旧版 `v1`/`v2` 外置索引 `manifest` 必须保持可读，读取期统一做规范化，不允许因为缺少新字段就判定索引损坏。
 - 旧版 `base_shard`、`delta_shard`、`batchRefs`、`snapshot.activeRowKeys`、`snapshot.activeChunkIds` 必须继续被加载、排序和去重。
-- 显式迁移旧索引时只能新增内容寻址 `manifest` 与 `vector_chunk`，并只更新当前最新 AI 楼层指针；不得删除旧楼层、旧 `manifest`、旧 shard 或旧外置文件。
+- 显式迁移旧索引时只能新增内容寻址 `manifest` 与新协议 `vector_pack` / `chunkRefs`（旧版本迁移产生的 `vector_chunk` 仍需兼容读取），并只更新当前最新 AI 楼层指针；不得删除旧楼层、旧 `manifest`、旧 shard 或旧外置文件。
 - 迁移过程中如果旧外置文件缺失、checksum 不一致或无法还原行/chunk，必须失败退出并保留原状态，不允许写入半迁移状态。
 - `IndexedDB` 热缓存只能作为加速层；浏览器缓存丢失时必须以聊天楼层 checkpoint 与外置文件恢复，不能把空热缓存当作空索引。
 - 健康检查中的 `legacy_manifest` 属于可迁移警告，不属于数据损坏错误；真正的错误必须限定为外置文件缺失、校验失败、身份不匹配等会破坏恢复能力的问题。
@@ -69,7 +71,7 @@ IndexedDB 热缓存
   └─ 保存当前聊天当前表的行级向量，可单条更新、快速检索
 
 外置内容寻址冷备份
-  └─ 保存 manifest、row_index、vector_chunk、checkpoint、registry，用于缓存丢失后恢复
+  └─ 保存 manifest、row_index、vector_pack、chunkRefs、checkpoint、registry，用于缓存丢失后恢复
 ```
 
 职责划分：
@@ -174,7 +176,9 @@ interface SummaryVectorCheckpointState_ACU {
 
 - `manifest`
 - `row_index`
-- `vector_chunk`
+- `vector_pack`：新协议的实际冷备份载体，一个 pack 聚合多个内容寻址 chunk。
+- `chunkRefs`：manifest 内的 chunk 级引用，不再等同于独立外置文件。
+- `vector_chunk`：旧 `content_addressed_chunks` 协议兼容角色，只用于读取旧数据或非破坏迁移过渡。
 - `tombstone`
 - `registry`
 - `checkpoint`
@@ -206,15 +210,16 @@ TavernDB_ACU_vector_<safeChatName>_<shortHash>_<isolationKey>_<sourceTableKey>_<
   → rowHash 变化：只重嵌该行
   → 更新 IndexedDB.vectorRows 单条记录
   → 标记当前 checkpoint dirty
-  → 后台防抖写外置 checkpoint / chunk
+  → 后台稳定后将热缓存内容打包为 vector_pack，并同步更新外置 manifest / chunkRefs / packRefs
 ```
 
 要求：
 
 - 修改一行只重嵌一行。
 - 未变化行不得重复向量化。
-- 高频变化不得高频上传外置文件。
+- 高并发变化时，外置层应减少零散文件数量，而不是继续写出大量单 chunk 文件。
 - 更新失败不能破坏旧 checkpoint。
+- 本阶段不把聊天楼层 manifest 写入改成真正异步防抖；楼层 checkpoint 仍需与已落盘的外置 pack 保持同步。
 
 ### 5.2 检索
 
@@ -222,7 +227,7 @@ TavernDB_ACU_vector_<safeChatName>_<shortHash>_<isolationKey>_<sourceTableKey>_<
 读取当前楼层 checkpoint
   → 查询 IndexedDB 是否存在该 checkpoint 的 vectorRows
   → 命中：直接本地向量检索
-  → 未命中：从外置 manifest / row_index / vector_chunk 恢复 IndexedDB
+  → 未命中：从外置 manifest / row_index / vector_pack + chunkRefs 恢复 IndexedDB
   → 外置恢复成功：继续检索
   → 外置也缺失：健康检查报告并提示重建索引
 ```
@@ -270,22 +275,128 @@ IndexedDB 丢失
 ### 5.5 外置文件防抖备份
 
 ```text
-IndexedDB 行级变化
-  → checkpoint 标记 dirty
-  → debounce 合并变更
-  → 生成新 checkpoint
-  → 内容寻址写入变化 chunk
-  → 更新 manifest / row_index
-  → 注册 registry
+表格保存 / API 编辑 / 导入 / 填表完成
+  → enqueue 当前 scope 的 flush task
+  → IndexedDB 持久化 task 与 dirty scope
+  → debounce 合并同 scope 多次触发
+  → 到期后重新读取当前聊天、当前纪要表与目标楼层
+  → 调用同步归档核心生成新 checkpoint
+  → 将有效 chunk 聚合写入 vector_pack
+  → 外置 manifest / row_index / chunkRefs / packRefs 全部成功后
+  → 写入楼层 checkpoint
+  → 清除 dirty / queued task
 ```
 
 要求：
 
 - 防抖窗口内多次行变化只写一次外置备份。
-- chunk 内容寻址去重。
+- 防抖只能合并触发频率，不能拆散 checkpoint 原子性。
+- chunk 内容寻址去重，但新外置文件应以 pack 为主要落盘单位。
 - 写入新 checkpoint 成功前，不破坏旧 checkpoint。
+- flush 到期时必须重新读取真实表格状态，不能使用 enqueue 时捕获的旧 rows。旧 rows 进队列就是把过期数据包装成“异步优化”，这种实现不合格。
+- 手动重建、旧协议迁移、删除索引等显式操作保留立即执行路径，不混入后台防抖。
 
-### 5.6 GC
+### 5.6 Flush 队列状态机
+
+```text
+idle
+  → dirty
+  → queued
+  → flushing
+  → ready
+  → failed_retryable
+  → queued
+
+flushing
+  → failed_terminal
+```
+
+状态含义：
+
+| 状态 | 含义 | 是否可自动恢复 |
+|---|---|---:|
+| `idle` | 当前 scope 无待处理任务 | 是 |
+| `dirty` | 表格已变更，但尚未进入执行窗口 | 是 |
+| `queued` | 防抖任务已排队，等待执行 | 是 |
+| `flushing` | 正在执行同步归档与外置 pack 写入 | 需等待 |
+| `ready` | 最近一次 flush 成功，checkpoint 与外置文件一致 | 是 |
+| `failed_retryable` | 网络、上传、临时读取失败，可重试 | 是 |
+| `failed_terminal` | 配置无效、目标楼层不存在、表结构不可恢复等终止错误 | 否 |
+
+持久化 task 字段：
+
+```ts
+interface SummaryVectorIndexFlushTask_ACU {
+    scopeKey: string;
+    chatKey: string;
+    isolationKey: string;
+    sourceTableKey: string;
+    targetMessageIndex?: number;
+    mode: 'append' | 'sync';
+    status: 'dirty' | 'queued' | 'flushing' | 'ready' | 'failed_retryable' | 'failed_terminal';
+    requestedAt: number;
+    debounceUntil: number;
+    attemptCount: number;
+    lastAttemptAt?: number;
+    lastSuccessAt?: number;
+    lastError?: string;
+}
+```
+
+约束：
+
+- `scopeKey` 必须由 `chatKey + isolationKey + sourceTableKey` 构成，禁止只按表名去重。
+- `flushing` 状态崩溃后，下次启动应降级为 `failed_retryable` 或重新排队，而不是永远卡死。
+- 自动入口只 enqueue；真正写楼层仍由同步归档核心完成。
+- 队列执行期间如果发现当前聊天或纪要表已经切换，必须放弃本次 flush 并记录错误，不允许跨聊天写 checkpoint。
+
+### 5.7 崩溃恢复
+
+```text
+插件启动 / 进入聊天 / 打开数据管理页
+  → 扫描 IndexedDB flushTasks
+  → 找到当前 chatKey + isolationKey 下 dirty / queued / failed_retryable task
+  → 未到 debounceUntil：恢复 timer
+  → 已到期：重新 enqueue 立即执行
+  → flushing 超时：标记 failed_retryable 后重试
+  → failed_terminal：只报告，不自动执行
+```
+
+要求：
+
+- 崩溃恢复只处理当前聊天上下文可验证的 task。
+- 找不到当前表或目标楼层时不得盲 flush。
+- 恢复失败不能清空楼层 manifest，也不能删除外置文件。
+- UI 必须显示 pending 数量、失败数量和最近错误。
+
+### 5.8 Pack compaction
+
+第一阶段不做激进重写历史 pack，只做安全治理：
+
+```text
+扫描全聊天楼层 manifest
+  → 收集 reachable pack / legacy shard / manifest / row_index / tombstone
+  → registry 中同 scope 不可达文件进入 GC 候选
+  → pack 级健康检查报告 chunkRef 缺失、checksum mismatch、身份不匹配
+```
+
+后续可选 compact：
+
+```text
+只选择当前最新 checkpoint 专属且历史楼层不可达的 pack
+  → 重新打包为较少 pack
+  → 写新 manifest
+  → 新 manifest 落楼层成功后
+  → 老 pack 进入安全 GC
+```
+
+约束：
+
+- compaction 不能只看最新楼层。
+- compaction 不能覆盖旧楼层引用的 pack。
+- compaction 失败必须保留旧 manifest。
+
+### 5.9 GC
 
 ```text
 扫描所有聊天楼层 checkpoint / manifest
@@ -363,26 +474,33 @@ IndexedDB 行级变化
 - 新楼层新增行不会污染旧楼层。
 - 外置 checkpoint 缺失时健康检查明确报错。
 
-### 阶段四：外置文件降级为冷备份与迁移层
+### 阶段四：防抖 flush 队列与外置冷备份
 
-目标：降低实时写外置文件压力。
+目标：降低实时写外置文件压力，同时不破坏 checkpoint 原子性。
 
 任务：
 
-1. 外置写入改为防抖批量 checkpoint。
-2. 内容寻址 chunk 继续去重。
-3. registry 记录 checkpoint 与 chunk 引用。
-4. GC 只清不可达 checkpoint/chunk。
-5. 删除当前索引时先收集 scope，再清状态，再 GC。
+1. 新增持久化 flush task / dirty scope 存储。
+2. 新增调度层，将自动触发合并到同一 scope 的 debounce flush。
+3. 保留同步归档核心，由队列到期后调用同步归档完成外置 pack 与楼层 checkpoint 写入。
+4. 将填表完成、表 CRUD、可视化保存、JSON 导入四个自动入口统一改为 enqueue。
+5. 手动重建、旧协议迁移、删除索引保留立即执行路径。
+6. 内容寻址 chunk 继续去重，但多个 chunk 聚合写入 `vector_pack`。
+7. registry 记录 checkpoint、pack 引用与 manifest 内 chunkRefs。
+8. 删除当前索引时先收集 scope，再清状态，再 GC。
 
 验收：
 
-- 高频表格变化不会高频上传外置文件。
+- 高频表格变化在防抖窗口内只触发一次外置上传。
+- flush 成功前旧 checkpoint 仍可读取。
+- flush 上传失败不会写入新楼层 manifest。
+- 四个自动入口行为一致，不存在有的防抖、有的同步阻塞。
+- 刷新页面后 pending task 能恢复或报告失败，不会静默丢失。
 - 删除本地索引能删除对应外置备份。
-- 浏览器缓存清理后可恢复。
+- 浏览器缓存清理后可从外置 pack 恢复。
 - registry 不残留已删除路径。
 
-### 阶段五：UI 与诊断
+### 阶段五：UI、诊断与 pack 治理
 
 目标：让用户知道系统状态，而不是靠猜。
 
@@ -390,9 +508,14 @@ IndexedDB 行级变化
 
 - 热缓存是否存在。
 - 当前 checkpointId。
-- IndexedDB 行数。
+- IndexedDB chunk 数。
+- pending flush task 数量。
+- dirty scope 数量。
+- failed flush task 数量。
+- 最近一次 flush 错误。
 - 外置 manifest 是否存在。
-- chunk 缺失数量。
+- pack 数量与 chunkRef 数量。
+- pack 内 chunk 与 manifest chunkRefs 是否一致。
 - checksum mismatch 数量。
 - 当前楼层是否可恢复。
 - 是否需要重建索引。
@@ -400,14 +523,21 @@ IndexedDB 行级变化
 UI 入口：
 
 - 复用现有健康检查按钮。
-- 在数据管理页显示热缓存与外置备份状态。
-- 删除索引时显示本地热缓存与外置文件清理结果。
+- 在数据管理页显示热缓存、flush 队列与外置备份状态。
+- 删除索引时显示本地热缓存、pending task 与外置文件清理结果。
+- 失败 task 提供明确日志，不用 `{}` 这种废话错误对象糊弄用户。
+
+pack 治理：
+
+- 第一阶段只做可达性统计、安全 GC 与细粒度 health。
+- 真正 pack compaction 必须确认历史楼层不可达后再写新 manifest。
 
 验收：
 
-- 用户能区分“热缓存缺失”和“外置备份缺失”。
+- 用户能区分“热缓存缺失”“flush 未完成”和“外置备份缺失”。
 - 健康检查不再只给模糊错误。
-- 删除、恢复、重建都有明确日志。
+- 删除、恢复、重建、flush 失败都有明确日志。
+- pack 健康检查能定位到具体 pack / chunkRef。
 
 ---
 
@@ -476,8 +606,8 @@ GC 如果 scope 推导错误，会误删有效文件。
 | 向量粒度 | 事件字段 `embedding` | 表行级 `vectorRows.embedding` |
 | 单条更新 | `db.events.update()` | `vectorRows.update()` |
 | 楼层回退 | 不作为核心目标 | checkpoint 强约束 |
-| 缓存丢失 | 依赖整库同步文件 | 从外置 checkpoint/chunk 恢复 |
-| 文件同步 | 整库 JSON dump | 内容寻址 chunk + checkpoint |
+| 缓存丢失 | 依赖整库同步文件 | 从外置 checkpoint / vector_pack / chunkRefs 恢复 |
+| 文件同步 | 整库 JSON dump | 内容寻址 chunkRefs + vector_pack + checkpoint |
 | GC | 删除 IndexedDB 或同步文件 | 可达性 GC |
 | 风险 | IndexedDB 丢失、dump 变大 | 架构复杂，但可恢复性更强 |
 

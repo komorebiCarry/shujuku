@@ -38,7 +38,7 @@ import { getCurrentWorldbookConfig_ACU } from '../../service/settings/settings-r
 import { syncManualUpdateButtonAvailability_ACU } from '../components/status-display';
 import { cleanupUnreachableSummaryVectorIndexFiles_ACU, getSummaryVectorIndexStats_ACU, inspectSummaryVectorIndexHealth_ACU } from '../../service/vector/summary-vector-index-storage-service';
 import { clearVectorIndexTempCache_ACU } from '../../data/storage/vector-index-temp-cache';
-import { clearSummaryVectorHotCache_ACU, deleteSummaryVectorHotCacheByScope_ACU } from '../../data/storage/vector-index-hot-cache';
+import { clearSummaryVectorFlushTasksByScope_ACU, clearSummaryVectorHotCache_ACU, deleteSummaryVectorHotCacheByScope_ACU } from '../../data/storage/vector-index-hot-cache';
 import { getChatArray_ACU, getLastMessageIndex_ACU, saveChatToHost_ACU } from '../../service/chat/chat-service';
 import { readIsolatedTagData_ACU, writeIsolatedTagData_ACU } from '../../data/repositories/chat-message-data-repo';
 import { assignSummaryVectorIndexStateToTagData_ACU } from '../../service/vector/summary-vector-index-state-service';
@@ -68,6 +68,9 @@ async function refreshVectorIndexStatsPanel_ACU(): Promise<void> {
     setField('tombstones', `${stats.tombstoneRowCount} / ${stats.tombstoneChunkCount}`);
     setField('externalBytes', formatBytes_ACU(stats.externalTotalBytes));
     setField('cacheBytes', formatBytes_ACU(stats.cacheTotalBytes));
+    const pendingFlushCount = (stats.flushTaskDirtyCount || 0) + (stats.flushTaskQueuedCount || 0) + (stats.flushTaskFlushingCount || 0);
+    setField('flushQueue', `${pendingFlushCount} pending / ${stats.flushTaskFailedCount || 0} failed`);
+    setField('flushError', stats.flushTaskLastError || '-');
     setField('updatedAt', stats.updatedAt || '-');
 }
 
@@ -116,6 +119,7 @@ async function deleteCurrentVectorIndexFromChat_ACU(): Promise<boolean> {
     const scopeHintList = Array.from(scopeHints.values());
     for (const hint of scopeHintList) {
         await deleteSummaryVectorHotCacheByScope_ACU(hint);
+        await clearSummaryVectorFlushTasksByScope_ACU(hint);
     }
     const gcResult = await cleanupUnreachableSummaryVectorIndexFiles_ACU({ scopeHints: scopeHintList });
     return changed || gcResult.deletedPaths.length > 0 || gcResult.failedDeletes.length > 0;
@@ -224,9 +228,12 @@ export async function bindDataEvents_ACU(): Promise<void> {
                   const report = await inspectSummaryVectorIndexHealth_ACU();
                   const errorCount = report.missingFileCount + report.checksumMismatchCount + report.identityMismatchCount;
                   const warningCount = report.legacyManifestCount + report.unreachableRegisteredFileCount;
+                  const pendingFlushCount = (report.flushTaskDirtyCount || 0) + (report.flushTaskQueuedCount || 0) + (report.flushTaskFlushingCount || 0);
+                  const failedFlushCount = report.flushTaskFailedCount || 0;
                   const repairHint = report.repairableRowKeys.length > 0 ? `，可修复行 ${report.repairableRowKeys.length} 条` : '';
-                  const message = `状态=${report.status}，manifest=${report.manifestCount}，可达文件=${report.reachableFileCount}，错误=${errorCount}，警告=${warningCount}${repairHint}`;
-                  showToastr_ACU(errorCount > 0 ? 'warning' : 'success', `交火索引健康检查完成：${message}`);
+                  const flushHint = pendingFlushCount > 0 || failedFlushCount > 0 ? `，防抖队列 pending=${pendingFlushCount}, failed=${failedFlushCount}` : '';
+                  const message = `状态=${report.status}，manifest=${report.manifestCount}，可达文件=${report.reachableFileCount}，错误=${errorCount}，警告=${warningCount}${flushHint}${repairHint}`;
+                  showToastr_ACU(errorCount > 0 || failedFlushCount > 0 ? 'warning' : 'success', `交火索引健康检查完成：${message}`);
               } catch (e: any) {
                   logError_ACU('交火索引健康检查失败:', e);
                   showToastr_ACU('error', `交火索引健康检查失败: ${e?.message || '未知错误'}`);

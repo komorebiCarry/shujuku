@@ -178,7 +178,7 @@ function buildPreparedRowFingerprint_ACU(row: SummaryVectorArchivePreparedRow_AC
     ].join('\n'));
 }
 
-function findSummaryTable_ACU(): SummaryTableSelection_ACU | null {
+export function findSummaryTable_ACU(): SummaryTableSelection_ACU | null {
     if (!currentJsonTableData_ACU || typeof currentJsonTableData_ACU !== 'object') {
         return null;
     }

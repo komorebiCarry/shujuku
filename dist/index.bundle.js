@@ -21448,8 +21448,8 @@ $CONTENT
     function buildVectorIndexStableFilePath_ACU(parts) {
         const scope = buildVectorIndexStableDirectory_ACU(parts);
         const role = normalizePathSegment_ACU(parts.role || 'manifest');
-        if (parts.role === 'base_shard' || parts.role === 'delta_shard') {
-            const shardName = normalizePathSegment_ACU(parts.shardId || 'shard_0001');
+        if (parts.role === 'base_shard' || parts.role === 'delta_shard' || parts.role === 'vector_pack') {
+            const shardName = normalizePathSegment_ACU(parts.shardId || (parts.role === 'vector_pack' ? 'pack_0001' : 'shard_0001'));
             return `${scope}_${role}_${shardName}`;
         }
         return `${scope}_${role}`;
@@ -21458,8 +21458,8 @@ $CONTENT
         const scope = buildVectorIndexStableDirectory_ACU(parts);
         const indexId = normalizePathSegment_ACU(parts.indexId || 'snapshot');
         const role = normalizePathSegment_ACU(parts.role || 'manifest');
-        if (parts.role === 'base_shard' || parts.role === 'delta_shard') {
-            const shardName = normalizePathSegment_ACU(parts.shardId || 'shard_0001');
+        if (parts.role === 'base_shard' || parts.role === 'delta_shard' || parts.role === 'vector_pack') {
+            const shardName = normalizePathSegment_ACU(parts.shardId || (parts.role === 'vector_pack' ? 'pack_0001' : 'shard_0001'));
             return `${scope}_${indexId}_${role}_${shardName}`;
         }
         return `${scope}_${indexId}_${role}`;
@@ -21843,16 +21843,17 @@ $CONTENT
     }
 
     const DB_NAME_ACU = 'TavernDB_ACU_VectorHotCache';
-    const DB_VERSION_ACU = 1;
+    const DB_VERSION_ACU = 2;
     const STORE_NAME_ACU = 'chunks';
+    const FLUSH_TASK_STORE_NAME_ACU = 'flushTasks';
     function isIdbAvailable_ACU() {
         return typeof indexedDB !== 'undefined';
     }
-    function normalizeKeyPart_ACU(value) {
+    function normalizeKeyPart_ACU$1(value) {
         return String(value || '').trim();
     }
     function buildRecordKey_ACU(indexId, chunkId, chunkKey) {
-        return `${normalizeKeyPart_ACU(indexId)}::${normalizeKeyPart_ACU(chunkId)}::${normalizeKeyPart_ACU(chunkKey)}`;
+        return `${normalizeKeyPart_ACU$1(indexId)}::${normalizeKeyPart_ACU$1(chunkId)}::${normalizeKeyPart_ACU$1(chunkKey)}`;
     }
     function openDb_ACU() {
         return new Promise((resolve, reject) => {
@@ -21870,6 +21871,13 @@ $CONTENT
                     store.createIndex('scope', ['chatKey', 'isolationKey', 'sourceTableKey'], { unique: false });
                     store.createIndex('lastAccessAt', 'lastAccessAt', { unique: false });
                 }
+                if (!db.objectStoreNames.contains(FLUSH_TASK_STORE_NAME_ACU)) {
+                    const taskStore = db.createObjectStore(FLUSH_TASK_STORE_NAME_ACU, { keyPath: 'scopeKey' });
+                    taskStore.createIndex('scope', ['chatKey', 'isolationKey', 'sourceTableKey'], { unique: true });
+                    taskStore.createIndex('status', 'status', { unique: false });
+                    taskStore.createIndex('debounceUntil', 'debounceUntil', { unique: false });
+                    taskStore.createIndex('updatedAt', 'updatedAt', { unique: false });
+                }
             };
             request.onsuccess = () => resolve(request.result);
             request.onerror = () => reject(request.error || new Error('打开交火向量热缓存失败'));
@@ -21883,34 +21891,34 @@ $CONTENT
         };
     }
     function getManifestCheckpointId_ACU(manifest) {
-        return normalizeKeyPart_ACU(manifest.checkpoint?.checkpointId || manifest.indexId);
+        return normalizeKeyPart_ACU$1(manifest.checkpoint?.checkpointId || manifest.indexId);
     }
     function getActiveChunkRefs_ACU(manifest) {
         const refs = Array.isArray(manifest.contentAddressed?.chunkRefs) ? manifest.contentAddressed.chunkRefs : [];
-        const activeChunkKeys = new Set((manifest.contentAddressed?.activeChunkKeys || []).map((item) => normalizeKeyPart_ACU(item)).filter(Boolean));
+        const activeChunkKeys = new Set((manifest.contentAddressed?.activeChunkKeys || []).map((item) => normalizeKeyPart_ACU$1(item)).filter(Boolean));
         return refs.filter((ref) => {
-            const chunkKey = normalizeKeyPart_ACU(ref?.chunkKey);
+            const chunkKey = normalizeKeyPart_ACU$1(ref?.chunkKey);
             return chunkKey && (activeChunkKeys.size === 0 || activeChunkKeys.has(chunkKey));
         });
     }
     function isRecordCompatible_ACU(record, manifest, ref) {
         if (!record?.chunk)
             return false;
-        if (record.chatKey !== normalizeKeyPart_ACU(manifest.chatKey))
+        if (record.chatKey !== normalizeKeyPart_ACU$1(manifest.chatKey))
             return false;
-        if (record.isolationKey !== normalizeKeyPart_ACU(manifest.isolationKey))
+        if (record.isolationKey !== normalizeKeyPart_ACU$1(manifest.isolationKey))
             return false;
-        if (record.sourceTableKey !== normalizeKeyPart_ACU(manifest.sourceTableKey))
+        if (record.sourceTableKey !== normalizeKeyPart_ACU$1(manifest.sourceTableKey))
             return false;
-        if (record.indexId !== normalizeKeyPart_ACU(manifest.indexId))
+        if (record.indexId !== normalizeKeyPart_ACU$1(manifest.indexId))
             return false;
         if (record.checkpointId !== getManifestCheckpointId_ACU(manifest))
             return false;
-        if (record.chunkKey !== normalizeKeyPart_ACU(ref.chunkKey))
+        if (record.chunkKey !== normalizeKeyPart_ACU$1(ref.chunkKey))
             return false;
-        if (record.chunkId !== normalizeKeyPart_ACU(ref.chunkId))
+        if (record.chunkId !== normalizeKeyPart_ACU$1(ref.chunkId))
             return false;
-        if (record.rowKey !== normalizeKeyPart_ACU(ref.rowKey))
+        if (record.rowKey !== normalizeKeyPart_ACU$1(ref.rowKey))
             return false;
         if (record.dimension !== Math.max(0, Number(ref.dimension) || 0))
             return false;
@@ -21927,19 +21935,19 @@ $CONTENT
             const refs = getActiveChunkRefs_ACU(manifest);
             if (refs.length === 0 || !Array.isArray(options.chunks) || options.chunks.length === 0)
                 return;
-            const refsByChunkId = new Map(refs.map((ref) => [normalizeKeyPart_ACU(ref.chunkId), ref]));
+            const refsByChunkId = new Map(refs.map((ref) => [normalizeKeyPart_ACU$1(ref.chunkId), ref]));
             const db = await openDb_ACU();
             await new Promise((resolve, reject) => {
                 const tx = db.transaction(STORE_NAME_ACU, 'readwrite');
                 const store = tx.objectStore(STORE_NAME_ACU);
                 const now = Date.now();
                 options.chunks.forEach((chunk) => {
-                    const chunkId = normalizeKeyPart_ACU(chunk?.chunkId);
+                    const chunkId = normalizeKeyPart_ACU$1(chunk?.chunkId);
                     const ref = refsByChunkId.get(chunkId);
                     const vector = Array.isArray(chunk?.vector) ? chunk.vector : [];
                     if (!ref || vector.length === 0)
                         return;
-                    const chunkKey = normalizeKeyPart_ACU(ref.chunkKey);
+                    const chunkKey = normalizeKeyPart_ACU$1(ref.chunkKey);
                     const normalizedChunk = cloneChunk_ACU({
                         ...chunk,
                         chunkKeys: Array.from(new Set([...(Array.isArray(chunk.chunkKeys) ? chunk.chunkKeys : []), chunkKey].filter(Boolean))),
@@ -21947,17 +21955,17 @@ $CONTENT
                     const json = JSON.stringify(normalizedChunk);
                     const record = {
                         key: buildRecordKey_ACU(manifest.indexId, ref.chunkId, chunkKey),
-                        chatKey: normalizeKeyPart_ACU(manifest.chatKey),
-                        isolationKey: normalizeKeyPart_ACU(manifest.isolationKey),
-                        sourceTableKey: normalizeKeyPart_ACU(manifest.sourceTableKey),
-                        indexId: normalizeKeyPart_ACU(manifest.indexId),
+                        chatKey: normalizeKeyPart_ACU$1(manifest.chatKey),
+                        isolationKey: normalizeKeyPart_ACU$1(manifest.isolationKey),
+                        sourceTableKey: normalizeKeyPart_ACU$1(manifest.sourceTableKey),
+                        indexId: normalizeKeyPart_ACU$1(manifest.indexId),
                         checkpointId: getManifestCheckpointId_ACU(manifest),
                         chunkKey,
-                        chunkId: normalizeKeyPart_ACU(ref.chunkId),
-                        rowKey: normalizeKeyPart_ACU(ref.rowKey),
-                        embeddingModel: normalizeKeyPart_ACU(ref.embeddingModel || manifest.embeddingModel),
+                        chunkId: normalizeKeyPart_ACU$1(ref.chunkId),
+                        rowKey: normalizeKeyPart_ACU$1(ref.rowKey),
+                        embeddingModel: normalizeKeyPart_ACU$1(ref.embeddingModel || manifest.embeddingModel),
                         dimension: Math.max(0, Number(ref.dimension || vector.length) || 0),
-                        checksum: normalizeKeyPart_ACU(ref.checksum),
+                        checksum: normalizeKeyPart_ACU$1(ref.checksum),
                         chunk: normalizedChunk,
                         byteSize: new Blob([json]).size,
                         createdAt: now,
@@ -22030,7 +22038,7 @@ $CONTENT
     }
     async function deleteSummaryVectorHotCacheByIndex_ACU(indexId) {
         try {
-            const targetIndexId = normalizeKeyPart_ACU(indexId);
+            const targetIndexId = normalizeKeyPart_ACU$1(indexId);
             if (!targetIndexId)
                 return;
             const db = await openDb_ACU();
@@ -22061,9 +22069,9 @@ $CONTENT
     }
     async function deleteSummaryVectorHotCacheByScope_ACU(scope) {
         try {
-            const chatKey = normalizeKeyPart_ACU(scope.chatKey);
-            const isolationKey = normalizeKeyPart_ACU(scope.isolationKey);
-            const sourceTableKey = normalizeKeyPart_ACU(scope.sourceTableKey);
+            const chatKey = normalizeKeyPart_ACU$1(scope.chatKey);
+            const isolationKey = normalizeKeyPart_ACU$1(scope.isolationKey);
+            const sourceTableKey = normalizeKeyPart_ACU$1(scope.sourceTableKey);
             if (!chatKey && !isolationKey && !sourceTableKey)
                 return;
             const db = await openDb_ACU();
@@ -22116,7 +22124,7 @@ $CONTENT
     }
     async function estimateSummaryVectorHotCache_ACU(indexId) {
         try {
-            const targetIndexId = normalizeKeyPart_ACU(indexId);
+            const targetIndexId = normalizeKeyPart_ACU$1(indexId);
             const db = await openDb_ACU();
             return await new Promise((resolve, reject) => {
                 let bytes = 0;
@@ -22151,8 +22159,208 @@ $CONTENT
             return { bytes: 0, count: 0 };
         }
     }
+    function normalizeFlushTaskStatus_ACU(status) {
+        return status === 'queued'
+            || status === 'flushing'
+            || status === 'ready'
+            || status === 'failed_retryable'
+            || status === 'failed_terminal'
+            ? status
+            : 'dirty';
+    }
+    function normalizeFlushTaskMode_ACU(mode) {
+        return mode === 'append' ? 'append' : 'sync';
+    }
+    function cloneFlushTask_ACU(task) {
+        return {
+            scopeKey: normalizeKeyPart_ACU$1(task.scopeKey),
+            chatKey: normalizeKeyPart_ACU$1(task.chatKey),
+            isolationKey: normalizeKeyPart_ACU$1(task.isolationKey),
+            sourceTableKey: normalizeKeyPart_ACU$1(task.sourceTableKey),
+            ...(Number.isFinite(Number(task.targetMessageIndex)) ? { targetMessageIndex: Number(task.targetMessageIndex) } : {}),
+            mode: normalizeFlushTaskMode_ACU(task.mode),
+            status: normalizeFlushTaskStatus_ACU(task.status),
+            requestedAt: Math.max(0, Number(task.requestedAt) || 0),
+            debounceUntil: Math.max(0, Number(task.debounceUntil) || 0),
+            attemptCount: Math.max(0, Number(task.attemptCount) || 0),
+            ...(Number.isFinite(Number(task.lastAttemptAt)) ? { lastAttemptAt: Number(task.lastAttemptAt) } : {}),
+            ...(Number.isFinite(Number(task.lastSuccessAt)) ? { lastSuccessAt: Number(task.lastSuccessAt) } : {}),
+            ...(task.lastError ? { lastError: String(task.lastError) } : {}),
+            updatedAt: Math.max(0, Number(task.updatedAt) || 0),
+        };
+    }
+    async function upsertSummaryVectorFlushTask_ACU(input) {
+        try {
+            const scopeKey = normalizeKeyPart_ACU$1(input.scopeKey);
+            const chatKey = normalizeKeyPart_ACU$1(input.chatKey);
+            const isolationKey = normalizeKeyPart_ACU$1(input.isolationKey);
+            const sourceTableKey = normalizeKeyPart_ACU$1(input.sourceTableKey);
+            if (!scopeKey || !chatKey || !isolationKey || !sourceTableKey)
+                return null;
+            const now = Date.now();
+            const db = await openDb_ACU();
+            return await new Promise((resolve, reject) => {
+                const tx = db.transaction(FLUSH_TASK_STORE_NAME_ACU, 'readwrite');
+                const store = tx.objectStore(FLUSH_TASK_STORE_NAME_ACU);
+                const getRequest = store.get(scopeKey);
+                let nextRecord = null;
+                getRequest.onsuccess = () => {
+                    const previous = getRequest.result ? cloneFlushTask_ACU(getRequest.result) : null;
+                    const previousAttemptCount = previous?.attemptCount || 0;
+                    const nextStatus = normalizeFlushTaskStatus_ACU(input.status);
+                    nextRecord = {
+                        scopeKey,
+                        chatKey,
+                        isolationKey,
+                        sourceTableKey,
+                        ...(Number.isFinite(Number(input.targetMessageIndex)) ? { targetMessageIndex: Number(input.targetMessageIndex) } : previous?.targetMessageIndex != null ? { targetMessageIndex: previous.targetMessageIndex } : {}),
+                        mode: normalizeFlushTaskMode_ACU(input.mode),
+                        status: nextStatus,
+                        requestedAt: Math.max(0, Number(input.requestedAt ?? previous?.requestedAt ?? now) || now),
+                        debounceUntil: Math.max(0, Number(input.debounceUntil ?? previous?.debounceUntil ?? now) || now),
+                        attemptCount: nextStatus === 'flushing' ? previousAttemptCount + 1 : previousAttemptCount,
+                        ...(nextStatus === 'flushing' ? { lastAttemptAt: now } : previous?.lastAttemptAt ? { lastAttemptAt: previous.lastAttemptAt } : {}),
+                        ...(nextStatus === 'ready' ? { lastSuccessAt: now } : previous?.lastSuccessAt ? { lastSuccessAt: previous.lastSuccessAt } : {}),
+                        ...(input.lastError ? { lastError: String(input.lastError) } : nextStatus === 'ready' ? {} : previous?.lastError ? { lastError: previous.lastError } : {}),
+                        updatedAt: now,
+                    };
+                    store.put(nextRecord);
+                };
+                getRequest.onerror = () => reject(getRequest.error || new Error('读取交火向量 flush task 失败'));
+                tx.oncomplete = () => {
+                    db.close();
+                    resolve(nextRecord ? cloneFlushTask_ACU(nextRecord) : null);
+                };
+                tx.onerror = () => {
+                    db.close();
+                    reject(tx.error || new Error('写入交火向量 flush task 事务失败'));
+                };
+            });
+        }
+        catch {
+            return null;
+        }
+    }
+    async function getSummaryVectorFlushTask_ACU(scopeKey) {
+        try {
+            const normalizedScopeKey = normalizeKeyPart_ACU$1(scopeKey);
+            if (!normalizedScopeKey)
+                return null;
+            const db = await openDb_ACU();
+            return await new Promise((resolve, reject) => {
+                const tx = db.transaction(FLUSH_TASK_STORE_NAME_ACU, 'readonly');
+                const store = tx.objectStore(FLUSH_TASK_STORE_NAME_ACU);
+                const request = store.get(normalizedScopeKey);
+                request.onsuccess = () => resolve(request.result ? cloneFlushTask_ACU(request.result) : null);
+                request.onerror = () => reject(request.error || new Error('读取交火向量 flush task 失败'));
+                tx.oncomplete = () => db.close();
+                tx.onerror = () => {
+                    db.close();
+                    reject(tx.error || new Error('读取交火向量 flush task 事务失败'));
+                };
+            });
+        }
+        catch {
+            return null;
+        }
+    }
+    async function listSummaryVectorFlushTasks_ACU(scope) {
+        try {
+            const chatKey = normalizeKeyPart_ACU$1(scope?.chatKey);
+            const isolationKey = normalizeKeyPart_ACU$1(scope?.isolationKey);
+            const sourceTableKey = normalizeKeyPart_ACU$1(scope?.sourceTableKey);
+            const db = await openDb_ACU();
+            return await new Promise((resolve, reject) => {
+                const records = [];
+                const tx = db.transaction(FLUSH_TASK_STORE_NAME_ACU, 'readonly');
+                const store = tx.objectStore(FLUSH_TASK_STORE_NAME_ACU);
+                const request = store.openCursor();
+                request.onsuccess = () => {
+                    const cursor = request.result;
+                    if (cursor) {
+                        const record = cloneFlushTask_ACU(cursor.value);
+                        const matches = (!chatKey || record.chatKey === chatKey)
+                            && (!isolationKey || record.isolationKey === isolationKey)
+                            && (!sourceTableKey || record.sourceTableKey === sourceTableKey);
+                        if (matches)
+                            records.push(record);
+                        cursor.continue();
+                    }
+                };
+                request.onerror = () => reject(request.error || new Error('列出交火向量 flush task 失败'));
+                tx.oncomplete = () => {
+                    db.close();
+                    resolve(records.sort((left, right) => left.debounceUntil - right.debounceUntil || left.scopeKey.localeCompare(right.scopeKey)));
+                };
+                tx.onerror = () => {
+                    db.close();
+                    reject(tx.error || new Error('列出交火向量 flush task 事务失败'));
+                };
+            });
+        }
+        catch {
+            return [];
+        }
+    }
+    async function deleteSummaryVectorFlushTask_ACU(scopeKey) {
+        try {
+            const normalizedScopeKey = normalizeKeyPart_ACU$1(scopeKey);
+            if (!normalizedScopeKey)
+                return;
+            const db = await openDb_ACU();
+            await new Promise((resolve, reject) => {
+                const tx = db.transaction(FLUSH_TASK_STORE_NAME_ACU, 'readwrite');
+                const store = tx.objectStore(FLUSH_TASK_STORE_NAME_ACU);
+                const request = store.delete(normalizedScopeKey);
+                request.onsuccess = () => resolve();
+                request.onerror = () => reject(request.error || new Error('删除交火向量 flush task 失败'));
+                tx.oncomplete = () => db.close();
+                tx.onerror = () => {
+                    db.close();
+                    reject(tx.error || new Error('删除交火向量 flush task 事务失败'));
+                };
+            });
+        }
+        catch { }
+    }
+    async function clearSummaryVectorFlushTasksByScope_ACU(scope) {
+        const tasks = await listSummaryVectorFlushTasks_ACU(scope);
+        for (const task of tasks) {
+            await deleteSummaryVectorFlushTask_ACU(task.scopeKey);
+        }
+    }
+    async function estimateSummaryVectorFlushTasks_ACU(scope) {
+        const tasks = await listSummaryVectorFlushTasks_ACU(scope);
+        const estimate = {
+            total: tasks.length,
+            dirty: 0,
+            queued: 0,
+            flushing: 0,
+            ready: 0,
+            failedRetryable: 0,
+            failedTerminal: 0,
+        };
+        tasks.forEach((task) => {
+            if (task.status === 'dirty')
+                estimate.dirty += 1;
+            else if (task.status === 'queued')
+                estimate.queued += 1;
+            else if (task.status === 'flushing')
+                estimate.flushing += 1;
+            else if (task.status === 'ready')
+                estimate.ready += 1;
+            else if (task.status === 'failed_retryable')
+                estimate.failedRetryable += 1;
+            else if (task.status === 'failed_terminal')
+                estimate.failedTerminal += 1;
+            if (task.lastError)
+                estimate.lastError = task.lastError;
+        });
+        return estimate;
+    }
 
     const DEFAULT_SHARD_CHUNK_LIMIT_ACU = 128;
+    const SUMMARY_VECTOR_INDEX_PACK_CHUNK_LIMIT_ACU = 64;
     // 第一版保守止血：不再按 retention 删除历史快照，避免回退到旧楼层时找不到外置文件。
     const SUMMARY_VECTOR_INDEX_SNAPSHOT_RETENTION_LIMIT_ACU = 0;
     function normalizeChatKey_ACU(chatKey) {
@@ -22251,6 +22459,24 @@ $CONTENT
             role: 'vector_chunk',
         });
     }
+    function buildVectorPackKey_ACU(params) {
+        return `pack_${hashUserInput_ACU([
+        params.indexId,
+        params.embeddingModel,
+        String(Math.max(0, Math.floor(Number(params.dimension) || 0))),
+        ...params.chunkKeys.slice().sort(),
+    ].join('\n'))}`;
+    }
+    function buildVectorPackPath_ACU(parts) {
+        return buildVectorIndexSnapshotFilePath_ACU({
+            chatKey: parts.chatKey,
+            isolationKey: parts.isolationKey,
+            sourceTableKey: parts.sourceTableKey,
+            indexId: parts.indexId,
+            role: 'vector_pack',
+            shardId: parts.packKey,
+        });
+    }
     function buildVectorChunkBlob_ACU(chunk, options) {
         const now = new Date().toISOString();
         return {
@@ -22270,6 +22496,33 @@ $CONTENT
             updatedAt: now,
         };
     }
+    async function prepareVectorChunkBlob_ACU(chunk, options) {
+        const chunkKey = buildVectorChunkKey_ACU({
+            embeddingModel: options.embeddingModel,
+            dimension: options.dimension,
+            rowKey: chunk.rowKey,
+            sourceFingerprint: options.sourceFingerprint,
+            text: chunk.text,
+        });
+        const blob = buildVectorChunkBlob_ACU(chunk, {
+            chunkKey,
+            embeddingModel: options.embeddingModel,
+            dimension: options.dimension,
+            sourceFingerprint: options.sourceFingerprint,
+        });
+        const chunkJson = JSON.stringify(blob);
+        return {
+            chunk,
+            blob,
+            chunkKey,
+            chunkChecksum: await sha256Text_ACU(chunkJson),
+            chunkByteSize: new Blob([chunkJson]).size,
+            rowKey: chunk.rowKey,
+            chunkId: chunk.chunkId,
+            sourceFingerprint: options.sourceFingerprint,
+            textHash: blob.textHash,
+        };
+    }
     function chunkArray_ACU(items, limit) {
         const size = Math.max(1, Math.floor(Number(limit) || DEFAULT_SHARD_CHUNK_LIMIT_ACU));
         const chunks = [];
@@ -22277,6 +22530,36 @@ $CONTENT
             chunks.push(items.slice(index, index + size));
         }
         return chunks;
+    }
+    function dedupeByPath_ACU(items) {
+        const seen = new Set();
+        const result = [];
+        for (const item of Array.isArray(items) ? items : []) {
+            const path = String(item?.path || '').trim();
+            if (!path || seen.has(path))
+                continue;
+            seen.add(path);
+            result.push(item);
+        }
+        return result;
+    }
+    function dedupeChunkRefs_ACU(items) {
+        const seen = new Set();
+        const result = [];
+        for (const item of Array.isArray(items) ? items : []) {
+            const chunkKey = String(item?.chunkKey || '').trim();
+            const chunkId = String(item?.chunkId || '').trim();
+            const rowKey = String(item?.rowKey || '').trim();
+            const path = String(item?.path || '').trim();
+            if (!chunkKey || !path)
+                continue;
+            const key = `${chunkKey}::${chunkId}::${rowKey}::${path}`;
+            if (seen.has(key))
+                continue;
+            seen.add(key);
+            result.push(item);
+        }
+        return result;
     }
     function buildRowIndex_ACU(indexId, rows, shardIdsByChunkId, updatedAt) {
         const entries = {};
@@ -22340,11 +22623,24 @@ $CONTENT
         const contentAddressed = manifest.contentAddressed && typeof manifest.contentAddressed === 'object'
             ? {
                 ...manifest.contentAddressed,
+                mode: manifest.contentAddressed.packRefs?.length ? 'content_addressed_packs' : (manifest.contentAddressed.mode || 'content_addressed_chunks'),
                 chunkRefs: Array.isArray(manifest.contentAddressed.chunkRefs)
-                    ? manifest.contentAddressed.chunkRefs.filter((ref) => ref && String(ref.path || '').trim() && String(ref.chunkKey || '').trim())
+                    ? dedupeChunkRefs_ACU(manifest.contentAddressed.chunkRefs.filter((ref) => ref && String(ref.path || '').trim() && String(ref.chunkKey || '').trim()).map((ref) => ({
+                        ...ref,
+                        path: String(ref.path || '').trim(),
+                        packKey: String(ref.packKey || '').trim() || undefined,
+                        packPath: String(ref.packPath || '').trim() || undefined,
+                    })))
                     : [],
                 activeChunkKeys: Array.isArray(manifest.contentAddressed.activeChunkKeys)
                     ? manifest.contentAddressed.activeChunkKeys.map((item) => String(item || '')).filter(Boolean)
+                    : [],
+                packRefs: Array.isArray(manifest.contentAddressed.packRefs)
+                    ? dedupeByPath_ACU(manifest.contentAddressed.packRefs.filter((ref) => ref && String(ref.path || '').trim() && String(ref.packKey || '').trim()).map((ref) => ({
+                        ...ref,
+                        path: String(ref.path || '').trim(),
+                        chunkKeys: Array.isArray(ref.chunkKeys) ? Array.from(new Set(ref.chunkKeys.map((item) => String(item || '')).filter(Boolean))) : [],
+                    })))
                     : [],
             }
             : undefined;
@@ -22422,6 +22718,7 @@ $CONTENT
         (manifest?.files || []).forEach(addFile);
         (manifest?.batchRefs || []).forEach((batch) => (batch.files || []).forEach(addFile));
         (manifest?.contentAddressed?.chunkRefs || []).forEach((ref) => addPath(ref.path));
+        (manifest?.contentAddressed?.packRefs || []).forEach((ref) => addPath(ref.path));
         return paths;
     }
     async function cleanupManifestFilesExcept_ACU(previousManifest, retainedPaths) {
@@ -22499,15 +22796,26 @@ $CONTENT
         pushFile({ path: manifest.tombstoneFile, role: 'tombstone' });
         (manifest.files || []).forEach((file) => pushFile({ ...file, indexId: manifest.indexId }));
         (manifest.batchRefs || []).forEach((batch) => (batch.files || []).forEach((file) => pushFile({ ...file, indexId: batch.indexId || manifest.indexId })));
-        (manifest.contentAddressed?.chunkRefs || []).forEach((ref) => pushFile({
-            path: ref.path,
-            role: 'vector_chunk',
-            indexId: manifest.indexId,
-            checksum: ref.checksum,
-            chunkKey: ref.chunkKey,
-            chunkId: ref.chunkId,
-            rowKey: ref.rowKey,
-        }));
+        const contentInfo = manifest.contentAddressed;
+        if (contentInfo?.mode === 'content_addressed_packs' && Array.isArray(contentInfo.packRefs) && contentInfo.packRefs.length > 0) {
+            contentInfo.packRefs.forEach((ref) => pushFile({
+                path: ref.path,
+                role: 'vector_pack',
+                indexId: manifest.indexId,
+                checksum: ref.checksum,
+            }));
+        }
+        else {
+            (contentInfo?.chunkRefs || []).forEach((ref) => pushFile({
+                path: ref.path,
+                role: 'vector_chunk',
+                indexId: manifest.indexId,
+                checksum: ref.checksum,
+                chunkKey: ref.chunkKey,
+                chunkId: ref.chunkId,
+                rowKey: ref.rowKey,
+            }));
+        }
         return reachableFiles;
     }
     async function collectSummaryVectorIndexReachability_ACU() {
@@ -22795,61 +23103,110 @@ $CONTENT
         const uploadedFiles = [];
         try {
             const chunkRefs = [];
+            const packRefs = [];
             const chunkKeysByChunkId = new Map();
+            const rowsByKey = new Map(rows.map((row) => [row.rowKey, row]));
+            const preparedChunks = [];
             for (const chunk of chunks) {
-                const row = rows.find((item) => item.rowKey === chunk.rowKey);
-                const chunkKey = buildVectorChunkKey_ACU({
-                    embeddingModel: options.embeddingModel,
-                    dimension,
-                    rowKey: chunk.rowKey,
-                    sourceFingerprint: row?.sourceFingerprint,
-                    text: chunk.text,
-                });
-                const path = buildVectorChunkPath_ACU({ chatKey, isolationKey, sourceTableKey: options.sourceTableKey, chunkKey });
-                const blob = buildVectorChunkBlob_ACU(chunk, {
-                    chunkKey,
+                const row = rowsByKey.get(chunk.rowKey);
+                const prepared = await prepareVectorChunkBlob_ACU(chunk, {
                     embeddingModel: options.embeddingModel,
                     dimension,
                     sourceFingerprint: row?.sourceFingerprint,
                 });
+                chunkKeysByChunkId.set(chunk.chunkId, prepared.chunkKey);
+                preparedChunks.push(prepared);
+            }
+            const packGroups = chunkArray_ACU(preparedChunks, SUMMARY_VECTOR_INDEX_PACK_CHUNK_LIMIT_ACU);
+            for (const group of packGroups) {
+                const packKey = buildVectorPackKey_ACU({
+                    indexId,
+                    embeddingModel: options.embeddingModel,
+                    dimension,
+                    chunkKeys: group.map((item) => item.chunkKey),
+                });
+                const path = buildVectorPackPath_ACU({ chatKey, isolationKey, sourceTableKey: options.sourceTableKey, indexId, packKey });
+                const packBlob = {
+                    version: SUMMARY_VECTOR_INDEX_MANIFEST_VERSION_ACU,
+                    packKey,
+                    indexId,
+                    embeddingModel: options.embeddingModel,
+                    dimension,
+                    chunkKeys: group.map((item) => item.chunkKey),
+                    chunks: group.map((item) => item.blob),
+                    createdAt: indexedAt,
+                    updatedAt: indexedAt,
+                };
                 const existing = await readVectorIndexJsonFile_ACU(path);
                 let ref = null;
-                if (existing.ok && existing.data?.chunkKey === chunkKey && Array.isArray(existing.data.vector) && existing.data.vector.length === dimension) {
+                if (existing.ok && existing.data?.packKey === packKey && Array.isArray(existing.data.chunks) && existing.data.chunks.length === group.length) {
                     const json = JSON.stringify(existing.data);
-                    ref = {
-                        role: 'vector_chunk',
-                        path,
-                        byteSize: new Blob([json]).size,
-                        checksum: await sha256Text_ACU(json),
-                        chunkCount: 1,
-                        rowCount: 1,
-                        createdAt: String(existing.data.createdAt || indexedAt),
-                        updatedAt: String(existing.data.updatedAt || indexedAt),
-                        status: 'ready',
-                    };
+                    const checksum = await sha256Text_ACU(json);
+                    const existingChunkKeys = new Set((existing.data.chunkKeys || []).map((item) => String(item)));
+                    const allChunkKeysMatch = group.every((item) => existingChunkKeys.has(item.chunkKey));
+                    if (allChunkKeysMatch) {
+                        ref = {
+                            role: 'vector_pack',
+                            path,
+                            shardId: packKey,
+                            byteSize: new Blob([json]).size,
+                            checksum,
+                            chunkCount: group.length,
+                            rowCount: Array.from(new Set(group.map((item) => item.rowKey))).length,
+                            createdAt: String(existing.data.createdAt || indexedAt),
+                            updatedAt: String(existing.data.updatedAt || indexedAt),
+                            status: 'ready',
+                        };
+                    }
                 }
-                else {
-                    const written = await uploadVectorIndexJsonFile_ACU({ path, role: 'vector_chunk', data: blob, chunkCount: 1, rowCount: 1, status: 'ready' });
+                if (!ref) {
+                    const written = await uploadVectorIndexJsonFile_ACU({
+                        path,
+                        role: 'vector_pack',
+                        shardId: packKey,
+                        data: packBlob,
+                        chunkCount: group.length,
+                        rowCount: Array.from(new Set(group.map((item) => item.rowKey))).length,
+                        status: 'ready',
+                    });
                     if (!written.ok || !written.ref)
-                        throw new Error(written.error || `内容寻址向量块 ${chunkKey} 写入失败`);
+                        throw new Error(written.error || `内容寻址向量包 ${packKey} 写入失败`);
                     uploadedFiles.push(written.ref);
                     ref = written.ref;
                 }
-                chunkKeysByChunkId.set(chunk.chunkId, chunkKey);
-                chunkRefs.push({
-                    chunkKey,
-                    chunkId: chunk.chunkId,
-                    rowKey: chunk.rowKey,
+                const packRef = {
+                    packKey,
                     path,
                     checksum: ref.checksum,
                     byteSize: ref.byteSize,
+                    chunkKeys: group.map((item) => item.chunkKey),
+                    chunkCount: group.length,
+                    rowCount: Array.from(new Set(group.map((item) => item.rowKey))).length,
                     embeddingModel: options.embeddingModel,
                     dimension,
-                    sourceFingerprint: row?.sourceFingerprint,
-                    textHash: hashUserInput_ACU(chunk.text),
                     createdAt: ref.createdAt,
                     updatedAt: ref.updatedAt,
                     status: ref.status,
+                };
+                packRefs.push(packRef);
+                group.forEach((item) => {
+                    chunkRefs.push({
+                        chunkKey: item.chunkKey,
+                        chunkId: item.chunkId,
+                        rowKey: item.rowKey,
+                        path,
+                        checksum: item.chunkChecksum,
+                        byteSize: item.chunkByteSize,
+                        embeddingModel: options.embeddingModel,
+                        dimension,
+                        sourceFingerprint: item.sourceFingerprint,
+                        textHash: item.textHash,
+                        packKey,
+                        packPath: path,
+                        createdAt: ref.createdAt,
+                        updatedAt: ref.updatedAt,
+                        status: ref.status,
+                    });
                 });
             }
             const rowsWithShardIds = rows.map((row) => ({
@@ -22936,9 +23293,10 @@ $CONTENT
                 checkpoint,
                 contentAddressed: {
                     version: SUMMARY_VECTOR_INDEX_MANIFEST_VERSION_ACU,
-                    mode: 'content_addressed_chunks',
+                    mode: 'content_addressed_packs',
                     chunkRefs,
                     activeChunkKeys,
+                    packRefs,
                 },
             };
             const manifestWritten = await uploadVectorIndexJsonFile_ACU({ path: manifestPath, role: 'manifest', data: { ...manifestDraft, files: [...uploadedFiles] }, status: 'ready' });
@@ -23019,6 +23377,77 @@ $CONTENT
             return [];
         const activeChunkKeys = new Set((info.activeChunkKeys || []).map((item) => String(item)));
         const chunks = [];
+        if (info.mode === 'content_addressed_packs' && Array.isArray(info.packRefs) && info.packRefs.length > 0) {
+            const packRefsByKey = new Map();
+            info.packRefs.forEach((packRef) => {
+                const packKey = String(packRef.packKey || '').trim();
+                if (packKey && packRef.path)
+                    packRefsByKey.set(packKey, packRef);
+            });
+            const chunkRefsByPackKey = new Map();
+            for (const ref of info.chunkRefs) {
+                if (activeChunkKeys.size > 0 && !activeChunkKeys.has(ref.chunkKey))
+                    continue;
+                const packKey = String(ref.packKey || '').trim();
+                if (!packKey)
+                    throw new Error(`交火向量索引内容包引用缺少 packKey: ${ref.path}`);
+                const refs = chunkRefsByPackKey.get(packKey) || [];
+                refs.push(ref);
+                chunkRefsByPackKey.set(packKey, refs);
+            }
+            for (const [packKey, refs] of chunkRefsByPackKey.entries()) {
+                const packRef = packRefsByKey.get(packKey);
+                if (!packRef)
+                    throw new Error(`交火向量索引内容包缺少 manifest 引用: packKey=${packKey}`);
+                const loaded = await readVectorIndexJsonFile_ACU(packRef.path);
+                if (!loaded.ok || !loaded.data) {
+                    throw new Error(`交火向量索引内容包读取失败: ${packRef.path} ${loaded.error || ''}`.trim());
+                }
+                const packBlob = loaded.data;
+                if (String(packBlob.packKey || '') !== packKey || String(packBlob.indexId || '') !== manifest.indexId) {
+                    throw new Error(`交火向量索引内容包身份不匹配: ${packRef.path} expectedPack=${packKey} actualPack=${String(packBlob.packKey || 'empty')} expectedIndex=${manifest.indexId} actualIndex=${String(packBlob.indexId || 'empty')}`);
+                }
+                const packChecksum = await sha256Text_ACU(JSON.stringify(packBlob));
+                if (packRef.checksum && packChecksum !== packRef.checksum) {
+                    throw new Error(`交火向量索引内容包校验失败: ${packRef.path} expected=${packRef.checksum} actual=${packChecksum}`);
+                }
+                const blobsByChunkKey = new Map();
+                (packBlob.chunks || []).forEach((blob) => {
+                    const chunkKey = String(blob?.chunkKey || '').trim();
+                    if (chunkKey && !blobsByChunkKey.has(chunkKey))
+                        blobsByChunkKey.set(chunkKey, blob);
+                });
+                for (const ref of refs) {
+                    const blob = blobsByChunkKey.get(ref.chunkKey);
+                    if (!blob)
+                        throw new Error(`交火向量索引内容包缺少 chunk: pack=${packKey} chunk=${ref.chunkKey}`);
+                    if (String(blob.chunkKey || '') !== ref.chunkKey || String(blob.chunkId || '') !== ref.chunkId || String(blob.rowKey || '') !== ref.rowKey) {
+                        throw new Error(`交火向量索引内容块身份不匹配: ${packRef.path} expectedChunk=${ref.chunkKey} actualChunk=${String(blob.chunkKey || 'empty')} expectedRow=${ref.rowKey} actualRow=${String(blob.rowKey || 'empty')}`);
+                    }
+                    const chunkChecksum = await sha256Text_ACU(JSON.stringify(blob));
+                    if (ref.checksum && chunkChecksum !== ref.checksum) {
+                        throw new Error(`交火向量索引内容块校验失败: ${packRef.path} expected=${ref.checksum} actual=${chunkChecksum}`);
+                    }
+                    const vector = Array.isArray(blob.vector) ? blob.vector.map((value) => Number(value)) : [];
+                    if (vector.length === 0)
+                        continue;
+                    chunks.push({
+                        chunkId: String(blob.chunkId || ref.chunkId),
+                        rowKey: String(blob.rowKey || ref.rowKey),
+                        rowOrder: Number(blob.rowOrder || 0),
+                        text: String(blob.text || ''),
+                        vector,
+                        sequence: Number(blob.sequence || 0),
+                        sourceFingerprint: blob.sourceFingerprint || ref.sourceFingerprint,
+                        textHash: blob.textHash || ref.textHash,
+                        shardId: undefined,
+                        shardRole: undefined,
+                        chunkKeys: [ref.chunkKey],
+                    });
+                }
+            }
+            return chunks.sort((left, right) => left.sequence - right.sequence || left.chunkId.localeCompare(right.chunkId));
+        }
         for (const ref of info.chunkRefs) {
             if (activeChunkKeys.size > 0 && !activeChunkKeys.has(ref.chunkKey))
                 continue;
@@ -23139,6 +23568,7 @@ $CONTENT
         const checkedAt = new Date().toISOString();
         const reachability = await collectSummaryVectorIndexReachability_ACU();
         const registry = await loadVectorIndexRegistry_ACU();
+        const flushTasks = await estimateSummaryVectorFlushTasks_ACU();
         const reachablePathSet = new Set(reachability.reachablePaths);
         const issues = [];
         const repairableRowKeys = new Set();
@@ -23173,7 +23603,108 @@ $CONTENT
                     message: 'registry checksum 与实际文件内容不一致',
                 });
             }
-            if (file.role === 'vector_chunk') {
+            if (file.role === 'vector_pack') {
+                const pack = loaded.data;
+                const chunks = Array.isArray(pack.chunks) ? pack.chunks : [];
+                const chunksByKey = new Map(chunks.map((chunk) => [String(chunk?.chunkKey || ''), chunk]));
+                const vectorPackIdentityMismatch = !pack.packKey
+                    || String(pack.indexId || '') !== String(file.indexId || '')
+                    || chunks.length === 0
+                    || chunks.some((chunk) => !chunk?.chunkKey || !chunk.chunkId || !chunk.rowKey || !Array.isArray(chunk.vector) || chunk.vector.length === 0);
+                if (vectorPackIdentityMismatch) {
+                    issues.push({
+                        severity: 'error',
+                        code: 'identity_mismatch',
+                        path: file.path,
+                        role: file.role,
+                        messageIndex: file.messageIndex,
+                        isolationKey: file.isolationKey,
+                        expected: String(file.indexId || ''),
+                        actual: `${String(pack.indexId || '')}/${String(pack.packKey || '')}`,
+                        message: '内容寻址向量包身份与 manifest 引用不一致，或包内缺少有效向量',
+                    });
+                }
+                const chunkRefsForPack = reachability.reachableFiles.filter((item) => item.path === file.path && item.role === 'vector_chunk');
+                for (const ref of chunkRefsForPack) {
+                    const chunk = chunksByKey.get(String(ref.chunkKey || ''));
+                    if (!chunk) {
+                        issues.push({
+                            severity: 'error',
+                            code: 'pack_chunk_missing',
+                            path: file.path,
+                            role: 'vector_pack',
+                            messageIndex: ref.messageIndex,
+                            isolationKey: ref.isolationKey,
+                            chunkKey: ref.chunkKey,
+                            chunkId: ref.chunkId,
+                            rowKey: ref.rowKey,
+                            expected: String(ref.chunkKey || ''),
+                            actual: 'missing_in_pack',
+                            message: 'manifest chunkRef 指向的内容块在 vector_pack 内不存在',
+                        });
+                        if (ref.rowKey)
+                            repairableRowKeys.add(ref.rowKey);
+                        continue;
+                    }
+                    const chunkIdentityMismatch = String(chunk.chunkId || '') !== String(ref.chunkId || '')
+                        || String(chunk.rowKey || '') !== String(ref.rowKey || '')
+                        || !Array.isArray(chunk.vector)
+                        || chunk.vector.length === 0;
+                    if (chunkIdentityMismatch) {
+                        issues.push({
+                            severity: 'error',
+                            code: 'identity_mismatch',
+                            path: file.path,
+                            role: 'vector_pack',
+                            messageIndex: ref.messageIndex,
+                            isolationKey: ref.isolationKey,
+                            chunkKey: ref.chunkKey,
+                            chunkId: ref.chunkId,
+                            rowKey: ref.rowKey,
+                            expected: `${ref.chunkKey || ''}/${ref.chunkId || ''}/${ref.rowKey || ''}`,
+                            actual: `${String(chunk.chunkKey || '')}/${String(chunk.chunkId || '')}/${String(chunk.rowKey || '')}`,
+                            message: 'vector_pack 内 chunk 身份与 manifest chunkRef 不一致',
+                        });
+                        if (ref.rowKey)
+                            repairableRowKeys.add(ref.rowKey);
+                    }
+                    if (ref.checksum) {
+                        const chunkChecksum = await sha256Text_ACU(JSON.stringify(chunk));
+                        if (chunkChecksum !== ref.checksum) {
+                            issues.push({
+                                severity: 'error',
+                                code: 'checksum_mismatch',
+                                path: file.path,
+                                role: 'vector_pack',
+                                messageIndex: ref.messageIndex,
+                                isolationKey: ref.isolationKey,
+                                chunkKey: ref.chunkKey,
+                                chunkId: ref.chunkId,
+                                rowKey: ref.rowKey,
+                                expected: ref.checksum,
+                                actual: chunkChecksum,
+                                message: 'vector_pack 内 chunk checksum 与 manifest chunkRef 不一致',
+                            });
+                            if (ref.rowKey)
+                                repairableRowKeys.add(ref.rowKey);
+                        }
+                    }
+                }
+                if (file.checksum && checksum !== file.checksum) {
+                    issues.push({
+                        severity: 'error',
+                        code: 'checksum_mismatch',
+                        path: file.path,
+                        role: file.role,
+                        messageIndex: file.messageIndex,
+                        isolationKey: file.isolationKey,
+                        expected: file.checksum,
+                        actual: checksum,
+                        message: 'manifest packRef checksum 与实际内容不一致',
+                    });
+                }
+            }
+            else if (file.role === 'vector_chunk') {
                 const blob = loaded.data;
                 const vector = Array.isArray(blob.vector) ? blob.vector : [];
                 const identityMismatch = !blob.chunkKey
@@ -23268,6 +23799,12 @@ $CONTENT
             identityMismatchCount,
             legacyManifestCount,
             unreachableRegisteredFileCount,
+            flushTaskTotalCount: flushTasks.total,
+            flushTaskDirtyCount: flushTasks.dirty,
+            flushTaskQueuedCount: flushTasks.queued,
+            flushTaskFlushingCount: flushTasks.flushing,
+            flushTaskFailedCount: flushTasks.failedRetryable + flushTasks.failedTerminal,
+            flushTaskLastError: flushTasks.lastError,
             repairableRowKeys: Array.from(repairableRowKeys),
             issues,
         };
@@ -23276,7 +23813,20 @@ $CONTENT
         manifest = normalizeSummaryVectorIndexManifestForRead_ACU(manifest);
         const tempCache = await estimateVectorIndexTempCache_ACU(manifest?.indexId);
         const hotCache = await estimateSummaryVectorHotCache_ACU(manifest?.indexId);
+        const flushTasks = await estimateSummaryVectorFlushTasks_ACU(manifest ? {
+            chatKey: manifest.chatKey,
+            isolationKey: manifest.isolationKey,
+            sourceTableKey: manifest.sourceTableKey,
+        } : undefined);
         const cacheTotalBytes = tempCache.bytes + hotCache.bytes;
+        const flushTaskFields = {
+            flushTaskTotalCount: flushTasks.total,
+            flushTaskDirtyCount: flushTasks.dirty,
+            flushTaskQueuedCount: flushTasks.queued,
+            flushTaskFlushingCount: flushTasks.flushing,
+            flushTaskFailedCount: flushTasks.failedRetryable + flushTasks.failedTerminal,
+            flushTaskLastError: flushTasks.lastError,
+        };
         if (!manifest) {
             return {
                 status: 'none',
@@ -23294,6 +23844,7 @@ $CONTENT
                 tempCacheCount: tempCache.count,
                 hotCacheBytes: hotCache.bytes,
                 hotCacheCount: hotCache.count,
+                ...flushTaskFields,
                 updatedAt: '',
             };
         }
@@ -23313,6 +23864,7 @@ $CONTENT
             tempCacheCount: tempCache.count,
             hotCacheBytes: hotCache.bytes,
             hotCacheCount: hotCache.count,
+            ...flushTaskFields,
             updatedAt: manifest.updatedAt,
             error: manifest.error,
         };
@@ -31456,6 +32008,182 @@ $CONTENT
         return `summary-vector-index:${hashUserInput_ACU(source)}`;
     }
 
+    const SUMMARY_VECTOR_INDEX_FLUSH_DEBOUNCE_MS_ACU = 2500;
+    const SUMMARY_VECTOR_INDEX_FLUSHING_STALE_MS_ACU = 60000;
+    const summaryVectorFlushTimers_ACU = new Map();
+    const summaryVectorFlushRunning_ACU = new Set();
+    function normalizeKeyPart_ACU(value) {
+        return String(value || '').trim();
+    }
+    function buildSummaryVectorIndexFlushScopeKey_ACU(parts) {
+        return [parts.chatKey, parts.isolationKey, parts.sourceTableKey]
+            .map((part) => normalizeKeyPart_ACU(part) || 'default')
+            .join('::');
+    }
+    function normalizeErrorMessage_ACU$1(error) {
+        if (error instanceof Error)
+            return error.message || error.name || '未知错误';
+        if (typeof error === 'string')
+            return error;
+        try {
+            const text = JSON.stringify(error);
+            return text && text !== '{}' ? text : String(error || '未知错误');
+        }
+        catch {
+            return String(error || '未知错误');
+        }
+    }
+    function clearFlushTimer_ACU(scopeKey) {
+        const timer = summaryVectorFlushTimers_ACU.get(scopeKey);
+        if (timer)
+            clearTimeout(timer);
+        summaryVectorFlushTimers_ACU.delete(scopeKey);
+    }
+    async function markFlushTaskFailure_ACU(task, error, terminal = false) {
+        await upsertSummaryVectorFlushTask_ACU({
+            scopeKey: task.scopeKey,
+            chatKey: task.chatKey,
+            isolationKey: task.isolationKey,
+            sourceTableKey: task.sourceTableKey,
+            targetMessageIndex: task.targetMessageIndex,
+            mode: task.mode,
+            status: terminal ? 'failed_terminal' : 'failed_retryable',
+            requestedAt: task.requestedAt,
+            debounceUntil: Date.now() + SUMMARY_VECTOR_INDEX_FLUSH_DEBOUNCE_MS_ACU,
+            lastError: error,
+        });
+    }
+    function scheduleFlushTaskTimer_ACU(task) {
+        clearFlushTimer_ACU(task.scopeKey);
+        const delay = Math.max(0, Math.min(Math.max(0, task.debounceUntil - Date.now()), 2147483647));
+        const timer = setTimeout(() => {
+            summaryVectorFlushTimers_ACU.delete(task.scopeKey);
+            void flushSummaryVectorIndexTaskNow_ACU(task.scopeKey);
+        }, delay);
+        summaryVectorFlushTimers_ACU.set(task.scopeKey, timer);
+    }
+    async function enqueueSummaryVectorIndexFlush_ACU(options = {}) {
+        const selectedSummary = findSummaryTable_ACU();
+        if (!selectedSummary?.summaryKey) {
+            return { queued: false, skipped: true, reason: 'summary_table_not_found' };
+        }
+        const chatKey = normalizeKeyPart_ACU(currentChatFileIdentifier_ACU);
+        const isolationKey = normalizeKeyPart_ACU(getCurrentIsolationKey_ACU());
+        const sourceTableKey = normalizeKeyPart_ACU(selectedSummary.summaryKey);
+        if (!chatKey || !isolationKey || !sourceTableKey) {
+            return { queued: false, skipped: true, reason: 'flush_scope_unresolved' };
+        }
+        const now = Date.now();
+        const debounceMs = Math.max(0, Number(options.debounceMs ?? SUMMARY_VECTOR_INDEX_FLUSH_DEBOUNCE_MS_ACU) || SUMMARY_VECTOR_INDEX_FLUSH_DEBOUNCE_MS_ACU);
+        const scopeKey = buildSummaryVectorIndexFlushScopeKey_ACU({ chatKey, isolationKey, sourceTableKey });
+        const task = await upsertSummaryVectorFlushTask_ACU({
+            scopeKey,
+            chatKey,
+            isolationKey,
+            sourceTableKey,
+            targetMessageIndex: options.targetMessageIndex,
+            mode: options.mode === 'append' ? 'append' : 'sync',
+            status: 'queued',
+            requestedAt: now,
+            debounceUntil: now + debounceMs,
+        });
+        if (!task) {
+            return { queued: false, skipped: true, reason: 'flush_task_persist_failed', scopeKey };
+        }
+        scheduleFlushTaskTimer_ACU(task);
+        logDebug_ACU(`[交火向量索引] 已加入防抖 flush 队列：scope=${scopeKey}, mode=${task.mode}, debounceMs=${debounceMs}, reason=${options.reason || ''}`);
+        return { queued: true, scopeKey, debounceUntil: task.debounceUntil };
+    }
+    async function flushSummaryVectorIndexTaskNow_ACU(scopeKey) {
+        const task = await getSummaryVectorFlushTask_ACU(scopeKey);
+        if (!task)
+            return { success: true, skipped: true, reason: 'flush_task_not_found' };
+        if (summaryVectorFlushRunning_ACU.has(task.scopeKey)) {
+            return { success: true, skipped: true, reason: 'flush_already_running' };
+        }
+        const activeChatKey = normalizeKeyPart_ACU(currentChatFileIdentifier_ACU);
+        const activeIsolationKey = normalizeKeyPart_ACU(getCurrentIsolationKey_ACU());
+        if (task.chatKey !== activeChatKey || task.isolationKey !== activeIsolationKey) {
+            const message = `flush scope 与当前聊天上下文不一致：task=${task.chatKey}/${task.isolationKey}, active=${activeChatKey}/${activeIsolationKey}`;
+            await markFlushTaskFailure_ACU(task, message, false);
+            logWarn_ACU('[交火向量索引] 跳过防抖 flush，当前上下文不匹配:', message);
+            return { success: false, reason: 'flush_scope_mismatch', error: message };
+        }
+        const selectedSummary = findSummaryTable_ACU();
+        if (!selectedSummary?.summaryKey || normalizeKeyPart_ACU(selectedSummary.summaryKey) !== task.sourceTableKey) {
+            const message = `flush scope 对应纪要表不可用：sourceTableKey=${task.sourceTableKey}`;
+            await markFlushTaskFailure_ACU(task, message, false);
+            logWarn_ACU('[交火向量索引] 跳过防抖 flush，纪要表不可用:', message);
+            return { success: false, reason: 'summary_table_not_found_for_flush', error: message };
+        }
+        summaryVectorFlushRunning_ACU.add(task.scopeKey);
+        clearFlushTimer_ACU(task.scopeKey);
+        try {
+            await upsertSummaryVectorFlushTask_ACU({
+                scopeKey: task.scopeKey,
+                chatKey: task.chatKey,
+                isolationKey: task.isolationKey,
+                sourceTableKey: task.sourceTableKey,
+                targetMessageIndex: task.targetMessageIndex,
+                mode: task.mode,
+                status: 'flushing',
+                requestedAt: task.requestedAt,
+                debounceUntil: task.debounceUntil,
+            });
+            const result = await archiveSummaryVectorIndexNow_ACU({
+                targetMessageIndex: task.targetMessageIndex,
+                mode: task.mode,
+                saveChatAfterWrite: false,
+            });
+            if (result.success) {
+                await deleteSummaryVectorFlushTask_ACU(task.scopeKey);
+                logDebug_ACU(`[交火向量索引] 防抖 flush 完成：scope=${task.scopeKey}, skipped=${result.skipped}, reason=${result.reason || ''}`);
+                return { success: true, skipped: result.skipped, reason: result.reason, result };
+            }
+            const error = result.errors?.join('; ') || result.reason || 'summary_vector_index_flush_failed';
+            await markFlushTaskFailure_ACU(task, error, result.reason === 'summary_vector_index_config_invalid' || result.reason === 'target_message_invalid' || result.reason === 'target_message_not_found');
+            logWarn_ACU('[交火向量索引] 防抖 flush 失败:', error);
+            return { success: false, reason: result.reason, result, error };
+        }
+        catch (error) {
+            const message = normalizeErrorMessage_ACU$1(error);
+            await markFlushTaskFailure_ACU(task, message, false);
+            logWarn_ACU('[交火向量索引] 防抖 flush 异常:', message);
+            return { success: false, reason: 'flush_exception', error: message };
+        }
+        finally {
+            summaryVectorFlushRunning_ACU.delete(task.scopeKey);
+        }
+    }
+    async function restoreSummaryVectorIndexFlushQueueForCurrentChat_ACU() {
+        const chatKey = normalizeKeyPart_ACU(currentChatFileIdentifier_ACU);
+        const isolationKey = normalizeKeyPart_ACU(getCurrentIsolationKey_ACU());
+        if (!chatKey || !isolationKey)
+            return 0;
+        const tasks = await listSummaryVectorFlushTasks_ACU({ chatKey, isolationKey });
+        let restored = 0;
+        const now = Date.now();
+        for (const task of tasks) {
+            if (task.status === 'ready' || task.status === 'failed_terminal')
+                continue;
+            if (task.status === 'flushing' && now - task.updatedAt > SUMMARY_VECTOR_INDEX_FLUSHING_STALE_MS_ACU) {
+                await markFlushTaskFailure_ACU(task, '上次 flush 在执行中断后超时，已重新排队。', false);
+                const refreshed = await getSummaryVectorFlushTask_ACU(task.scopeKey);
+                if (refreshed) {
+                    scheduleFlushTaskTimer_ACU(refreshed);
+                    restored += 1;
+                }
+                continue;
+            }
+            scheduleFlushTaskTimer_ACU(task);
+            restored += 1;
+        }
+        if (restored > 0) {
+            logDebug_ACU(`[交火向量索引] 已恢复当前聊天防抖 flush 队列：count=${restored}`);
+        }
+        return restored;
+    }
+
     /**
      * service/table/update-orchestrator.ts — 表格更新编排（service 层：纯业务逻辑）
      * 从 presentation/triggers/update-process.ts 提取。
@@ -31776,16 +32504,20 @@ $CONTENT
                     await updateReadableLorebookEntry_ACU(true);
                     if (getCurrentWorldbookConfig_ACU().summaryVectorIndexModeEnabled === true) {
                         try {
-                            const archiveResult = await archiveSummaryVectorIndexNow_ACU({ targetMessageIndex: saveTargetIndex, mode: 'append', saveChatAfterWrite: false });
-                            if (!archiveResult.success && !archiveResult.skipped) {
-                                logWarn_ACU('[交火模式纪要索引] 填表完成后自动归档失败:', archiveResult.errors?.join('; ') || archiveResult.reason || 'unknown_error');
+                            const queueResult = await enqueueSummaryVectorIndexFlush_ACU({
+                                targetMessageIndex: saveTargetIndex,
+                                mode: 'append',
+                                reason: 'table_update_completed',
+                            });
+                            if (!queueResult.queued && !queueResult.skipped) {
+                                logWarn_ACU('[交火模式纪要索引] 填表完成后加入防抖归档队列失败:', queueResult.reason || 'unknown_error');
                             }
                             else {
-                                logDebug_ACU(`[交火模式纪要索引] 填表完成后自动归档完成：rows=${archiveResult.indexedRowCount}, chunks=${archiveResult.chunkCount}, skipped=${archiveResult.skipped}, reason=${archiveResult.reason || ''}`);
+                                logDebug_ACU(`[交火模式纪要索引] 填表完成后已加入防抖归档队列：queued=${queueResult.queued}, skipped=${queueResult.skipped}, reason=${queueResult.reason || ''}`);
                             }
                         }
                         catch (archiveError) {
-                            logWarn_ACU('[交火模式纪要索引] 填表完成后自动归档异常，已保留本次表格保存结果:', archiveError);
+                            logWarn_ACU('[交火模式纪要索引] 填表完成后加入防抖归档队列异常，已保留本次表格保存结果:', archiveError);
                         }
                     }
                 }
@@ -36505,25 +37237,25 @@ $CONTENT
                 await refreshMergedDataAndNotifyWithUI_ACU();
                 if (shouldSyncSummaryVectorIndexAfterSave_ACU && getCurrentWorldbookConfig_ACU().summaryVectorIndexModeEnabled === true) {
                     try {
-                        const archiveResult = await archiveSummaryVectorIndexNow_ACU({
+                        const queueResult = await enqueueSummaryVectorIndexFlush_ACU({
                             targetMessageIndex: latestAiIndex !== -1 ? latestAiIndex : undefined,
                             mode: 'sync',
-                            saveChatAfterWrite: false,
+                            reason: 'visualizer_save',
                         });
-                        if (!archiveResult.success) {
-                            logWarn_ACU('[VisualizerVectorIndex] 交火索引快照同步失败:', archiveResult.reason, archiveResult.errors);
-                            showToastr_ACU('warning', `表格已保存，但交火索引同步失败：${archiveResult.reason || 'unknown'}`);
+                        if (!queueResult.queued && !queueResult.skipped) {
+                            logWarn_ACU('[VisualizerVectorIndex] 交火索引防抖归档入队失败:', queueResult.reason);
+                            showToastr_ACU('warning', `表格已保存，但交火索引防抖归档入队失败：${queueResult.reason || 'unknown'}`);
                         }
-                        else if (archiveResult.skipped) {
-                            logDebug_ACU(`[VisualizerVectorIndex] 交火索引快照同步跳过: ${archiveResult.reason || 'skipped'}`);
+                        else if (queueResult.skipped) {
+                            logDebug_ACU(`[VisualizerVectorIndex] 交火索引防抖归档入队跳过: ${queueResult.reason || 'skipped'}`);
                         }
                         else {
-                            logDebug_ACU(`[VisualizerVectorIndex] 交火索引快照已同步: rows=${archiveResult.indexedRowCount}, chunks=${archiveResult.chunkCount}, reason=${archiveResult.reason || 'ok'}`);
+                            logDebug_ACU(`[VisualizerVectorIndex] 交火索引防抖归档已入队: scope=${queueResult.scopeKey || ''}`);
                         }
                     }
                     catch (error) {
-                        logWarn_ACU('[VisualizerVectorIndex] 交火索引快照同步异常:', error);
-                        showToastr_ACU('warning', '表格已保存，但交火索引同步异常，请查看控制台日志。');
+                        logWarn_ACU('[VisualizerVectorIndex] 交火索引防抖归档入队异常:', error);
+                        showToastr_ACU('warning', '表格已保存，但交火索引防抖归档入队异常，请查看控制台日志。');
                     }
                 }
                 if ($popupInstance_ACU && $popupInstance_ACU.length) {
@@ -38882,6 +39614,9 @@ $CONTENT
         setField('tombstones', `${stats.tombstoneRowCount} / ${stats.tombstoneChunkCount}`);
         setField('externalBytes', formatBytes_ACU(stats.externalTotalBytes));
         setField('cacheBytes', formatBytes_ACU(stats.cacheTotalBytes));
+        const pendingFlushCount = (stats.flushTaskDirtyCount || 0) + (stats.flushTaskQueuedCount || 0) + (stats.flushTaskFlushingCount || 0);
+        setField('flushQueue', `${pendingFlushCount} pending / ${stats.flushTaskFailedCount || 0} failed`);
+        setField('flushError', stats.flushTaskLastError || '-');
         setField('updatedAt', stats.updatedAt || '-');
     }
     function getCurrentSummaryVectorIndexSourceTableKey_ACU() {
@@ -38928,6 +39663,7 @@ $CONTENT
         const scopeHintList = Array.from(scopeHints.values());
         for (const hint of scopeHintList) {
             await deleteSummaryVectorHotCacheByScope_ACU(hint);
+            await clearSummaryVectorFlushTasksByScope_ACU(hint);
         }
         const gcResult = await cleanupUnreachableSummaryVectorIndexFiles_ACU({ scopeHints: scopeHintList });
         return changed || gcResult.deletedPaths.length > 0 || gcResult.failedDeletes.length > 0;
@@ -39027,9 +39763,12 @@ $CONTENT
                     const report = await inspectSummaryVectorIndexHealth_ACU();
                     const errorCount = report.missingFileCount + report.checksumMismatchCount + report.identityMismatchCount;
                     const warningCount = report.legacyManifestCount + report.unreachableRegisteredFileCount;
+                    const pendingFlushCount = (report.flushTaskDirtyCount || 0) + (report.flushTaskQueuedCount || 0) + (report.flushTaskFlushingCount || 0);
+                    const failedFlushCount = report.flushTaskFailedCount || 0;
                     const repairHint = report.repairableRowKeys.length > 0 ? `，可修复行 ${report.repairableRowKeys.length} 条` : '';
-                    const message = `状态=${report.status}，manifest=${report.manifestCount}，可达文件=${report.reachableFileCount}，错误=${errorCount}，警告=${warningCount}${repairHint}`;
-                    showToastr_ACU(errorCount > 0 ? 'warning' : 'success', `交火索引健康检查完成：${message}`);
+                    const flushHint = pendingFlushCount > 0 || failedFlushCount > 0 ? `，防抖队列 pending=${pendingFlushCount}, failed=${failedFlushCount}` : '';
+                    const message = `状态=${report.status}，manifest=${report.manifestCount}，可达文件=${report.reachableFileCount}，错误=${errorCount}，警告=${warningCount}${flushHint}${repairHint}`;
+                    showToastr_ACU(errorCount > 0 || failedFlushCount > 0 ? 'warning' : 'success', `交火索引健康检查完成：${message}`);
                 }
                 catch (e) {
                     logError_ACU('交火索引健康检查失败:', e);
@@ -43368,6 +44107,8 @@ $CONTENT
                             <div>Tombstone 行 / 块：<span data-acu-vector-index-field="tombstones">0 / 0</span></div>
                             <div>当前外置快照体积：<span data-acu-vector-index-field="externalBytes">0 B</span></div>
                             <div>当前索引临时缓存体积：<span data-acu-vector-index-field="cacheBytes">0 B</span></div>
+                            <div>防抖归档队列：<span data-acu-vector-index-field="flushQueue">0 pending / 0 failed</span></div>
+                            <div>防抖归档错误：<span data-acu-vector-index-field="flushError">-</span></div>
                             <div>更新时间：<span data-acu-vector-index-field="updatedAt">-</span></div>
                         </div>
                         <div class="button-group acu-data-mgmt-buttons">
@@ -46338,6 +47079,15 @@ $CONTENT
                         // 注意：必须放在 refreshMergedDataAndNotifyWithUI_ACU 之后，否则可能读取到旧聊天的 manifest。
                         const vectorCacheResult = await preloadSummaryVectorIndexCacheForCurrentChat_ACU();
                         logDebug_ACU(`[交火向量索引] CHAT_CHANGED 缓存预热结果：success=${vectorCacheResult.success}, skipped=${vectorCacheResult.skipped === true}, reason=${vectorCacheResult.reason || 'none'}, chunks=${vectorCacheResult.chunkCount}, indexId=${vectorCacheResult.indexId || 'none'}`);
+                        try {
+                            const restoredFlushCount = await restoreSummaryVectorIndexFlushQueueForCurrentChat_ACU();
+                            if (restoredFlushCount > 0) {
+                                logDebug_ACU(`[交火向量索引] CHAT_CHANGED 已恢复防抖归档队列：count=${restoredFlushCount}`);
+                            }
+                        }
+                        catch (restoreFlushError) {
+                            logWarn_ACU('[交火向量索引] CHAT_CHANGED 恢复防抖归档队列失败:', restoreFlushError);
+                        }
                         // [新增] 再次强制刷新状态显示，确保UI同步
                         if (typeof updateCardUpdateStatusDisplay_ACU === 'function') {
                             updateCardUpdateStatusDisplay_ACU();
@@ -46824,20 +47574,20 @@ $CONTENT
                         });
                         if (importedSummaryTables && getCurrentWorldbookConfig_ACU().summaryVectorIndexModeEnabled === true) {
                             try {
-                                const syncResult = await archiveSummaryVectorIndexNow_ACU({
+                                const queueResult = await enqueueSummaryVectorIndexFlush_ACU({
                                     targetMessageIndex: targetMessageIndexForVectorSync >= 0 ? targetMessageIndexForVectorSync : undefined,
                                     mode: 'sync',
-                                    saveChatAfterWrite: false,
+                                    reason: 'importTableAsJson',
                                 });
-                                if (!syncResult.success && !syncResult.skipped) {
-                                    logWarn_ACU(`[importTableAsJson] 交火向量索引同步失败: reason=${syncResult.reason || 'unknown'}`, syncResult.errors || []);
+                                if (!queueResult.queued && !queueResult.skipped) {
+                                    logWarn_ACU(`[importTableAsJson] 交火向量索引防抖归档入队失败: reason=${queueResult.reason || 'unknown'}`);
                                 }
                                 else {
-                                    logDebug_ACU(`[importTableAsJson] 交火向量索引已同步: reason=${syncResult.reason || 'ok'}`);
+                                    logDebug_ACU(`[importTableAsJson] 交火向量索引防抖归档已入队: queued=${queueResult.queued}, reason=${queueResult.reason || 'ok'}`);
                                 }
                             }
                             catch (syncError) {
-                                logError_ACU('[importTableAsJson] 交火向量索引同步异常（表格导入已完成）:', syncError);
+                                logError_ACU('[importTableAsJson] 交火向量索引防抖归档入队异常（表格导入已完成）:', syncError);
                             }
                         }
                         return true;
@@ -47139,20 +47889,20 @@ $CONTENT
             ? tableLatestFloorIndex
             : undefined;
         try {
-            const result = await archiveSummaryVectorIndexNow_ACU({
+            const result = await enqueueSummaryVectorIndexFlush_ACU({
                 targetMessageIndex: preferredTargetIndex,
                 mode: 'sync',
-                saveChatAfterWrite: false,
+                reason: methodName,
             });
-            if (!result.success && !result.skipped) {
-                logWarn_ACU(`${methodName}: Summary vector index sync failed after editing [${tableName}]. reason=${result.reason || 'unknown'}`, result.errors || []);
+            if (!result.queued && !result.skipped) {
+                logWarn_ACU(`${methodName}: Summary vector index flush enqueue failed after editing [${tableName}]. reason=${result.reason || 'unknown'}`);
             }
             else {
-                logDebug_ACU(`${methodName}: Summary vector index snapshot synced after editing [${tableName}]. reason=${result.reason || 'ok'}`);
+                logDebug_ACU(`${methodName}: Summary vector index flush queued after editing [${tableName}]. queued=${result.queued}, reason=${result.reason || 'ok'}`);
             }
         }
         catch (error) {
-            logError_ACU(`${methodName}: Summary vector index sync threw after editing [${tableName}].`, error);
+            logError_ACU(`${methodName}: Summary vector index flush enqueue threw after editing [${tableName}].`, error);
         }
     }
     /**

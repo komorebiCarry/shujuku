@@ -22,6 +22,7 @@ export type SummaryVectorIndexExternalFileRole_ACU =
     | 'base_shard'
     | 'delta_shard'
     | 'vector_chunk'
+    | 'vector_pack'
     | 'registry';
 
 export interface ChatSummaryVectorIndexChunk_ACU {
@@ -42,13 +43,36 @@ export interface SummaryVectorIndexChunkRef_ACU {
     chunkKey: string;
     chunkId: string;
     rowKey: string;
+    /**
+     * 兼容字段：旧 content_addressed_chunks 下指向单 chunk 文件；
+     * content_addressed_packs 下指向所属 pack 文件，不表示 chunk 级文件。
+     */
     path: string;
+    /** chunk blob 级校验值，不得替换为 pack 文件级 checksum。 */
     checksum: string;
+    /** chunk blob 级大小，不得替换为 pack 文件大小。 */
     byteSize: number;
     embeddingModel: string;
     dimension: number;
     sourceFingerprint?: string;
     textHash?: string;
+    packKey?: string;
+    packPath?: string;
+    createdAt: string;
+    updatedAt: string;
+    status: SummaryVectorIndexManifestStatus_ACU;
+}
+
+export interface SummaryVectorIndexPackRef_ACU {
+    packKey: string;
+    path: string;
+    checksum: string;
+    byteSize: number;
+    chunkKeys: string[];
+    chunkCount: number;
+    rowCount: number;
+    embeddingModel: string;
+    dimension: number;
     createdAt: string;
     updatedAt: string;
     status: SummaryVectorIndexManifestStatus_ACU;
@@ -56,9 +80,10 @@ export interface SummaryVectorIndexChunkRef_ACU {
 
 export interface SummaryVectorIndexContentAddressedInfo_ACU {
     version: number;
-    mode: 'content_addressed_chunks';
+    mode: 'content_addressed_chunks' | 'content_addressed_packs';
     chunkRefs: SummaryVectorIndexChunkRef_ACU[];
     activeChunkKeys: string[];
+    packRefs?: SummaryVectorIndexPackRef_ACU[];
 }
 
 export interface SummaryVectorIndexCheckpoint_ACU {
@@ -273,6 +298,12 @@ export interface SummaryVectorIndexStats_ACU {
     tempCacheCount?: number;
     hotCacheBytes?: number;
     hotCacheCount?: number;
+    flushTaskTotalCount?: number;
+    flushTaskDirtyCount?: number;
+    flushTaskQueuedCount?: number;
+    flushTaskFlushingCount?: number;
+    flushTaskFailedCount?: number;
+    flushTaskLastError?: string;
     updatedAt: string;
     error?: string;
 }
@@ -302,7 +333,7 @@ export interface SummaryVectorIndexReachabilityReport_ACU {
 
 export interface SummaryVectorIndexHealthIssue_ACU {
     severity: 'warning' | 'error';
-    code: 'missing_file' | 'checksum_mismatch' | 'identity_mismatch' | 'legacy_manifest' | 'unreachable_registered_file' | 'read_error';
+    code: 'missing_file' | 'checksum_mismatch' | 'identity_mismatch' | 'legacy_manifest' | 'unreachable_registered_file' | 'read_error' | 'pack_chunk_missing';
     path: string;
     role?: SummaryVectorIndexExternalFileRole_ACU;
     rowKey?: string;
@@ -326,6 +357,12 @@ export interface SummaryVectorIndexHealthReport_ACU {
     identityMismatchCount: number;
     legacyManifestCount: number;
     unreachableRegisteredFileCount: number;
+    flushTaskTotalCount?: number;
+    flushTaskDirtyCount?: number;
+    flushTaskQueuedCount?: number;
+    flushTaskFlushingCount?: number;
+    flushTaskFailedCount?: number;
+    flushTaskLastError?: string;
     repairableRowKeys: string[];
     issues: SummaryVectorIndexHealthIssue_ACU[];
 }

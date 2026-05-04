@@ -22,7 +22,7 @@ import { proceedWithCardUpdate_ACU } from '../../triggers/update-process';
 import { refreshMergedDataAndNotifyWithUI_ACU } from '../../components/pipeline-ui-helpers';
 import { showToastr_ACU } from '../../theme/toast';
 import { getCurrentWorldbookConfig_ACU } from '../../../service/settings/settings-readers';
-import { archiveSummaryVectorIndexNow_ACU } from '../../../service/vector/summary-vector-index-archive-service';
+import { enqueueSummaryVectorIndexFlush_ACU } from '../../../service/vector/summary-vector-index-flush-queue';
 import type { ApiGroupContext } from './callback-api';
 
 export function createCoreDataApi(ctx: ApiGroupContext): Record<string, Function> {
@@ -153,18 +153,18 @@ export function createCoreDataApi(ctx: ApiGroupContext): Record<string, Function
                         });
                     if (importedSummaryTables && getCurrentWorldbookConfig_ACU().summaryVectorIndexModeEnabled === true) {
                         try {
-                            const syncResult = await archiveSummaryVectorIndexNow_ACU({
+                            const queueResult = await enqueueSummaryVectorIndexFlush_ACU({
                                 targetMessageIndex: targetMessageIndexForVectorSync >= 0 ? targetMessageIndexForVectorSync : undefined,
                                 mode: 'sync',
-                                saveChatAfterWrite: false,
+                                reason: 'importTableAsJson',
                             });
-                            if (!syncResult.success && !syncResult.skipped) {
-                                logWarn_ACU(`[importTableAsJson] 交火向量索引同步失败: reason=${syncResult.reason || 'unknown'}`, syncResult.errors || []);
+                            if (!queueResult.queued && !queueResult.skipped) {
+                                logWarn_ACU(`[importTableAsJson] 交火向量索引防抖归档入队失败: reason=${queueResult.reason || 'unknown'}`);
                             } else {
-                                logDebug_ACU(`[importTableAsJson] 交火向量索引已同步: reason=${syncResult.reason || 'ok'}`);
+                                logDebug_ACU(`[importTableAsJson] 交火向量索引防抖归档已入队: queued=${queueResult.queued}, reason=${queueResult.reason || 'ok'}`);
                             }
                         } catch (syncError) {
-                            logError_ACU('[importTableAsJson] 交火向量索引同步异常（表格导入已完成）:', syncError);
+                            logError_ACU('[importTableAsJson] 交火向量索引防抖归档入队异常（表格导入已完成）:', syncError);
                         }
                     }
 

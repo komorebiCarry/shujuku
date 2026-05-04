@@ -82,8 +82,8 @@ export function buildVectorIndexStableFilePath_ACU(parts: {
 }): string {
     const scope = buildVectorIndexStableDirectory_ACU(parts);
     const role = normalizePathSegment_ACU(parts.role || 'manifest');
-    if (parts.role === 'base_shard' || parts.role === 'delta_shard') {
-        const shardName = normalizePathSegment_ACU(parts.shardId || 'shard_0001');
+    if (parts.role === 'base_shard' || parts.role === 'delta_shard' || parts.role === 'vector_pack') {
+        const shardName = normalizePathSegment_ACU(parts.shardId || (parts.role === 'vector_pack' ? 'pack_0001' : 'shard_0001'));
         return `${scope}_${role}_${shardName}`;
     }
     return `${scope}_${role}`;
@@ -100,8 +100,8 @@ export function buildVectorIndexSnapshotFilePath_ACU(parts: {
     const scope = buildVectorIndexStableDirectory_ACU(parts);
     const indexId = normalizePathSegment_ACU(parts.indexId || 'snapshot');
     const role = normalizePathSegment_ACU(parts.role || 'manifest');
-    if (parts.role === 'base_shard' || parts.role === 'delta_shard') {
-        const shardName = normalizePathSegment_ACU(parts.shardId || 'shard_0001');
+    if (parts.role === 'base_shard' || parts.role === 'delta_shard' || parts.role === 'vector_pack') {
+        const shardName = normalizePathSegment_ACU(parts.shardId || (parts.role === 'vector_pack' ? 'pack_0001' : 'shard_0001'));
         return `${scope}_${indexId}_${role}_${shardName}`;
     }
     return `${scope}_${indexId}_${role}`;

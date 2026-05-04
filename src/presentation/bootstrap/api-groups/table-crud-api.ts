@@ -20,7 +20,7 @@ import { getStorageProvider } from '../../../service/table/table-storage-strateg
 import { getNameMapper } from '../../../service/runtime/template-vars/name-mapper';
 import { parseDDLTableName } from '../../../shared/ddl-utils';
 import { resolveTableHistoryStateFromChat_ACU } from '../../../service/table/table-history';
-import { archiveSummaryVectorIndexNow_ACU } from '../../../service/vector/summary-vector-index-archive-service';
+import { enqueueSummaryVectorIndexFlush_ACU } from '../../../service/vector/summary-vector-index-flush-queue';
 import { getCurrentWorldbookConfig_ACU } from '../../../service/settings/settings-readers';
 
 /**
@@ -355,18 +355,18 @@ async function syncSummaryVectorIndexAfterTableEdit_ACU(
         : undefined;
 
     try {
-        const result = await archiveSummaryVectorIndexNow_ACU({
+        const result = await enqueueSummaryVectorIndexFlush_ACU({
             targetMessageIndex: preferredTargetIndex,
             mode: 'sync',
-            saveChatAfterWrite: false,
+            reason: methodName,
         });
-        if (!result.success && !result.skipped) {
-            logWarn_ACU(`${methodName}: Summary vector index sync failed after editing [${tableName}]. reason=${result.reason || 'unknown'}`, result.errors || []);
+        if (!result.queued && !result.skipped) {
+            logWarn_ACU(`${methodName}: Summary vector index flush enqueue failed after editing [${tableName}]. reason=${result.reason || 'unknown'}`);
         } else {
-            logDebug_ACU(`${methodName}: Summary vector index snapshot synced after editing [${tableName}]. reason=${result.reason || 'ok'}`);
+            logDebug_ACU(`${methodName}: Summary vector index flush queued after editing [${tableName}]. queued=${result.queued}, reason=${result.reason || 'ok'}`);
         }
     } catch (error) {
-        logError_ACU(`${methodName}: Summary vector index sync threw after editing [${tableName}].`, error);
+        logError_ACU(`${methodName}: Summary vector index flush enqueue threw after editing [${tableName}].`, error);
     }
 }
 
