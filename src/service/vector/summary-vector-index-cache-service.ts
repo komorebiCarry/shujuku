@@ -1,6 +1,6 @@
 import { logDebug_ACU, logWarn_ACU } from '../../shared/utils';
-import { deleteVectorIndexCacheByIndex_ACU } from '../../data/storage/vector-index-temp-cache';
-import { deleteSummaryVectorHotCacheByIndex_ACU } from '../../data/storage/vector-index-hot-cache';
+import { clearVectorIndexTempCache_ACU, deleteVectorIndexCacheByIndex_ACU } from '../../data/storage/vector-index-temp-cache';
+import { clearSummaryVectorHotCache_ACU, deleteSummaryVectorHotCacheByIndex_ACU } from '../../data/storage/vector-index-hot-cache';
 import { getLatestSummaryVectorIndexSnapshotState_ACU } from './summary-vector-index-state-service';
 import { loadSummaryVectorIndexChunksFromManifest_ACU } from './summary-vector-index-storage-service';
 
@@ -13,6 +13,13 @@ export interface SummaryVectorIndexCachePreloadResult_ACU {
     error?: string;
     cacheCleared?: boolean;
     chatStateCleared?: boolean;
+}
+
+export async function clearAllSummaryVectorIndexCaches_ACU(): Promise<void> {
+    await Promise.all([
+        clearVectorIndexTempCache_ACU(),
+        clearSummaryVectorHotCache_ACU(),
+    ]);
 }
 
 function normalizeErrorMessage_ACU(error: unknown): string {
