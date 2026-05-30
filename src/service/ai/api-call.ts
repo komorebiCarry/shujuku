@@ -9,21 +9,45 @@ import { logDebug_ACU, logWarn_ACU } from '../../shared/utils';
 /**
  * 解析 "key=value\nkey=value" 格式字符串为 Record<string, string>
  */
-function parseKeyValueLines(raw: string): Record<string, string> {
-  const result: Record<string, string> = {};
+function parseKeyValueLines(raw: string): Record<string, any> {
+  const result: Record<string, any> = {};
   if (!raw || typeof raw !== 'string') return result;
+
+  // JSON 检测：尝试整体 parse
+  const trimmed = raw.trim();
+  if (trimmed.startsWith('{')) {
+    try {
+      const parsed = JSON.parse(trimmed);
+      if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+        return parsed as Record<string, any>;
+      }
+    } catch {
+      // 不是合法 JSON，回退到行解析
+    }
+  }
+
+  // 行解析（保持现有逻辑 + 边界加固）
   const lines = raw.split(/\n/);
   for (const line of lines) {
-    const trimmed = line.trim();
-    if (!trimmed || trimmed.startsWith('#')) continue;
-    const eqIndex = trimmed.indexOf(':');
+    const lineTrimmed = line.trim();
+    if (!lineTrimmed || lineTrimmed.startsWith('#')) continue;
+    const eqIndex = lineTrimmed.indexOf(':');
     if (eqIndex <= 0) continue;
-    const key = trimmed.slice(0, eqIndex).trim();
-    const value = trimmed.slice(eqIndex + 1).trim();
+    let key = lineTrimmed.slice(0, eqIndex).trim();
+    let value = lineTrimmed.slice(eqIndex + 1).trim();
+    // 去除 key 的引号包裹（兼容 JSON 行混入）
+    if ((key.startsWith('"') && key.endsWith('"')) || (key.startsWith("'") && key.endsWith("'"))) {
+      key = key.slice(1, -1);
+    }
+    // 去除 value 尾部逗号（兼容 JSON 行混入）
+    if (value.endsWith(',')) {
+      value = value.slice(0, -1).trimEnd();
+    }
     if (key) result[key] = value;
   }
   return result;
 }
+
 
 /**
  * 构建 Chat Completions 自定义 API 请求体（支持 bodyParams / excludeBodyParams / requestHeaders）
@@ -75,10 +99,15 @@ function buildCustomApiRequestBody_ACU(
   if (effectiveApiConfig.bodyParams) {
     const extra = parseKeyValueLines(effectiveApiConfig.bodyParams);
     for (const [k, v] of Object.entries(extra)) {
-      if (v === 'true') body[k] = true;
-      else if (v === 'false') body[k] = false;
-      else if (v !== '' && !isNaN(Number(v))) body[k] = Number(v);
-      else body[k] = v;
+      if (typeof v === 'string') {
+        if (v === 'true') body[k] = true;
+        else if (v === 'false') body[k] = false;
+        else if (v !== '' && !isNaN(Number(v))) body[k] = Number(v);
+        else body[k] = v;
+      } else {
+        // JSON 解析路径：值已是正确类型（number/boolean/object）
+        body[k] = v;
+      }
     }
   }
 
