@@ -118,7 +118,24 @@ const userscriptConfig = {
     sourcemap: false,
   },
   treeshake: false,
-  plugins: [...sharedPlugins, createTsPlugin(), createReplacePlugin()],
+  plugins: [
+    ...sharedPlugins,
+    createTsPlugin(),
+    createReplacePlugin(),
+    {
+      name: 'sync-userscript-artifacts',
+      writeBundle() {
+        const distBundle = join(__dirname, 'dist', 'index.bundle.js');
+        const rootIndex = join(__dirname, 'index.js');
+
+        if (!existsSync(distBundle)) {
+          throw new Error(`userscript 构建产物缺失: ${distBundle}`);
+        }
+
+        copyFileSync(distBundle, rootIndex);
+      },
+    },
+  ],
   external: [
     './script.js',
     './scripts/extensions.js',
