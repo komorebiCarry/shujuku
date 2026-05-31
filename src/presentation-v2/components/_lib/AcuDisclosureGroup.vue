@@ -179,6 +179,7 @@ function cleanupTransition(el: Element): void {
   flex: 0 0 10px;
   width: 10px;
   font-size: var(--acu-font-size-micro, 10px);
+  --acu-icon-color: var(--acu-text-3);
   color: var(--acu-text-3);
   transition: transform 0.15s ease;
 }

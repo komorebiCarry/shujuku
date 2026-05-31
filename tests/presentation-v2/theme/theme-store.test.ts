@@ -346,6 +346,8 @@ describe('theme-injector', () => {
     expect(style1!.textContent).toContain('scrollbar-color: color-mix(in srgb, var(--acu-text-3) 55%, transparent) transparent;');
     expect(style1!.textContent).toContain(`#${APP_ROOT_ID} ::-webkit-scrollbar-thumb`);
     expect(style1!.textContent).toContain('background: color-mix(in srgb, var(--acu-accent) 62%, var(--acu-text-3));');
+    expect(style1!.textContent).toContain(`#${APP_ROOT_ID} :is(.fa, .fas, .far, .fab, .fa-solid, .fa-regular, .fa-brands, [class^="fa-"], [class*=" fa-"])`);
+    expect(style1!.textContent).toContain('color: var(--acu-icon-color, currentColor) !important;');
 
     store.setTheme('default-light');
     m.injector.applyTheme(store.activeTheme);

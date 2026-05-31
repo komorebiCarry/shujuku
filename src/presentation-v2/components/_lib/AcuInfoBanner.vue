@@ -62,6 +62,7 @@ const iconClass = computed(() => {
   box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--acu-text-3) 18%, transparent);
 }
 .acu-info-banner--info .acu-info-banner__icon {
+  --acu-icon-color: var(--acu-text-3);
   color: var(--acu-text-3);
 }
 
@@ -70,6 +71,7 @@ const iconClass = computed(() => {
   box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--acu-accent) 18%, transparent);
 }
 .acu-info-banner--tip .acu-info-banner__icon {
+  --acu-icon-color: var(--acu-accent);
   color: var(--acu-accent);
 }
 
@@ -78,6 +80,7 @@ const iconClass = computed(() => {
   box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--acu-warning) 20%, transparent);
 }
 .acu-info-banner--warning .acu-info-banner__icon {
+  --acu-icon-color: var(--acu-warning);
   color: var(--acu-warning);
 }
 </style>

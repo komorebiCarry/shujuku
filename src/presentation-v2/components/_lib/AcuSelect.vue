@@ -117,7 +117,7 @@ onBeforeUnmount(() => {
 }
 .acu-select__label--placeholder { color: var(--acu-text-3); }
 
-.acu-select__caret { font-size: var(--acu-font-size-micro, 10px); color: var(--acu-text-3); transition: transform 0.15s ease; flex-shrink: 0; }
+.acu-select__caret { font-size: var(--acu-font-size-micro, 10px); --acu-icon-color: var(--acu-text-3); color: var(--acu-text-3); transition: transform 0.15s ease; flex-shrink: 0; }
 .acu-select__caret--open { transform: rotate(180deg); }
 
 .acu-select__menu {

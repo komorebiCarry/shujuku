@@ -51,6 +51,11 @@ ${lines.join('\n')}
 #${APP_ROOT_ID} ::-webkit-scrollbar-corner {
   background: transparent;
 }
+
+/* Keep Font Awesome icons tied to v2 component colors despite host CSS injection. */
+#${APP_ROOT_ID} :is(.fa, .fas, .far, .fab, .fa-solid, .fa-regular, .fa-brands, [class^="fa-"], [class*=" fa-"]) {
+  color: var(--acu-icon-color, currentColor) !important;
+}
 `;
 }
 
