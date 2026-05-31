@@ -50,6 +50,11 @@ interface InitialThemeState {
   customThemes: AcuV2Theme[];
 }
 
+interface SanitizedPersistedCustomThemes {
+  customThemes: AcuV2Theme[];
+  builtinOverridesByCustomId: Record<string, AcuV2BuiltinThemeId>;
+}
+
 type ThemeImportSource = AcuV2CustomThemeFile | {
   id?: unknown;
   name?: unknown;
@@ -76,8 +81,12 @@ function themeExists(id: unknown, customThemes: readonly AcuV2Theme[]): id is Ac
 function normalizePersistedActiveThemeId(
   id: unknown,
   customThemes: readonly AcuV2Theme[],
+  builtinOverridesByCustomId: Record<string, AcuV2BuiltinThemeId> = {},
 ): AcuV2ThemeId {
   if (themeExists(id, customThemes)) return id;
+  if (typeof id === 'string' && builtinOverridesByCustomId[id]) {
+    return builtinOverridesByCustomId[id];
+  }
   if (typeof id === 'string' && LEGACY_BUILTIN_THEME_ID_ALIASES[id]) {
     return LEGACY_BUILTIN_THEME_ID_ALIASES[id];
   }
@@ -138,6 +147,11 @@ function makeUniqueCustomThemeId(
   return candidate;
 }
 
+function findBuiltinThemeByName(name: string): AcuV2Theme | undefined {
+  const normalizedName = sanitizeThemeName(name);
+  return ACU_V2_BUILTIN_THEMES.find(t => sanitizeThemeName(t.name) === normalizedName);
+}
+
 function normalizeThemeSource(
   source: ThemeImportSource,
   customThemes: readonly AcuV2Theme[],
@@ -172,14 +186,20 @@ function normalizeThemeSource(
   return { id, name, colorScheme, tokens };
 }
 
-function sanitizePersistedCustomThemes(value: unknown): AcuV2Theme[] {
-  if (!Array.isArray(value)) return [];
+function sanitizePersistedCustomThemes(value: unknown): SanitizedPersistedCustomThemes {
+  if (!Array.isArray(value)) return { customThemes: [], builtinOverridesByCustomId: {} };
   const themes: AcuV2Theme[] = [];
+  const builtinOverridesByCustomId: Record<string, AcuV2BuiltinThemeId> = {};
   for (const item of value) {
     if (themes.length >= MAX_CUSTOM_THEMES) break;
     try {
       const normalized = normalizeThemeSource(item as ThemeImportSource, themes);
       if (!isSafeCustomThemeId((item as { id?: unknown })?.id)) continue;
+      const builtinOverride = findBuiltinThemeByName(normalized.name);
+      if (builtinOverride) {
+        builtinOverridesByCustomId[normalized.id] = builtinOverride.id as AcuV2BuiltinThemeId;
+        continue;
+      }
       const index = themes.findIndex(t => t.id === normalized.id);
       if (index >= 0) themes[index] = normalized;
       else themes.push(normalized);
@@ -187,13 +207,13 @@ function sanitizePersistedCustomThemes(value: unknown): AcuV2Theme[] {
       /* 忽略损坏的持久化主题，保留其余可用项。 */
     }
   }
-  return themes;
+  return { customThemes: themes, builtinOverridesByCustomId };
 }
 
 function readInitialThemeState(): InitialThemeState {
   const persisted = readSection<PersistedTheme>(SECTION_KEY);
-  const customThemes = sanitizePersistedCustomThemes(persisted?.customThemes);
-  const activeId = normalizePersistedActiveThemeId(persisted?.activeId, customThemes);
+  const { customThemes, builtinOverridesByCustomId } = sanitizePersistedCustomThemes(persisted?.customThemes);
+  const activeId = normalizePersistedActiveThemeId(persisted?.activeId, customThemes, builtinOverridesByCustomId);
   return { activeId, customThemes };
 }
 
@@ -246,6 +266,13 @@ export const useThemeStore = defineStore('acu-v2-theme', {
     importCustomThemeFromJsonText(text: string): AcuV2Theme {
       const source = parseThemeFileText(text);
       const theme = normalizeThemeSource(source, this.customThemes);
+      const builtinOverride = findBuiltinThemeByName(theme.name);
+      if (builtinOverride) {
+        this.customThemes = this.customThemes.filter(t => sanitizeThemeName(t.name) !== sanitizeThemeName(theme.name));
+        this.activeId = builtinOverride.id;
+        this.persist();
+        return builtinOverride;
+      }
       const index = this.customThemes.findIndex(t => t.id === theme.id);
       if (index >= 0) this.customThemes.splice(index, 1, theme);
       else {

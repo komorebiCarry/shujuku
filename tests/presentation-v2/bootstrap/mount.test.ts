@@ -113,6 +113,8 @@ describe('mount — 当前文档场景', () => {
     const menu = document.querySelector('.acu-v2-app__theme-menu') as HTMLElement | null;
     expect(menu).not.toBeNull();
     expect(menu!.textContent).toContain('浅色');
+    expect(menu!.textContent).toContain('地雷色');
+    expect(menu!.querySelector('[title^="内置主题不可删除"]')).toBeNull();
 
     document.body.click();
     await Promise.resolve();

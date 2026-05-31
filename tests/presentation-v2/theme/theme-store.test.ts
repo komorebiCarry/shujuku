@@ -15,6 +15,32 @@ type PersistenceModule = typeof import('../../../src/presentation-v2/stores/pers
 type HostDocModule = typeof import('../../../src/presentation-v2/bootstrap/host-document');
 type PiniaModule = typeof import('pinia');
 
+const JIRAI_TOKENS = {
+  bg0: '#2B2B2B',
+  bg1: '#1F1F1F',
+  bg2: 'rgba(255, 196, 212, 0.08)',
+  sidebarBg: '#1F1F1F',
+  hoverOverlay: 'rgba(255, 196, 212, 0.12)',
+  border: 'transparent',
+  border2: 'transparent',
+  text1: '#FFFFFF',
+  text2: 'rgba(255, 255, 255, 0.70)',
+  text3: 'rgba(255, 255, 255, 0.50)',
+  accent: '#FFC4D4',
+  accent2: '#FFD9E4',
+  onAccent: '#2B2B2B',
+  accentGlow: 'rgba(255, 196, 212, 0.25)',
+  success: '#E5A0B5',
+  warning: '#FFB38B',
+  danger: '#D96C6C',
+  fontUi: '-apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+  fontMono: 'Consolas, Menlo, Monaco, "Courier New", monospace',
+  radiusLg: '18px',
+  radiusMd: '16px',
+  radiusSm: '12px',
+  shadow: '0 8px 24px rgba(0, 0, 0, 0.45)',
+};
+
 async function freshImport(): Promise<{
   themeStore: ThemeStoreModule;
   injector: InjectorModule;
@@ -96,7 +122,7 @@ describe('theme-store', () => {
     expect(store.activeId).toBe(before);
   });
 
-  it('只暴露当前维护的三个内置主题', async () => {
+  it('只暴露当前维护的四个内置主题', async () => {
     const m = await freshImport();
     m.pinia.setActivePinia(m.pinia.createPinia());
     const store = m.themeStore.useThemeStore();
@@ -104,6 +130,7 @@ describe('theme-store', () => {
       'default-light',
       'default-dark',
       'creamy-minimal',
+      'jirai-kei',
     ]);
   });
 
@@ -135,6 +162,7 @@ describe('theme-store', () => {
       'default-light',
       'default-dark',
       'creamy-minimal',
+      'jirai-kei',
       'custom:theme',
     ]);
 
@@ -146,6 +174,66 @@ describe('theme-store', () => {
       name: '夜航主题',
       colorScheme: 'dark',
     });
+  });
+
+  it('导入同名地雷色主题时使用内置主题并移除自定义主题', async () => {
+    const m = await freshImport();
+    m.pinia.setActivePinia(m.pinia.createPinia());
+    const store = m.themeStore.useThemeStore();
+
+    const imported = store.importCustomThemeFromJsonText(JSON.stringify({
+      kind: 'acu-v2-theme',
+      version: 1,
+      theme: {
+        id: 'custom:jirai-kei',
+        name: '地雷色',
+        colorScheme: 'dark',
+        tokens: {
+          ...JIRAI_TOKENS,
+          bg0: '#000000',
+        },
+      },
+    }));
+
+    expect(imported.id).toBe('jirai-kei');
+    expect(store.activeId).toBe('jirai-kei');
+    expect(store.customThemes).toEqual([]);
+    expect(store.themes.map(t => t.id)).toEqual([
+      'default-light',
+      'default-dark',
+      'creamy-minimal',
+      'jirai-kei',
+    ]);
+    expect(store.activeTheme.tokens.bg0).toBe('#2B2B2B');
+    expect(JSON.parse(localStorage.getItem(STORAGE_KEY)!)).toEqual({
+      theme: { activeId: 'jirai-kei' },
+    });
+  });
+
+  it('localStorage 中已有同名自定义地雷色时恢复为内置主题', async () => {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify({
+      theme: {
+        activeId: 'custom:jirai-kei',
+        customThemes: [{
+          id: 'custom:jirai-kei',
+          name: '地雷色',
+          colorScheme: 'dark',
+          tokens: {
+            ...JIRAI_TOKENS,
+            bg0: '#000000',
+          },
+        }],
+      },
+    }));
+    const m = await freshImport();
+    m.pinia.setActivePinia(m.pinia.createPinia());
+    const store = m.themeStore.useThemeStore();
+
+    expect(store.activeId).toBe('jirai-kei');
+    expect(store.activeTheme.name).toBe('地雷色');
+    expect(store.activeTheme.tokens.bg0).toBe('#2B2B2B');
+    expect(store.customThemes).toEqual([]);
+    expect(store.themes.filter(t => t.name === '地雷色')).toHaveLength(1);
   });
 
   it('localStorage 中已有自定义主题时可以恢复活动主题', async () => {
@@ -320,6 +408,39 @@ describe('theme-store', () => {
     expect(store.activeId).toBe('creamy-minimal');
     expect(JSON.parse(localStorage.getItem(STORAGE_KEY)!)).toEqual({
       theme: { activeId: 'creamy-minimal' },
+    });
+  });
+
+  it('包含地雷色主题', async () => {
+    const m = await freshImport();
+    m.pinia.setActivePinia(m.pinia.createPinia());
+    const store = m.themeStore.useThemeStore();
+    const jiraiKei = store.themes.find(t => t.id === 'jirai-kei');
+    expect(jiraiKei).toMatchObject({
+      name: '地雷色',
+      colorScheme: 'dark',
+      tokens: {
+        bg0: '#2B2B2B',
+        bg1: '#1F1F1F',
+        bg2: 'rgba(255, 196, 212, 0.08)',
+        sidebarBg: '#1F1F1F',
+        border: 'transparent',
+        text1: '#FFFFFF',
+        accent: '#FFC4D4',
+        accent2: '#FFD9E4',
+        onAccent: '#2B2B2B',
+        hoverOverlay: 'rgba(255, 196, 212, 0.12)',
+        success: '#E5A0B5',
+        warning: '#FFB38B',
+        danger: '#D96C6C',
+        radiusLg: '18px',
+      },
+    });
+
+    store.setTheme('jirai-kei');
+    expect(store.activeId).toBe('jirai-kei');
+    expect(JSON.parse(localStorage.getItem(STORAGE_KEY)!)).toEqual({
+      theme: { activeId: 'jirai-kei' },
     });
   });
 });

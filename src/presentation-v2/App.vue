@@ -59,10 +59,11 @@
                         @click="exportTheme(t.id)"
                       />
                       <AcuIconButton
+                        v-if="isCustomThemeId(t.id)"
                         icon="fa-solid fa-trash"
                         size="sm"
-                        :variant="isCustomThemeId(t.id) ? 'danger' : 'default'"
-                        :title="isCustomThemeId(t.id) ? '删除自定义主题：' + t.name : '内置主题不可删除：' + t.name"
+                        variant="danger"
+                        :title="'删除自定义主题：' + t.name"
                         @click="deleteTheme(t.id)"
                       />
                     </span>
