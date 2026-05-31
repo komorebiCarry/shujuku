@@ -23,7 +23,7 @@
       <div class="acu-viz-config__columns">
         <article
           v-for="(header, index) in config.headers.value"
-          :key="`${index}-${header}`"
+          :key="`column-${index}`"
           class="acu-viz-config__column-row"
         >
           <span class="acu-viz-config__column-index">#{{ index + 1 }}</span>
@@ -278,8 +278,8 @@
             </AcuFormRow>
             <div class="acu-viz-config__column-modes">
               <article
-                v-for="header in config.headers.value"
-                :key="header"
+                v-for="(header, index) in config.headers.value"
+                :key="`extra-index-column-${index}`"
                 class="acu-viz-config__column-mode"
               >
                 <AcuCheckbox

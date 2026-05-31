@@ -9,6 +9,7 @@
     :disabled="disabled"
     @input="onInput"
     @focus="onFocus"
+    @blur="onBlur"
   ></textarea>
 </template>
 
@@ -32,6 +33,8 @@ const props = withDefaults(defineProps<{
 
 const emit = defineEmits<{
   (e: 'update:modelValue', value: string): void;
+  (e: 'focus', event: FocusEvent): void;
+  (e: 'blur', event: FocusEvent): void;
 }>();
 
 const textareaRef = ref<HTMLTextAreaElement | null>(null);
@@ -131,9 +134,14 @@ function onInput(ev: Event): void {
   emit('update:modelValue', el?.value ?? '');
 }
 
-function onFocus(): void {
+function onFocus(ev: FocusEvent): void {
   resizeTextarea();
   scheduleTextareaResize();
+  emit('focus', ev);
+}
+
+function onBlur(ev: FocusEvent): void {
+  emit('blur', ev);
 }
 
 onMounted(() => {

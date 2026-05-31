@@ -278,6 +278,12 @@
                         :rows="1"
                         :max-rows="12"
                         auto-resize
+                        @focus="
+                          startDataCellEditing(row.index, field.columnIndex)
+                        "
+                        @blur="
+                          stopDataCellEditing(row.index, field.columnIndex)
+                        "
                         @update:model-value="
                           (value) =>
                             visualizer.updateCell(
@@ -500,6 +506,10 @@ const headers = computed<string[]>(() => {
 });
 
 const VISUALIZER_SHORT_FIELD_CHAR_LIMIT = 24;
+const activeDataCell = ref<{ rowIndex: number; columnIndex: number } | null>(
+  null,
+);
+const editingColumnLayoutSnapshot = ref<boolean[] | null>(null);
 
 function isShortDataField(value: string): boolean {
   const normalized = String(value || "").trim();
@@ -519,6 +529,18 @@ function getColumnIsShort(content: any[]): boolean[] {
           String(Array.isArray(row) ? (row[columnIndex + 1] ?? "") : ""),
         ),
       ),
+  );
+}
+
+function getEffectiveColumnIsShort(content: any[]): boolean[] {
+  const columnIsShort = getColumnIsShort(content);
+  const active = activeDataCell.value;
+  const snapshot = editingColumnLayoutSnapshot.value;
+  if (!active || !snapshot || snapshot.length !== columnIsShort.length) {
+    return columnIsShort;
+  }
+  return columnIsShort.map((value, index) =>
+    index === active.columnIndex ? snapshot[index] : value,
   );
 }
 
@@ -552,12 +574,41 @@ function buildFieldLayoutRows<T extends { columnIndex: number }>(
   return result;
 }
 
+function startDataCellEditing(rowIndex: number, columnIndex: number): void {
+  activeDataCell.value = {
+    rowIndex: Math.trunc(Number(rowIndex)),
+    columnIndex: Math.trunc(Number(columnIndex)),
+  };
+  const content = visualizer.currentSheet?.content;
+  editingColumnLayoutSnapshot.value = Array.isArray(content)
+    ? getColumnIsShort(content)
+    : null;
+}
+
+function stopDataCellEditing(rowIndex: number, columnIndex: number): void {
+  const active = activeDataCell.value;
+  if (
+    !active ||
+    active.rowIndex !== Math.trunc(Number(rowIndex)) ||
+    active.columnIndex !== Math.trunc(Number(columnIndex))
+  ) {
+    return;
+  }
+  activeDataCell.value = null;
+  editingColumnLayoutSnapshot.value = null;
+}
+
+function clearDataCellEditing(): void {
+  activeDataCell.value = null;
+  editingColumnLayoutSnapshot.value = null;
+}
+
 const rows = computed(() => {
   const content = visualizer.currentSheet?.content;
   if (!Array.isArray(content)) return [];
   const sheetKey = visualizer.currentSheetKey;
   const specialIndexInfo = config.specialIndex.value;
-  const columnIsShort = getColumnIsShort(content);
+  const columnIsShort = getEffectiveColumnIsShort(content);
   return content.slice(1).map((row: any[], index: number) => {
     const fields = headers.value.map((header, columnIndex) => ({
       header,
@@ -755,6 +806,13 @@ watch(
   () => {
     if (!visualizer.isActive || visualizer.dirty) return;
     void data.loadFromCurrentContext();
+  },
+);
+
+watch(
+  () => visualizer.currentSheetKey,
+  () => {
+    clearDataCellEditing();
   },
 );
 </script>

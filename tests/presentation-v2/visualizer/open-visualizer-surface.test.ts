@@ -204,6 +204,39 @@ describe('openVisualizerSurface_ACU', () => {
     mount.__resetAcuV2MountForTests();
   });
 
+  it('数据卡片单元格输入跨布局阈值时保持 textarea 焦点', async () => {
+    persistAdvancedMode();
+    const state = await import('../../../src/service/runtime/state-manager');
+    state._set_currentJsonTableData_ACU({
+      mate: { type: 'chatSheets', version: 1 },
+      sheet_a: {
+        uid: 'sheet_a',
+        name: '角色状态',
+        orderNo: 0,
+        content: [[null, '姓名', '状态'], [null, 'A', '平静']],
+      },
+    });
+    const bridge = await import('../../../src/presentation-v2/surfaces/visualizer/open-visualizer-surface');
+    const mount = await import('../../../src/presentation-v2/bootstrap/mount');
+
+    await bridge.openVisualizerSurface_ACU({ source: 'external-api' });
+    await new Promise(r => setTimeout(r, 0));
+
+    const surface = document.querySelector('[data-acu-visualizer-surface]') as HTMLElement;
+    const statusTextarea = Array.from(surface.querySelectorAll<HTMLTextAreaElement>('textarea'))
+      .find(item => item.value === '平静')!;
+    statusTextarea.focus();
+    expect(document.activeElement).toBe(statusTextarea);
+
+    statusTextarea.value = '这是一段超过二十四个字符的状态描述，用来触发布局切换';
+    statusTextarea.dispatchEvent(new Event('input', { bubbles: true }));
+    await Promise.resolve();
+
+    expect(document.activeElement).toBe(statusTextarea);
+    expect(surface.contains(statusTextarea)).toBe(true);
+    mount.__resetAcuV2MountForTests();
+  });
+
   it('数据卡片按表格字段顺序布局，仅连续两个短字段双列显示', async () => {
     persistAdvancedMode();
     const state = await import('../../../src/service/runtime/state-manager');
@@ -300,6 +333,16 @@ describe('openVisualizerSurface_ACU', () => {
       .find(button => button.textContent?.includes('新增列'));
     expect(addColumnButton).not.toBeUndefined();
     expect(addColumnButton!.classList.contains('acu-btn--primary')).toBe(true);
+
+    const firstHeaderInput = configPanel.querySelector<HTMLInputElement>('.acu-viz-config__column-row input')!;
+    firstHeaderInput.focus();
+    expect(document.activeElement).toBe(firstHeaderInput);
+    firstHeaderInput.value = '姓';
+    firstHeaderInput.dispatchEvent(new Event('input', { bubbles: true }));
+    await Promise.resolve();
+
+    expect(document.activeElement).toBe(firstHeaderInput);
+    expect(configPanel.querySelector<HTMLInputElement>('.acu-viz-config__column-row input')).toBe(firstHeaderInput);
 
     const databaseManagementButton = Array.from(document.querySelectorAll<HTMLButtonElement>('button'))
       .find(button => button.textContent?.includes('数据库管理'));
