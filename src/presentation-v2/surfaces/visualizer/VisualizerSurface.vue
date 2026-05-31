@@ -2,6 +2,7 @@
   <main
     class="acu-visualizer-surface"
     data-acu-visualizer-surface
+    @pointerdown.capture="handleSurfacePointerDown"
   >
     <aside class="acu-visualizer-surface__sidebar" aria-label="数据库导航">
       <VisualizerNavigation
@@ -248,17 +249,25 @@
                       fieldRow.wide ? 'wide' : 'half'
                     "
                   >
-                    <label
+                    <div
                       v-for="field in fieldRow.fields"
                       :key="field.columnIndex"
                       class="acu-visualizer-surface__field"
                       :class="{
                         'is-locked': field.locked,
                         'is-special-index': field.specialIndexLocked,
+                        'is-actions-active': isFieldActionsActive(
+                          row.index,
+                          field.columnIndex,
+                        ),
                       }"
                       :data-acu-visualizer-field-layout="
                         fieldRow.wide ? 'wide' : 'half'
                       "
+                      @pointerdown="
+                        setActiveFieldActions(row.index, field.columnIndex)
+                      "
+                      @focusin="setActiveFieldActions(row.index, field.columnIndex)"
                     >
                       <span class="acu-visualizer-surface__field-label">
                         <span>{{ field.header }}</span>
@@ -271,7 +280,10 @@
                             自动编号
                           </AcuBadge>
                           <AcuIconButton
-                            v-else
+                            v-else-if="
+                              field.locked ||
+                              isFieldActionsActive(row.index, field.columnIndex)
+                            "
                             class="acu-visualizer-surface__lock-button"
                             icon="fa-solid fa-table-columns"
                             size="sm"
@@ -294,7 +306,14 @@
                             "
                           />
                           <AcuIconButton
-                            v-if="!field.specialIndexLocked"
+                            v-if="
+                              !field.specialIndexLocked &&
+                              (field.locked ||
+                                isFieldActionsActive(
+                                  row.index,
+                                  field.columnIndex,
+                                ))
+                            "
                             class="acu-visualizer-surface__lock-button"
                             icon="fa-solid fa-lock"
                             size="sm"
@@ -324,7 +343,7 @@
                         :ref="setActiveDataTextareaRef"
                         :model-value="field.value"
                         :rows="1"
-                        :max-rows="12"
+                        :aria-label="`编辑${field.header}`"
                         auto-resize
                         @focus="
                           startDataCellEditing(row.index, field.columnIndex)
@@ -348,6 +367,9 @@
                         role="button"
                         tabindex="0"
                         title="点击编辑该字段"
+                        @pointerdown.stop="
+                          startDataCellEditing(row.index, field.columnIndex)
+                        "
                         @click="
                           startDataCellEditing(row.index, field.columnIndex)
                         "
@@ -360,7 +382,7 @@
                       >
                         {{ field.value || "未填写" }}
                       </div>
-                    </label>
+                    </div>
                   </div>
                 </div>
               </article>
@@ -473,7 +495,7 @@ const isMobileNavClosing = ref(false);
 const workspaceRef = ref<HTMLElement | null>(null);
 const paginationRef = ref<HTMLElement | null>(null);
 const VISUALIZER_MOBILE_NAV_LEAVE_MS = 150;
-const VISUALIZER_DATA_PAGE_SIZE = 50;
+const VISUALIZER_DATA_PAGE_SIZE = 30;
 let mobileNavCloseTimer: ReturnType<typeof setTimeout> | undefined;
 let paginationResizeObserver: ResizeObserver | undefined;
 
@@ -586,6 +608,10 @@ const VISUALIZER_SHORT_FIELD_CHAR_LIMIT = 24;
 const activeDataCell = ref<{ rowIndex: number; columnIndex: number } | null>(
   null,
 );
+const activeFieldActions = ref<{
+  rowIndex: number;
+  columnIndex: number;
+} | null>(null);
 const activeDataTextareaRef = ref<HTMLTextAreaElement | null>(null);
 const editingColumnLayoutSnapshot = ref<boolean[] | null>(null);
 const currentDataPage = ref(1);
@@ -839,10 +865,42 @@ function isDataCellEditing(rowIndex: number, columnIndex: number): boolean {
   );
 }
 
+function setActiveFieldActions(rowIndex: number, columnIndex: number): void {
+  activeFieldActions.value = {
+    rowIndex: Math.trunc(Number(rowIndex)),
+    columnIndex: Math.trunc(Number(columnIndex)),
+  };
+}
+
+function isFieldActionsActive(rowIndex: number, columnIndex: number): boolean {
+  const active = activeFieldActions.value;
+  return (
+    !!active &&
+    active.rowIndex === Math.trunc(Number(rowIndex)) &&
+    active.columnIndex === Math.trunc(Number(columnIndex))
+  );
+}
+
+function clearFieldActions(): void {
+  activeFieldActions.value = null;
+}
+
+function handleSurfacePointerDown(event: PointerEvent): void {
+  const target = event.target;
+  if (
+    target instanceof Element &&
+    target.closest(".acu-visualizer-surface__field")
+  ) {
+    return;
+  }
+  clearFieldActions();
+}
+
 async function startDataCellEditing(
   rowIndex: number,
   columnIndex: number,
 ): Promise<void> {
+  setActiveFieldActions(rowIndex, columnIndex);
   activeDataCell.value = {
     rowIndex: Math.trunc(Number(rowIndex)),
     columnIndex: Math.trunc(Number(columnIndex)),
@@ -873,6 +931,7 @@ function clearDataCellEditing(): void {
   activeDataCell.value = null;
   activeDataTextareaRef.value = null;
   editingColumnLayoutSnapshot.value = null;
+  clearFieldActions();
 }
 
 const rows = computed(() => {
@@ -1543,14 +1602,22 @@ watch(rowCount, () => {
   background: transparent;
   transition:
     background 0.15s ease,
-    border-color 0.15s ease;
+    border-color 0.15s ease,
+    box-shadow 0.15s ease;
 }
 
 .acu-visualizer-surface__field :deep(.acu-textarea) {
   flex: 1 1 auto;
+  min-height: 34px;
+  font-size: var(--acu-font-size-body, 12px);
+  line-height: 1.45;
+  white-space: pre-wrap;
+  word-break: break-word;
+  overflow-wrap: break-word;
 }
 
 .acu-visualizer-surface__field-preview {
+  width: 100%;
   min-height: 34px;
   box-sizing: border-box;
   padding: 8px 10px;
@@ -1558,14 +1625,12 @@ watch(rowCount, () => {
   background: var(--acu-bg-2);
   color: var(--acu-text-1);
   cursor: text;
-  display: -webkit-box;
-  overflow: hidden;
+  display: block;
   font-size: var(--acu-font-size-body, 12px);
   line-height: 1.45;
   white-space: pre-wrap;
   word-break: break-word;
-  -webkit-box-orient: vertical;
-  -webkit-line-clamp: 4;
+  overflow-wrap: break-word;
   transition:
     background 0.15s ease,
     box-shadow 0.15s ease;
@@ -1586,6 +1651,7 @@ watch(rowCount, () => {
 
 .acu-visualizer-surface__field-label {
   min-width: 0;
+  min-height: 24px;
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -1604,8 +1670,10 @@ watch(rowCount, () => {
 
 .acu-visualizer-surface__field-locks {
   flex: 0 0 auto;
+  min-width: 51px;
   display: inline-flex;
   align-items: center;
+  justify-content: flex-end;
   gap: 3px;
   opacity: 0.44;
   transition: opacity 0.15s ease;
@@ -1614,6 +1682,8 @@ watch(rowCount, () => {
 .acu-visualizer-surface__field:hover .acu-visualizer-surface__field-locks,
 .acu-visualizer-surface__field:focus-within
   .acu-visualizer-surface__field-locks,
+.acu-visualizer-surface__field.is-actions-active
+  .acu-visualizer-surface__field-locks,
 .acu-visualizer-surface__field.is-locked .acu-visualizer-surface__field-locks,
 .acu-visualizer-surface__field.is-special-index
   .acu-visualizer-surface__field-locks {
@@ -1621,9 +1691,11 @@ watch(rowCount, () => {
 }
 
 .acu-visualizer-surface__field-locks :deep(.acu-icon-btn) {
+  --acu-icon-btn-size: 24px;
+  --acu-icon-btn-font-size: 11px;
   width: 24px;
   height: 24px;
-  background: transparent;
+  background: transparent !important;
 }
 
 .acu-visualizer-surface__field-locks
@@ -1642,6 +1714,10 @@ watch(rowCount, () => {
 .acu-visualizer-surface__field.is-locked {
   border-color: var(--acu-border);
   background: color-mix(in srgb, var(--acu-warning) 8%, transparent);
+}
+
+.acu-visualizer-surface__field.is-actions-active:not(.is-locked) {
+  background: color-mix(in srgb, var(--acu-accent) 6%, transparent);
 }
 
 .acu-visualizer-surface__footer {

@@ -35,38 +35,94 @@ defineEmits<{
 
 <style scoped>
 .acu-icon-btn {
-  display: inline-flex; align-items: center; justify-content: center;
-  border: 0; background: transparent;
-  color: var(--acu-text-2);
-  border-radius: var(--acu-radius-sm);
+  --acu-icon-btn-size: 32px;
+  --acu-icon-btn-font-size: var(--acu-font-size-body-lg, 13px);
+  appearance: none !important;
+  -webkit-appearance: none !important;
+  flex: 0 0 auto;
+  display: inline-flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  width: var(--acu-icon-btn-size) !important;
+  min-width: var(--acu-icon-btn-size) !important;
+  max-width: var(--acu-icon-btn-size) !important;
+  height: var(--acu-icon-btn-size) !important;
+  min-height: var(--acu-icon-btn-size) !important;
+  max-height: var(--acu-icon-btn-size) !important;
+  box-sizing: border-box !important;
+  margin: 0 !important;
+  padding: 0 !important;
+  border: 0 !important;
+  background: transparent !important;
+  color: var(--acu-text-2) !important;
+  border-radius: var(--acu-radius-sm) !important;
   cursor: pointer;
+  font: inherit !important;
+  font-size: var(--acu-icon-btn-font-size) !important;
+  line-height: 1 !important;
+  text-align: center !important;
+  vertical-align: middle !important;
+  box-shadow: none !important;
+  outline: none !important;
+  -webkit-tap-highlight-color: transparent;
   transition: background 0.15s ease, color 0.15s ease, border-color 0.15s ease;
 }
 
-.acu-icon-btn--md { width: 32px; height: 32px; font-size: var(--acu-font-size-body-lg, 13px); }
-.acu-icon-btn--sm { width: 22px; height: 22px; font-size: var(--acu-font-size-micro, 10px); background: var(--acu-bg-2); }
+.acu-icon-btn > i {
+  flex: 0 0 auto !important;
+  display: inline-block !important;
+  width: 1em !important;
+  min-width: 1em !important;
+  height: 1em !important;
+  min-height: 1em !important;
+  color: inherit !important;
+  font-size: inherit !important;
+  line-height: 1 !important;
+  text-align: center !important;
+  vertical-align: -0.125em !important;
+}
+
+.acu-icon-btn > i::before {
+  display: block !important;
+  width: 1em !important;
+  height: 1em !important;
+  color: inherit !important;
+  font-size: inherit !important;
+  line-height: 1 !important;
+}
+
+.acu-icon-btn--md {
+  --acu-icon-btn-size: 32px;
+  --acu-icon-btn-font-size: var(--acu-font-size-body-lg, 13px);
+}
+
+.acu-icon-btn--sm {
+  --acu-icon-btn-size: 22px;
+  --acu-icon-btn-font-size: var(--acu-font-size-micro, 10px);
+  background: var(--acu-bg-2) !important;
+}
 
 .acu-icon-btn--default:hover:not(:disabled) {
-  background: linear-gradient(var(--acu-hover-overlay), var(--acu-hover-overlay)), var(--acu-bg-2);
-  color: var(--acu-text-1);
+  background: linear-gradient(var(--acu-hover-overlay), var(--acu-hover-overlay)), var(--acu-bg-2) !important;
+  color: var(--acu-text-1) !important;
 }
 
 .acu-icon-btn--danger:hover:not(:disabled) {
-  color: var(--acu-danger);
-  background: color-mix(in srgb, var(--acu-danger) 12%, transparent);
+  color: var(--acu-danger) !important;
+  background: color-mix(in srgb, var(--acu-danger) 12%, transparent) !important;
 }
 
 .acu-icon-btn--accent {
-  background: var(--acu-bg-2);
-  color: var(--acu-text-1);
+  background: var(--acu-bg-2) !important;
+  color: var(--acu-text-1) !important;
 }
 .acu-icon-btn--accent:hover:not(:disabled) {
-  background: var(--acu-accent-glow); color: var(--acu-accent);
+  background: var(--acu-accent-glow) !important; color: var(--acu-accent) !important;
 }
 
 .acu-icon-btn:focus-visible {
-  outline: none;
-  box-shadow: 0 0 0 2px var(--acu-accent-glow);
+  outline: none !important;
+  box-shadow: 0 0 0 2px var(--acu-accent-glow) !important;
 }
 
 .acu-icon-btn:disabled { opacity: 0.4; cursor: not-allowed; }

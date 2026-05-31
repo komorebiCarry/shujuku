@@ -213,6 +213,7 @@ describe('mount — 父文档场景（iframe 模拟）', () => {
     parentDom = new JSDOM('<!doctype html><html><head></head><body></body></html>');
     setParent(parentDom.window);
     document.body.innerHTML = '';
+    localStorage.clear();
   });
 
   afterEach(() => {
@@ -243,6 +244,36 @@ describe('mount — 父文档场景（iframe 模拟）', () => {
       `style[${STYLE_DATA_ATTR}]`,
     );
     expect(childStyles.length).toBe(0);
+
+    mount.__resetAcuV2MountForTests();
+  });
+
+  it('父文档挂载时，Vue 创建的表单控件属于父文档 realm', async () => {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify({
+      uiMode: { mode: 'advanced' },
+      router: { activePageId: 'api' },
+    }));
+
+    const { mount } = await freshImport();
+    await mount.openAcuV2App();
+
+    const pinia = mount.getAcuV2PiniaForBridge();
+    expect(pinia).not.toBeNull();
+    const { useDialogStore } = await import('../../../src/presentation-v2/stores/dialog-store');
+    void useDialogStore(pinia!).prompt({
+      title: '测试输入框',
+      message: '用于确认父文档挂载节点的 realm。',
+      label: '名称',
+      requireNonEmpty: false,
+    });
+    await nextTick();
+
+    const parentDoc = parentDom.window.document;
+    const input = parentDoc.querySelector('input.acu-input') as HTMLInputElement | null;
+    expect(input).not.toBeNull();
+    expect(input!.ownerDocument).toBe(parentDoc);
+    expect(input!).toBeInstanceOf(parentDom.window.HTMLInputElement);
+    expect(input!).not.toBeInstanceOf(window.HTMLInputElement);
 
     mount.__resetAcuV2MountForTests();
   });

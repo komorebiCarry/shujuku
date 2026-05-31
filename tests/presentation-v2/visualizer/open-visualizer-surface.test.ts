@@ -290,7 +290,9 @@ describe('openVisualizerSurface_ACU', () => {
 
   it('大表数据区只渲染当前页，单元格点击后才挂载 textarea', async () => {
     persistAdvancedMode();
-    const rows = Array.from({ length: 120 }, (_, index) => {
+    const pageSize = 30;
+    const totalRows = 120;
+    const rows = Array.from({ length: totalRows }, (_, index) => {
       const rowNo = index + 1;
       return [null, `A${rowNo}`, `状态 ${rowNo}`];
     });
@@ -313,11 +315,11 @@ describe('openVisualizerSurface_ACU', () => {
 
     const surface = document.querySelector('[data-acu-visualizer-surface]') as HTMLElement;
     let cards = Array.from(surface.querySelectorAll<HTMLElement>('.acu-visualizer-surface__data-card'));
-    expect(cards).toHaveLength(50);
+    expect(cards).toHaveLength(pageSize);
     expect(cards[0].textContent).toContain('#1');
-    expect(cards[49].textContent).toContain('#50');
+    expect(cards[pageSize - 1].textContent).toContain(`#${pageSize}`);
     expect(surface.querySelectorAll('textarea')).toHaveLength(0);
-    expect(surface.textContent).toContain('第 1-50 行 / 共 120 行');
+    expect(surface.textContent).toContain(`第 1-${pageSize} 行 / 共 ${totalRows} 行`);
     expect(surface.textContent).not.toContain('上一页');
     expect(surface.textContent).not.toContain('下一页');
 
@@ -327,10 +329,10 @@ describe('openVisualizerSurface_ACU', () => {
     await new Promise(r => setTimeout(r, 0));
 
     cards = Array.from(surface.querySelectorAll<HTMLElement>('.acu-visualizer-surface__data-card'));
-    expect(cards).toHaveLength(50);
-    expect(cards[0].textContent).toContain('#51');
-    expect(cards[49].textContent).toContain('#100');
-    expect(surface.textContent).toContain('第 51-100 行 / 共 120 行');
+    expect(cards).toHaveLength(pageSize);
+    expect(cards[0].textContent).toContain(`#${pageSize + 1}`);
+    expect(cards[pageSize - 1].textContent).toContain(`#${pageSize * 2}`);
+    expect(surface.textContent).toContain(`第 ${pageSize + 1}-${pageSize * 2} 行 / 共 ${totalRows} 行`);
     expect(surface.querySelectorAll('textarea')).toHaveLength(0);
 
     const jumpInput = surface.querySelector<HTMLInputElement>('.acu-visualizer-surface__page-jump input')!;
@@ -339,10 +341,10 @@ describe('openVisualizerSurface_ACU', () => {
     await new Promise(r => setTimeout(r, 0));
 
     cards = Array.from(surface.querySelectorAll<HTMLElement>('.acu-visualizer-surface__data-card'));
-    expect(cards).toHaveLength(20);
-    expect(cards[0].textContent).toContain('#101');
-    expect(cards[19].textContent).toContain('#120');
-    expect(surface.textContent).toContain('第 101-120 行 / 共 120 行');
+    expect(cards).toHaveLength(pageSize);
+    expect(cards[0].textContent).toContain(`#${pageSize * 2 + 1}`);
+    expect(cards[pageSize - 1].textContent).toContain(`#${pageSize * 3}`);
+    expect(surface.textContent).toContain(`第 ${pageSize * 2 + 1}-${pageSize * 3} 行 / 共 ${totalRows} 行`);
 
     jumpInput.value = '2';
     jumpInput.dispatchEvent(new Event('input', { bubbles: true }));
@@ -388,7 +390,10 @@ describe('openVisualizerSurface_ACU', () => {
     });
 
     try {
-      const rows = Array.from({ length: 1050 }, (_, index) => {
+      const pageSize = 30;
+      const totalRows = 1050;
+      const lastPage = Math.ceil(totalRows / pageSize);
+      const rows = Array.from({ length: totalRows }, (_, index) => {
         const rowNo = index + 1;
         return [null, `A${rowNo}`, `状态 ${rowNo}`];
       });
@@ -416,7 +421,7 @@ describe('openVisualizerSurface_ACU', () => {
 
       const buttonLabels = Array.from(surface.querySelectorAll<HTMLButtonElement>('.acu-visualizer-surface__page-button'))
         .map(button => button.textContent?.trim());
-      expect(buttonLabels).toEqual(['1', '...', '4', '5', '6', '...', '21']);
+      expect(buttonLabels).toEqual(['1', '...', '4', '5', '6', '...', String(lastPage)]);
       expect(jumpInput.value).toBe('5');
 
       const ellipsisButtons = Array.from(surface.querySelectorAll<HTMLButtonElement>('.acu-visualizer-surface__page-button'))
@@ -426,7 +431,7 @@ describe('openVisualizerSurface_ACU', () => {
 
       const nextGroupLabels = Array.from(surface.querySelectorAll<HTMLButtonElement>('.acu-visualizer-surface__page-button'))
         .map(button => button.textContent?.trim());
-      expect(nextGroupLabels).toEqual(['1', '...', '7', '8', '9', '...', '21']);
+      expect(nextGroupLabels).toEqual(['1', '...', '7', '8', '9', '...', String(lastPage)]);
       expect(jumpInput.value).toBe('8');
 
       mount.__resetAcuV2MountForTests();

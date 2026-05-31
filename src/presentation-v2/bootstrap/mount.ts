@@ -7,7 +7,7 @@
  * - 应用生命周期：首次打开惰性创建 + mount，后续打开/关闭只切换 display；
  *   根 Vue app 与 Pinia 保留，当前页面组件在重开时由 MainArea key remount。
  */
-import { createApp, type App as VueApp } from 'vue';
+import type { App as VueApp } from 'vue';
 import { createPinia, type Pinia } from 'pinia';
 import { logDebug_ACU } from '../../shared/utils';
 import { setSfcStyleHost } from '../build/sfc-style-runtime';
@@ -21,6 +21,7 @@ import {
   getAcuHostDocument,
   getAcuHostSource,
 } from './host-document';
+import { createHostDocumentApp, __resetHostRendererForTests } from './host-renderer';
 
 const ROOT_ID = 'acu-app-v2';
 
@@ -48,11 +49,14 @@ function ensureMounted(): MountedState {
   }
 
   const pinia = createPinia();
-  const vueApp = createApp(App, {
+  root.textContent = '';
+  const vueApp = createHostDocumentApp(App, {
     onClose: () => closeAcuV2App(),
-  });
+  }, doc);
   vueApp.use(pinia);
   vueApp.mount(root);
+  root.removeAttribute('v-cloak');
+  root.setAttribute('data-v-app', '');
 
   // 主题：先应用一次 + 订阅后续变更，确保切主题立刻刷新 <style>
   const themeStore = useThemeStore(pinia);
@@ -107,4 +111,5 @@ export function __resetAcuV2MountForTests(): void {
   }
   __resetUiCloseGuardsForTests();
   __resetHostDocumentCacheForTests();
+  __resetHostRendererForTests();
 }
