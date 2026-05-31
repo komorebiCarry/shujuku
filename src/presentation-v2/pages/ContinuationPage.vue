@@ -167,7 +167,7 @@ const loop = useContinuationLoop();
 
 function refreshAll(): void {
   store.refreshFromSettings();
-  loop.refreshStatus();
+  loop.syncFromLoopState();
 }
 
 onMounted(refreshAll);

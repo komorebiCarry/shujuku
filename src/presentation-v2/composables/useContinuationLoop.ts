@@ -6,18 +6,20 @@ import {
   validateLoopStartParams_ACU,
 } from '../../service/loop/loop-controller';
 import { loopState_ACU } from '../../service/runtime/state-manager';
+import { getAcuHostDocument } from '../bootstrap/host-document';
 import { useToastStore } from '../stores/toast-store';
 
 function setSendTextareaValue(text: string): boolean {
-  const input = document.querySelector<HTMLTextAreaElement>('#send_textarea');
+  const input = getAcuHostDocument().querySelector<HTMLTextAreaElement>('#send_textarea');
   if (!input) return false;
   input.value = text;
-  input.dispatchEvent(new Event('input', { bubbles: true }));
+  const EventCtor = input.ownerDocument.defaultView?.Event ?? Event;
+  input.dispatchEvent(new EventCtor('input', { bubbles: true }));
   return true;
 }
 
 function clickSendButton(): boolean {
-  const button = document.querySelector<HTMLElement>('#send_but');
+  const button = getAcuHostDocument().querySelector<HTMLElement>('#send_but');
   if (!button) return false;
   button.click();
   return true;
@@ -27,19 +29,33 @@ export function useContinuationLoop() {
   const toast = useToastStore();
   const running = ref(loopState_ACU.isLooping);
   const timerText = ref('');
+  let displayInterval: ReturnType<typeof window.setInterval> | null = null;
 
   function refreshStatus(): void {
     running.value = loopState_ACU.isLooping;
   }
 
+  function getRemainingMs(): number | null {
+    if (!loopState_ACU.isLooping || !loopState_ACU.startTime || !loopState_ACU.totalDuration) {
+      return null;
+    }
+    return Math.max(0, loopState_ACU.totalDuration - (Date.now() - loopState_ACU.startTime));
+  }
+
+  function clearDisplayTick(): void {
+    if (displayInterval) {
+      window.clearInterval(displayInterval);
+      displayInterval = null;
+    }
+  }
+
   function updateTimer(): void {
     refreshStatus();
-    if (!loopState_ACU.isLooping || !loopState_ACU.startTime || !loopState_ACU.totalDuration) {
+    const remaining = getRemainingMs();
+    if (remaining === null) {
       timerText.value = '';
       return;
     }
-    const elapsed = Date.now() - loopState_ACU.startTime;
-    const remaining = Math.max(0, loopState_ACU.totalDuration - elapsed);
     if (remaining <= 0) {
       stop();
       toast.info('总时长已结束，智能续写已停止。', { muteable: false });
@@ -50,10 +66,40 @@ export function useContinuationLoop() {
     timerText.value = `${minutes}:${seconds.toString().padStart(2, '0')}`;
   }
 
-  function startTick(): void {
-    if (loopState_ACU.tickInterval) clearInterval(loopState_ACU.tickInterval);
+  function startDisplayTick(): void {
+    clearDisplayTick();
     updateTimer();
-    loopState_ACU.tickInterval = setInterval(updateTimer, 1000);
+    if (getRemainingMs() !== null) {
+      displayInterval = window.setInterval(updateTimer, 1000);
+    }
+  }
+
+  function ensureDurationGuardTick(): void {
+    if (loopState_ACU.tickInterval) return;
+    loopState_ACU.tickInterval = setInterval(() => {
+      const remaining = getRemainingMs();
+      if (remaining === null) {
+        if (loopState_ACU.tickInterval) {
+          clearInterval(loopState_ACU.tickInterval);
+          loopState_ACU.tickInterval = null;
+        }
+        return;
+      }
+      if (remaining <= 0) {
+        stopLoopState_ACU();
+      }
+    }, 1000);
+  }
+
+  function syncFromLoopState(): void {
+    refreshStatus();
+    if (getRemainingMs() === null) {
+      clearDisplayTick();
+      timerText.value = '';
+      return;
+    }
+    ensureDurationGuardTick();
+    startDisplayTick();
   }
 
   function triggerNextPrompt(): void {
@@ -88,17 +134,20 @@ export function useContinuationLoop() {
     initLoopState_ACU();
     toast.success('智能续写已启动。', { muteable: false });
     refreshStatus();
-    startTick();
+    ensureDurationGuardTick();
+    startDisplayTick();
     triggerNextPrompt();
   }
 
   function stop(): void {
     stopLoopState_ACU();
+    clearDisplayTick();
     timerText.value = '';
     refreshStatus();
   }
 
   onBeforeUnmount(() => {
+    clearDisplayTick();
     refreshStatus();
   });
 
@@ -109,5 +158,6 @@ export function useContinuationLoop() {
     start,
     stop,
     refreshStatus,
+    syncFromLoopState,
   };
 }
