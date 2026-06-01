@@ -121,7 +121,7 @@ onBeforeUnmount(() => {
 .acu-preset-dd__trigger:disabled { opacity: 0.5; cursor: not-allowed; }
 .acu-preset-dd--disabled { pointer-events: none; opacity: 0.5; }
 .acu-preset-dd__label { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; text-align: left; }
-.acu-preset-dd__caret { font-size: var(--acu-font-size-micro, 10px); color: var(--acu-text-3); transition: transform 0.15s ease; }
+.acu-preset-dd__caret { font-size: var(--acu-font-size-micro, 10px); --acu-icon-color: var(--acu-text-3); color: var(--acu-text-3); transition: transform 0.15s ease; }
 .acu-preset-dd__caret--open { transform: rotate(180deg); }
 .acu-preset-dd__menu {
   position: absolute; top: calc(100% + 4px); left: 0; right: 0; z-index: 100;
@@ -148,7 +148,7 @@ onBeforeUnmount(() => {
 .acu-preset-dd__star--active { color: var(--acu-text-1); }
 .acu-preset-dd__item--active .acu-preset-dd__item-meta,
 .acu-preset-dd__item--active .acu-preset-dd__star,
-.acu-preset-dd__item--active .acu-preset-dd__check { color: var(--acu-on-accent); }
-.acu-preset-dd__check { font-size: var(--acu-font-size-caption, 11px); color: var(--acu-text-1); }
+.acu-preset-dd__item--active .acu-preset-dd__check { --acu-icon-color: var(--acu-on-accent); color: var(--acu-on-accent); }
+.acu-preset-dd__check { font-size: var(--acu-font-size-caption, 11px); --acu-icon-color: var(--acu-text-1); color: var(--acu-text-1); }
 .acu-preset-dd__empty { padding: 12px; text-align: center; color: var(--acu-text-3); font-size: var(--acu-font-size-body, 12px); }
 </style>

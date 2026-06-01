@@ -99,10 +99,42 @@ export const THEME_CREAMY_MINIMAL: AcuV2Theme = {
   },
 };
 
+export const THEME_JIRAI_KEI: AcuV2Theme = {
+  id: "jirai-kei",
+  name: "地雷色",
+  colorScheme: "dark",
+  tokens: {
+    bg0: "#2B2B2B",
+    bg1: "#1F1F1F",
+    bg2: "rgba(255, 196, 212, 0.08)",
+    sidebarBg: "#1F1F1F",
+    hoverOverlay: "rgba(255, 196, 212, 0.12)",
+    border: "transparent",
+    border2: "transparent",
+    text1: "#FFFFFF",
+    text2: "rgba(255, 255, 255, 0.70)",
+    text3: "rgba(255, 255, 255, 0.50)",
+    accent: "#FFC4D4",
+    accent2: "#FFD9E4",
+    onAccent: "#2B2B2B",
+    accentGlow: "rgba(255, 196, 212, 0.25)",
+    success: "#E5A0B5",
+    warning: "#FFB38B",
+    danger: "#D96C6C",
+    fontUi: '-apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    fontMono: 'Consolas, Menlo, Monaco, "Courier New", monospace',
+    radiusLg: "18px",
+    radiusMd: "16px",
+    radiusSm: "12px",
+    shadow: "0 8px 24px rgba(0, 0, 0, 0.45)",
+  },
+};
+
 export const ACU_V2_BUILTIN_THEMES: readonly AcuV2Theme[] = [
   THEME_DEFAULT_LIGHT,
   THEME_DEFAULT_DARK,
   THEME_CREAMY_MINIMAL,
+  THEME_JIRAI_KEI,
 ];
 
 export const ACU_V2_DEFAULT_THEME_ID = THEME_DEFAULT_DARK.id;

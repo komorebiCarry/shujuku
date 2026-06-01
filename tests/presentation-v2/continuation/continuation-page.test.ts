@@ -4,8 +4,23 @@
  * @vitest-environment jsdom
  */
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { JSDOM } from 'jsdom';
 
 const STORAGE_KEY = 'acu_v2_ui_state';
+
+function setParent(parent: any) {
+  Object.defineProperty(window, 'parent', {
+    value: parent,
+    writable: true,
+    configurable: true,
+  });
+}
+
+function stopContinuationLoop(doc: Document = document): void {
+  const stopButton = Array.from(doc.querySelectorAll('button'))
+    .find(button => (button.textContent || '').includes('停止智能续写')) as HTMLButtonElement | undefined;
+  stopButton?.click();
+}
 
 function createSettings() {
   return {
@@ -30,12 +45,23 @@ function createSettings() {
   } as any;
 }
 
-async function mountContinuationPage(settings = createSettings()) {
+async function mountContinuationPage(settings = createSettings(), loopStateOverrides: Record<string, any> = {}) {
   vi.resetModules();
   document.body.innerHTML = '';
   document.head.innerHTML = '';
   localStorage.setItem(STORAGE_KEY, JSON.stringify({ router: { activePageId: 'continuation' } }));
   const saveSettings = vi.fn(() => ({ saved: true }));
+  const loopState = {
+    isLooping: false,
+    isRetrying: false,
+    timerId: null,
+    retryCount: 0,
+    startTime: 0,
+    totalDuration: 0,
+    tickInterval: null,
+    awaitingReply: false,
+    ...loopStateOverrides,
+  };
 
   vi.doMock('../../../src/service/runtime/state-manager', () => ({
     settings_ACU: settings,
@@ -43,16 +69,7 @@ async function mountContinuationPage(settings = createSettings()) {
     currentJsonTableData_ACU: null,
     getCurrentIsolationKey_ACU: () => '',
     coreApisAreReady_ACU: true,
-    loopState_ACU: {
-      isLooping: false,
-      isRetrying: false,
-      timerId: null,
-      retryCount: 0,
-      startTime: 0,
-      totalDuration: 0,
-      tickInterval: null,
-      awaitingReply: false,
-    },
+    loopState_ACU: loopState,
   }));
   vi.doMock('../../../src/service/settings/settings-service', () => ({
     saveSettings_ACU: saveSettings,
@@ -82,6 +99,14 @@ async function mountContinuationPage(settings = createSettings()) {
       }),
       stopLoopState_ACU: vi.fn(() => {
         state.loopState_ACU.isLooping = false;
+        if (state.loopState_ACU.timerId) {
+          clearTimeout(state.loopState_ACU.timerId);
+          state.loopState_ACU.timerId = null;
+        }
+        if (state.loopState_ACU.tickInterval) {
+          clearInterval(state.loopState_ACU.tickInterval);
+          state.loopState_ACU.tickInterval = null;
+        }
       }),
       getNextLoopPrompt_ACU: vi.fn(() => settings.plotSettings.loopSettings.quickReplyContent[0]),
     };
@@ -90,10 +115,11 @@ async function mountContinuationPage(settings = createSettings()) {
   const mount = await import('../../../src/presentation-v2/bootstrap/mount');
   await mount.openAcuV2App();
   await new Promise(r => setTimeout(r, 0));
-  return { mount, settings, saveSettings };
+  return { mount, settings, saveSettings, loopState };
 }
 
 beforeEach(() => {
+  setParent(window);
   localStorage.clear();
   vi.restoreAllMocks();
   vi.unstubAllGlobals();
@@ -175,6 +201,82 @@ describe('ContinuationPage', () => {
     expect(sendSpy).toHaveBeenCalled();
     expect((document.querySelector('.acu-v2-continuation-page__status') as HTMLElement).textContent || '').toContain('运行中');
 
+    stopContinuationLoop();
+    mount.__resetAcuV2MountForTests();
+  });
+
+  it('父文档挂载时点击开始会写入宿主酒馆输入框', async () => {
+    const parentDom = new JSDOM('<!doctype html><html><head></head><body></body></html>');
+    setParent(parentDom.window);
+    const { mount } = await mountContinuationPage();
+    const parentDoc = parentDom.window.document;
+
+    const textarea = parentDoc.createElement('textarea');
+    textarea.id = 'send_textarea';
+    parentDoc.body.appendChild(textarea);
+    const sendButton = parentDoc.createElement('button');
+    sendButton.id = 'send_but';
+    const sendSpy = vi.fn();
+    sendButton.addEventListener('click', sendSpy);
+    parentDoc.body.appendChild(sendButton);
+
+    const startButton = Array.from(parentDoc.querySelectorAll('button'))
+      .find(button => (button.textContent || '').includes('开始智能续写')) as HTMLButtonElement | undefined;
+    expect(startButton).not.toBeUndefined();
+    startButton!.click();
+    await new Promise(r => setTimeout(r, 150));
+
+    expect(textarea.value).toBe('继续推进剧情');
+    expect(sendSpy).toHaveBeenCalled();
+
+    stopContinuationLoop(parentDoc);
+    mount.__resetAcuV2MountForTests();
+    parentDom.window.close();
+    setParent(window);
+  });
+
+  it('打开页面时会从已有循环状态恢复倒计时', async () => {
+    const { mount } = await mountContinuationPage(createSettings(), {
+      isLooping: true,
+      startTime: Date.now() - 30_000,
+      totalDuration: 20 * 60 * 1000,
+    });
+
+    const statusText = (document.querySelector('.acu-v2-continuation-page__status') as HTMLElement).textContent || '';
+    expect(statusText).toContain('运行中');
+    expect(statusText).toContain('剩余');
+
+    stopContinuationLoop();
+    mount.__resetAcuV2MountForTests();
+  });
+
+  it('关闭新 UI 后重开会恢复倒计时显示', async () => {
+    const { mount } = await mountContinuationPage();
+
+    const textarea = document.createElement('textarea');
+    textarea.id = 'send_textarea';
+    document.body.appendChild(textarea);
+    const sendButton = document.createElement('button');
+    sendButton.id = 'send_but';
+    document.body.appendChild(sendButton);
+
+    const startButton = Array.from(document.querySelectorAll('button'))
+      .find(button => (button.textContent || '').includes('开始智能续写')) as HTMLButtonElement | undefined;
+    startButton!.click();
+    await Promise.resolve();
+
+    expect((document.querySelector('.acu-v2-continuation-page__status') as HTMLElement).textContent || '').toContain('剩余');
+
+    mount.closeAcuV2App();
+    await Promise.resolve();
+    await mount.openAcuV2App();
+    await new Promise(r => setTimeout(r, 0));
+
+    const reopenedStatusText = (document.querySelector('.acu-v2-continuation-page__status') as HTMLElement).textContent || '';
+    expect(reopenedStatusText).toContain('运行中');
+    expect(reopenedStatusText).toContain('剩余');
+
+    stopContinuationLoop();
     mount.__resetAcuV2MountForTests();
   });
 });

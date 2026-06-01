@@ -59,10 +59,11 @@
                         @click="exportTheme(t.id)"
                       />
                       <AcuIconButton
+                        v-if="isCustomThemeId(t.id)"
                         icon="fa-solid fa-trash"
                         size="sm"
-                        :variant="isCustomThemeId(t.id) ? 'danger' : 'default'"
-                        :title="isCustomThemeId(t.id) ? '删除自定义主题：' + t.name : '内置主题不可删除：' + t.name"
+                        variant="danger"
+                        :title="'删除自定义主题：' + t.name"
                         @click="deleteTheme(t.id)"
                       />
                     </span>
@@ -155,7 +156,7 @@ let themeMenuCloseTimer: ReturnType<typeof setTimeout> | undefined;
 let mobileNavCloseTimer: ReturnType<typeof setTimeout> | undefined;
 
 const shellTitle = computed(() =>
-  visualizer.isActive ? "数据库编辑器" : router.activePage?.title || "SP·数据库 IV",
+  visualizer.isActive ? "数据库编辑器" : router.activePage?.title || "SP·数据库 III",
 );
 
 function toggleThemeMenu(): void {

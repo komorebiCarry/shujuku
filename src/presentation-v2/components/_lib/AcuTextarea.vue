@@ -9,6 +9,7 @@
     :disabled="disabled"
     @input="onInput"
     @focus="onFocus"
+    @blur="onBlur"
   ></textarea>
 </template>
 
@@ -32,6 +33,8 @@ const props = withDefaults(defineProps<{
 
 const emit = defineEmits<{
   (e: 'update:modelValue', value: string): void;
+  (e: 'focus', event: FocusEvent): void;
+  (e: 'blur', event: FocusEvent): void;
 }>();
 
 const textareaRef = ref<HTMLTextAreaElement | null>(null);
@@ -131,9 +134,14 @@ function onInput(ev: Event): void {
   emit('update:modelValue', el?.value ?? '');
 }
 
-function onFocus(): void {
+function onFocus(ev: FocusEvent): void {
   resizeTextarea();
   scheduleTextareaResize();
+  emit('focus', ev);
+}
+
+function onBlur(ev: FocusEvent): void {
+  emit('blur', ev);
 }
 
 onMounted(() => {
@@ -164,29 +172,40 @@ watch(
 
 <style scoped>
 .acu-textarea {
-  width: 100%;
-  box-sizing: border-box;
-  padding: 8px 10px;
+  appearance: none !important;
+  -webkit-appearance: none !important;
+  display: block !important;
+  width: 100% !important;
+  min-width: 0 !important;
+  box-sizing: border-box !important;
+  margin: 0 !important;
+  padding: 8px 10px !important;
   border: 0 !important;
-  border-radius: var(--acu-radius-sm);
+  border-radius: var(--acu-radius-sm) !important;
   background: var(--acu-bg-2) !important;
   color: var(--acu-text-1) !important;
-  font: inherit;
-  font-size: var(--acu-font-size-body, 12px);
-  line-height: 1.45;
+  font: inherit !important;
+  font-size: var(--acu-font-size-body, 12px) !important;
+  line-height: 1.45 !important;
+  letter-spacing: 0 !important;
+  text-align: start !important;
   resize: none !important;
+  outline: none !important;
+  box-shadow: none !important;
+  caret-color: var(--acu-text-1);
+  -webkit-tap-highlight-color: transparent;
   transition: background 0.15s ease, box-shadow 0.15s ease;
 }
 .acu-textarea--auto-resize {
-  overflow-x: hidden;
+  overflow-x: hidden !important;
   overflow-y: auto;
 }
 .acu-textarea:hover:not(:disabled) {
   background: linear-gradient(var(--acu-hover-overlay), var(--acu-hover-overlay)), var(--acu-bg-2) !important;
 }
 .acu-textarea:focus {
-  outline: none;
-  box-shadow: 0 0 0 2px var(--acu-accent-glow);
+  outline: none !important;
+  box-shadow: 0 0 0 2px var(--acu-accent-glow) !important;
 }
 .acu-textarea:disabled {
   opacity: 0.5; cursor: not-allowed;
