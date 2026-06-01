@@ -5,7 +5,7 @@
 
 import { getChatArray_ACU, saveChatToHost_ACU } from '../../data/gateways/chat-gateway';
 import { logDebug_ACU, logError_ACU, logWarn_ACU, parseTableTemplateJson_ACU } from '../../shared/utils';
-import { currentJsonTableData_ACU, getCurrentIsolationKey_ACU, settings_ACU, _set_currentJsonTableData_ACU } from '../runtime/state-manager';
+import { currentChatFileIdentifier_ACU, currentJsonTableData_ACU, getCurrentIsolationKey_ACU, settings_ACU, _set_currentJsonTableData_ACU } from '../runtime/state-manager';
 import { applyTemplateScopeForCurrentChat_ACU } from '../settings/settings-service';
 import {
   attachSeedRowsToCurrentDataFromGuide_ACU,
@@ -20,6 +20,7 @@ import { deleteAllGeneratedEntries_ACU } from '../worldbook/pipeline';
 import { mergeAllIndependentTables_ACU } from '../runtime/helpers-remaining';
 import { cloneIsolatedData_ACU, writeIsolatedTagData_ACU, writeMessageIdentity_ACU, readIsolatedTagData_ACU, readLegacyIndependentData_ACU, isLegacyMatchForIsolation_ACU } from '../../data/repositories/chat-message-data-repo';
 import { applyTableDelta_ACU, buildTableDelta_ACU, isDeltaTagData_ACU } from './table-delta';
+import { buildTableUpdateApplyScopeKey_ACU, runTableUpdateApplyWithScopeLock_ACU } from './table-update-queue';
 
 export interface TableChatPersistOptions_ACU {
   targetMessageIndex?: number;
@@ -36,6 +37,13 @@ export interface TableChatPersistOptions_ACU {
 
 export async function persistTablesToChatMessage_ACU(
   options: TableChatPersistOptions_ACU = {},
+): Promise<{ saved: boolean; messageIndex?: number; error?: string }> {
+  return persistTablesToChatMessageWithLockOption_ACU(options, true);
+}
+
+async function persistTablesToChatMessageWithLockOption_ACU(
+  options: TableChatPersistOptions_ACU = {},
+  useScopeLock: boolean,
 ): Promise<{ saved: boolean; messageIndex?: number; error?: string }> {
   const {
     targetMessageIndex = -1,
@@ -56,197 +64,216 @@ export async function persistTablesToChatMessage_ACU(
     return { saved: false, error: 'currentJsonTableData is null' };
   }
 
-  const chat = getChatArray_ACU();
-  if (!chat || chat.length === 0) {
-    logError_ACU('Save failed: Chat history is empty.');
-    return { saved: false, error: 'chat history is empty' };
-  }
-
-  let targetMessage: any = null;
-  let finalIndex = -1;
-
-  if (targetMessageIndex !== -1 && chat[targetMessageIndex] && !chat[targetMessageIndex].is_user) {
-    targetMessage = chat[targetMessageIndex];
-    finalIndex = targetMessageIndex;
-  } else {
-    for (let i = chat.length - 1; i >= 0; i--) {
-      if (!chat[i].is_user) {
-        targetMessage = chat[i];
-        finalIndex = i;
-        break;
-      }
-    }
-  }
-
-  if (!targetMessage) {
-    logWarn_ACU('Save failed: No AI message found.');
-    return { saved: false, error: 'no AI message found' };
-  }
-
   const currentIsolationKey = getCurrentIsolationKey_ACU();
-
-  // 查找上一个 AI 楼层的 tagData 作为 delta 的 base
-  let prevTagData: import('../../data/models/chat-message-data').IsolationTagData_ACU | null = null;
-  for (let i = finalIndex - 1; i >= 0; i--) {
-    if (!chat[i].is_user) {
-      const td = readIsolatedTagData_ACU(chat[i], currentIsolationKey);
-      if (td && td.independentData && Object.keys(td.independentData).some(k => k.startsWith('sheet_'))) {
-        prevTagData = td;
-      }
-      break;
-    }
-  }
-
-  try {
-    const existingGuide = getChatSheetGuideDataForIsolationKey_ACU(currentIsolationKey);
-    if (!existingGuide || !Object.keys(existingGuide).some(k => k.startsWith('sheet_'))) {
-      const templateObjForSeed = parseTableTemplateJson_ACU({ stripSeedRows: false });
-      const guideData = buildChatSheetGuideDataFromData_ACU(currentJsonTableData_ACU, {
-        preserveSeedRowsFromGuideData: null,
-        seedRowsFromTemplateObj: templateObjForSeed,
-      });
-      if (guideData && Object.keys(guideData).some(k => k.startsWith('sheet_'))) {
-        setChatSheetGuideDataForIsolationKey_ACU(currentIsolationKey, guideData, { reason: 'first_fill' });
-        logDebug_ACU(`[SheetGuide] Created chat sheet guide for tag [${currentIsolationKey || '无标签'}] (tables=${Object.keys(guideData).filter(k => k.startsWith('sheet_')).length}).`);
-      }
-    }
-  } catch (e) {
-    logWarn_ACU('[SheetGuide] Failed to create sheet guide on first fill:', e);
-  }
-
-  let isolatedData = cloneIsolatedData_ACU(targetMessage);
-
-  if (!isolatedData[currentIsolationKey]) {
-    isolatedData[currentIsolationKey] = {
-      independentData: {},
-      modifiedKeys: [],
-      updateGroupKeys: [],
-    };
-  }
-
-  let currentTagData = isolatedData[currentIsolationKey];
-  let independentData: Record<string, any> = {};
-
-  if (isDeltaTagData_ACU(currentTagData) && prevTagData?.independentData && currentTagData.incrementalData) {
-    independentData = JSON.parse(JSON.stringify(prevTagData.independentData));
-    for (const [sheetKey, delta] of Object.entries(currentTagData.incrementalData)) {
-      const baseSheet = independentData[sheetKey];
-      if (!baseSheet) {
-        logWarn_ACU(`[表格增量] 楼层 #${finalIndex} 既有 delta 表 ${sheetKey} 缺少 base，跳过同楼层重建`);
-        continue;
-      }
-      independentData[sheetKey] = applyTableDelta_ACU(baseSheet, delta, sheetKey);
-    }
-  } else {
-    independentData = JSON.parse(JSON.stringify(currentTagData.independentData || {}));
-  }
-
-  let keysToSave: string[] = targetSheetKeys as string[];
-
-  if (!keysToSave) {
-    keysToSave = getSortedSheetKeys_ACU(currentJsonTableData_ACU);
-  }
-
-  const trackingKeySet = new Set(
-    Array.isArray(trackingSheetKeys)
-      ? trackingSheetKeys.filter((sheetKey): sheetKey is string => typeof sheetKey === 'string' && sheetKey.length > 0)
-      : []
-  );
-  const actuallyModifiedKeys = keysToSave.filter(sheetKey => trackingKeySet.has(sheetKey));
-
-  keysToSave.forEach(sheetKey => {
-    const table = currentJsonTableData_ACU[sheetKey];
-    if (table) {
-      independentData[sheetKey] = sanitizeSheetForStorage_ACU(JSON.parse(JSON.stringify(table)));
-    }
+  const scopeKey = buildTableUpdateApplyScopeKey_ACU({
+    chatKey: currentChatFileIdentifier_ACU,
+    isolationKey: currentIsolationKey,
+    targetMessageIndex,
   });
 
-  currentTagData.independentData = independentData;
+  const persistCore = async () => {
+    const chat = getChatArray_ACU();
+    if (!chat || chat.length === 0) {
+      logError_ACU('Save failed: Chat history is empty.');
+      return { saved: false, error: 'chat history is empty' };
+    }
 
-  // ── 增量/checkpoint 模式判定 ──
-  let persistedChangedKeySet = new Set<string>();
+    let targetMessage: any = null;
+    let finalIndex = -1;
 
-  if (prevTagData && prevTagData.independentData) {
-    // 尝试对目标楼层已合并后的表构建 delta。
-    // 同一楼层可能由多个更新组分批写入，必须保留此前组已写入的 incrementalData。
-    const incrementalData: Record<string, import('../../data/models/chat-message-data').TableIncrementalUpdate_ACU> = {};
-    let anyDegraded = false;
-
-    for (const sheetKey of Object.keys(independentData).filter(k => k.startsWith('sheet_'))) {
-      const nextSheet = independentData[sheetKey];
-      if (!nextSheet) continue;
-      const baseSheet = prevTagData.independentData[sheetKey];
-      const result = buildTableDelta_ACU(baseSheet, nextSheet, sheetKey);
-      if (result.degraded) {
-        anyDegraded = true;
-        logDebug_ACU(`[表格增量] ${sheetKey} 退化: ${result.degradeReason}，本楼层将使用 checkpoint 模式`);
-        break;
-      }
-      if (result.delta && (result.delta.rowDeltas.length > 0 || result.delta.metaChanged)) {
-        incrementalData[sheetKey] = result.delta;
+    if (targetMessageIndex !== -1 && chat[targetMessageIndex] && !chat[targetMessageIndex].is_user) {
+      targetMessage = chat[targetMessageIndex];
+      finalIndex = targetMessageIndex;
+    } else {
+      for (let i = chat.length - 1; i >= 0; i--) {
+        if (!chat[i].is_user) {
+          targetMessage = chat[i];
+          finalIndex = i;
+          break;
+        }
       }
     }
 
-    if (!anyDegraded) {
-      // delta 模式：写入增量数据，independentData 清空以节省存储空间
-      currentTagData.incrementalData = incrementalData;
-      currentTagData.independentData = {};
-      currentTagData._acu_storage_mode = 'delta';
-      currentTagData._acu_storage_version = 1;
-      persistedChangedKeySet = new Set(Object.keys(incrementalData));
-      logDebug_ACU(`[表格增量] 楼层 #${finalIndex} 使用 delta 模式，${Object.keys(incrementalData).length} 张表有变更`);
+    if (!targetMessage) {
+      logWarn_ACU('Save failed: No AI message found.');
+      return { saved: false, error: 'no AI message found' };
+    }
+
+    // 查找上一个 AI 楼层的 tagData 作为 delta 的 base
+    let prevTagData: import('../../data/models/chat-message-data').IsolationTagData_ACU | null = null;
+    for (let i = finalIndex - 1; i >= 0; i--) {
+      if (!chat[i].is_user) {
+        const td = readIsolatedTagData_ACU(chat[i], currentIsolationKey);
+        if (td && td.independentData && Object.keys(td.independentData).some(k => k.startsWith('sheet_'))) {
+          prevTagData = td;
+        }
+        break;
+      }
+    }
+
+    try {
+      const existingGuide = getChatSheetGuideDataForIsolationKey_ACU(currentIsolationKey);
+      if (!existingGuide || !Object.keys(existingGuide).some(k => k.startsWith('sheet_'))) {
+        const templateObjForSeed = parseTableTemplateJson_ACU({ stripSeedRows: false });
+        const guideData = buildChatSheetGuideDataFromData_ACU(currentJsonTableData_ACU, {
+          preserveSeedRowsFromGuideData: null,
+          seedRowsFromTemplateObj: templateObjForSeed,
+        });
+        if (guideData && Object.keys(guideData).some(k => k.startsWith('sheet_'))) {
+          setChatSheetGuideDataForIsolationKey_ACU(currentIsolationKey, guideData, { reason: 'first_fill' });
+          logDebug_ACU(`[SheetGuide] Created chat sheet guide for tag [${currentIsolationKey || '无标签'}] (tables=${Object.keys(guideData).filter(k => k.startsWith('sheet_')).length}).`);
+        }
+      }
+    } catch (e) {
+      logWarn_ACU('[SheetGuide] Failed to create sheet guide on first fill:', e);
+    }
+
+    const isolatedData = cloneIsolatedData_ACU(targetMessage);
+
+    if (!isolatedData[currentIsolationKey]) {
+      isolatedData[currentIsolationKey] = {
+        independentData: {},
+        modifiedKeys: [],
+        updateGroupKeys: [],
+      };
+    }
+
+    const currentTagData = isolatedData[currentIsolationKey];
+    let independentData: Record<string, any> = {};
+
+    if (isDeltaTagData_ACU(currentTagData) && currentTagData.incrementalData) {
+      independentData = prevTagData?.independentData
+        ? JSON.parse(JSON.stringify(prevTagData.independentData))
+        : JSON.parse(JSON.stringify(currentTagData.independentData || {}));
+      const existingCheckpointData = JSON.parse(JSON.stringify(currentTagData.independentData || {}));
+      for (const [sheetKey, delta] of Object.entries(currentTagData.incrementalData)) {
+        const baseSheet = independentData[sheetKey] || existingCheckpointData[sheetKey];
+        if (!baseSheet) {
+          logWarn_ACU(`[表格增量] 楼层 #${finalIndex} 既有 delta 表 ${sheetKey} 缺少 base，回退保留当前楼层已存快照`);
+          if (existingCheckpointData[sheetKey]) {
+            independentData[sheetKey] = existingCheckpointData[sheetKey];
+          }
+          continue;
+        }
+        independentData[sheetKey] = applyTableDelta_ACU(baseSheet, delta, sheetKey);
+      }
     } else {
-      // checkpoint 模式：退化，写完整快照
+      independentData = JSON.parse(JSON.stringify(currentTagData.independentData || {}));
+    }
+
+    let keysToSave: string[] = targetSheetKeys as string[];
+
+    if (!keysToSave) {
+      keysToSave = getSortedSheetKeys_ACU(currentJsonTableData_ACU);
+    }
+
+    const trackingKeySet = new Set(
+      Array.isArray(trackingSheetKeys)
+        ? trackingSheetKeys.filter((sheetKey): sheetKey is string => typeof sheetKey === 'string' && sheetKey.length > 0)
+        : []
+    );
+    const actuallyModifiedKeys = keysToSave.filter(sheetKey => trackingKeySet.has(sheetKey));
+
+    keysToSave.forEach(sheetKey => {
+      const table = currentJsonTableData_ACU[sheetKey];
+      if (table) {
+        independentData[sheetKey] = sanitizeSheetForStorage_ACU(JSON.parse(JSON.stringify(table)));
+      }
+    });
+
+    currentTagData.independentData = independentData;
+
+    // ── 增量/checkpoint 模式判定 ──
+    let persistedChangedKeySet = new Set<string>();
+
+    if (prevTagData && prevTagData.independentData) {
+      // 尝试对目标楼层已合并后的表构建 delta。
+      // 同一楼层可能由多个更新组分批写入，必须保留此前组已写入的 incrementalData。
+      const incrementalData: Record<string, import('../../data/models/chat-message-data').TableIncrementalUpdate_ACU> = {};
+      let anyDegraded = false;
+
+      for (const sheetKey of Object.keys(independentData).filter(k => k.startsWith('sheet_'))) {
+        const nextSheet = independentData[sheetKey];
+        if (!nextSheet) continue;
+        const baseSheet = prevTagData.independentData[sheetKey];
+        const result = buildTableDelta_ACU(baseSheet, nextSheet, sheetKey);
+        if (result.degraded) {
+          anyDegraded = true;
+          logDebug_ACU(`[表格增量] ${sheetKey} 退化: ${result.degradeReason}，本楼层将使用 checkpoint 模式`);
+          break;
+        }
+        if (result.delta && (result.delta.rowDeltas.length > 0 || result.delta.metaChanged)) {
+          incrementalData[sheetKey] = result.delta;
+        }
+      }
+
+      if (!anyDegraded) {
+        // delta 模式：写入增量数据，independentData 清空以节省存储空间
+        currentTagData.incrementalData = incrementalData;
+        currentTagData.independentData = {};
+        currentTagData._acu_storage_mode = 'delta';
+        currentTagData._acu_storage_version = 1;
+        persistedChangedKeySet = new Set(Object.keys(incrementalData));
+        logDebug_ACU(`[表格增量] 楼层 #${finalIndex} 使用 delta 模式，${Object.keys(incrementalData).length} 张表有变更`);
+      } else {
+        // checkpoint 模式：退化，写完整快照
+        delete currentTagData.incrementalData;
+        currentTagData._acu_storage_mode = 'checkpoint';
+        currentTagData._acu_storage_version = 1;
+        persistedChangedKeySet = new Set(actuallyModifiedKeys.filter(sheetKey => Boolean(independentData[sheetKey])));
+        logDebug_ACU(`[表格Checkpoint] 楼层 #${finalIndex} 使用 checkpoint 模式`);
+      }
+    } else {
+      // 无上一楼层 base → checkpoint 模式（首楼层或首次出现该标签）
       delete currentTagData.incrementalData;
       currentTagData._acu_storage_mode = 'checkpoint';
       currentTagData._acu_storage_version = 1;
       persistedChangedKeySet = new Set(actuallyModifiedKeys.filter(sheetKey => Boolean(independentData[sheetKey])));
-      logDebug_ACU(`[表格Checkpoint] 楼层 #${finalIndex} 使用 checkpoint 模式`);
+      logDebug_ACU(`[表格Checkpoint] 楼层 #${finalIndex} 无 base，使用 checkpoint 模式`);
     }
-  } else {
-    // 无上一楼层 base → checkpoint 模式（首楼层或首次出现该标签）
-    delete currentTagData.incrementalData;
-    currentTagData._acu_storage_mode = 'checkpoint';
-    currentTagData._acu_storage_version = 1;
-    persistedChangedKeySet = new Set(actuallyModifiedKeys.filter(sheetKey => Boolean(independentData[sheetKey])));
-    logDebug_ACU(`[表格Checkpoint] 楼层 #${finalIndex} 无 base，使用 checkpoint 模式`);
+
+    const persistedModifiedKeys = actuallyModifiedKeys.filter(sheetKey => persistedChangedKeySet.has(sheetKey));
+    const filteredUpdateGroupKeys = Array.isArray(updateGroupKeys)
+      ? updateGroupKeys.filter(sheetKey => persistedChangedKeySet.has(sheetKey))
+      : [];
+
+    if (trackAsUpdate && persistedModifiedKeys.length > 0) {
+      const existingModifiedKeys = currentTagData.modifiedKeys || [];
+      currentTagData.modifiedKeys = [...new Set([...existingModifiedKeys, ...persistedModifiedKeys])];
+      logDebug_ACU(`[Tracking] Recorded modified keys for tag [${currentIsolationKey || '无标签'}] at index ${finalIndex}: ${currentTagData.modifiedKeys.join(', ')}`);
+    } else if (trackAsUpdate && actuallyModifiedKeys.length > 0) {
+      logDebug_ACU(`[Tracking] No persisted table changes for tag [${currentIsolationKey || '无标签'}] at index ${finalIndex}; skipped modified keys: ${actuallyModifiedKeys.join(', ')}`);
+    }
+
+    if (trackAsUpdate && filteredUpdateGroupKeys.length > 0 && persistedModifiedKeys.length > 0) {
+      const existingGroupKeys = currentTagData.updateGroupKeys || [];
+      currentTagData.updateGroupKeys = [...new Set([...existingGroupKeys, ...filteredUpdateGroupKeys])];
+      logDebug_ACU(`[Merge Update Success] Group keys for tag [${currentIsolationKey || '无标签'}] recorded at index ${finalIndex}: ${currentTagData.updateGroupKeys.join(', ')}`);
+    } else if (trackAsUpdate && updateGroupKeys && updateGroupKeys.length > 0 && actuallyModifiedKeys.length === 0) {
+      logDebug_ACU(`[Merge Update Failed] No tables were modified for tag [${currentIsolationKey || '无标签'}]. Group keys NOT recorded: ${updateGroupKeys.join(', ')}`);
+    } else if (trackAsUpdate && updateGroupKeys && updateGroupKeys.length > 0 && filteredUpdateGroupKeys.length === 0) {
+      logDebug_ACU(`[Merge Update Skipped] No persisted table changes for tag [${currentIsolationKey || '无标签'}]. Group keys NOT recorded: ${updateGroupKeys.join(', ')}`);
+    }
+
+    writeIsolatedTagData_ACU(targetMessage, currentIsolationKey, currentTagData);
+
+    writeMessageIdentity_ACU(targetMessage, {
+      enabled: settings_ACU.dataIsolationEnabled,
+      code: settings_ACU.dataIsolationCode,
+    });
+
+    logDebug_ACU(`Saved ${keysToSave.length} tables for tag [${currentIsolationKey || '无标签'}] to message at index ${finalIndex}. Actually modified: ${actuallyModifiedKeys.length} tables.`);
+
+    await saveChatToHost_ACU();
+
+    return { saved: true, messageIndex: finalIndex };
+  };
+
+  if (!useScopeLock) {
+    return persistCore();
   }
 
-  const persistedModifiedKeys = actuallyModifiedKeys.filter(sheetKey => persistedChangedKeySet.has(sheetKey));
-  const filteredUpdateGroupKeys = Array.isArray(updateGroupKeys)
-    ? updateGroupKeys.filter(sheetKey => persistedChangedKeySet.has(sheetKey))
-    : [];
-
-  if (trackAsUpdate && persistedModifiedKeys.length > 0) {
-    const existingModifiedKeys = currentTagData.modifiedKeys || [];
-    currentTagData.modifiedKeys = [...new Set([...existingModifiedKeys, ...persistedModifiedKeys])];
-    logDebug_ACU(`[Tracking] Recorded modified keys for tag [${currentIsolationKey || '无标签'}] at index ${finalIndex}: ${currentTagData.modifiedKeys.join(', ')}`);
-  } else if (trackAsUpdate && actuallyModifiedKeys.length > 0) {
-    logDebug_ACU(`[Tracking] No persisted table changes for tag [${currentIsolationKey || '无标签'}] at index ${finalIndex}; skipped modified keys: ${actuallyModifiedKeys.join(', ')}`);
-  }
-
-  if (trackAsUpdate && filteredUpdateGroupKeys.length > 0 && persistedModifiedKeys.length > 0) {
-    const existingGroupKeys = currentTagData.updateGroupKeys || [];
-    currentTagData.updateGroupKeys = [...new Set([...existingGroupKeys, ...filteredUpdateGroupKeys])];
-    logDebug_ACU(`[Merge Update Success] Group keys for tag [${currentIsolationKey || '无标签'}] recorded at index ${finalIndex}: ${currentTagData.updateGroupKeys.join(', ')}`);
-  } else if (trackAsUpdate && updateGroupKeys && updateGroupKeys.length > 0 && actuallyModifiedKeys.length === 0) {
-    logDebug_ACU(`[Merge Update Failed] No tables were modified for tag [${currentIsolationKey || '无标签'}]. Group keys NOT recorded: ${updateGroupKeys.join(', ')}`);
-  } else if (trackAsUpdate && updateGroupKeys && updateGroupKeys.length > 0 && filteredUpdateGroupKeys.length === 0) {
-    logDebug_ACU(`[Merge Update Skipped] No persisted table changes for tag [${currentIsolationKey || '无标签'}]. Group keys NOT recorded: ${updateGroupKeys.join(', ')}`);
-  }
-
-  writeIsolatedTagData_ACU(targetMessage, currentIsolationKey, currentTagData);
-
-  writeMessageIdentity_ACU(targetMessage, {
-    enabled: settings_ACU.dataIsolationEnabled,
-    code: settings_ACU.dataIsolationCode,
-  });
-
-  logDebug_ACU(`Saved ${keysToSave.length} tables for tag [${currentIsolationKey || '无标签'}] to message at index ${finalIndex}. Actually modified: ${actuallyModifiedKeys.length} tables.`);
-
-  await saveChatToHost_ACU();
-
-  return { saved: true, messageIndex: finalIndex };
+  return runTableUpdateApplyWithScopeLock_ACU(scopeKey, persistCore);
 }
 
 /**
@@ -268,6 +295,27 @@ export async function saveIndependentTableToChatHistory_ACU(
     trackingSheetKeys,
     trackAsUpdate: true,
   });
+}
+
+/**
+ * 在调用方已经持有 table update scope 锁时保存独立表格数据。
+ * 仅供同 scope 的 parse/apply/save 连续临界区使用；外部普通调用必须继续使用
+ * saveIndependentTableToChatHistory_ACU，避免绕过目标楼层串行保护。
+ */
+export async function saveIndependentTableToChatHistoryWithinScopeLock_ACU(
+  targetMessageIndex = -1,
+  targetSheetKeys: string[] | null = null,
+  updateGroupKeys: string[] | null = null,
+  _skipPostRefresh = false,
+  trackingSheetKeys: string[] | null = targetSheetKeys,
+): Promise<{ saved: boolean; messageIndex?: number; error?: string }> {
+  return persistTablesToChatMessageWithLockOption_ACU({
+    targetMessageIndex,
+    targetSheetKeys,
+    updateGroupKeys,
+    trackingSheetKeys,
+    trackAsUpdate: true,
+  }, false);
 }
 
 /**

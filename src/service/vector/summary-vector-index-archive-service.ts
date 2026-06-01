@@ -130,10 +130,11 @@ async function persistPendingVectorIndexArchive_ACU(scopeKey: string): Promise<v
     }
     pendingVectorIndexArchives_ACU.delete(scopeKey);
     try {
+        const latestAggregatedSnapshot = await hydrateAggregatedSummaryVectorIndexSnapshot_ACU(getAggregatedSummaryVectorIndexSnapshot_ACU());
         logDebug_ACU(`[纪要向量索引] 防抖归档开始：scope=${scopeKey}, rows=${pending.finalRows.length}, chunks=${pending.finalChunks.length}`);
         await writeSummaryVectorIndexCheckpoint_ACU({
             chat: pending.chat,
-            aggregatedSnapshot: pending.aggregatedSnapshot,
+            aggregatedSnapshot: latestAggregatedSnapshot || pending.aggregatedSnapshot,
             embeddingModel: pending.embeddingModel,
             preparedRows: pending.preparedRows,
             finalRows: pending.finalRows,

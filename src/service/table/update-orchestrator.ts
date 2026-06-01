@@ -7,7 +7,7 @@
 import { isAutoUpdatingCard_ACU, wasStoppedByUser_ACU, _set_isAutoUpdatingCard_ACU, _set_manualExtraHint_ACU, _set_wasStoppedByUser_ACU } from '../runtime/state-manager';
 import { callCustomOpenAI_ACU } from '../ai/prompt-builder';
 import { getChatArray_ACU } from '../chat/chat-service';
-import { coreApisAreReady_ACU, currentJsonTableData_ACU, getCurrentIsolationKey_ACU, settings_ACU, _set_currentJsonTableData_ACU } from '../runtime/state-manager';
+import { coreApisAreReady_ACU, currentChatFileIdentifier_ACU, currentJsonTableData_ACU, getCurrentIsolationKey_ACU, settings_ACU, _set_currentJsonTableData_ACU } from '../runtime/state-manager';
 import { checkAutoMergeTrigger_ACU, prepareAutoMergeBatches_ACU, executeAutoMergeBatch_ACU, finalizeAutoMerge_ACU } from '../summary/merge-logic';
 import { getChatSheetGuideDataForIsolationKey_ACU } from '../template/chat-scope';
 import { loadAllChatMessages_ACU, updateReadableLorebookEntry_ACU } from '../worldbook/pipeline';
@@ -37,13 +37,14 @@ function resolveTableApiPresetOverride_ACU(tableName: any): string {
     const preset = overrides[normalizedName];
     return (typeof preset === 'string' && preset.trim()) ? preset.trim() : '';
 }
-import { checkIfFirstTimeInit_ACU, saveIndependentTableToChatHistory_ACU } from './table-service';
+import { checkIfFirstTimeInit_ACU, saveIndependentTableToChatHistoryWithinScopeLock_ACU } from './table-service';
 import { parseAndApplyTableEdits_ACU, prepareAIInput_ACU } from '../ai/prompt-builder';
 import { buildGuidedBaseDataFromSheetGuide_ACU, getSortedSheetKeys_ACU } from '../template/chat-scope';
 import { isSqliteMode } from './storage-mode';
 import { reloadStorageProvider } from './table-storage-strategy';
 import { clearTableDataAtFloors_ACU } from '../chat/chat-service';
 import { applySpecialIndexSequenceToSummaryTables_ACU } from '../runtime/helpers-remaining';
+import { buildTableUpdateApplyScopeKey_ACU, runTableUpdateApplyWithScopeLock_ACU } from './table-update-queue';
 
 // ============================================================
 // 类型定义：返回值 + 进度事件（service 层不驱动 UI）
@@ -74,6 +75,7 @@ export interface CardUpdateProgressEvent {
 export interface BatchUpdateProgressContext {
     currentBatch: number;
     totalBatches: number;
+    batchBaseSnapshot?: Record<string, any>;
 }
 
 /** executeCardUpdateCore 的返回值 */
@@ -311,6 +313,16 @@ export async function executeCardUpdateCore_ACU(
     progressContext: BatchUpdateProgressContext | null = null,
     onProgress?: (event: CardUpdateProgressEvent) => void
 ): Promise<CardUpdateResult> {
+    // 向后兼容：历史调用可能把 onProgress 作为第9参传入
+    if (typeof progressContext === 'function' && !onProgress) {
+        onProgress = progressContext as unknown as (event: CardUpdateProgressEvent) => void;
+        progressContext = null;
+    }
+    // 兜底保护：若误传了非对象 progressContext，避免读取属性报错
+    if (progressContext && typeof progressContext !== 'object') {
+        progressContext = null;
+    }
+
     const emitProgress = (event: CardUpdateProgressEvent): void => {
         onProgress?.({
             ...event,
@@ -328,6 +340,10 @@ export async function executeCardUpdateCore_ACU(
 
     try {
         emitProgress({ phase: 'preparing' });
+
+        if (progressContext?.batchBaseSnapshot) {
+            _set_currentJsonTableData_ACU(JSON.parse(JSON.stringify(progressContext.batchBaseSnapshot)));
+        }
 
         const dynamicContent = await prepareAIInput_ACU(messagesToUse, updateMode, targetSheetKeys, {
             excludeImportTaggedWorldbookEntries: isImportMode && settings_ACU.importPromptExcludeImportedWorldbookEntries !== false,
@@ -372,26 +388,103 @@ export async function executeCardUpdateCore_ACU(
 
                 emitProgress({ phase: 'parsing' });
 
-                const parseResult = parseAndApplyTableEdits_ACU(aiResponse, updateMode, isImportMode);
+                const applyScopeKey = buildTableUpdateApplyScopeKey_ACU({
+                    chatKey: currentChatFileIdentifier_ACU,
+                    isolationKey: getCurrentIsolationKey_ACU(),
+                    targetMessageIndex: saveTargetIndex,
+                });
 
-                let parseSuccess = false;
-                modifiedKeys = [];
+                const updateOutcome = await runTableUpdateApplyWithScopeLock_ACU(applyScopeKey, async () => {
+                    if (progressContext?.batchBaseSnapshot) {
+                        _set_currentJsonTableData_ACU(JSON.parse(JSON.stringify(progressContext.batchBaseSnapshot)));
+                    }
 
-                if (typeof parseResult === 'object' && parseResult !== null) {
-                    parseSuccess = parseResult.success;
-                    modifiedKeys = parseResult.modifiedKeys || [];
-                } else {
-                    parseSuccess = !!parseResult;
-                    modifiedKeys = targetSheetKeys || [];
+                    const parseResult = parseAndApplyTableEdits_ACU(aiResponse, updateMode, isImportMode);
+
+                    let parseSuccess = false;
+                    let parsedKeys: string[] = [];
+
+                    if (typeof parseResult === 'object' && parseResult !== null) {
+                        parseSuccess = parseResult.success;
+                        parsedKeys = parseResult.modifiedKeys || [];
+                    } else {
+                        parseSuccess = !!parseResult;
+                        parsedKeys = targetSheetKeys || [];
+                    }
+
+                    if (!parseSuccess) {
+                        throw new Error('解析或应用AI更新时出错');
+                    }
+
+                    // [spv3.6.5] 填表完成后统一强制应用编码索引列特殊锁定（AM序列）
+                    // 无论 SQL 模式还是原生模式，都在这里兜底确保编码索引列被强制修正
+                    applySpecialIndexSequenceToSummaryTables_ACU(currentJsonTableData_ACU);
+                    if (!isImportMode) {
+                        emitProgress({ phase: 'saving' });
+
+                        let keysToPersist = parsedKeys;
+                        if (targetSheetKeys && Array.isArray(targetSheetKeys)) {
+                            keysToPersist = keysToPersist.filter((k: string) => targetSheetKeys.includes(k));
+                        }
+
+                        const isFirstTimeInit = await checkIfFirstTimeInit_ACU();
+
+                        if (keysToPersist.length > 0 || isFirstTimeInit) {
+                            let keysToActuallySave = keysToPersist;
+                            if (isFirstTimeInit) {
+                                const allSheetKeys = getSortedSheetKeys_ACU(currentJsonTableData_ACU);
+                                keysToActuallySave = allSheetKeys;
+
+                                const fullTemplate = parseTableTemplateJson_ACU({ stripSeedRows: false });
+                                if (fullTemplate) {
+                                    allSheetKeys.forEach(sheetKey => {
+                                        if (!keysToPersist.includes(sheetKey) && fullTemplate[sheetKey]) {
+                                            currentJsonTableData_ACU[sheetKey] = JSON.parse(JSON.stringify(fullTemplate[sheetKey]));
+                                            logDebug_ACU(`[Init] Table ${sheetKey} not modified by AI, using template data (may include seed rows).`);
+                                        }
+                                    });
+                                }
+
+                                logDebug_ACU('[Init] First time initialization detected. Saving complete template structure with all tables.');
+                            }
+
+                            const updateGroupKeysRaw = isFirstTimeInit ? keysToPersist : targetSheetKeys;
+                            const keysToTrackAsUpdated = keysToPersist.filter((sheetKey: string) => keysToActuallySave.includes(sheetKey));
+                            const updateGroupKeysToUse = Array.isArray(updateGroupKeysRaw)
+                                ? updateGroupKeysRaw.filter(sheetKey => {
+                                    const table = currentJsonTableData_ACU?.[sheetKey];
+                                    if (!table || !isSummaryOrOutlineTable_ACU(table.name)) return true;
+                                    return keysToTrackAsUpdated.includes(sheetKey);
+                                })
+                                : updateGroupKeysRaw;
+                            const saveResult = await saveIndependentTableToChatHistoryWithinScopeLock_ACU(
+                                saveTargetIndex,
+                                keysToActuallySave,
+                                updateGroupKeysToUse,
+                                false,
+                                keysToTrackAsUpdated,
+                            );
+                            if (!saveResult.saved) {
+                                return { success: false, modifiedKeys: parsedKeys, error: '无法将更新后的数据库保存到聊天记录。' };
+                            }
+                        } else {
+                            logDebug_ACU("No tables were modified by AI, skipping save to chat history.");
+                        }
+
+                        await updateReadableLorebookEntry_ACU(true);
+                    } else {
+                        emitProgress({ phase: 'chunk_done' });
+                        logDebug_ACU("Import mode: skipping save to chat history for this chunk.");
+                    }
+
+                    return { success: true, modifiedKeys: parsedKeys };
+                });
+
+                modifiedKeys = updateOutcome.modifiedKeys;
+
+                if (!updateOutcome.success) {
+                    return updateOutcome;
                 }
-
-                if (!parseSuccess) {
-                    throw new Error('解析或应用AI更新时出错');
-                }
-
-                // [spv3.6.5] 填表完成后统一强制应用编码索引列特殊锁定（AM序列）
-                // 无论 SQL 模式还是原生模式，都在这里兜底确保编码索引列被强制修正
-                applySpecialIndexSequenceToSummaryTables_ACU(currentJsonTableData_ACU);
 
                 success = true;
                 break;
@@ -420,64 +513,6 @@ export async function executeCardUpdateCore_ACU(
         }
 
         if (success) {
-            if (!isImportMode) {
-                emitProgress({ phase: 'saving' });
-
-                let keysToPersist = modifiedKeys;
-                if (targetSheetKeys && Array.isArray(targetSheetKeys)) {
-                    keysToPersist = keysToPersist.filter((k: string) => targetSheetKeys.includes(k));
-                }
-
-                const isFirstTimeInit = await checkIfFirstTimeInit_ACU();
-
-                if (keysToPersist.length > 0 || isFirstTimeInit) {
-                    let keysToActuallySave = keysToPersist;
-                    if (isFirstTimeInit) {
-                        const allSheetKeys = getSortedSheetKeys_ACU(currentJsonTableData_ACU);
-                        keysToActuallySave = allSheetKeys;
-
-                        const fullTemplate = parseTableTemplateJson_ACU({ stripSeedRows: false });
-                        if (fullTemplate) {
-                            allSheetKeys.forEach(sheetKey => {
-                                if (!keysToPersist.includes(sheetKey) && fullTemplate[sheetKey]) {
-                                    currentJsonTableData_ACU[sheetKey] = JSON.parse(JSON.stringify(fullTemplate[sheetKey]));
-                                    logDebug_ACU(`[Init] Table ${sheetKey} not modified by AI, using template data (may include seed rows).`);
-                                }
-                            });
-                        }
-
-                        logDebug_ACU('[Init] First time initialization detected. Saving complete template structure with all tables.');
-                    }
-
-                    const updateGroupKeysRaw = isFirstTimeInit ? keysToPersist : targetSheetKeys;
-                    const keysToTrackAsUpdated = keysToPersist.filter((sheetKey: string) => keysToActuallySave.includes(sheetKey));
-                    const updateGroupKeysToUse = Array.isArray(updateGroupKeysRaw)
-                        ? updateGroupKeysRaw.filter(sheetKey => {
-                            const table = currentJsonTableData_ACU?.[sheetKey];
-                            if (!table || !isSummaryOrOutlineTable_ACU(table.name)) return true;
-                            return keysToTrackAsUpdated.includes(sheetKey);
-                        })
-                        : updateGroupKeysRaw;
-                    const saveSuccess = await saveIndependentTableToChatHistory_ACU(
-                        saveTargetIndex,
-                        keysToActuallySave,
-                        updateGroupKeysToUse,
-                        false,
-                        keysToTrackAsUpdated,
-                    );
-                    if (!saveSuccess) {
-                        return { success: false, modifiedKeys, error: '无法将更新后的数据库保存到聊天记录。' };
-                    }
-                } else {
-                    logDebug_ACU("No tables were modified by AI, skipping save to chat history.");
-                }
-
-                    await updateReadableLorebookEntry_ACU(true);
-
-            } else {
-                emitProgress({ phase: 'chunk_done' });
-                logDebug_ACU("Import mode: skipping save to chat history for this chunk.");
-            }
 
             emitProgress({ phase: 'complete' });
 
@@ -621,7 +656,11 @@ export async function processUpdatesBatch_ACU(
                 isSilentMode,
                 targetSheetKeys,
                 effectiveRequestOptions,
-                { currentBatch: batchNumber, totalBatches: batches.length }
+                {
+                    currentBatch: batchNumber,
+                    totalBatches: batches.length,
+                    batchBaseSnapshot: JSON.parse(JSON.stringify(mergedBatchData)),
+                }
             );
 
             if (!result.success) {
@@ -785,11 +824,21 @@ export async function orchestrateManualUpdate_ACU(
             const groupPromises = chunkKeys.map(gKey => (async () => {
                 const group = updateGroups[gKey];
 
-                logDebug_ACU(`[Manual Parallel] Processing group update for groupId=${group.groupId}, sheets: ${group.sheetKeys.join(', ')}, apiPreset=(manual-global), chunk=${Math.floor(start / maxConcurrentGroups) + 1}`);
+                let effectiveRequestOptions: Record<string, any> | null = null;
+                if (Array.isArray(group.sheetKeys) && group.sheetKeys.length > 0) {
+                    const firstSheetKey = group.sheetKeys[0];
+                    const firstTableName = templateData?.[firstSheetKey]?.name || '';
+                    const resolvedPreset = resolveTableApiPresetOverride_ACU(firstTableName);
+                    if (resolvedPreset) {
+                        effectiveRequestOptions = { tableApiPreset: resolvedPreset };
+                    }
+                }
+
+                logDebug_ACU(`[Manual Parallel] Processing group update for groupId=${group.groupId}, sheets: ${group.sheetKeys.join(', ')}, apiPreset=${effectiveRequestOptions?.tableApiPreset || '(manual-global)'}, chunk=${Math.floor(start / maxConcurrentGroups) + 1}`);
                 const batchResult = await processBatch(group.indices, 'manual_independent', {
                     targetSheetKeys: group.sheetKeys,
                     batchSize: group.batchSize,
-                    requestOptions: null,
+                    requestOptions: effectiveRequestOptions,
                 });
 
                 return {

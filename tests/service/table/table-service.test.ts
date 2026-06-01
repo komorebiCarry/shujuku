@@ -80,6 +80,7 @@ vi.mock('../../../src/shared/utils', () => ({
 vi.mock('../../../src/service/runtime/state-manager', () => ({
   get currentJsonTableData_ACU() { return mockCurrentJsonTableDataRef.value; },
   getCurrentIsolationKey_ACU: mockGetCurrentIsolationKey,
+  currentChatFileIdentifier_ACU: 'test-chat',
   settings_ACU: mockSettings,
   _set_currentJsonTableData_ACU: mockSetCurrentJsonTableData,
 }));
@@ -196,7 +197,7 @@ describe('saveIndependentTableToChatHistory_ACU', () => {
       '': { independentData: {}, modifiedKeys: ['sheet_0'], updateGroupKeys: [] },
     });
 
-    const result = await saveIndependentTableToChatHistory_ACU(-1, ['sheet_1'], ['group_A']);
+    const result = await saveIndependentTableToChatHistory_ACU(-1, ['sheet_1'], ['sheet_1']);
 
     expect(result.saved).toBe(true);
     // writeIsolatedTagData 应被调用，且 tagData 中 modifiedKeys 包含 sheet_1
@@ -204,7 +205,36 @@ describe('saveIndependentTableToChatHistory_ACU', () => {
     const writtenTagData = mockWriteIsolatedTagData.mock.calls[0][2];
     expect(writtenTagData.modifiedKeys).toContain('sheet_0');
     expect(writtenTagData.modifiedKeys).toContain('sheet_1');
-    expect(writtenTagData.updateGroupKeys).toContain('group_A');
+    expect(writtenTagData.updateGroupKeys).toContain('sheet_1');
+  });
+
+  it('同一目标楼层连续保存不同 group 时保留已有表、modifiedKeys 与 updateGroupKeys', async () => {
+    const aiMsg: any = { is_user: false, mes: 'AI回复' };
+    mockGetChatArray.mockReturnValue([aiMsg]);
+    mockCurrentJsonTableDataRef.value = {
+      sheet_1: { name: '纪要表', content: [['row_id', '事件'], ['2', '后写组']] },
+    };
+    mockCloneIsolatedData.mockReturnValue({
+      '': {
+        independentData: {
+          sheet_0: { name: '背包物品表', content: [['row_id', '物品名'], ['1', '先写组']] },
+        },
+        incrementalData: {},
+        modifiedKeys: ['sheet_0'],
+        updateGroupKeys: ['sheet_0'],
+        _acu_storage_mode: 'delta',
+        _acu_storage_version: 1,
+      },
+    });
+
+    const result = await saveIndependentTableToChatHistory_ACU(0, ['sheet_1'], ['sheet_1']);
+
+    expect(result.saved).toBe(true);
+    const writtenTagData = mockWriteIsolatedTagData.mock.calls[0][2];
+    expect(writtenTagData.independentData.sheet_0.content[1][1]).toBe('先写组');
+    expect(writtenTagData.independentData.sheet_1.content[1][1]).toBe('后写组');
+    expect(writtenTagData.modifiedKeys).toEqual(expect.arrayContaining(['sheet_0', 'sheet_1']));
+    expect(writtenTagData.updateGroupKeys).toEqual(expect.arrayContaining(['sheet_0', 'sheet_1']));
   });
 });
 
