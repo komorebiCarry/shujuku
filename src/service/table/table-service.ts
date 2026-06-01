@@ -164,6 +164,8 @@ export async function persistTablesToChatMessage_ACU(
   currentTagData.independentData = independentData;
 
   // ── 增量/checkpoint 模式判定 ──
+  let persistedChangedKeySet = new Set<string>();
+
   if (prevTagData && prevTagData.independentData) {
     // 尝试对目标楼层已合并后的表构建 delta。
     // 同一楼层可能由多个更新组分批写入，必须保留此前组已写入的 incrementalData。
@@ -191,12 +193,14 @@ export async function persistTablesToChatMessage_ACU(
       currentTagData.independentData = {};
       currentTagData._acu_storage_mode = 'delta';
       currentTagData._acu_storage_version = 1;
+      persistedChangedKeySet = new Set(Object.keys(incrementalData));
       logDebug_ACU(`[表格增量] 楼层 #${finalIndex} 使用 delta 模式，${Object.keys(incrementalData).length} 张表有变更`);
     } else {
       // checkpoint 模式：退化，写完整快照
       delete currentTagData.incrementalData;
       currentTagData._acu_storage_mode = 'checkpoint';
       currentTagData._acu_storage_version = 1;
+      persistedChangedKeySet = new Set(actuallyModifiedKeys.filter(sheetKey => Boolean(independentData[sheetKey])));
       logDebug_ACU(`[表格Checkpoint] 楼层 #${finalIndex} 使用 checkpoint 模式`);
     }
   } else {
@@ -204,21 +208,31 @@ export async function persistTablesToChatMessage_ACU(
     delete currentTagData.incrementalData;
     currentTagData._acu_storage_mode = 'checkpoint';
     currentTagData._acu_storage_version = 1;
+    persistedChangedKeySet = new Set(actuallyModifiedKeys.filter(sheetKey => Boolean(independentData[sheetKey])));
     logDebug_ACU(`[表格Checkpoint] 楼层 #${finalIndex} 无 base，使用 checkpoint 模式`);
   }
 
-  if (trackAsUpdate && actuallyModifiedKeys.length > 0) {
+  const persistedModifiedKeys = actuallyModifiedKeys.filter(sheetKey => persistedChangedKeySet.has(sheetKey));
+  const filteredUpdateGroupKeys = Array.isArray(updateGroupKeys)
+    ? updateGroupKeys.filter(sheetKey => persistedChangedKeySet.has(sheetKey))
+    : [];
+
+  if (trackAsUpdate && persistedModifiedKeys.length > 0) {
     const existingModifiedKeys = currentTagData.modifiedKeys || [];
-    currentTagData.modifiedKeys = [...new Set([...existingModifiedKeys, ...actuallyModifiedKeys])];
+    currentTagData.modifiedKeys = [...new Set([...existingModifiedKeys, ...persistedModifiedKeys])];
     logDebug_ACU(`[Tracking] Recorded modified keys for tag [${currentIsolationKey || '无标签'}] at index ${finalIndex}: ${currentTagData.modifiedKeys.join(', ')}`);
+  } else if (trackAsUpdate && actuallyModifiedKeys.length > 0) {
+    logDebug_ACU(`[Tracking] No persisted table changes for tag [${currentIsolationKey || '无标签'}] at index ${finalIndex}; skipped modified keys: ${actuallyModifiedKeys.join(', ')}`);
   }
 
-  if (trackAsUpdate && updateGroupKeys && updateGroupKeys.length > 0 && actuallyModifiedKeys.length > 0) {
+  if (trackAsUpdate && filteredUpdateGroupKeys.length > 0 && persistedModifiedKeys.length > 0) {
     const existingGroupKeys = currentTagData.updateGroupKeys || [];
-    currentTagData.updateGroupKeys = [...new Set([...existingGroupKeys, ...updateGroupKeys])];
+    currentTagData.updateGroupKeys = [...new Set([...existingGroupKeys, ...filteredUpdateGroupKeys])];
     logDebug_ACU(`[Merge Update Success] Group keys for tag [${currentIsolationKey || '无标签'}] recorded at index ${finalIndex}: ${currentTagData.updateGroupKeys.join(', ')}`);
   } else if (trackAsUpdate && updateGroupKeys && updateGroupKeys.length > 0 && actuallyModifiedKeys.length === 0) {
     logDebug_ACU(`[Merge Update Failed] No tables were modified for tag [${currentIsolationKey || '无标签'}]. Group keys NOT recorded: ${updateGroupKeys.join(', ')}`);
+  } else if (trackAsUpdate && updateGroupKeys && updateGroupKeys.length > 0 && filteredUpdateGroupKeys.length === 0) {
+    logDebug_ACU(`[Merge Update Skipped] No persisted table changes for tag [${currentIsolationKey || '无标签'}]. Group keys NOT recorded: ${updateGroupKeys.join(', ')}`);
   }
 
   writeIsolatedTagData_ACU(targetMessage, currentIsolationKey, currentTagData);

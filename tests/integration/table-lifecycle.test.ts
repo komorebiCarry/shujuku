@@ -233,6 +233,37 @@ describe('I2: 增量存储端到端链路', () => {
     expect(td2.updateGroupKeys.sort()).toEqual(['sheet_a', 'sheet_b']);
   });
 
+  it('delta 模式只记录实际持久化变化的 key，过滤未产生增量的纪要表标记', async () => {
+    mockChat.push({ is_user: false, mes: 'AI回复1' });
+    mockCurrentJsonTableDataRef.value = {
+      sheet_summary: { name: '纪要表', content: [['row_id', '内容'], ['s1', '旧纪要']] },
+      sheet_data: { name: '数据表', content: [['row_id', '值'], ['d1', '旧数据']] },
+    };
+    await saveIndependentTableToChatHistory_ACU();
+
+    mockChat.push({ is_user: true, mes: '用户' });
+    mockChat.push({ is_user: false, mes: 'AI回复2' });
+
+    mockCurrentJsonTableDataRef.value = {
+      sheet_summary: { name: '纪要表', content: [['row_id', '内容'], ['s1', '旧纪要']] },
+      sheet_data: { name: '数据表', content: [['row_id', '值'], ['d1', '新数据']] },
+    };
+    await saveIndependentTableToChatHistory_ACU(
+      2,
+      ['sheet_summary', 'sheet_data'],
+      ['sheet_summary', 'sheet_data'],
+      false,
+      ['sheet_summary', 'sheet_data'],
+    );
+
+    const td2 = mockChat[2].TavernDB_ACU_IsolatedData[''];
+    expect(td2._acu_storage_mode).toBe('delta');
+    expect(td2.incrementalData.sheet_data).toBeDefined();
+    expect(td2.incrementalData.sheet_summary).toBeUndefined();
+    expect(td2.modifiedKeys).toEqual(['sheet_data']);
+    expect(td2.updateGroupKeys).toEqual(['sheet_data']);
+  });
+
   it('buildTableDelta + applyTableDelta 往返一致性', () => {
     const base = { name: 'T', content: [['row_id', 'A', 'B'], ['r1', '铁剑', '3'], ['r2', '药水', '5']] } as any;
     const next = { name: 'T', content: [['row_id', 'A', 'B'], ['r1', '铁剑', '10'], ['r3', '盾牌', '1']] } as any;
