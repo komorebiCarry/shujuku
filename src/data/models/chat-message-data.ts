@@ -26,6 +26,39 @@ export interface IsolationTagData_ACU {
     summaryVectorIndexManifest?: ChatSummaryVectorIndexManifest_ACU | null;
     /** 基底状态标记（首楼初始化时写入） */
     _acu_base_state?: string;
+    /** 增量数据：本楼层对各表的行级变更。仅 delta 楼层存在。 */
+    incrementalData?: Record<string, TableIncrementalUpdate_ACU>;
+    /** 存储模式标记 */
+    _acu_storage_mode?: TableStorageMode_ACU;
+    /** 存储格式版本号（便于后续升级） */
+    _acu_storage_version?: number;
+}
+
+// ── 增量存储类型 ──
+
+/** 存储模式枚举 */
+export type TableStorageMode_ACU = 'checkpoint' | 'delta' | 'legacy';
+
+/** 单行变更操作 */
+export interface TableRowDelta_ACU {
+    /** 行标识（取自 content[i][0]） */
+    row_id: string;
+    /** 操作类型：upsert=新增或更新整行，delete=删除该行 */
+    op: 'upsert' | 'delete';
+    /** upsert 时的完整行数据（含 row_id 列）；delete 时为 undefined */
+    cells?: (string | null)[];
+}
+
+/** 单张表的增量更新描述 */
+export interface TableIncrementalUpdate_ACU {
+    /** 目标表 uid（与 Sheet_ACU.uid 对应） */
+    sheetUid: string;
+    /** 行级变更列表 */
+    rowDeltas: TableRowDelta_ACU[];
+    /** 元数据变更（name/orderNo/updateConfig/exportConfig/sourceData 任一变化时记录） */
+    metaChanged?: Partial<Pick<Sheet_ACU, 'name' | 'orderNo' | 'updateConfig' | 'exportConfig' | 'sourceData'>>;
+    /** 列结构是否发生变化（true 时该表应退化为 checkpoint） */
+    structureChanged?: boolean;
 }
 
 export type {

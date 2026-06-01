@@ -16,6 +16,7 @@ import { getCurrentWorldbookConfig_ACU } from '../settings/settings-readers';
 
 import { isSummaryOrOutlineTable_ACU, logDebug_ACU, logError_ACU, logWarn_ACU, parseTableTemplateJson_ACU } from '../../shared/utils';
 
+import { applyTableDelta_ACU, isDeltaTagData_ACU } from './table-delta';
 /**
  * 表名标准化：trim 后空串视为无效键
  */
@@ -141,6 +142,9 @@ export function loadBatchBaseData_ACU(
     const batchFoundSheets: Record<string, boolean> = {};
     batchSheetKeys.forEach(k => batchFoundSheets[k] = false);
 
+    // 收集 delta 楼层的增量数据（逆序收集，后续正序叠加）
+    const pendingDeltas: { msgIndex: number; incrementalData: Record<string, any> }[] = [];
+
     // [修复] 保存指导表基底中每个 sheet 的结构快照（sourceData/DDL/表头/表名等），
     // 以便从聊天记录加载旧数据覆盖后恢复。防止旧数据中的旧 DDL/旧表头覆盖用户在可视化编辑器中的修改。
     const guideSnapshots: Record<string, any> = {};
@@ -157,8 +161,17 @@ export function loadBatchBaseData_ACU(
         // [优先级1] 新版按标签分组存储
         if (msg.TavernDB_ACU_IsolatedData && msg.TavernDB_ACU_IsolatedData[batchIsolationKey]) {
             const tagData = msg.TavernDB_ACU_IsolatedData[batchIsolationKey];
-            const independentData = tagData.independentData || {};
 
+            // delta 楼层：收集增量，不做整表覆盖
+            if (isDeltaTagData_ACU(tagData)) {
+                if (tagData.incrementalData) {
+                    pendingDeltas.push({ msgIndex: j, incrementalData: tagData.incrementalData });
+                }
+                continue;
+            }
+
+            // checkpoint / legacy 楼层：原 first-write-wins 逻辑
+            const independentData = tagData.independentData || {};
             Object.keys(independentData).forEach(storedSheetKey => {
                 if (batchFoundSheets[storedSheetKey] === false && mergedBatchData[storedSheetKey]) {
                     mergedBatchData[storedSheetKey] = JSON.parse(JSON.stringify(independentData[storedSheetKey]));
@@ -214,6 +227,23 @@ export function loadBatchBaseData_ACU(
 
         if (Object.values(batchFoundSheets).every(v => v === true)) {
             break;
+        }
+    }
+
+    // 正序叠加 delta 增量到已找到的 base 数据上
+    if (pendingDeltas.length > 0) {
+        pendingDeltas.reverse(); // 逆序收集 → 正序叠加
+        for (const { incrementalData } of pendingDeltas) {
+            for (const sheetKey of Object.keys(incrementalData)) {
+                if (!mergedBatchData[sheetKey] || batchFoundSheets[sheetKey] === undefined) continue;
+                try {
+                    mergedBatchData[sheetKey] = applyTableDelta_ACU(mergedBatchData[sheetKey], incrementalData[sheetKey], sheetKey);
+                    restoreGuideStructure(mergedBatchData[sheetKey], guideSnapshots[sheetKey]);
+                    batchFoundSheets[sheetKey] = true;
+                } catch (e: any) {
+                    logWarn_ACU(`[表格增量] loadBatchBaseData: 叠加 delta 失败 (sheet=${sheetKey}): ${e?.message || e}`);
+                }
+            }
         }
     }
 

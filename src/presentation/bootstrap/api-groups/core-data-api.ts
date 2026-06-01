@@ -93,6 +93,8 @@ export function createCoreDataApi(ctx: ApiGroupContext): Record<string, Function
                                 tagData.independentData = newIndependentData;
                                 tagData.modifiedKeys = Object.keys(newIndependentData);
                                 tagData.updateGroupKeys = Object.keys(newIndependentData);
+                                tagData._acu_storage_mode = 'checkpoint';
+                                tagData._acu_storage_version = 1;
 
                                 isolatedContainer[currentIsolationKey] = tagData;
                                 targetMessage.TavernDB_ACU_IsolatedData = isolatedContainer;

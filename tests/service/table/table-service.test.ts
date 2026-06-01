@@ -12,7 +12,6 @@ const {
   mockGetChatArray,
   mockSaveChatToHost,
   mockParseTableTemplateJson,
-  mockIsSummaryOrOutlineTable,
   mockApplyTemplateScopeForCurrentChat,
   mockGetChatSheetGuideData,
   mockSetChatSheetGuideData,
@@ -26,8 +25,6 @@ const {
   mockCloneIsolatedData,
   mockWriteIsolatedTagData,
   mockWriteMessageIdentity,
-  mockWriteLegacyCompatData,
-  mockWriteLegacyStandardAndSummary,
   mockReadIsolatedTagData,
   mockReadLegacyIndependentData,
   mockIsLegacyMatchForIsolation,
@@ -49,7 +46,6 @@ const {
     mockGetChatArray: vi.fn(),
     mockSaveChatToHost: vi.fn().mockResolvedValue(undefined),
     mockParseTableTemplateJson: vi.fn(),
-    mockIsSummaryOrOutlineTable: vi.fn((name: string) => name.includes('纪要') || name.includes('总结') || name.includes('大纲')),
     mockApplyTemplateScopeForCurrentChat: vi.fn(),
     mockGetChatSheetGuideData: vi.fn(() => null),
     mockSetChatSheetGuideData: vi.fn(),
@@ -63,8 +59,6 @@ const {
     mockCloneIsolatedData: vi.fn(() => ({})),
     mockWriteIsolatedTagData: vi.fn(),
     mockWriteMessageIdentity: vi.fn(),
-    mockWriteLegacyCompatData: vi.fn(),
-    mockWriteLegacyStandardAndSummary: vi.fn(),
     mockReadIsolatedTagData: vi.fn(() => null),
     mockReadLegacyIndependentData: vi.fn(() => null),
     mockIsLegacyMatchForIsolation: vi.fn(() => false),
@@ -77,7 +71,6 @@ vi.mock('../../../src/data/gateways/chat-gateway', () => ({
 }));
 
 vi.mock('../../../src/shared/utils', () => ({
-  isSummaryOrOutlineTable_ACU: mockIsSummaryOrOutlineTable,
   logDebug_ACU: vi.fn(),
   logError_ACU: vi.fn(),
   logWarn_ACU: vi.fn(),
@@ -117,8 +110,6 @@ vi.mock('../../../src/data/repositories/chat-message-data-repo', () => ({
   cloneIsolatedData_ACU: mockCloneIsolatedData,
   writeIsolatedTagData_ACU: mockWriteIsolatedTagData,
   writeMessageIdentity_ACU: mockWriteMessageIdentity,
-  writeLegacyCompatData_ACU: mockWriteLegacyCompatData,
-  writeLegacyStandardAndSummary_ACU: mockWriteLegacyStandardAndSummary,
   readIsolatedTagData_ACU: mockReadIsolatedTagData,
   readLegacyIndependentData_ACU: mockReadLegacyIndependentData,
   isLegacyMatchForIsolation_ACU: mockIsLegacyMatchForIsolation,
@@ -170,7 +161,7 @@ describe('saveIndependentTableToChatHistory_ACU', () => {
     expect(result.error).toContain('no AI message');
   });
 
-  it('正常保存到最后一条 AI 消息，写入隔离数据和 legacy 数据', async () => {
+  it('正常保存到最后一条 AI 消息，写入隔离数据', async () => {
     const aiMsg: any = { is_user: false, mes: 'AI回复' };
     mockGetChatArray.mockReturnValue([
       { is_user: true, mes: '用户消息' },
@@ -184,8 +175,6 @@ describe('saveIndependentTableToChatHistory_ACU', () => {
     // 验证隔离数据写入
     expect(mockWriteIsolatedTagData).toHaveBeenCalledTimes(1);
     expect(mockWriteMessageIdentity).toHaveBeenCalledTimes(1);
-    expect(mockWriteLegacyCompatData).toHaveBeenCalledTimes(1);
-    expect(mockWriteLegacyStandardAndSummary).toHaveBeenCalledTimes(1);
     expect(mockSaveChatToHost).toHaveBeenCalledTimes(1);
   });
 

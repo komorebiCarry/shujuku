@@ -13,6 +13,7 @@ import { ensureSheetOrderNumbers_ACU, isSummaryOrOutlineTable_ACU, logDebug_ACU,
 import { getTemplateSheetKeys_ACU } from '../template/chat-scope';
 import { upsertTemplatePreset_ACU } from '../template/template-preset-service';
 import { readIsolatedTagData_ACU, readLegacyIndependentData_ACU, readLegacyStandardData_ACU, readLegacySummaryData_ACU, readModifiedKeys_ACU, readUpdateGroupKeys_ACU, readMessageIdentity_ACU, isLegacyMatchForIsolation_ACU, initIsolatedTagSlot_ACU, writeLegacyCompatData_ACU } from '../../data/repositories/chat-message-data-repo';
+import { applyTableDelta_ACU, isDeltaTagData_ACU, isCheckpointTagData_ACU } from '../table/table-delta';
 
   /**
    * 旧数据兼容层：将 content 数组中的 null 占位列迁移为行号 row_id
@@ -87,6 +88,8 @@ import { readIsolatedTagData_ACU, readLegacyIndependentData_ACU, readLegacyStand
       // 1. [优化] 不使用模板作为基础，动态收集聊天记录中的所有实际数据
       let mergedData: Record<string, any> = {};
       const foundSheets: Record<string, boolean> = {};
+      // 收集 delta 楼层的增量数据（逆序收集，后续正序叠加）
+      const pendingDeltas: { index: number; tagData: any }[] = [];
 
       for (let i = chat.length - 1; i >= 0; i--) {
           const message = chat[i];
@@ -95,6 +98,15 @@ import { readIsolatedTagData_ACU, readLegacyIndependentData_ACU, readLegacyStand
           // [优先级1] 检查新版按标签分组存储
           const tagData = readIsolatedTagData_ACU(message, currentIsolationKey);
           if (tagData) {
+              // delta 楼层：收集增量数据，稍后正序叠加
+              if (isDeltaTagData_ACU(tagData)) {
+                  if (tagData.incrementalData && Object.keys(tagData.incrementalData).length > 0) {
+                      pendingDeltas.push({ index: i, tagData });
+                  }
+                  continue;
+              }
+
+              // checkpoint / legacy 楼层：使用现有的 first-write-wins 逻辑
               const independentData = tagData.independentData || {};
               const modifiedKeys = tagData.modifiedKeys || [];
               const updateGroupKeys = tagData.updateGroupKeys || [];
@@ -105,7 +117,7 @@ import { readIsolatedTagData_ACU, readLegacyIndependentData_ACU, readLegacyStand
                       logDebug_ACU(`[Merge] Skipping sheet [${storedSheetKey}] - not in current template/guide`);
                       return;
                   }
-                  if (!foundSheets[storedSheetKey]) {
+    if (!foundSheets[storedSheetKey]) {
                       mergedData[storedSheetKey] = JSON.parse(JSON.stringify(independentData[storedSheetKey]));
                       foundSheets[storedSheetKey] = true;
 
@@ -215,6 +227,36 @@ import { readIsolatedTagData_ACU, readLegacyIndependentData_ACU, readLegacyStand
               }
           }
       }
+
+      // ── 正序叠加 delta 楼层的增量数据到已找到的 base 上 ──
+      if (pendingDeltas.length > 0 && Object.keys(foundSheets).length > 0) {
+          // pendingDeltas 是逆序收集的，需要反转为正序（从旧到新）
+          pendingDeltas.reverse();
+          logDebug_ACU(`[表格重建] 正序叠加 ${pendingDeltas.length} 个 delta 楼层到 base 上`);
+
+          for (const { index: deltaIndex, tagData: deltaTagData } of pendingDeltas) {
+              const incrementalData = deltaTagData.incrementalData || {};
+              for (const [sheetKey, delta] of Object.entries(incrementalData)) {
+                  if (!templateSheetKeySet.has(sheetKey)) continue;
+                  if (!mergedData[sheetKey]) {
+                      logWarn_ACU(`[表格重建] delta 楼层 #${deltaIndex} 引用了 sheetKey=${sheetKey}，但 base 中不存在该表，跳过`);
+                      continue;
+                  }
+                  try {
+                      mergedData[sheetKey] = applyTableDelta_ACU(mergedData[sheetKey], delta as any, sheetKey);
+                      // 更新 lastUpdatedAiFloor 为 delta 楼层（最新变更来源）
+                      if (!independentTableStates_ACU[sheetKey]) {
+                          independentTableStates_ACU[sheetKey] = {};
+                      }
+                      const currentAiFloor = chat.slice(0, deltaIndex + 1).filter((m: any) => !m.is_user).length;
+                      independentTableStates_ACU[sheetKey].lastUpdatedAiFloor = currentAiFloor;
+                  } catch (e) {
+                      logError_ACU(`[表格重建] 应用 delta 失败: sheetKey=${sheetKey}, 楼层=#${deltaIndex}`, e);
+                  }
+              }
+          }
+      }
+
 
       const foundCount = Object.keys(foundSheets).length;
       logDebug_ACU(`[Merge] Found ${foundCount} tables for tag [${currentIsolationKey || '无标签'}] from chat history.`);
@@ -459,6 +501,8 @@ if (!Array.isArray(next.content)) next.content = guideHeader ? [guideHeader] : [
           tagData.modifiedKeys = [];
           tagData.updateGroupKeys = [];
           tagData._acu_base_state = GREETING_LOCAL_BASE_STATE_MARKER_ACU;
+          tagData._acu_storage_mode = 'checkpoint';
+          tagData._acu_storage_version = 1;
 
           // 同步旧格式（兼容老逻辑）
           writeLegacyCompatData_ACU(greetingMsg, JSON.parse(JSON.stringify(indep)), [], []);
@@ -548,6 +592,8 @@ if (!Array.isArray(next.content)) next.content = guideHeader ? [guideHeader] : [
           tagData.independentData = indep;
           tagData.modifiedKeys = [];
           tagData.updateGroupKeys = [];
+          tagData._acu_storage_mode = 'checkpoint';
+          tagData._acu_storage_version = 1;
 
           // 同步旧格式（兼容老逻辑）
           writeLegacyCompatData_ACU(firstMsg, JSON.parse(JSON.stringify(indep)), [], []);

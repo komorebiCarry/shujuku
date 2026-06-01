@@ -230,6 +230,39 @@ export function initIsolatedTagSlot_ACU(msg: any, isolationKey: string): Isolati
 }
 
 /**
+ * 统一的 checkpoint 写入接口。
+ * 将完整表格快照写入指定消息的指定隔离标签槽位，并标记 _acu_storage_mode='checkpoint'。
+ * 用于播种、导入、模板覆盖、清理边界兆底等场景。
+ *
+ * @param msg 聊天消息对象
+ * @param isolationKey 隔离标签键名
+ * @param independentData 完整表格快照
+ * @param options 可选配置（modifiedKeys/updateGroupKeys/baseState）
+ */
+export function writeTableCheckpointToMessage_ACU(
+    msg: any,
+    isolationKey: string,
+    independentData: Record<string, Sheet_ACU>,
+    options?: {
+        modifiedKeys?: string[];
+        updateGroupKeys?: string[];
+        baseState?: string;
+    },
+): void {
+    if (!msg) return;
+    const tagData = initIsolatedTagSlot_ACU(msg, isolationKey);
+    tagData.independentData = independentData;
+    tagData.modifiedKeys = options?.modifiedKeys ?? [];
+    tagData.updateGroupKeys = options?.updateGroupKeys ?? [];
+    tagData._acu_storage_mode = 'checkpoint';
+    tagData._acu_storage_version = 1;
+    if (options?.baseState !== undefined) {
+        tagData._acu_base_state = options.baseState;
+    }
+}
+
+
+/**
  * 同步写入旧版兼容字段（IndependentData/ModifiedKeys/UpdateGroupKeys）。
  *
  * @param msg 聊天消息对象

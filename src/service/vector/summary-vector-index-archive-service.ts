@@ -760,6 +760,9 @@ async function writeSummaryVectorIndexCheckpoint_ACU(options: {
         updateGroupKeys: Array.isArray(existingTagData.updateGroupKeys) ? [...existingTagData.updateGroupKeys] : [],
         ...(existingTagData.vectorMemoryState ? { vectorMemoryState: existingTagData.vectorMemoryState } : {}),
         ...(existingTagData._acu_base_state ? { _acu_base_state: existingTagData._acu_base_state } : {}),
+        ...(existingTagData.incrementalData ? { incrementalData: existingTagData.incrementalData } : {}),
+        ...(existingTagData._acu_storage_mode ? { _acu_storage_mode: existingTagData._acu_storage_mode } : {}),
+        ...(existingTagData._acu_storage_version != null ? { _acu_storage_version: existingTagData._acu_storage_version } : {}),
     } as any;
     if (nextState) {
         const previousManifest = existingTagData.summaryVectorIndexManifest || previousState?.manifest || null;
@@ -831,6 +834,9 @@ async function clearSummaryVectorIndexCheckpoint_ACU(params: {
         updateGroupKeys: Array.isArray(existingTagData.updateGroupKeys) ? [...existingTagData.updateGroupKeys] : [],
         ...(existingTagData.vectorMemoryState ? { vectorMemoryState: existingTagData.vectorMemoryState } : {}),
         ...(existingTagData._acu_base_state ? { _acu_base_state: existingTagData._acu_base_state } : {}),
+        ...(existingTagData.incrementalData ? { incrementalData: existingTagData.incrementalData } : {}),
+        ...(existingTagData._acu_storage_mode ? { _acu_storage_mode: existingTagData._acu_storage_mode } : {}),
+        ...(existingTagData._acu_storage_version != null ? { _acu_storage_version: existingTagData._acu_storage_version } : {}),
     } as any;
     assignSummaryVectorIndexStateToTagData_ACU(nextTagData, null);
     nextIsolatedData[isolationKey] = nextTagData;
@@ -959,6 +965,9 @@ export async function migrateLegacySummaryVectorIndexToContentAddressed_ACU(opti
         updateGroupKeys: Array.isArray(existingTagData.updateGroupKeys) ? [...existingTagData.updateGroupKeys] : [],
         ...(existingTagData.vectorMemoryState ? { vectorMemoryState: existingTagData.vectorMemoryState } : {}),
         ...(existingTagData._acu_base_state ? { _acu_base_state: existingTagData._acu_base_state } : {}),
+        ...(existingTagData.incrementalData ? { incrementalData: existingTagData.incrementalData } : {}),
+        ...(existingTagData._acu_storage_mode ? { _acu_storage_mode: existingTagData._acu_storage_mode } : {}),
+        ...(existingTagData._acu_storage_version != null ? { _acu_storage_version: existingTagData._acu_storage_version } : {}),
     } as any;
     assignSummaryVectorIndexStateToTagData_ACU(nextTagData, persisted.state, persisted.manifest);
     nextIsolatedData[isolationKey] = nextTagData;

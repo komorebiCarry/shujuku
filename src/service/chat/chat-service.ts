@@ -336,6 +336,8 @@ export async function purgeOldLayerData_ACU() {
                 for (const [sheetKey, sheetData] of sheetMap) {
                     anchorTagData.independentData[sheetKey] = JSON.parse(JSON.stringify(sheetData));
                 }
+                anchorTagData._acu_storage_mode = 'checkpoint';
+                anchorTagData._acu_storage_version = 1;
             }
 
             // 立即持久化兜底数据，再继续删除循环
@@ -711,6 +713,8 @@ export async function overrideLatestLayerWithTemplateCore_ACU(templateData: any)
         // 更新修改标记
         tagData.modifiedKeys = Object.keys(tagData.independentData);
         tagData.updateGroupKeys = tagData.modifiedKeys;
+        tagData._acu_storage_mode = 'checkpoint';
+        tagData._acu_storage_version = 1;
 
         // 保存聊天记录
         await saveChatToHost_ACU();
