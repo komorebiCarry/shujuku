@@ -90,6 +90,23 @@ vi.mock('../../../src/service/summary/merge-logic', () => ({
 vi.mock('../../../src/service/template/chat-scope', () => ({
   getChatSheetGuideDataForIsolationKey_ACU: vi.fn(() => null),
   getEffectiveSeedRowsForSheet_ACU: vi.fn(() => []),
+  ensureStableRowIdsForSheetContent_ACU: vi.fn((content: any) => {
+    if (!Array.isArray(content) || content.length === 0) return [];
+    const header = Array.isArray(content[0]) ? [...content[0]] : ['row_id'];
+    const rows = content.slice(1).map((row: any) => Array.isArray(row) ? [...row] : []);
+    const seen = new Set<string>();
+    let nextId = 1;
+    return [header, ...rows.map((row: any) => {
+      let value = row[0] == null || String(row[0]).trim() === '' || seen.has(String(row[0]).trim()) ? '' : String(row[0]).trim();
+      if (!value) {
+        while (seen.has(String(nextId))) nextId += 1;
+        value = String(nextId++);
+      }
+      seen.add(value);
+      row[0] = value;
+      return row;
+    })];
+  }),
   getSortedSheetKeys_ACU: vi.fn((data: any) => data ? Object.keys(data).filter((k: string) => k.startsWith('sheet_')) : []),
   buildGuidedBaseDataFromSheetGuide_ACU: vi.fn(),
 }));
@@ -1662,6 +1679,37 @@ describe('applyUnifiedGroupFillResponses_ACU', () => {
     const savePayload = mockPersistTablesToChatMessage.mock.calls[0][0];
     expect(savePayload.targetSheetKeys).toEqual(['sheet_0']);
     expect(savePayload.tableData.sheet_1.content).toEqual([['row_id', 'value'], ['9', 'existing-b']]);
+    vi.mocked(isSqliteMode).mockReturnValue(false);
+  });
+
+  it('SQL 模式下缺失表 seedRows 的 row_id 会在首次初始化时稳定化后再落盘', async () => {
+    const { isSqliteMode } = await import('../../../src/service/table/storage-mode');
+    const { parseTableTemplateJson_ACU } = await import('../../../src/shared/utils');
+    const { getChatSheetGuideDataForIsolationKey_ACU, getEffectiveSeedRowsForSheet_ACU } = await import('../../../src/service/template/chat-scope');
+    vi.mocked(isSqliteMode).mockReturnValue(true);
+    vi.mocked(getChatSheetGuideDataForIsolationKey_ACU).mockReturnValue(null);
+    vi.mocked(parseTableTemplateJson_ACU).mockReturnValue({
+      mate: { type: 'acu', version: 1 },
+      sheet_0: { uid: 'inventory', name: '表A', sourceData: { ddl: 'CREATE TABLE inventory (row_id INTEGER PRIMARY KEY, value TEXT NOT NULL);' }, content: [['row_id', 'value'], ['1', 'tpl-a']], updateConfig: {}, exportConfig: {}, orderNo: 0 },
+      sheet_1: { uid: 'quest_log', name: '表B', sourceData: { ddl: 'CREATE TABLE quest_log (row_id INTEGER PRIMARY KEY, value TEXT NOT NULL);' }, content: [['row_id', 'value']], updateConfig: {}, exportConfig: {}, orderNo: 1 },
+    } as any);
+    vi.mocked(getEffectiveSeedRowsForSheet_ACU).mockImplementation((sheetKey: string) => sheetKey === 'sheet_1' ? [[null, 'tpl-b'], ['', 'tpl-c']] as any : []);
+
+    const baseSnapshot = {
+      mate: { type: 'acu', version: 1 },
+      sheet_0: { uid: 'inventory', name: '表A', sourceData: { ddl: 'CREATE TABLE inventory (row_id INTEGER PRIMARY KEY, value TEXT NOT NULL);' }, content: [['row_id', 'value']], updateConfig: {}, exportConfig: {}, orderNo: 0 },
+    } as any;
+    const responses = [
+      { success: true, attempt: 1, aiResponse: "<tableEdit>INSERT INTO inventory VALUES (2, 'sql-a');</tableEdit>", tableEditText: "INSERT INTO inventory VALUES (2, 'sql-a');", job: { groupKey: 'a', groupId: 1, batchNumber: 1, saveTargetIndex: 3, targetSheetKeys: ['sheet_0', 'sheet_1'], updateMode: 'auto_standard', requestOptions: null, messagesForContext: [], baseSnapshot, isImportMode: false } },
+    ];
+
+    const result = await applyUnifiedGroupFillResponses_ACU(responses as any, baseSnapshot, { saveTargetIndex: 3, updateMode: 'auto_standard', isImportMode: false });
+
+    expect(result.success).toBe(true);
+    const savePayload = mockPersistTablesToChatMessage.mock.calls[0][0];
+    expect(savePayload.targetSheetKeys).toEqual(['sheet_0', 'sheet_1']);
+    expect(savePayload.tableData.sheet_1.content).toEqual([['row_id', 'value'], ['1', 'tpl-b'], ['2', 'tpl-c']]);
+    expect(baseSnapshot.sheet_0.content).toEqual([['row_id', 'value']]);
     vi.mocked(isSqliteMode).mockReturnValue(false);
   });
 });

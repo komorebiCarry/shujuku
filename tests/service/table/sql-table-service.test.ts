@@ -63,6 +63,19 @@ const mockGetCurrentChatTemplateScopeState = vi.fn().mockReturnValue(null);
 vi.mock('../../../src/service/template/chat-scope', () => ({
   getEffectiveSeedRowsForSheet_ACU: (...args: any[]) => mockGetEffectiveSeedRows(...args),
   getCurrentChatTemplateScopeState_ACU: (...args: any[]) => mockGetCurrentChatTemplateScopeState(...args),
+  ensureStableRowIdsForSheetContent_ACU: vi.fn((content: any) => {
+    if (!Array.isArray(content) || content.length === 0) return [];
+    const header = Array.isArray(content[0]) ? [...content[0]] : ['row_id'];
+    const rows = content.slice(1).map((row: any) => Array.isArray(row) ? [...row] : []);
+    let nextId = 1;
+    return [header, ...rows.map((row: any) => {
+      const normalized = row[0] == null || String(row[0]).trim() === '' ? '' : String(row[0]).trim();
+      const value = normalized || String(nextId++);
+      if (row.length === 0) return [value];
+      row[0] = value;
+      return row;
+    })];
+  }),
   sanitizeTemplateSnapshotForChat_ACU: vi.fn((source: any) => {
     if (!source) return null;
     return { templateStr: typeof source === 'string' ? source : JSON.stringify(source), templateObj: typeof source === 'string' ? JSON.parse(source) : source };
@@ -567,6 +580,38 @@ describe('SqlTableService', () => {
       // 验证 UPDATE 确实生效了（quantity 从 3 变为 10）
       expect(queryResult.values[0]).toContain(10);
       expect(queryResult.values[1]).toContain('治疗药水');
+    });
+
+    it('seedRows 缺失 row_id 时会稳定化后写入 SQLite', async () => {
+      mockMergeAll.mockResolvedValue(null);
+      await service.loadFromChat();
+
+      const { parseTableTemplateJson_ACU } = await import('../../../src/shared/utils');
+      vi.mocked(parseTableTemplateJson_ACU).mockReturnValue({
+        mate: { type: 'acu', version: 1 },
+        sheet_0: {
+          uid: 'inventory',
+          name: '背包物品表',
+          sourceData: { note: '', initNode: '', deleteNode: '', updateNode: '', insertNode: '', ddl: TEST_DDL_WITH_SEED },
+          content: [['row_id', 'item_name', 'quantity']],
+          updateConfig: {},
+          exportConfig: {},
+          orderNo: 0,
+        },
+      } as any);
+
+      mockGetEffectiveSeedRows.mockReturnValue([
+        [null, '铁剑', '3'],
+        ['', '治疗药水', '5'],
+      ]);
+
+      const result = service.applyEdits("UPDATE inventory SET quantity = 10 WHERE item_name = '铁剑';");
+      expect(result.success).toBe(true);
+
+      const queryResult = service.executeQuery('SELECT row_id, item_name, quantity FROM inventory ORDER BY row_id');
+      expect(queryResult.rowCount).toBe(2);
+      expect(queryResult.values[0]).toEqual([1, '铁剑', 10]);
+      expect(queryResult.values[1]).toEqual([2, '治疗药水', 5]);
     });
 
     it('没有 seedRows 的表建表后仍为空表', async () => {

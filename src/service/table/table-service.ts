@@ -10,6 +10,7 @@ import { applyTemplateScopeForCurrentChat_ACU } from '../settings/settings-servi
 import {
   attachSeedRowsToCurrentDataFromGuide_ACU,
   buildChatSheetGuideDataFromData_ACU,
+  ensureStableRowIdsForSheetContent_ACU,
   ensureChatSheetGuideSeeded_ACU,
   getChatSheetGuideDataForIsolationKey_ACU,
   getSortedSheetKeys_ACU,
@@ -203,7 +204,11 @@ async function persistTablesToChatMessageWithLockOption_ACU(
     keysToSave.forEach(sheetKey => {
       const table = effectiveTableData[sheetKey];
       if (table) {
-        independentData[sheetKey] = sanitizeSheetForStorage_ACU(JSON.parse(JSON.stringify(table)));
+        const normalizedTable = JSON.parse(JSON.stringify(table));
+        if (Array.isArray(normalizedTable.content)) {
+          normalizedTable.content = ensureStableRowIdsForSheetContent_ACU(normalizedTable.content);
+        }
+        independentData[sheetKey] = sanitizeSheetForStorage_ACU(normalizedTable);
       }
     });
 

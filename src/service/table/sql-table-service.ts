@@ -29,7 +29,7 @@ import { logDebug_ACU, logError_ACU, logWarn_ACU, parseTableTemplateJson_ACU, st
 import { buildGlobalNameMapper, disposeGlobalNameMapper } from '../runtime/template-vars/name-mapper';
 import { parseDDLTableName, generateDDL, generateInserts } from '../../data/sqlite/schema-mapper';
 import { normalizeSqlStructure, normalizeStatementValues } from '../../data/sqlite/sql-normalizer';
-import { getEffectiveSeedRowsForSheet_ACU, getCurrentChatTemplateScopeState_ACU, sanitizeTemplateSnapshotForChat_ACU } from '../template/chat-scope';
+import { ensureStableRowIdsForSheetContent_ACU, getEffectiveSeedRowsForSheet_ACU, getCurrentChatTemplateScopeState_ACU, sanitizeTemplateSnapshotForChat_ACU } from '../template/chat-scope';
 import { getTemplatePreset_ACU } from '../template/template-preset-service';
 import { safeJsonParse_ACU } from '../../shared/json-helpers';
 
@@ -453,6 +453,7 @@ export class SqlTableService implements ITableStorageProvider {
         if (Array.isArray(seedRows) && seedRows.length > 0) {
           // seedRows 是不含表头的纯数据行，拼接到表头后面
           sheetCopy.content = [sheetCopy.content[0] || [], ...seedRows];
+          sheetCopy.content = ensureStableRowIdsForSheetContent_ACU(sheetCopy.content);
           logDebug_ACU(`[SqlTableService] 表 ${key} (${sheetCopy.name}) 注入 ${seedRows.length} 行 seedRows 作为初版快照`);
         }
       }

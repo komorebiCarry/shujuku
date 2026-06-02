@@ -9,7 +9,7 @@ import { callCustomOpenAI_ACU } from '../ai/prompt-builder';
 import { getChatArray_ACU } from '../chat/chat-service';
 import { coreApisAreReady_ACU, currentChatFileIdentifier_ACU, currentJsonTableData_ACU, getCurrentIsolationKey_ACU, settings_ACU, _set_currentJsonTableData_ACU } from '../runtime/state-manager';
 import { checkAutoMergeTrigger_ACU, prepareAutoMergeBatches_ACU, executeAutoMergeBatch_ACU, finalizeAutoMerge_ACU } from '../summary/merge-logic';
-import { getChatSheetGuideDataForIsolationKey_ACU, getEffectiveSeedRowsForSheet_ACU } from '../template/chat-scope';
+import { ensureStableRowIdsForSheetContent_ACU, getChatSheetGuideDataForIsolationKey_ACU, getEffectiveSeedRowsForSheet_ACU } from '../template/chat-scope';
 import { loadAllChatMessages_ACU, updateReadableLorebookEntry_ACU } from '../worldbook/pipeline';
 import { enqueueSummaryVectorIndexFlush_ACU } from '../vector/summary-vector-index-flush-queue';
 import { getCurrentWorldbookConfig_ACU } from '../settings/settings-readers';
@@ -526,6 +526,7 @@ function buildSqlInitializationBase_ACU(baseSnapshot: Record<string, any>, targe
             const seedRows = getEffectiveSeedRowsForSheet_ACU(sheetKey, { guideData, allowTemplateFallback: true });
             if (Array.isArray(seedRows) && seedRows.length > 0) {
                 targetSheet.content = [targetSheet.content[0] || [], ...JSON.parse(JSON.stringify(seedRows))];
+                targetSheet.content = ensureStableRowIdsForSheetContent_ACU(targetSheet.content);
                 sheetChanged = true;
             }
         }

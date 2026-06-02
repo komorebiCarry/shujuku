@@ -28,6 +28,7 @@ const {
   mockReadIsolatedTagData,
   mockReadLegacyIndependentData,
   mockIsLegacyMatchForIsolation,
+  mockEnsureStableRowIdsForSheetContent,
 } = vi.hoisted(() => {
   const mockCurrentJsonTableDataRef = {
     value: {
@@ -61,6 +62,18 @@ const {
     mockWriteMessageIdentity: vi.fn(),
     mockReadIsolatedTagData: vi.fn(() => null),
     mockReadLegacyIndependentData: vi.fn(() => null),
+    mockEnsureStableRowIdsForSheetContent: vi.fn((content: any) => {
+      if (!Array.isArray(content) || content.length === 0) return [];
+      const header = Array.isArray(content[0]) ? [...content[0]] : ['row_id'];
+      const rows = content.slice(1).map((row: any) => Array.isArray(row) ? [...row] : []);
+      let nextId = 1;
+      return [header, ...rows.map((row: any) => {
+        const value = String(nextId++);
+        if (row.length === 0) return [value];
+        row[0] = value;
+        return row;
+      })];
+    }),
     mockIsLegacyMatchForIsolation: vi.fn(() => false),
   };
 });
@@ -95,6 +108,7 @@ vi.mock('../../../src/service/template/chat-scope', () => ({
   ensureChatSheetGuideSeeded_ACU: mockEnsureChatSheetGuideSeeded,
   getChatSheetGuideDataForIsolationKey_ACU: mockGetChatSheetGuideData,
   getSortedSheetKeys_ACU: mockGetSortedSheetKeys,
+  ensureStableRowIdsForSheetContent_ACU: mockEnsureStableRowIdsForSheetContent,
   sanitizeSheetForStorage_ACU: mockSanitizeSheetForStorage,
   setChatSheetGuideDataForIsolationKey_ACU: mockSetChatSheetGuideData,
 }));
@@ -166,6 +180,29 @@ describe('saveIndependentTableToChatHistory_ACU', () => {
     const writtenTagData = mockWriteIsolatedTagData.mock.calls[0][2];
     expect(writtenTagData.independentData.sheet_0.content[1][1]).toBe('显式铁剑');
     expect(writtenTagData.independentData.sheet_0.name).toBe('显式表');
+  });
+
+  it('落盘前会稳定化目标 sheet 的 row_id', async () => {
+    const aiMsg: any = { is_user: false, mes: 'AI回复' };
+    mockGetChatArray.mockReturnValue([aiMsg]);
+    mockCloneIsolatedData.mockReturnValue({
+      '': { independentData: {}, modifiedKeys: [], updateGroupKeys: [] },
+    });
+
+    const explicitTableData = {
+      sheet_0: {
+        name: '显式表',
+        content: [['row_id', '物品名'], [null, '苹果'], ['', '梨子']],
+      },
+    } as any;
+
+    const result = await persistTablesToChatMessage_ACU({ tableData: explicitTableData });
+
+    expect(result.saved).toBe(true);
+    expect(mockEnsureStableRowIdsForSheetContent).toHaveBeenCalledTimes(1);
+    const writtenTagData = mockWriteIsolatedTagData.mock.calls[0][2];
+    expect(writtenTagData.independentData.sheet_0.content).toEqual([['row_id', '物品名'], ['1', '苹果'], ['2', '梨子']]);
+    expect(explicitTableData.sheet_0.content).toEqual([['row_id', '物品名'], [null, '苹果'], ['', '梨子']]);
   });
 
   it('显式传入 tableData:null 时不回退全局数据，直接返回失败', async () => {
