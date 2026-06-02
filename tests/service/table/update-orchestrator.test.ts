@@ -89,6 +89,7 @@ vi.mock('../../../src/service/summary/merge-logic', () => ({
 
 vi.mock('../../../src/service/template/chat-scope', () => ({
   getChatSheetGuideDataForIsolationKey_ACU: vi.fn(() => null),
+  getEffectiveSeedRowsForSheet_ACU: vi.fn(() => []),
   getSortedSheetKeys_ACU: vi.fn((data: any) => data ? Object.keys(data).filter((k: string) => k.startsWith('sheet_')) : []),
   buildGuidedBaseDataFromSheetGuide_ACU: vi.fn(),
 }));
@@ -1431,6 +1432,39 @@ describe('applyUnifiedGroupFillResponses_ACU', () => {
     vi.mocked(isSqliteMode).mockReturnValue(false);
   });
 
+  it('SQL 模式下模板基础数据与 AI INSERT 主键冲突时返回真实 SQL 错误且不保存', async () => {
+    const { isSqliteMode } = await import('../../../src/service/table/storage-mode');
+    const { parseTableTemplateJson_ACU } = await import('../../../src/shared/utils');
+    const { getChatSheetGuideDataForIsolationKey_ACU, getEffectiveSeedRowsForSheet_ACU } = await import('../../../src/service/template/chat-scope');
+    vi.mocked(isSqliteMode).mockReturnValue(true);
+    vi.mocked(getChatSheetGuideDataForIsolationKey_ACU).mockReturnValue(null);
+    vi.mocked(parseTableTemplateJson_ACU).mockReturnValue({
+      mate: { type: 'acu', version: 1 },
+      sheet_0: { uid: 'inventory', name: '表A', sourceData: { ddl: 'CREATE TABLE inventory (row_id INTEGER PRIMARY KEY, value TEXT NOT NULL);' }, content: [['row_id', 'value'], ['1', 'tpl-a']], updateConfig: {}, exportConfig: {}, orderNo: 0 },
+    } as any);
+    vi.mocked(getEffectiveSeedRowsForSheet_ACU).mockReturnValue([['1', 'tpl-a']] as any);
+
+    const baseSnapshot = {
+      mate: { type: 'acu', version: 1 },
+      sheet_0: { uid: 'inventory', name: '表A', sourceData: { ddl: 'CREATE TABLE inventory (row_id INTEGER PRIMARY KEY, value TEXT NOT NULL);' }, content: [['row_id', 'value']], updateConfig: {}, exportConfig: {}, orderNo: 0 },
+    } as any;
+    const responses = [
+      { success: true, attempt: 1, aiResponse: "<tableEdit>INSERT INTO inventory VALUES (1, 'sql-conflict');</tableEdit>", tableEditText: "INSERT INTO inventory VALUES (1, 'sql-conflict');", job: { groupKey: 'a', groupId: 1, batchNumber: 1, saveTargetIndex: 3, targetSheetKeys: ['sheet_0'], updateMode: 'auto_standard', requestOptions: null, messagesForContext: [], baseSnapshot, isImportMode: false } },
+    ];
+
+    const result = await applyUnifiedGroupFillResponses_ACU(responses as any, baseSnapshot, { saveTargetIndex: 3, updateMode: 'auto_standard', isImportMode: false });
+
+    expect(result.success).toBe(false);
+    const normalizedError = String(result.error).toLowerCase();
+    expect(normalizedError).toContain('group a');
+    expect(normalizedError).toMatch(/unique|constraint|primary/);
+    expect(mockParseAndApplyTableEditsToData).not.toHaveBeenCalled();
+    expect(mockPersistTablesToChatMessage).not.toHaveBeenCalled();
+    expect(mockUpdateReadableLorebookEntry).not.toHaveBeenCalled();
+    expect(mockEnqueueSummaryVectorIndexFlush).not.toHaveBeenCalled();
+    vi.mocked(isSqliteMode).mockReturnValue(false);
+  });
+
   it('parser 返回越权 modifiedKeys 时直接失败且不保存', async () => {
     const baseSnapshot = {
       sheet_0: { name: '表A', content: [['row_id', '值'], ['1', 'base-a']] },
@@ -1526,6 +1560,109 @@ describe('applyUnifiedGroupFillResponses_ACU', () => {
     expect(mockSaveIndependentTable).not.toHaveBeenCalled();
     expect(mockEnqueueSummaryVectorIndexFlush).not.toHaveBeenCalled();
     expect(mockUpdateReadableLorebookEntry).not.toHaveBeenCalled();
+  });
+
+  it('SQL 模式下部分表无反馈时，仍用模板结构与基础数据初始化缺失表', async () => {
+    const { isSqliteMode } = await import('../../../src/service/table/storage-mode');
+    const { parseTableTemplateJson_ACU } = await import('../../../src/shared/utils');
+    const { getChatSheetGuideDataForIsolationKey_ACU, getEffectiveSeedRowsForSheet_ACU } = await import('../../../src/service/template/chat-scope');
+    vi.mocked(isSqliteMode).mockReturnValue(true);
+    vi.mocked(getChatSheetGuideDataForIsolationKey_ACU).mockReturnValue(null);
+    vi.mocked(parseTableTemplateJson_ACU).mockReturnValue({
+      mate: { type: 'acu', version: 1 },
+      sheet_0: { uid: 'inventory', name: '表A', sourceData: { ddl: 'CREATE TABLE inventory (row_id INTEGER PRIMARY KEY, value TEXT NOT NULL);' }, content: [['row_id', 'value'], ['1', 'tpl-a']], updateConfig: {}, exportConfig: {}, orderNo: 0 },
+      sheet_1: { uid: 'quest_log', name: '表B', sourceData: { ddl: 'CREATE TABLE quest_log (row_id INTEGER PRIMARY KEY, value TEXT NOT NULL);' }, content: [['row_id', 'value'], ['1', 'tpl-b']], updateConfig: {}, exportConfig: {}, orderNo: 1 },
+    } as any);
+    vi.mocked(getEffectiveSeedRowsForSheet_ACU).mockImplementation((sheetKey: string) => sheetKey === 'sheet_1' ? [['1', 'tpl-b']] : []);
+
+    const baseSnapshot = {
+      mate: { type: 'acu', version: 1 },
+      sheet_0: { uid: 'inventory', name: '表A', sourceData: { ddl: 'CREATE TABLE inventory (row_id INTEGER PRIMARY KEY, value TEXT NOT NULL);' }, content: [['row_id', 'value']], updateConfig: {}, exportConfig: {}, orderNo: 0 },
+    } as any;
+    const responses = [
+      { success: true, attempt: 1, aiResponse: "<tableEdit>INSERT INTO inventory VALUES (2, 'sql-a');</tableEdit>", tableEditText: "INSERT INTO inventory VALUES (2, 'sql-a');", job: { groupKey: 'a', groupId: 1, batchNumber: 1, saveTargetIndex: 3, targetSheetKeys: ['sheet_0', 'sheet_1'], updateMode: 'auto_standard', requestOptions: null, messagesForContext: [], baseSnapshot, isImportMode: false } },
+    ];
+
+    const result = await applyUnifiedGroupFillResponses_ACU(responses as any, baseSnapshot, { saveTargetIndex: 3, updateMode: 'auto_standard', isImportMode: false });
+
+    expect(result.success).toBe(true);
+    expect(result.modifiedKeys).toEqual(['sheet_0']);
+    expect(mockParseAndApplyTableEditsToData).not.toHaveBeenCalled();
+    expect(mockPersistTablesToChatMessage).toHaveBeenCalledTimes(1);
+    const savePayload = mockPersistTablesToChatMessage.mock.calls[0][0];
+    expect(savePayload.targetSheetKeys).toEqual(['sheet_0', 'sheet_1']);
+    expect(savePayload.tableData.sheet_0.content).toEqual([['row_id', 'value'], ['2', 'sql-a']]);
+    expect(savePayload.tableData.sheet_1.content).toEqual([['row_id', 'value'], ['1', 'tpl-b']]);
+    vi.mocked(isSqliteMode).mockReturnValue(false);
+  });
+
+  it('SQL 模式下模板无基础数据时，缺失表仍以表头空表落盘', async () => {
+    const { isSqliteMode } = await import('../../../src/service/table/storage-mode');
+    const { parseTableTemplateJson_ACU } = await import('../../../src/shared/utils');
+    const { getChatSheetGuideDataForIsolationKey_ACU, getEffectiveSeedRowsForSheet_ACU } = await import('../../../src/service/template/chat-scope');
+    vi.mocked(isSqliteMode).mockReturnValue(true);
+    vi.mocked(getChatSheetGuideDataForIsolationKey_ACU).mockReturnValue(null);
+    vi.mocked(parseTableTemplateJson_ACU).mockReturnValue({
+      mate: { type: 'acu', version: 1 },
+      sheet_0: { uid: 'inventory', name: '表A', sourceData: { ddl: 'CREATE TABLE inventory (row_id INTEGER PRIMARY KEY, value TEXT NOT NULL);' }, content: [['row_id', 'value']], updateConfig: {}, exportConfig: {}, orderNo: 0 },
+      sheet_1: { uid: 'quest_log', name: '表B', sourceData: { ddl: 'CREATE TABLE quest_log (row_id INTEGER PRIMARY KEY, value TEXT NOT NULL);' }, content: [['row_id', 'value']], updateConfig: {}, exportConfig: {}, orderNo: 1 },
+    } as any);
+    vi.mocked(getEffectiveSeedRowsForSheet_ACU).mockReturnValue([] as any);
+
+    const baseSnapshot = {
+      mate: { type: 'acu', version: 1 },
+      sheet_0: { uid: 'inventory', name: '表A', sourceData: { ddl: 'CREATE TABLE inventory (row_id INTEGER PRIMARY KEY, value TEXT NOT NULL);' }, content: [['row_id', 'value']], updateConfig: {}, exportConfig: {}, orderNo: 0 },
+    } as any;
+    const responses = [
+      { success: true, attempt: 1, aiResponse: "<tableEdit>INSERT INTO inventory VALUES (2, 'sql-a');</tableEdit>", tableEditText: "INSERT INTO inventory VALUES (2, 'sql-a');", job: { groupKey: 'a', groupId: 1, batchNumber: 1, saveTargetIndex: 3, targetSheetKeys: ['sheet_0', 'sheet_1'], updateMode: 'auto_standard', requestOptions: null, messagesForContext: [], baseSnapshot, isImportMode: false } },
+    ];
+
+    const result = await applyUnifiedGroupFillResponses_ACU(responses as any, baseSnapshot, { saveTargetIndex: 3, updateMode: 'auto_standard', isImportMode: false });
+
+    expect(result.success).toBe(true);
+    expect(result.modifiedKeys).toEqual(['sheet_0']);
+    expect(mockParseAndApplyTableEditsToData).not.toHaveBeenCalled();
+    const savePayload = mockPersistTablesToChatMessage.mock.calls[0][0];
+    expect(savePayload.targetSheetKeys).toEqual(['sheet_0', 'sheet_1']);
+    expect(savePayload.tableData.sheet_1.content).toEqual([['row_id']]);
+    expect(savePayload.tableData.sheet_1.uid).toBe('quest_log');
+    expect(savePayload.tableData.sheet_1.name).toBe('表B');
+    expect(savePayload.tableData.sheet_1.sourceData?.ddl).toContain('CREATE TABLE quest_log');
+    expect(savePayload.tableData.sheet_1.orderNo).toBe(1);
+    vi.mocked(isSqliteMode).mockReturnValue(false);
+  });
+
+  it('SQL 模式下已有运行数据的表不重复灌入模板基础数据，也不扩大 targetSheetKeys', async () => {
+    const { isSqliteMode } = await import('../../../src/service/table/storage-mode');
+    const { parseTableTemplateJson_ACU } = await import('../../../src/shared/utils');
+    const { getChatSheetGuideDataForIsolationKey_ACU, getEffectiveSeedRowsForSheet_ACU } = await import('../../../src/service/template/chat-scope');
+    vi.mocked(isSqliteMode).mockReturnValue(true);
+    vi.mocked(getChatSheetGuideDataForIsolationKey_ACU).mockReturnValue(null);
+    vi.mocked(parseTableTemplateJson_ACU).mockReturnValue({
+      mate: { type: 'acu', version: 1 },
+      sheet_0: { uid: 'inventory', name: '表A', sourceData: { ddl: 'CREATE TABLE inventory (row_id INTEGER PRIMARY KEY, value TEXT NOT NULL);' }, content: [['row_id', 'value'], ['1', 'tpl-a']], updateConfig: {}, exportConfig: {}, orderNo: 0 },
+      sheet_1: { uid: 'quest_log', name: '表B', sourceData: { ddl: 'CREATE TABLE quest_log (row_id INTEGER PRIMARY KEY, value TEXT NOT NULL);' }, content: [['row_id', 'value'], ['1', 'tpl-b']], updateConfig: {}, exportConfig: {}, orderNo: 1 },
+    } as any);
+    vi.mocked(getEffectiveSeedRowsForSheet_ACU).mockImplementation((sheetKey: string) => sheetKey === 'sheet_1' ? [['1', 'tpl-b']] : []);
+
+    const baseSnapshot = {
+      mate: { type: 'acu', version: 1 },
+      sheet_0: { uid: 'inventory', name: '表A', sourceData: { ddl: 'CREATE TABLE inventory (row_id INTEGER PRIMARY KEY, value TEXT NOT NULL);' }, content: [['row_id', 'value']], updateConfig: {}, exportConfig: {}, orderNo: 0 },
+      sheet_1: { uid: 'quest_log', name: '表B', sourceData: { ddl: 'CREATE TABLE quest_log (row_id INTEGER PRIMARY KEY, value TEXT NOT NULL);' }, content: [['row_id', 'value'], ['9', 'existing-b']], updateConfig: {}, exportConfig: {}, orderNo: 1 },
+    } as any;
+    const responses = [
+      { success: true, attempt: 1, aiResponse: "<tableEdit>INSERT INTO inventory VALUES (2, 'sql-a');</tableEdit>", tableEditText: "INSERT INTO inventory VALUES (2, 'sql-a');", job: { groupKey: 'a', groupId: 1, batchNumber: 1, saveTargetIndex: 3, targetSheetKeys: ['sheet_0', 'sheet_1'], updateMode: 'auto_standard', requestOptions: null, messagesForContext: [], baseSnapshot, isImportMode: false } },
+    ];
+
+    const result = await applyUnifiedGroupFillResponses_ACU(responses as any, baseSnapshot, { saveTargetIndex: 3, updateMode: 'auto_standard', isImportMode: false });
+
+    expect(result.success).toBe(true);
+    expect(result.modifiedKeys).toEqual(['sheet_0']);
+    expect(mockParseAndApplyTableEditsToData).not.toHaveBeenCalled();
+    const savePayload = mockPersistTablesToChatMessage.mock.calls[0][0];
+    expect(savePayload.targetSheetKeys).toEqual(['sheet_0']);
+    expect(savePayload.tableData.sheet_1.content).toEqual([['row_id', 'value'], ['9', 'existing-b']]);
+    vi.mocked(isSqliteMode).mockReturnValue(false);
   });
 });
 

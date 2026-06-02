@@ -9,7 +9,7 @@ import { callCustomOpenAI_ACU } from '../ai/prompt-builder';
 import { getChatArray_ACU } from '../chat/chat-service';
 import { coreApisAreReady_ACU, currentChatFileIdentifier_ACU, currentJsonTableData_ACU, getCurrentIsolationKey_ACU, settings_ACU, _set_currentJsonTableData_ACU } from '../runtime/state-manager';
 import { checkAutoMergeTrigger_ACU, prepareAutoMergeBatches_ACU, executeAutoMergeBatch_ACU, finalizeAutoMerge_ACU } from '../summary/merge-logic';
-import { getChatSheetGuideDataForIsolationKey_ACU } from '../template/chat-scope';
+import { getChatSheetGuideDataForIsolationKey_ACU, getEffectiveSeedRowsForSheet_ACU } from '../template/chat-scope';
 import { loadAllChatMessages_ACU, updateReadableLorebookEntry_ACU } from '../worldbook/pipeline';
 import { enqueueSummaryVectorIndexFlush_ACU } from '../vector/summary-vector-index-flush-queue';
 import { getCurrentWorldbookConfig_ACU } from '../settings/settings-readers';
@@ -431,6 +431,111 @@ export async function collectGroupFillResponse_ACU(
     return { job, success: false, attempt: maxRetries, error: `填表在 ${maxRetries} 次尝试后仍失败: ${lastErrorMessage}`, rawError: lastErrorMessage };
 }
 
+function buildSqlInitializationBase_ACU(baseSnapshot: Record<string, any>, targetSheetKeys: string[]) {
+    const workingTableData = JSON.parse(JSON.stringify(baseSnapshot || {}));
+    const initializedSheetKeys = new Set<string>();
+
+    let templateData: Record<string, any> | null = null;
+    let guideData: Record<string, any> | null = null;
+    let guidedBaseData: Record<string, any> | null = null;
+
+    try {
+        templateData = parseTableTemplateJson_ACU({ stripSeedRows: false }) as Record<string, any> | null;
+    } catch (error) {
+        logWarn_ACU('[SQL Init] parseTableTemplateJson_ACU failed, fallback to baseSnapshot only.', error);
+    }
+    try {
+        guideData = getChatSheetGuideDataForIsolationKey_ACU(getCurrentIsolationKey_ACU());
+        guidedBaseData = guideData ? buildGuidedBaseDataFromSheetGuide_ACU(guideData) : null;
+    } catch (error) {
+        logWarn_ACU('[SQL Init] getChatSheetGuideDataForIsolationKey_ACU failed, fallback to template/baseSnapshot only.', error);
+    }
+
+    if (!workingTableData.mate && templateData?.mate) {
+        workingTableData.mate = JSON.parse(JSON.stringify(templateData.mate));
+    }
+
+    for (const sheetKey of Array.isArray(targetSheetKeys) ? targetSheetKeys : []) {
+        if (!sheetKey || !String(sheetKey).startsWith('sheet_')) continue;
+
+        const templateSheet = templateData?.[sheetKey];
+        const guidedSheet = guidedBaseData?.[sheetKey];
+        const existingSheet = workingTableData?.[sheetKey];
+        const sourceSheet = guidedSheet || templateSheet;
+        if ((!existingSheet || typeof existingSheet !== 'object') && (!sourceSheet || typeof sourceSheet !== 'object')) continue;
+
+        let sheetChanged = false;
+        if (!existingSheet || typeof existingSheet !== 'object') {
+            workingTableData[sheetKey] = {};
+            sheetChanged = true;
+        }
+
+        const targetSheet = workingTableData[sheetKey];
+        const fallbackUid = guidedSheet?.uid || templateSheet?.uid;
+        const fallbackName = guidedSheet?.name || templateSheet?.name;
+        const fallbackSourceData = guidedSheet?.sourceData && typeof guidedSheet.sourceData === 'object'
+            ? guidedSheet.sourceData
+            : (templateSheet?.sourceData && typeof templateSheet.sourceData === 'object' ? templateSheet.sourceData : null);
+        const fallbackUpdateConfig = guidedSheet?.updateConfig && typeof guidedSheet.updateConfig === 'object'
+            ? guidedSheet.updateConfig
+            : (templateSheet?.updateConfig && typeof templateSheet.updateConfig === 'object' ? templateSheet.updateConfig : null);
+        const fallbackExportConfig = guidedSheet?.exportConfig && typeof guidedSheet.exportConfig === 'object'
+            ? guidedSheet.exportConfig
+            : (templateSheet?.exportConfig && typeof templateSheet.exportConfig === 'object' ? templateSheet.exportConfig : null);
+        const fallbackOrderNo = guidedSheet?.orderNo !== undefined ? guidedSheet.orderNo : templateSheet?.orderNo;
+        const headerRow = Array.isArray(targetSheet?.content?.[0])
+            ? targetSheet.content[0]
+            : (Array.isArray(guidedSheet?.content?.[0])
+                ? guidedSheet.content[0]
+                : (Array.isArray(templateSheet?.content?.[0]) ? templateSheet.content[0] : null));
+
+        if (!targetSheet.uid && fallbackUid) { targetSheet.uid = fallbackUid; sheetChanged = true; }
+        if (!targetSheet.name && fallbackName) { targetSheet.name = fallbackName; sheetChanged = true; }
+        if ((!targetSheet.sourceData || typeof targetSheet.sourceData !== 'object') && fallbackSourceData) {
+            targetSheet.sourceData = JSON.parse(JSON.stringify(fallbackSourceData));
+            sheetChanged = true;
+        } else if (!targetSheet?.sourceData?.ddl && fallbackSourceData?.ddl) {
+            targetSheet.sourceData = { ...(targetSheet.sourceData || {}), ddl: fallbackSourceData.ddl };
+            sheetChanged = true;
+        }
+        if ((!targetSheet.updateConfig || typeof targetSheet.updateConfig !== 'object') && fallbackUpdateConfig) {
+            targetSheet.updateConfig = JSON.parse(JSON.stringify(fallbackUpdateConfig));
+            sheetChanged = true;
+        }
+        if ((!targetSheet.exportConfig || typeof targetSheet.exportConfig !== 'object') && fallbackExportConfig) {
+            targetSheet.exportConfig = JSON.parse(JSON.stringify(fallbackExportConfig));
+            sheetChanged = true;
+        }
+        if ((targetSheet.orderNo === undefined || targetSheet.orderNo === null) && fallbackOrderNo !== undefined) {
+            targetSheet.orderNo = fallbackOrderNo;
+            sheetChanged = true;
+        }
+
+        if (!Array.isArray(targetSheet.content)) {
+            targetSheet.content = headerRow ? [JSON.parse(JSON.stringify(headerRow))] : [];
+            sheetChanged = true;
+        } else if (targetSheet.content.length === 0 && headerRow) {
+            targetSheet.content = [JSON.parse(JSON.stringify(headerRow))];
+            sheetChanged = true;
+        } else if (!Array.isArray(targetSheet.content[0]) && headerRow) {
+            targetSheet.content[0] = JSON.parse(JSON.stringify(headerRow));
+            sheetChanged = true;
+        }
+
+        if (Array.isArray(targetSheet.content) && targetSheet.content.length <= 1) {
+            const seedRows = getEffectiveSeedRowsForSheet_ACU(sheetKey, { guideData, allowTemplateFallback: true });
+            if (Array.isArray(seedRows) && seedRows.length > 0) {
+                targetSheet.content = [targetSheet.content[0] || [], ...JSON.parse(JSON.stringify(seedRows))];
+                sheetChanged = true;
+            }
+        }
+
+        if (sheetChanged) initializedSheetKeys.add(sheetKey);
+    }
+
+    return { workingTableData, initializedSheetKeys };
+}
+
 export async function applyUnifiedGroupFillResponses_ACU(
     responses: GroupFillResponse_ACU[],
     baseSnapshot: Record<string, any>,
@@ -471,7 +576,12 @@ export async function applyUnifiedGroupFillResponses_ACU(
         }
     }
 
-    let workingTableData = JSON.parse(JSON.stringify(baseSnapshot));
+    const sqlInitialization = isSqliteMode()
+        ? buildSqlInitializationBase_ACU(baseSnapshot, [...allTargetSheetKeySet])
+        : { workingTableData: JSON.parse(JSON.stringify(baseSnapshot)), initializedSheetKeys: new Set<string>() };
+
+    let workingTableData = sqlInitialization.workingTableData;
+    const initializedSheetKeys = sqlInitialization.initializedSheetKeys;
     const modifiedKeySet = new Set<string>();
 
     for (const response of sortedResponses) {
@@ -527,10 +637,11 @@ export async function applyUnifiedGroupFillResponses_ACU(
 
     const modifiedKeys = [...modifiedKeySet].sort();
     if (!options.isImportMode) {
-        const allTargetSheetKeys = [...allTargetSheetKeySet].sort();
+        const initializedKeys = [...initializedSheetKeys].sort();
+        const allTargetSheetKeys = [...new Set([...allTargetSheetKeySet, ...initializedKeys])].sort();
         const saveResult = await persistTablesToChatMessage_ACU({
             targetMessageIndex: options.saveTargetIndex,
-            targetSheetKeys: modifiedKeys,
+            targetSheetKeys: [...new Set([...modifiedKeys, ...initializedKeys])].sort(),
             updateGroupKeys: allTargetSheetKeys,
             trackingSheetKeys: allTargetSheetKeys,
             tableData: workingTableData,
