@@ -21,6 +21,7 @@ import { mergeAllIndependentTables_ACU } from '../runtime/helpers-remaining';
 import { cloneIsolatedData_ACU, writeIsolatedTagData_ACU, writeMessageIdentity_ACU, readIsolatedTagData_ACU, readLegacyIndependentData_ACU, isLegacyMatchForIsolation_ACU } from '../../data/repositories/chat-message-data-repo';
 import { applyTableDelta_ACU, buildTableDelta_ACU, isDeltaTagData_ACU } from './table-delta';
 import { buildTableUpdateApplyScopeKey_ACU, runTableUpdateApplyWithScopeLock_ACU } from './table-update-queue';
+import type { TableDataObject_ACU } from '../../shared/models/table-data';
 
 export interface TableChatPersistOptions_ACU {
   targetMessageIndex?: number;
@@ -32,6 +33,7 @@ export interface TableChatPersistOptions_ACU {
    * 未传时沿用 targetSheetKeys，保持旧调用兼容。
    */
   trackingSheetKeys?: string[] | null;
+  tableData?: TableDataObject_ACU | null;
   trackAsUpdate?: boolean;
 }
 
@@ -50,6 +52,7 @@ async function persistTablesToChatMessageWithLockOption_ACU(
     targetSheetKeys = null,
     updateGroupKeys = null,
     trackingSheetKeys = targetSheetKeys,
+    tableData: explicitTableData,
     trackAsUpdate = true,
   } = options;
 
@@ -59,7 +62,8 @@ async function persistTablesToChatMessageWithLockOption_ACU(
  * 注意：不再内部调用 refreshMergedDataAndNotify，调用方按需自行刷新。
  */
   const _skipPostRefresh = false;
-  if (!currentJsonTableData_ACU) {
+  const effectiveTableData = explicitTableData !== undefined ? explicitTableData : currentJsonTableData_ACU;
+  if (!effectiveTableData) {
     logError_ACU('Save aborted: currentJsonTableData_ACU is null.');
     return { saved: false, error: 'currentJsonTableData is null' };
   }
@@ -115,7 +119,7 @@ async function persistTablesToChatMessageWithLockOption_ACU(
       const existingGuide = getChatSheetGuideDataForIsolationKey_ACU(currentIsolationKey);
       if (!existingGuide || !Object.keys(existingGuide).some(k => k.startsWith('sheet_'))) {
         const templateObjForSeed = parseTableTemplateJson_ACU({ stripSeedRows: false });
-        const guideData = buildChatSheetGuideDataFromData_ACU(currentJsonTableData_ACU, {
+        const guideData = buildChatSheetGuideDataFromData_ACU(effectiveTableData, {
           preserveSeedRowsFromGuideData: null,
           seedRowsFromTemplateObj: templateObjForSeed,
         });
@@ -164,7 +168,7 @@ async function persistTablesToChatMessageWithLockOption_ACU(
     let keysToSave: string[] = targetSheetKeys as string[];
 
     if (!keysToSave) {
-      keysToSave = getSortedSheetKeys_ACU(currentJsonTableData_ACU);
+      keysToSave = getSortedSheetKeys_ACU(effectiveTableData);
     }
 
     const trackingKeySet = new Set(
@@ -172,10 +176,32 @@ async function persistTablesToChatMessageWithLockOption_ACU(
         ? trackingSheetKeys.filter((sheetKey): sheetKey is string => typeof sheetKey === 'string' && sheetKey.length > 0)
         : []
     );
-    const actuallyModifiedKeys = keysToSave.filter(sheetKey => trackingKeySet.has(sheetKey));
+    const actuallyModifiedKeys = [...trackingKeySet];
+    const metadataOnlyUpdateGroupKeys = Array.isArray(updateGroupKeys)
+      ? updateGroupKeys.filter(sheetKey => trackingKeySet.has(sheetKey))
+      : [];
+
+    if (keysToSave.length === 0 && trackAsUpdate && actuallyModifiedKeys.length > 0) {
+      const existingModifiedKeys = currentTagData.modifiedKeys || [];
+      currentTagData.modifiedKeys = [...new Set([...existingModifiedKeys, ...actuallyModifiedKeys])];
+
+      if (metadataOnlyUpdateGroupKeys.length > 0) {
+        const existingGroupKeys = currentTagData.updateGroupKeys || [];
+        currentTagData.updateGroupKeys = [...new Set([...existingGroupKeys, ...metadataOnlyUpdateGroupKeys])];
+      }
+
+      writeIsolatedTagData_ACU(targetMessage, currentIsolationKey, currentTagData);
+      writeMessageIdentity_ACU(targetMessage, {
+        enabled: settings_ACU.dataIsolationEnabled,
+        code: settings_ACU.dataIsolationCode,
+      });
+
+      await saveChatToHost_ACU();
+      return { saved: true, messageIndex: finalIndex };
+    }
 
     keysToSave.forEach(sheetKey => {
-      const table = currentJsonTableData_ACU[sheetKey];
+      const table = effectiveTableData[sheetKey];
       if (table) {
         independentData[sheetKey] = sanitizeSheetForStorage_ACU(JSON.parse(JSON.stringify(table)));
       }
@@ -232,27 +258,23 @@ async function persistTablesToChatMessageWithLockOption_ACU(
       logDebug_ACU(`[表格Checkpoint] 楼层 #${finalIndex} 无 base，使用 checkpoint 模式`);
     }
 
-    const persistedModifiedKeys = actuallyModifiedKeys.filter(sheetKey => persistedChangedKeySet.has(sheetKey));
-    const filteredUpdateGroupKeys = Array.isArray(updateGroupKeys)
-      ? updateGroupKeys.filter(sheetKey => persistedChangedKeySet.has(sheetKey))
-      : [];
+    const trackingModifiedKeys = actuallyModifiedKeys;
+    const trackingUpdateGroupKeys = metadataOnlyUpdateGroupKeys;
 
-    if (trackAsUpdate && persistedModifiedKeys.length > 0) {
+    if (trackAsUpdate && trackingModifiedKeys.length > 0) {
       const existingModifiedKeys = currentTagData.modifiedKeys || [];
-      currentTagData.modifiedKeys = [...new Set([...existingModifiedKeys, ...persistedModifiedKeys])];
+      currentTagData.modifiedKeys = [...new Set([...existingModifiedKeys, ...trackingModifiedKeys])];
       logDebug_ACU(`[Tracking] Recorded modified keys for tag [${currentIsolationKey || '无标签'}] at index ${finalIndex}: ${currentTagData.modifiedKeys.join(', ')}`);
-    } else if (trackAsUpdate && actuallyModifiedKeys.length > 0) {
-      logDebug_ACU(`[Tracking] No persisted table changes for tag [${currentIsolationKey || '无标签'}] at index ${finalIndex}; skipped modified keys: ${actuallyModifiedKeys.join(', ')}`);
     }
 
-    if (trackAsUpdate && filteredUpdateGroupKeys.length > 0 && persistedModifiedKeys.length > 0) {
+    if (trackAsUpdate && trackingUpdateGroupKeys.length > 0 && trackingModifiedKeys.length > 0) {
       const existingGroupKeys = currentTagData.updateGroupKeys || [];
-      currentTagData.updateGroupKeys = [...new Set([...existingGroupKeys, ...filteredUpdateGroupKeys])];
+      currentTagData.updateGroupKeys = [...new Set([...existingGroupKeys, ...trackingUpdateGroupKeys])];
       logDebug_ACU(`[Merge Update Success] Group keys for tag [${currentIsolationKey || '无标签'}] recorded at index ${finalIndex}: ${currentTagData.updateGroupKeys.join(', ')}`);
     } else if (trackAsUpdate && updateGroupKeys && updateGroupKeys.length > 0 && actuallyModifiedKeys.length === 0) {
       logDebug_ACU(`[Merge Update Failed] No tables were modified for tag [${currentIsolationKey || '无标签'}]. Group keys NOT recorded: ${updateGroupKeys.join(', ')}`);
-    } else if (trackAsUpdate && updateGroupKeys && updateGroupKeys.length > 0 && filteredUpdateGroupKeys.length === 0) {
-      logDebug_ACU(`[Merge Update Skipped] No persisted table changes for tag [${currentIsolationKey || '无标签'}]. Group keys NOT recorded: ${updateGroupKeys.join(', ')}`);
+    } else if (trackAsUpdate && updateGroupKeys && updateGroupKeys.length > 0 && trackingUpdateGroupKeys.length === 0) {
+      logDebug_ACU(`[Merge Update Skipped] No tracked group keys intersected for tag [${currentIsolationKey || '无标签'}]. Group keys NOT recorded: ${updateGroupKeys.join(', ')}`);
     }
 
     writeIsolatedTagData_ACU(targetMessage, currentIsolationKey, currentTagData);

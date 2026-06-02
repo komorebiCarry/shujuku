@@ -118,6 +118,7 @@ vi.mock('../../../src/data/repositories/chat-message-data-repo', () => ({
 
 import {
   saveIndependentTableToChatHistory_ACU,
+  persistTablesToChatMessage_ACU,
   checkIfFirstTimeInit_ACU,
   loadOrCreateJsonTableFromChatHistory_ACU,
 } from '../../../src/service/table/table-service';
@@ -143,6 +144,42 @@ describe('saveIndependentTableToChatHistory_ACU', () => {
     const result = await saveIndependentTableToChatHistory_ACU();
     expect(result.saved).toBe(false);
     expect(result.error).toContain('null');
+    expect(mockSaveChatToHost).not.toHaveBeenCalled();
+  });
+
+  it('传入显式 tableData 时保存内容优先使用显式数据而不是全局数据', async () => {
+    const aiMsg: any = { is_user: false, mes: 'AI回复' };
+    mockGetChatArray.mockReturnValue([aiMsg]);
+    mockCloneIsolatedData.mockReturnValue({
+      '': { independentData: {}, modifiedKeys: [], updateGroupKeys: [] },
+    });
+    mockCurrentJsonTableDataRef.value = {
+      sheet_0: { name: '全局表', content: [['row_id', '物品名'], ['1', '全局铁剑']] },
+    };
+    const explicitTableData = {
+      sheet_0: { name: '显式表', content: [['row_id', '物品名'], ['1', '显式铁剑']] },
+    } as any;
+
+    const result = await persistTablesToChatMessage_ACU({ tableData: explicitTableData });
+
+    expect(result.saved).toBe(true);
+    const writtenTagData = mockWriteIsolatedTagData.mock.calls[0][2];
+    expect(writtenTagData.independentData.sheet_0.content[1][1]).toBe('显式铁剑');
+    expect(writtenTagData.independentData.sheet_0.name).toBe('显式表');
+  });
+
+  it('显式传入 tableData:null 时不回退全局数据，直接返回失败', async () => {
+    const aiMsg: any = { is_user: false, mes: 'AI回复' };
+    mockGetChatArray.mockReturnValue([aiMsg]);
+    mockCurrentJsonTableDataRef.value = {
+      sheet_0: { name: '全局表', content: [['row_id', '物品名'], ['1', '全局铁剑']] },
+    };
+
+    const result = await persistTablesToChatMessage_ACU({ tableData: null });
+
+    expect(result.saved).toBe(false);
+    expect(result.error).toContain('null');
+    expect(mockWriteIsolatedTagData).not.toHaveBeenCalled();
     expect(mockSaveChatToHost).not.toHaveBeenCalled();
   });
 
@@ -206,6 +243,26 @@ describe('saveIndependentTableToChatHistory_ACU', () => {
     expect(writtenTagData.modifiedKeys).toContain('sheet_0');
     expect(writtenTagData.modifiedKeys).toContain('sheet_1');
     expect(writtenTagData.updateGroupKeys).toContain('sheet_1');
+  });
+
+  it('真实保存表与仅追踪表混合时，仍记录全部 tracking metadata', async () => {
+    const aiMsg: any = { is_user: false, mes: 'AI回复' };
+    mockGetChatArray.mockReturnValue([aiMsg]);
+    mockCloneIsolatedData.mockReturnValue({
+      '': { independentData: {}, modifiedKeys: [], updateGroupKeys: [] },
+    });
+
+    const result = await persistTablesToChatMessage_ACU({
+      targetMessageIndex: 0,
+      targetSheetKeys: ['sheet_1'],
+      trackingSheetKeys: ['sheet_0', 'sheet_1'],
+      updateGroupKeys: ['sheet_0', 'sheet_1'],
+    });
+
+    expect(result.saved).toBe(true);
+    const writtenTagData = mockWriteIsolatedTagData.mock.calls[0][2];
+    expect(writtenTagData.modifiedKeys).toEqual(expect.arrayContaining(['sheet_0', 'sheet_1']));
+    expect(writtenTagData.updateGroupKeys).toEqual(expect.arrayContaining(['sheet_0', 'sheet_1']));
   });
 
   it('同一目标楼层连续保存不同 group 时保留已有表、modifiedKeys 与 updateGroupKeys', async () => {

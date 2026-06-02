@@ -84,6 +84,7 @@ vi.mock('../../../src/shared/json-helpers', () => ({
 
 // 现在 import 被测模块
 import {
+  applySqlEditsToTableDataSnapshot_ACU,
   SqlTableService,
   splitSqlStatements,
   extractTableNamesFromStatements,
@@ -238,6 +239,60 @@ describe('extractTableNamesFromStatements', () => {
   it('大小写不敏感', () => {
     const result = extractTableNamesFromStatements(["insert into MyTable values (1)"]);
     expect(result).toEqual(['MyTable']);
+  });
+});
+
+// ═══════════════════════════════════════════════════════════════
+// SqlTableService 类测试
+// ═══════════════════════════════════════════════════════════════
+describe('applySqlEditsToTableDataSnapshot_ACU', () => {
+  const TEST_DDL = `CREATE TABLE inventory (
+    row_id INTEGER PRIMARY KEY,
+    item_name TEXT NOT NULL,
+    quantity INTEGER DEFAULT 1
+  );`;
+
+  const snapshotTableData: any = {
+    mate: { type: 'acu', version: 1, updateConfigUiSentinel: 0, globalInjectionConfig: { readableEntryPlacement: { position: '', depth: 0, order: 0 }, wrapperPlacement: { position: '', depth: 0, order: 0 } } },
+    sheet_0: {
+      uid: 'inventory',
+      name: '背包物品表',
+      sourceData: { note: '', initNode: '', deleteNode: '', updateNode: '', insertNode: '', ddl: TEST_DDL },
+      content: [
+        ['row_id', 'item_name', 'quantity'],
+        ['1', '铁剑', '3'],
+      ],
+      updateConfig: {},
+      exportConfig: {},
+      orderNo: 0,
+    },
+  };
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockCurrentJsonTableData = null;
+  });
+
+  it('基于显式快照应用 SQL，返回 workingData 且不污染输入快照与全局状态', async () => {
+    const inputSnapshot = JSON.parse(JSON.stringify(snapshotTableData));
+    const result = await applySqlEditsToTableDataSnapshot_ACU("UPDATE inventory SET quantity = 9 WHERE row_id = 1; INSERT INTO inventory VALUES (2, '治疗药水', 5);", inputSnapshot);
+
+    expect(result.success).toBe(true);
+    expect(result.modifiedKeys).toEqual(['sheet_0']);
+    expect(result.appliedEdits).toBe(2);
+    expect(result.workingData?.sheet_0.content).toEqual([['row_id', 'item_name', 'quantity'], ['1', '铁剑', '9'], ['2', '治疗药水', '5']]);
+    expect(inputSnapshot.sheet_0.content).toEqual([['row_id', 'item_name', 'quantity'], ['1', '铁剑', '3']]);
+    expect(mockCurrentJsonTableData).toBeNull();
+  });
+
+  it('SQL 失败时返回错误且不污染输入快照与全局状态', async () => {
+    const inputSnapshot = JSON.parse(JSON.stringify(snapshotTableData));
+    const result = await applySqlEditsToTableDataSnapshot_ACU('UPDATE inventory SET missing_col = 1 WHERE row_id = 1;', inputSnapshot);
+
+    expect(result.success).toBe(false);
+    expect(result.error).toContain('missing_col');
+    expect(inputSnapshot.sheet_0.content).toEqual([['row_id', 'item_name', 'quantity'], ['1', '铁剑', '3']]);
+    expect(mockCurrentJsonTableData).toBeNull();
   });
 });
 
