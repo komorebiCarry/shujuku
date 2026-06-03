@@ -148,14 +148,31 @@ async function mountTablePage(opts: {
   }));
 
   const entriesSourceRef = ref<'character' | 'manual'>('character');
+  const entriesManualSelectionRef = ref<string[]>([]);
+  const setEntriesSource = vi.fn((value: 'character' | 'manual') => {
+    entriesSourceRef.value = value;
+  });
+  const toggleEntriesManualBook = vi.fn((name: string, checked: boolean) => {
+    entriesSourceRef.value = 'manual';
+    entriesManualSelectionRef.value = checked
+      ? [...new Set([...entriesManualSelectionRef.value, name])]
+      : entriesManualSelectionRef.value.filter(item => item !== name);
+  });
   vi.doMock('../../../src/presentation-v2/composables/useFormFillWorldbookConfig', () => ({
     useFormFillWorldbookConfig: () => ({
       source: entriesSourceRef,
-      manualBook: ref(''),
-      selectorValue: ref('character'),
+      manualSelection: entriesManualSelectionRef,
+      manualBook: computed(() => entriesManualSelectionRef.value[0] || ''),
       refreshFromSettings: vi.fn(),
-      onSelectorChange: vi.fn(),
-      resolveBookNames: vi.fn(async () => ['CharBookT']),
+      setSource: setEntriesSource,
+      setManualSelection: vi.fn((names: string[]) => {
+        entriesSourceRef.value = 'manual';
+        entriesManualSelectionRef.value = names;
+      }),
+      toggleManualBook: toggleEntriesManualBook,
+      resolveBookNames: vi.fn(async () =>
+        entriesSourceRef.value === 'manual' ? entriesManualSelectionRef.value : ['CharBookT'],
+      ),
     }),
   }));
 
@@ -288,6 +305,31 @@ describe('TablePage', () => {
       .map(item => item.textContent?.trim());
     expect(labels).toContain('角色卡绑定世界书');
     expect(labels).toContain('CharBookT');
+
+    mount.__resetAcuV2MountForTests();
+  });
+
+  it('附加世界书条目手动模式可以多选世界书', async () => {
+    const { mount } = await mountTablePage();
+
+    const page = document.querySelector('.acu-v2-table-page') as HTMLElement;
+    const entriesPanel = page.querySelector<HTMLElement>('#table-entries-panel')!;
+    const manualButton = Array.from(entriesPanel.querySelectorAll<HTMLButtonElement>('.acu-segmented__item'))
+      .find(button => button.textContent?.trim() === '手动选择')!;
+    manualButton.click();
+    await Promise.resolve();
+
+    const checkboxes = Array.from(entriesPanel.querySelectorAll<HTMLButtonElement>('button[role="checkbox"]'));
+    const charBook = checkboxes.find(button => button.textContent?.trim() === 'CharBookT')!;
+    const other = checkboxes.find(button => button.textContent?.trim() === 'Other')!;
+    charBook.click();
+    other.click();
+    await Promise.resolve();
+    await Promise.resolve();
+
+    expect(entriesPanel.textContent).toContain('目前已选: CharBookT、Other');
+    expect(charBook.getAttribute('aria-checked')).toBe('true');
+    expect(other.getAttribute('aria-checked')).toBe('true');
 
     mount.__resetAcuV2MountForTests();
   });
