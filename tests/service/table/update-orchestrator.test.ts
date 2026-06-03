@@ -1897,6 +1897,84 @@ describe('processGroupedRuntimeChunk_ACU', () => {
     expect(mockEnqueueSummaryVectorIndexFlush).toHaveBeenCalledTimes(1);
   });
 
+  it('grouped 手动路径会向 onProgress 转发 AI 调用进度', async () => {
+    const { getChatArray_ACU } = await import('../../../src/service/chat/chat-service');
+    const { parseTableTemplateJson_ACU } = await import('../../../src/shared/utils');
+    vi.mocked(getChatArray_ACU).mockReturnValue([{ is_user: true }, { is_user: false, mes: 'AI回复' }]);
+    vi.mocked(parseTableTemplateJson_ACU).mockReturnValue({
+      mate: { type: 'acu' },
+      sheet_0: { name: '表A', content: [['row_id', '值'], ['1', 'base-a']] },
+    } as any);
+    mockCallCustomOpenAI.mockResolvedValueOnce('<tableEdit>sheet_0</tableEdit>');
+    const onProgress = vi.fn();
+
+    const result = await processGroupedRuntimeChunk_ACU([
+      { key: 'group_a', groupId: 0, indices: [1], batchSize: 2, sheetKeys: ['sheet_0'], requestOptions: null },
+    ], 'manual_independent', { onProgress });
+
+    expect(result.success).toBe(true);
+    expect(onProgress).toHaveBeenCalledWith(expect.objectContaining({
+      phase: 'calling_ai',
+      attempt: 1,
+      maxRetries: 1,
+      currentBatch: 1,
+      totalBatches: 1,
+    }));
+  });
+
+  it('连续 bucket 会在上一 bucket 保存后重新加载聊天记录作为下一次 prompt 基底', async () => {
+    const { getChatArray_ACU } = await import('../../../src/service/chat/chat-service');
+    const { parseTableTemplateJson_ACU } = await import('../../../src/shared/utils');
+    const chat = [
+      { is_user: true, mes: 'u1' },
+      { is_user: false, mes: 'a1' },
+      { is_user: true, mes: 'u2' },
+      { is_user: false, mes: 'a2' },
+    ];
+    vi.mocked(getChatArray_ACU).mockReturnValue(chat as any);
+    vi.mocked(parseTableTemplateJson_ACU).mockReturnValue({
+      mate: { type: 'acu' },
+      sheet_0: { name: '纪要表', content: [['row_id', '内容']] },
+    } as any);
+    const promptBaseRows: any[][][] = [];
+    mockPrepareAIInput.mockImplementation(async (_messages: any, _mode: string, _keys: string[] | null, options: any) => {
+      promptBaseRows.push(JSON.parse(JSON.stringify(options.tableData.sheet_0.content)));
+      return { tableDataText: '模拟数据' };
+    });
+    mockCallCustomOpenAI
+      .mockResolvedValueOnce('<tableEdit>第一层纪要</tableEdit>')
+      .mockResolvedValueOnce('<tableEdit>第二层纪要</tableEdit>');
+    mockParseAndApplyTableEditsToData.mockImplementation((aiResponse: string, tableData: any) => {
+      if (aiResponse.includes('第一层纪要')) {
+        tableData.sheet_0.content.push(['AM0001', '第一层纪要']);
+      } else if (aiResponse.includes('第二层纪要')) {
+        tableData.sheet_0.content.push(['AM0002', '第二层纪要']);
+      }
+      return { success: true, modifiedKeys: ['sheet_0'], appliedEdits: 1 };
+    });
+    mockPersistTablesToChatMessage.mockImplementation(async (options: any) => {
+      const target = chat[options.targetMessageIndex] as any;
+      target.TavernDB_ACU_IsolatedData = {
+        '': {
+          independentData: JSON.parse(JSON.stringify(options.tableData)),
+          modifiedKeys: options.trackingSheetKeys || [],
+          updateGroupKeys: options.updateGroupKeys || [],
+          _acu_storage_mode: 'checkpoint',
+        },
+      };
+      return { saved: true, messageIndex: options.targetMessageIndex };
+    });
+
+    const result = await processGroupedRuntimeChunk_ACU([
+      { key: 'summary', groupId: 0, indices: [1, 3], batchSize: 1, sheetKeys: ['sheet_0'], requestOptions: null },
+    ], 'manual_independent');
+
+    expect(result.success).toBe(true);
+    expect(promptBaseRows).toHaveLength(2);
+    expect(promptBaseRows[0]).toEqual([['row_id', '内容']]);
+    expect(promptBaseRows[1]).toEqual([['row_id', '内容'], ['AM0001', '第一层纪要']]);
+  });
+
   it('SQL 模式下不再早退，而是完成 grouped 统一提交', async () => {
     const { getChatArray_ACU } = await import('../../../src/service/chat/chat-service');
     const { parseTableTemplateJson_ACU } = await import('../../../src/shared/utils');

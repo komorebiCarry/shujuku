@@ -84,6 +84,12 @@ function updateLoadingToastMessage(loadingToast: any, message: string) {
     loadingToast.find('.acu-toast-progress-message').text(message);
 }
 
+function clearLoadingToast(loadingToast: any) {
+    if (loadingToast && toastr_API_ACU) {
+        toastr_API_ACU.clear(loadingToast);
+    }
+}
+
 /**
  * 根据 service 层返回的进度事件更新 UI
  * presentation 层自己决定"怎么展示"
@@ -230,6 +236,7 @@ export async function processUpdates_ACU(indicesToUpdate: number[], mode = 'auto
  */
 export async function handleManualUpdate_ACU() {
     logDebug_ACU('[更新流程] handleManualUpdate: 开始手动更新');
+    let manualProgressToast: any = null;
     try {
         if (shouldShowVectorMemoryManualUpdateWarning_ACU()) {
             syncManualUpdateButtonAvailability_ACU();
@@ -270,9 +277,31 @@ export async function handleManualUpdate_ACU() {
 
         // 调用 service 层，传入 clearBeforeUpdate: true（用户已确认清空）
         _set_wasStoppedByUser_ACU(false);
+        notifyTableFillStart();
+        const stopButtonId = `acu-stop-manual-update-btn-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+        const stopButtonHtml = renderStopButton_ACU(stopButtonId, '终止');
+        manualProgressToast = showToastr_ACU('info', `<div><span class="acu-toast-progress-message">手动填表开始。</span>${stopButtonHtml}</div>`, {
+            timeOut: 0,
+            extendedTimeOut: 0,
+            tapToDismiss: false,
+            acuToastCategory: ACU_TOAST_CATEGORY_ACU.MANUAL_TABLE,
+            onShown: function () {
+                if (typeof bindTableFillStopButton_ACU === 'function') {
+                    bindTableFillStopButton_ACU(stopButtonId, () => {
+                        _set_wasStoppedByUser_ACU(true);
+                        abortAllActiveRequests_ACU();
+                        _set_isAutoUpdatingCard_ACU(false);
+                        updateStatusText('填表任务已终止，正在停止当前任务与后续批次...', false);
+                        updateLoadingToastMessage(manualProgressToast, '填表任务已终止，正在停止当前任务与后续批次...');
+                        showToastr_ACU('warning', '填表任务已由用户终止，当前任务与后续批次将立即停止。');
+                    });
+                }
+            },
+        });
+
         const result = await orchestrateManualUpdate_ACU(
             targetKeys,
-            // processBatch 回调
+            // processBatch 回调保留给兼容路径；当前手动填表主路径由 service grouped helper 执行。
             async (indices, batchMode, batchOptions) => {
                 return processUpdates_ACU(indices, batchMode, batchOptions);
             },
@@ -281,8 +310,13 @@ export async function handleManualUpdate_ACU() {
                 await refreshMergedDataAndNotifyWithUI_ACU();
             },
             // [新增] 传入用户确认后的预清空选项
-            { clearBeforeUpdate: true }
+            {
+                clearBeforeUpdate: true,
+                onProgress: event => handleProgressEvent(event, false, manualProgressToast),
+            }
         );
+        clearLoadingToast(manualProgressToast);
+        manualProgressToast = null;
 
         // UI：根据返回值显示 toast
         if (result.success) {
@@ -301,6 +335,7 @@ export async function handleManualUpdate_ACU() {
             showToastr_ACU(isWarning ? 'warning' : 'error', result.error);
         }
     } finally {
+        clearLoadingToast(manualProgressToast);
         // UI：重置手动更新按钮
         if (typeof resetManualUpdateButton_ACU === 'function') resetManualUpdateButton_ACU();
     }
