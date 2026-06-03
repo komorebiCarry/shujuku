@@ -475,6 +475,7 @@ import { useUiCloseGuard } from "../../composables/useUiCloseGuard";
 import { useVisualizerConfigEditing } from "../../composables/visualizer/useVisualizerConfigEditing";
 import { useVisualizerData } from "../../composables/visualizer/useVisualizerData";
 import { useVisualizerSave } from "../../composables/visualizer/useVisualizerSave";
+import { acuClearTimeout, acuSetTimeout, type AcuTimerHandle } from "../../bootstrap/host-env";
 import { useDialogStore } from "../../stores/dialog-store";
 import { useVisualizerStore } from "../../stores/visualizer-store";
 import VisualizerAssistantPanel from "./VisualizerAssistantPanel.vue";
@@ -496,7 +497,7 @@ const workspaceRef = ref<HTMLElement | null>(null);
 const paginationRef = ref<HTMLElement | null>(null);
 const VISUALIZER_MOBILE_NAV_LEAVE_MS = 150;
 const VISUALIZER_DATA_PAGE_SIZE = 30;
-let mobileNavCloseTimer: ReturnType<typeof setTimeout> | undefined;
+let mobileNavCloseTimer: AcuTimerHandle | undefined;
 let paginationResizeObserver: ResizeObserver | undefined;
 
 const save = useVisualizerSave({
@@ -565,7 +566,7 @@ function closeMobileNav(): void {
   if (!isMobileNavRendered.value || isMobileNavClosing.value) return;
   isMobileNavClosing.value = true;
   clearMobileNavCloseTimer();
-  mobileNavCloseTimer = setTimeout(() => {
+  mobileNavCloseTimer = acuSetTimeout(() => {
     isMobileNavRendered.value = false;
     isMobileNavClosing.value = false;
     mobileNavCloseTimer = undefined;
@@ -574,7 +575,7 @@ function closeMobileNav(): void {
 
 function clearMobileNavCloseTimer(): void {
   if (mobileNavCloseTimer === undefined) return;
-  clearTimeout(mobileNavCloseTimer);
+  acuClearTimeout(mobileNavCloseTimer);
   mobileNavCloseTimer = undefined;
 }
 
@@ -1322,6 +1323,7 @@ watch(rowCount, () => {
   min-width: 0;
   overflow: hidden;
   color: var(--acu-text-1);
+  font-size: var(--acu-font-size-body-lg, 13px);
   font-weight: 600;
   line-height: 1.25;
   text-overflow: ellipsis;

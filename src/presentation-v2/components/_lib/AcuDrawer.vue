@@ -35,6 +35,7 @@
 
 <script setup lang="ts">
 import { computed, onBeforeUnmount, ref, watch } from 'vue';
+import { acuClearTimeout, acuSetTimeout, type AcuTimerHandle } from '../../bootstrap/host-env';
 import AcuIconButton from './AcuIconButton.vue';
 
 const props = withDefaults(defineProps<{
@@ -60,7 +61,7 @@ const isRendered = ref(false);
 const isClosing = ref(false);
 const closeGuardPending = ref(false);
 const DRAWER_LEAVE_MS = 150;
-let closeTimer: ReturnType<typeof setTimeout> | undefined;
+let closeTimer: AcuTimerHandle | undefined;
 
 watch(() => props.isOpen, (open) => {
   if (open) showDrawer();
@@ -105,7 +106,7 @@ function hideDrawer(): void {
   if (!isRendered.value) return;
   isClosing.value = true;
   clearCloseTimer();
-  closeTimer = setTimeout(() => {
+  closeTimer = acuSetTimeout(() => {
     isRendered.value = false;
     isClosing.value = false;
     closeTimer = undefined;
@@ -114,7 +115,7 @@ function hideDrawer(): void {
 
 function clearCloseTimer(): void {
   if (closeTimer === undefined) return;
-  clearTimeout(closeTimer);
+  acuClearTimeout(closeTimer);
   closeTimer = undefined;
 }
 </script>

@@ -1,5 +1,6 @@
 import { defineStore } from "pinia";
 import { settings_ACU } from "../../service/runtime/state-manager";
+import { acuClearTimeout, acuSetTimeout, type AcuTimerHandle } from "../bootstrap/host-env";
 
 export type ToastKind = "info" | "success" | "warning" | "error";
 
@@ -39,7 +40,8 @@ const DEFAULT_DURATION_BY_KIND: Record<ToastKind, number> = {
 const DEFAULT_MAX_ITEMS = 4;
 
 let nextToastId = 1;
-const dismissTimers = new Map<string, ReturnType<typeof setTimeout>>();
+const dismissTimers = new Map<string, AcuTimerHandle>();
+let nextClearVersion = 0;
 
 function makeToastId(): string {
   return `toast-${nextToastId++}`;
@@ -62,7 +64,7 @@ function shouldMuteToast(kind: ToastKind, options: ToastOptions): boolean {
 function clearDismissTimer(id: string): void {
   const timer = dismissTimers.get(id);
   if (timer === undefined) return;
-  clearTimeout(timer);
+  acuClearTimeout(timer);
   dismissTimers.delete(id);
 }
 
@@ -75,6 +77,7 @@ function resolveDuration(kind: ToastKind, options: ToastOptions): number {
 export const useToastStore = defineStore("acu-v2-toast", {
   state: () => ({
     items: [] as ToastItem[],
+    clearVersion: 0,
   }),
   actions: {
     notify(kind: ToastKind, text: string, options: ToastOptions = {}): string | null {
@@ -96,7 +99,7 @@ export const useToastStore = defineStore("acu-v2-toast", {
       this.items.push(item);
       this.pruneToMax(options.maxItems ?? DEFAULT_MAX_ITEMS);
       if (this.items.some((current) => current.id === id) && durationMs > 0) {
-        dismissTimers.set(id, setTimeout(() => this.dismiss(id), durationMs));
+        dismissTimers.set(id, acuSetTimeout(() => this.dismiss(id), durationMs));
       }
       return id;
     },
@@ -129,7 +132,7 @@ export const useToastStore = defineStore("acu-v2-toast", {
       item.dismissible = options.dismissible !== false;
       item.action = options.action;
       if (item.durationMs > 0) {
-        dismissTimers.set(id, setTimeout(() => this.dismiss(id), item.durationMs));
+        dismissTimers.set(id, acuSetTimeout(() => this.dismiss(id), item.durationMs));
       }
       return true;
     },
@@ -138,6 +141,7 @@ export const useToastStore = defineStore("acu-v2-toast", {
         clearDismissTimer(item.id);
       }
       this.items = [];
+      this.clearVersion = ++nextClearVersion;
     },
     pruneToMax(maxItems: number): void {
       const max = Math.max(1, Math.trunc(maxItems));

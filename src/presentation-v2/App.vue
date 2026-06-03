@@ -135,6 +135,7 @@ import { useVisualizerStore } from "./stores/visualizer-store";
 import VisualizerSurface from "./surfaces/visualizer/VisualizerSurface.vue";
 import type { AcuV2ThemeId } from "./theme/theme-types";
 import { getAcuHostDocument } from "./bootstrap/host-document";
+import { acuClearTimeout, acuSetTimeout, type AcuTimerHandle } from "./bootstrap/host-env";
 
 const emit = defineEmits<{ (event: "close"): void }>();
 const rootShell = useRootShellStore();
@@ -152,8 +153,8 @@ const isThemeMenuRendered = ref(false);
 const isThemeMenuClosing = ref(false);
 const THEME_MENU_LEAVE_MS = 120;
 const MOBILE_NAV_LEAVE_MS = 150;
-let themeMenuCloseTimer: ReturnType<typeof setTimeout> | undefined;
-let mobileNavCloseTimer: ReturnType<typeof setTimeout> | undefined;
+let themeMenuCloseTimer: AcuTimerHandle | undefined;
+let mobileNavCloseTimer: AcuTimerHandle | undefined;
 
 const shellTitle = computed(() =>
   visualizer.isActive ? "数据库编辑器" : router.activePage?.title || "SP·数据库 III",
@@ -285,7 +286,7 @@ function closeMobileNav(): void {
   if (!isMobileNavRendered.value) return;
   isMobileNavClosing.value = true;
   clearMobileNavCloseTimer();
-  mobileNavCloseTimer = setTimeout(() => {
+  mobileNavCloseTimer = acuSetTimeout(() => {
     isMobileNavRendered.value = false;
     isMobileNavClosing.value = false;
     mobileNavCloseTimer = undefined;
@@ -318,7 +319,7 @@ function closeThemeMenu(): void {
   if (!isThemeMenuRendered.value) return;
   isThemeMenuClosing.value = true;
   clearThemeMenuCloseTimer();
-  themeMenuCloseTimer = setTimeout(() => {
+  themeMenuCloseTimer = acuSetTimeout(() => {
     isThemeMenuRendered.value = false;
     isThemeMenuClosing.value = false;
     themeMenuCloseTimer = undefined;
@@ -327,21 +328,19 @@ function closeThemeMenu(): void {
 
 function clearThemeMenuCloseTimer(): void {
   if (themeMenuCloseTimer === undefined) return;
-  clearTimeout(themeMenuCloseTimer);
+  acuClearTimeout(themeMenuCloseTimer);
   themeMenuCloseTimer = undefined;
 }
 
 function clearMobileNavCloseTimer(): void {
   if (mobileNavCloseTimer === undefined) return;
-  clearTimeout(mobileNavCloseTimer);
+  acuClearTimeout(mobileNavCloseTimer);
   mobileNavCloseTimer = undefined;
 }
 </script>
 
 <style scoped>
-.acu-v2-app {
-  color: var(--acu-text-1);
-  font-family: var(--acu-font-ui);
+:global(#acu-app-v2) {
   --acu-font-size-micro: 10px;
   --acu-font-size-caption: 11px;
   --acu-font-size-body: 12px;
@@ -353,6 +352,31 @@ function clearMobileNavCloseTimer(): void {
   --acu-line-height-caption: 1.5;
   --acu-line-height-body: 1.45;
   --acu-line-height-readable: 1.55;
+  box-sizing: border-box;
+  color: var(--acu-text-1);
+  font-family: var(--acu-font-ui);
+  font-size: var(--acu-font-size-body);
+}
+
+:global(#acu-app-v2),
+:global(#acu-app-v2 *) {
+  box-sizing: border-box;
+}
+
+:global(#acu-app-v2 button) {
+  appearance: none;
+  -webkit-appearance: none;
+  -webkit-tap-highlight-color: transparent;
+}
+
+:global(#acu-app-v2 button:focus:not(:focus-visible)) {
+  outline: none;
+  box-shadow: none;
+}
+
+.acu-v2-app {
+  color: var(--acu-text-1);
+  font-family: var(--acu-font-ui);
   font-size: var(--acu-font-size-body);
 }
 
@@ -379,88 +403,6 @@ function clearMobileNavCloseTimer(): void {
   color: var(--acu-text-1);
   font-family: var(--acu-font-ui);
   font-size: var(--acu-font-size-body);
-}
-
-.acu-v2-app,
-.acu-v2-app * {
-  box-sizing: border-box;
-}
-
-.acu-v2-app :deep(button) {
-  appearance: none;
-  -webkit-appearance: none;
-  -webkit-tap-highlight-color: transparent;
-}
-
-.acu-v2-app :deep(button:focus:not(:focus-visible)) {
-  outline: none;
-  box-shadow: none;
-}
-
-:global(.acu-text) {
-  margin: 0;
-  min-width: 0;
-}
-
-:global(.acu-text--caption) {
-  font-size: var(--acu-font-size-caption, 11px);
-  line-height: var(--acu-line-height-caption, 1.5);
-  color: var(--acu-text-3);
-}
-
-:global(.acu-text--meta) {
-  font-size: var(--acu-font-size-body, 12px);
-  line-height: var(--acu-line-height-body, 1.45);
-  color: var(--acu-text-3);
-}
-
-:global(.acu-text--hint) {
-  font-size: var(--acu-font-size-body, 12px);
-  line-height: var(--acu-line-height-readable, 1.55);
-  color: var(--acu-text-3);
-}
-
-:global(.acu-text--status-line) {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  flex-wrap: wrap;
-  min-height: 22px;
-  font-size: var(--acu-font-size-body, 12px);
-  line-height: var(--acu-line-height-body, 1.45);
-  color: var(--acu-text-3);
-}
-
-:global(.acu-text--empty) {
-  font-size: var(--acu-font-size-body-lg, 13px);
-  line-height: var(--acu-line-height-readable, 1.55);
-  color: var(--acu-text-3);
-  text-align: center;
-}
-
-:global(.acu-text--error) {
-  font-size: var(--acu-font-size-body, 12px);
-  line-height: var(--acu-line-height-body, 1.45);
-  color: var(--acu-danger);
-}
-
-:global(.acu-text--section-label) {
-  font-size: var(--acu-font-size-section-title, 12px);
-  line-height: var(--acu-line-height-body, 1.45);
-  font-weight: 600;
-  color: var(--acu-text-2);
-}
-
-:global(.acu-text--list-title) {
-  font-size: var(--acu-font-size-list-title, 13px);
-  line-height: var(--acu-line-height-body, 1.45);
-  font-weight: 500;
-  color: var(--acu-text-1);
-}
-
-:global(.acu-text__value) {
-  color: var(--acu-text-1);
-  font-weight: 500;
 }
 
 .acu-v2-app__header {

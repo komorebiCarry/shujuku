@@ -22,6 +22,7 @@
 
 <script setup lang="ts">
 import { nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue';
+import { acuCancelAnimationFrame, acuRequestAnimationFrame } from '../../bootstrap/host-env';
 
 interface AcuMobilePanelNavItem {
   id: string;
@@ -36,6 +37,7 @@ const rootRef = ref<HTMLElement | null>(null);
 const trackRef = ref<HTMLElement | null>(null);
 const activeId = ref(props.items[0]?.id ?? '');
 let scrollContainer: HTMLElement | Window | null = null;
+let resizeWindow: Window | null = null;
 let frame = 0;
 let programmaticTargetId = '';
 const USER_SCROLL_KEYS = new Set([
@@ -147,7 +149,8 @@ function releaseProgrammaticTarget(): void {
 }
 
 function onUserScrollIntent(event: Event): void {
-  if (event instanceof KeyboardEvent && !USER_SCROLL_KEYS.has(event.key)) {
+  const key = 'key' in event ? String((event as KeyboardEvent).key || '') : '';
+  if (key && !USER_SCROLL_KEYS.has(key)) {
     return;
   }
   releaseProgrammaticTarget();
@@ -182,21 +185,18 @@ function updateActiveFromViewport(): void {
 
 function queueActiveUpdate(): void {
   if (frame) return;
-  if (typeof window.requestAnimationFrame === 'function') {
-    frame = window.requestAnimationFrame(updateActiveFromViewport);
-    return;
-  }
-  updateActiveFromViewport();
+  frame = acuRequestAnimationFrame(updateActiveFromViewport);
 }
 
 onMounted(() => {
   void nextTick(() => {
     scrollContainer = resolveScrollContainer();
+    resizeWindow = ownerWindow();
     scrollContainer.addEventListener('scroll', queueActiveUpdate, { passive: true });
     scrollContainer.addEventListener('touchmove', onUserScrollIntent, { passive: true });
     scrollContainer.addEventListener('wheel', onUserScrollIntent, { passive: true });
-    window.addEventListener('resize', queueActiveUpdate, { passive: true });
-    ownerWindow().addEventListener('keydown', onUserScrollIntent);
+    resizeWindow.addEventListener('resize', queueActiveUpdate, { passive: true });
+    resizeWindow.addEventListener('keydown', onUserScrollIntent);
     queueActiveUpdate();
   });
 });
@@ -207,11 +207,12 @@ onBeforeUnmount(() => {
     scrollContainer.removeEventListener('touchmove', onUserScrollIntent);
     scrollContainer.removeEventListener('wheel', onUserScrollIntent);
   }
-  window.removeEventListener('resize', queueActiveUpdate);
-  ownerWindow().removeEventListener('keydown', onUserScrollIntent);
-  if (frame && typeof window.cancelAnimationFrame === 'function') {
-    window.cancelAnimationFrame(frame);
+  if (resizeWindow) {
+    resizeWindow.removeEventListener('resize', queueActiveUpdate);
+    resizeWindow.removeEventListener('keydown', onUserScrollIntent);
+    resizeWindow = null;
   }
+  if (frame) acuCancelAnimationFrame(frame);
 });
 </script>
 

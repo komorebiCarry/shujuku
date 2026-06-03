@@ -273,6 +273,7 @@ watch(useChatChangedTick(), () => {
 .acu-v2-dashboard-page__health-body p {
   margin: 0;
   color: var(--acu-text-2);
+  font-size: var(--acu-font-size-body, 12px);
   line-height: 1.55;
 }
 
