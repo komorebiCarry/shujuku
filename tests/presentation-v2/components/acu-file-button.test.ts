@@ -17,7 +17,7 @@ async function mountFileButton(props: Record<string, any> = {}) {
     },
     template: `
       <AcuFileButton v-bind="props" @file="onFile">
-        <i class="fa-solid fa-file-import"></i>
+        <i class="fa-solid fa-download"></i>
         <span v-if="!props.iconOnly">导入 JSON</span>
       </AcuFileButton>
     `,

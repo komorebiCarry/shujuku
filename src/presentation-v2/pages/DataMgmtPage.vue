@@ -100,6 +100,7 @@
               :disabled="!!flow.busyAction.value"
               @file="flow.importCombinedSettings"
             >
+              <i class="fa-solid fa-download"></i>
               合并导入（模板+指令）
             </AcuFileButton>
             <AcuButton
@@ -107,6 +108,7 @@
               :disabled="!!flow.busyAction.value"
               @click="flow.exportCombinedSettings"
             >
+              <i class="fa-solid fa-upload"></i>
               合并导出（模板+指令）
             </AcuButton>
             <AcuButton
@@ -114,6 +116,7 @@
               :disabled="!!flow.busyAction.value"
               @click="flow.exportJsonData"
             >
+              <i class="fa-solid fa-upload"></i>
               特殊导出
             </AcuButton>
             <AcuButton

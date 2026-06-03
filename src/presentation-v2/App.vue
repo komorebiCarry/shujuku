@@ -53,7 +53,7 @@
                     </span>
                     <span class="acu-v2-app__theme-tools" @click.stop>
                       <AcuIconButton
-                        icon="fa-solid fa-download"
+                        icon="fa-solid fa-upload"
                         size="sm"
                         :title="'导出主题：' + t.name"
                         @click="exportTheme(t.id)"
@@ -70,7 +70,7 @@
                   </li>
                   <li class="acu-v2-app__theme-menu-footer">
                     <AcuFileButton size="sm" accept="application/json,.json" @file="importThemeFile">
-                      <i class="fa-solid fa-file-import"></i>
+                      <i class="fa-solid fa-download"></i>
                       导入主题
                     </AcuFileButton>
                   </li>
