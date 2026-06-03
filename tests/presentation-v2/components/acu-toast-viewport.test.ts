@@ -42,6 +42,7 @@ function installAppRoot(): HTMLElement {
 }
 
 afterEach(() => {
+  vi.useRealTimers();
   while (apps.length > 0) {
     const entry = apps.pop()!;
     entry.app.unmount();
@@ -81,6 +82,7 @@ describe("AcuToastViewport", () => {
   });
 
   it("dismiss button removes the toast item", async () => {
+    vi.useFakeTimers();
     const { store, el } = await mountViewport();
 
     store.info("已开始导出", { durationMs: 0 });
@@ -92,6 +94,10 @@ describe("AcuToastViewport", () => {
     await nextTick();
 
     expect(store.items).toHaveLength(0);
+    expect(document.querySelector(".acu-v2-toast")?.classList.contains("is-closing")).toBe(true);
+    vi.advanceTimersByTime(160);
+    await nextTick();
+
     expect(el.querySelector(".acu-v2-toast")).toBeNull();
     expect(document.querySelector(".acu-v2-toast")).toBeNull();
   });

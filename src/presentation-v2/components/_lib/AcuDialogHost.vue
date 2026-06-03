@@ -1,94 +1,123 @@
 <template>
   <Teleport v-if="portalTarget" :to="portalTarget">
-    <Transition name="acu-dialog">
-      <div
-        v-if="dialog.active"
-        class="acu-dialog-layer"
-        role="presentation"
-        @click.self="dialog.cancelActive"
+    <div
+      v-if="renderedDialog"
+      class="acu-dialog-layer"
+      :class="{ 'is-closing': isClosing }"
+      role="presentation"
+      @click.self="dialog.cancelActive"
+    >
+      <section
+        class="acu-dialog"
+        role="dialog"
+        aria-modal="true"
+        :aria-labelledby="titleId"
+        @click.stop
       >
-        <section
-          class="acu-dialog"
-          role="dialog"
-          aria-modal="true"
-          :aria-labelledby="titleId"
-          @click.stop
-        >
-          <header class="acu-dialog__header">
-            <h2 :id="titleId">{{ dialog.active.title }}</h2>
-            <AcuBadge
-              v-if="dialog.active.badge"
-              :variant="dialog.active.badge.variant || 'neutral'"
-            >
-              {{ dialog.active.badge.label }}
-            </AcuBadge>
-          </header>
-
-          <p class="acu-dialog__message">{{ dialog.active.message }}</p>
-
-          <label v-if="dialog.active.kind === 'prompt'" class="acu-dialog__field">
-            <span>{{ dialog.active.label }}</span>
-            <AcuInput
-              v-model="dialog.inputValue"
-              autocomplete="off"
-              :placeholder="dialog.active.placeholder"
-              @keyup.enter="dialog.submitActive()"
-            />
-          </label>
-
-          <footer
-            class="acu-dialog__actions"
-            :class="{ 'acu-dialog__actions--stacked': isChoiceDialog }"
+        <header class="acu-dialog__header">
+          <h2 :id="titleId">{{ renderedDialog.title }}</h2>
+          <AcuBadge
+            v-if="renderedDialog.badge"
+            :variant="renderedDialog.badge.variant || 'neutral'"
           >
-            <template v-if="isChoiceDialog">
-              <AcuButton
-                v-for="action in dialog.active.actions"
-                :key="action.value"
-                :variant="action.variant || 'default'"
-                @click="dialog.submitActive(action.value)"
-              >
-                {{ action.label }}
-              </AcuButton>
-              <AcuButton @click="dialog.cancelActive">
-                {{ dialog.active.cancelLabel || "取消" }}
-              </AcuButton>
-            </template>
-            <template v-else>
-              <AcuButton @click="dialog.cancelActive">
-                {{ dialog.active.cancelLabel || "取消" }}
-              </AcuButton>
-              <AcuButton
-                :variant="dialog.active.confirmVariant || 'primary'"
-                :disabled="dialog.promptConfirmDisabled"
-                @click="dialog.submitActive()"
-              >
-                {{ dialog.active.confirmLabel || "确认" }}
-              </AcuButton>
-            </template>
-          </footer>
-        </section>
-      </div>
-    </Transition>
+            {{ renderedDialog.badge.label }}
+          </AcuBadge>
+        </header>
+
+        <p class="acu-dialog__message">{{ renderedDialog.message }}</p>
+
+        <label v-if="renderedDialog.kind === 'prompt'" class="acu-dialog__field">
+          <span>{{ renderedDialog.label }}</span>
+          <AcuInput
+            v-model="dialog.inputValue"
+            autocomplete="off"
+            :placeholder="renderedDialog.placeholder"
+            @keyup.enter="dialog.submitActive()"
+          />
+        </label>
+
+        <footer
+          class="acu-dialog__actions"
+          :class="{ 'acu-dialog__actions--stacked': isChoiceDialog }"
+        >
+          <template v-if="isChoiceDialog">
+            <AcuButton
+              v-for="action in renderedDialog.actions"
+              :key="action.value"
+              :variant="action.variant || 'default'"
+              @click="dialog.submitActive(action.value)"
+            >
+              {{ action.label }}
+            </AcuButton>
+            <AcuButton @click="dialog.cancelActive">
+              {{ renderedDialog.cancelLabel || "取消" }}
+            </AcuButton>
+          </template>
+          <template v-else>
+            <AcuButton @click="dialog.cancelActive">
+              {{ renderedDialog.cancelLabel || "取消" }}
+            </AcuButton>
+            <AcuButton
+              :variant="renderedDialog.confirmVariant || 'primary'"
+              :disabled="dialog.promptConfirmDisabled"
+              @click="dialog.submitActive()"
+            >
+              {{ renderedDialog.confirmLabel || "确认" }}
+            </AcuButton>
+          </template>
+        </footer>
+      </section>
+    </div>
   </Teleport>
 </template>
 
 <script setup lang="ts">
-import { computed, onMounted, ref } from "vue";
+import { computed, onBeforeUnmount, onMounted, ref, watch } from "vue";
 import { getAcuHostDocument } from "../../bootstrap/host-document";
-import { useDialogStore } from "../../stores/dialog-store";
+import { acuClearTimeout, acuSetTimeout, type AcuTimerHandle } from "../../bootstrap/host-env";
+import { useDialogStore, type AcuDialogRequest } from "../../stores/dialog-store";
 import AcuBadge from "./AcuBadge.vue";
 import AcuButton from "./AcuButton.vue";
 import AcuInput from "./AcuInput.vue";
 
+const DIALOG_LEAVE_MS = 160;
 const dialog = useDialogStore();
 const titleId = "acu-dialog-title";
-const isChoiceDialog = computed(() => dialog.active?.kind === "choice");
+const renderedDialog = ref<AcuDialogRequest | null>(null);
+const isClosing = ref(false);
+const isChoiceDialog = computed(() => renderedDialog.value?.kind === "choice");
 const portalTarget = ref<HTMLElement | null>(null);
+let closeTimer: AcuTimerHandle | undefined;
 
 onMounted(() => {
   const doc = getAcuHostDocument();
   portalTarget.value = doc.getElementById("acu-app-v2") ?? doc.body;
 });
+
+onBeforeUnmount(() => {
+  acuClearTimeout(closeTimer);
+});
+
+watch(
+  () => dialog.active,
+  (active) => {
+    acuClearTimeout(closeTimer);
+    closeTimer = undefined;
+    if (active) {
+      renderedDialog.value = active;
+      isClosing.value = false;
+      return;
+    }
+    if (!renderedDialog.value) return;
+    isClosing.value = true;
+    closeTimer = acuSetTimeout(() => {
+      renderedDialog.value = null;
+      isClosing.value = false;
+      closeTimer = undefined;
+    }, DIALOG_LEAVE_MS);
+  },
+  { immediate: true },
+);
 </script>
 
 <style scoped>
@@ -106,6 +135,12 @@ onMounted(() => {
   padding: 18px;
   background: rgba(0, 0, 0, 0.52);
   pointer-events: auto;
+  animation: acu-dialog-layer-in 0.16s ease-out both;
+}
+
+.acu-dialog-layer.is-closing {
+  pointer-events: none;
+  animation: acu-dialog-layer-out 0.16s ease-in both;
 }
 
 .acu-dialog {
@@ -122,6 +157,7 @@ onMounted(() => {
   color: var(--acu-text-1);
   box-shadow: var(--acu-shadow);
   overflow: auto;
+  animation: acu-dialog-panel-in 0.16s ease-out both;
 }
 
 .acu-dialog__header {
@@ -169,27 +205,40 @@ onMounted(() => {
   flex: 1 1 128px;
 }
 
-.acu-dialog-enter-active,
-.acu-dialog-leave-active {
-  transition: opacity 0.16s ease;
+.acu-dialog-layer.is-closing .acu-dialog {
+  animation: acu-dialog-panel-out 0.16s ease-in both;
 }
 
-.acu-dialog-enter-active .acu-dialog,
-.acu-dialog-leave-active .acu-dialog {
-  transition:
-    opacity 0.16s ease,
-    transform 0.16s ease;
+@keyframes acu-dialog-layer-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
 }
 
-.acu-dialog-enter-from,
-.acu-dialog-leave-to {
-  opacity: 0;
+@keyframes acu-dialog-layer-out {
+  from { opacity: 1; }
+  to { opacity: 0; }
 }
 
-.acu-dialog-enter-from .acu-dialog,
-.acu-dialog-leave-to .acu-dialog {
-  opacity: 0;
-  transform: translateY(6px);
+@keyframes acu-dialog-panel-in {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes acu-dialog-panel-out {
+  from {
+    opacity: 1;
+    transform: translateY(0);
+  }
+  to {
+    opacity: 0;
+    transform: translateY(6px);
+  }
 }
 
 @media (max-width: 520px) {

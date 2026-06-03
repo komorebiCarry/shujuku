@@ -1,49 +1,54 @@
 <template>
   <Teleport v-if="portalTarget" :to="portalTarget">
     <div
-      v-if="toast.items.length"
+      v-if="renderedItems.length"
       class="acu-toast-viewport"
       role="status"
       aria-label="通知"
       :style="{ zIndex: 9410 }"
     >
-      <TransitionGroup name="acu-toast" tag="ol" class="acu-toast-viewport__list">
+      <ol class="acu-toast-viewport__list">
         <li
-          v-for="item in toast.items"
-          :key="item.id"
-          :class="['acu-v2-toast', `acu-v2-toast--${item.kind}`]"
-          :role="item.kind === 'error' ? 'alert' : 'status'"
+          v-for="entry in renderedItems"
+          :key="entry.item.id"
+          :class="[
+            'acu-v2-toast',
+            `acu-v2-toast--${entry.item.kind}`,
+            { 'is-closing': entry.isClosing },
+          ]"
+          :role="entry.item.kind === 'error' ? 'alert' : 'status'"
         >
           <span class="acu-v2-toast__icon" aria-hidden="true">
-            <i :class="iconForKind(item.kind)"></i>
+            <i :class="iconForKind(entry.item.kind)"></i>
           </span>
-          <p class="acu-v2-toast__text">{{ item.text }}</p>
+          <p class="acu-v2-toast__text">{{ entry.item.text }}</p>
           <AcuButton
-            v-if="item.action"
+            v-if="entry.item.action"
             class="acu-v2-toast__action"
             size="sm"
-            :variant="item.action.variant || 'default'"
-            @click="runAction(item)"
+            :variant="entry.item.action.variant || 'default'"
+            @click="runAction(entry.item)"
           >
-            {{ item.action.label }}
+            {{ entry.item.action.label }}
           </AcuButton>
           <AcuIconButton
-            v-if="item.dismissible"
+            v-if="entry.item.dismissible"
             class="acu-v2-toast__dismiss"
             icon="fa-solid fa-xmark"
             size="sm"
             title="关闭通知"
-            @click="toast.dismiss(item.id)"
+            @click="toast.dismiss(entry.item.id)"
           />
         </li>
-      </TransitionGroup>
+      </ol>
     </div>
   </Teleport>
 </template>
 
 <script setup lang="ts">
-import { onMounted, ref } from "vue";
+import { onBeforeUnmount, onMounted, ref, watch } from "vue";
 import { getAcuHostDocument } from "../../bootstrap/host-document";
+import { acuClearTimeout, acuSetTimeout, type AcuTimerHandle } from "../../bootstrap/host-env";
 import {
   useToastStore,
   type ToastItem,
@@ -52,8 +57,17 @@ import {
 import AcuButton from "./AcuButton.vue";
 import AcuIconButton from "./AcuIconButton.vue";
 
+interface RenderedToastItem {
+  item: ToastItem;
+  isClosing: boolean;
+}
+
+const TOAST_LEAVE_MS = 160;
 const toast = useToastStore();
 const portalTarget = ref<HTMLElement | null>(null);
+const renderedItems = ref<RenderedToastItem[]>([]);
+const leaveTimers = new Map<string, AcuTimerHandle>();
+let observedClearVersion = toast.clearVersion;
 
 function iconForKind(kind: ToastKind): string {
   if (kind === "success") return "fa-solid fa-check";
@@ -75,6 +89,60 @@ onMounted(() => {
   const doc = getAcuHostDocument();
   portalTarget.value = doc.getElementById("acu-app-v2") ?? doc.body;
 });
+
+onBeforeUnmount(() => {
+  for (const timer of leaveTimers.values()) {
+    acuClearTimeout(timer);
+  }
+  leaveTimers.clear();
+});
+
+watch(
+  () => [toast.items, toast.clearVersion] as const,
+  ([items, clearVersion]) => {
+    if (clearVersion !== observedClearVersion) {
+      observedClearVersion = clearVersion;
+      for (const timer of leaveTimers.values()) {
+        acuClearTimeout(timer);
+      }
+      leaveTimers.clear();
+      renderedItems.value = [];
+      return;
+    }
+
+    const nextById = new Map(items.map((item) => [item.id, item]));
+    const currentById = new Map(renderedItems.value.map((entry) => [entry.item.id, entry]));
+    const nextRendered: RenderedToastItem[] = [];
+
+    for (const item of items) {
+      const existing = currentById.get(item.id);
+      if (existing) {
+        acuClearTimeout(leaveTimers.get(item.id));
+        leaveTimers.delete(item.id);
+        existing.item = item;
+        existing.isClosing = false;
+        nextRendered.push(existing);
+      } else {
+        nextRendered.push({ item, isClosing: false });
+      }
+    }
+
+    for (const entry of renderedItems.value) {
+      if (nextById.has(entry.item.id)) continue;
+      if (!entry.isClosing) {
+        entry.isClosing = true;
+        leaveTimers.set(entry.item.id, acuSetTimeout(() => {
+          renderedItems.value = renderedItems.value.filter((current) => current.item.id !== entry.item.id);
+          leaveTimers.delete(entry.item.id);
+        }, TOAST_LEAVE_MS));
+      }
+      nextRendered.push(entry);
+    }
+
+    renderedItems.value = nextRendered;
+  },
+  { immediate: true, deep: true },
+);
 </script>
 
 <style scoped>
@@ -135,6 +203,12 @@ onMounted(() => {
   box-shadow: none;
   color: var(--acu-text-2);
   pointer-events: auto;
+  animation: acu-toast-in 0.16s ease-out both;
+}
+
+.acu-v2-toast.is-closing {
+  pointer-events: none;
+  animation: acu-toast-out 0.16s ease-in both;
 }
 
 .acu-v2-toast__icon {
@@ -173,24 +247,26 @@ onMounted(() => {
   flex: 0 0 auto;
 }
 
-.acu-toast-enter-active,
-.acu-toast-leave-active,
-.acu-toast-move {
-  transition:
-    opacity 0.16s ease,
-    transform 0.16s ease;
+@keyframes acu-toast-in {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
 }
 
-.acu-toast-enter-from,
-.acu-toast-leave-to {
-  opacity: 0;
-  transform: translateY(6px);
-}
-
-.acu-toast-leave-active {
-  position: absolute;
-  right: 0;
-  left: 0;
+@keyframes acu-toast-out {
+  from {
+    opacity: 1;
+    transform: translateY(0);
+  }
+  to {
+    opacity: 0;
+    transform: translateY(6px);
+  }
 }
 
 @media (max-width: 640px) {

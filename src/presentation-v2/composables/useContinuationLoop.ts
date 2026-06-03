@@ -6,6 +6,12 @@ import {
   validateLoopStartParams_ACU,
 } from '../../service/loop/loop-controller';
 import { loopState_ACU } from '../../service/runtime/state-manager';
+import {
+  acuClearInterval,
+  acuSetInterval,
+  acuSetTimeout,
+  type AcuTimerHandle,
+} from '../bootstrap/host-env';
 import { getAcuHostDocument } from '../bootstrap/host-document';
 import { useToastStore } from '../stores/toast-store';
 
@@ -29,7 +35,7 @@ export function useContinuationLoop() {
   const toast = useToastStore();
   const running = ref(loopState_ACU.isLooping);
   const timerText = ref('');
-  let displayInterval: ReturnType<typeof window.setInterval> | null = null;
+  let displayInterval: AcuTimerHandle | null = null;
 
   function refreshStatus(): void {
     running.value = loopState_ACU.isLooping;
@@ -44,7 +50,7 @@ export function useContinuationLoop() {
 
   function clearDisplayTick(): void {
     if (displayInterval) {
-      window.clearInterval(displayInterval);
+      acuClearInterval(displayInterval);
       displayInterval = null;
     }
   }
@@ -70,17 +76,17 @@ export function useContinuationLoop() {
     clearDisplayTick();
     updateTimer();
     if (getRemainingMs() !== null) {
-      displayInterval = window.setInterval(updateTimer, 1000);
+      displayInterval = acuSetInterval(updateTimer, 1000);
     }
   }
 
   function ensureDurationGuardTick(): void {
     if (loopState_ACU.tickInterval) return;
-    loopState_ACU.tickInterval = setInterval(() => {
+    loopState_ACU.tickInterval = acuSetInterval(() => {
       const remaining = getRemainingMs();
       if (remaining === null) {
         if (loopState_ACU.tickInterval) {
-          clearInterval(loopState_ACU.tickInterval);
+          acuClearInterval(loopState_ACU.tickInterval as AcuTimerHandle);
           loopState_ACU.tickInterval = null;
         }
         return;
@@ -114,7 +120,7 @@ export function useContinuationLoop() {
       toast.error('找不到酒馆输入框，请确认当前页面可以正常发送消息。', { muteable: false });
       return;
     }
-    window.setTimeout(() => {
+    acuSetTimeout(() => {
       if (!loopState_ACU.isLooping) return;
       if (!clickSendButton()) {
         stop();
