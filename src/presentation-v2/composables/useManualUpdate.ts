@@ -329,7 +329,7 @@ export function useManualUpdate(): ManualUpdateState {
           selectedManualTableKeys.value,
           runProcessBatch,
           async () => { await reloadStorageProvider(); },
-          { clearBeforeUpdate },
+          { clearBeforeUpdate, onProgress: handleProgress },
         );
       } finally {
         restoreAutoUpdateSettings();

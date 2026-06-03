@@ -746,7 +746,10 @@ describe('FormFillPage · 手动填表面板', () => {
 
     expect(orchestrate).toHaveBeenCalled();
     expect(orchestrate.mock.calls[0][0]).toEqual(['sheet_a', 'sheet_b']);
-    expect(orchestrate.mock.calls[0][3]).toEqual({ clearBeforeUpdate: true });
+    expect(orchestrate.mock.calls[0][3]).toEqual(expect.objectContaining({
+      clearBeforeUpdate: true,
+      onProgress: expect.any(Function),
+    }));
     expect(manualExtraHintSetter).not.toHaveBeenCalled();
 
     mount.__resetAcuV2MountForTests();
@@ -794,6 +797,40 @@ describe('FormFillPage · 手动填表面板', () => {
 
     expect(orchestrate).toHaveBeenCalled();
     releaseCore();
+    await new Promise(r => setTimeout(r, 0));
+
+    mount.__resetAcuV2MountForTests();
+  });
+
+  it('手动填表展示 service grouped 路径转发的重试进度', async () => {
+    const { mount, orchestrate } = await mountFormFillPage();
+    let releaseOrchestrate = () => {};
+    orchestrate.mockImplementation(async (_targetKeys: string[], _processBatch: any, _refreshData: any, options: any) => {
+      options.onProgress?.({
+        phase: 'calling_ai',
+        currentBatch: 2,
+        totalBatches: 4,
+        attempt: 2,
+        maxRetries: 3,
+      });
+      await new Promise<void>(resolve => {
+        releaseOrchestrate = resolve;
+      });
+      return { success: true };
+    });
+
+    const panel = Array.from(document.querySelectorAll<HTMLElement>('.acu-v2-form-fill-page__grid > .acu-panel'))
+      .find(item => item.querySelector('.acu-panel__title')?.textContent?.includes('手动填表'))!;
+    const button = Array.from(panel.querySelectorAll('button'))
+      .find(btn => btn.textContent?.includes('执行手动填表')) as HTMLButtonElement;
+    button.click();
+    await clickDialogButton('确认并继续');
+    await new Promise(r => setTimeout(r, 0));
+
+    expect(document.querySelector('.acu-toast-viewport')?.textContent || '')
+      .toContain('批次 2/4 · 调用 AI（第 2/3 次尝试）');
+
+    releaseOrchestrate();
     await new Promise(r => setTimeout(r, 0));
 
     mount.__resetAcuV2MountForTests();
