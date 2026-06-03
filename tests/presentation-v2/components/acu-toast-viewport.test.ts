@@ -42,6 +42,7 @@ function installAppRoot(): HTMLElement {
 }
 
 afterEach(() => {
+  vi.useRealTimers();
   while (apps.length > 0) {
     const entry = apps.pop()!;
     entry.app.unmount();
@@ -81,6 +82,7 @@ describe("AcuToastViewport", () => {
   });
 
   it("dismiss button removes the toast item", async () => {
+    vi.useFakeTimers();
     const { store, el } = await mountViewport();
 
     store.info("已开始导出", { durationMs: 0 });
@@ -92,8 +94,32 @@ describe("AcuToastViewport", () => {
     await nextTick();
 
     expect(store.items).toHaveLength(0);
+    expect(document.querySelector(".acu-v2-toast")?.classList.contains("is-closing")).toBe(true);
+    vi.advanceTimersByTime(160);
+    await nextTick();
+
     expect(el.querySelector(".acu-v2-toast")).toBeNull();
     expect(document.querySelector(".acu-v2-toast")).toBeNull();
+  });
+
+  it("does not render pruned closing toasts beyond the visible stack", async () => {
+    const { store } = await mountViewport();
+
+    for (let i = 1; i <= 4; i++) {
+      store.info(`消息 ${i}`, { durationMs: 0 });
+    }
+    await nextTick();
+
+    expect(Array.from(document.querySelectorAll(".acu-v2-toast"))).toHaveLength(4);
+
+    store.info("消息 5", { durationMs: 0 });
+    await nextTick();
+
+    const toasts = Array.from(document.querySelectorAll<HTMLElement>(".acu-v2-toast"));
+    expect(toasts).toHaveLength(4);
+    expect(toasts.some((toast) => toast.classList.contains("is-closing"))).toBe(false);
+    expect(document.body.textContent || "").not.toContain("消息 1");
+    expect(document.body.textContent || "").toContain("消息 5");
   });
 
   it("runs toast action and follows dismissOnClick", async () => {

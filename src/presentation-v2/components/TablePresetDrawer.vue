@@ -110,6 +110,10 @@ defineEmits<{
 
 .acu-v2-manage-item__name {
   display: block;
+  font-size: var(--acu-font-size-list-title, 13px);
+  line-height: var(--acu-line-height-body, 1.45);
+  font-weight: 500;
+  color: var(--acu-text-1);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -118,6 +122,9 @@ defineEmits<{
 .acu-v2-manage-item__meta {
   display: block;
   margin-top: 2px;
+  font-size: var(--acu-font-size-caption, 11px);
+  line-height: var(--acu-line-height-caption, 1.5);
+  color: var(--acu-text-3);
 }
 
 .acu-v2-manage-item__actions {

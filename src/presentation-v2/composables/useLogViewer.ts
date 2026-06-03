@@ -16,6 +16,8 @@ import {
   setDebugLogEnabled,
   subscribe,
 } from '../../shared/log-buffer';
+import { acuCancelAnimationFrame, acuRequestAnimationFrame } from '../bootstrap/host-env';
+import { getAcuHostDocument } from '../bootstrap/host-document';
 import { useToastStore } from '../stores/toast-store';
 
 export type LogLevelFilter = LogLevel | 'all';
@@ -24,14 +26,6 @@ export interface LogViewerMessage {
   kind: 'success' | 'info' | 'warning' | 'error';
   text: string;
 }
-
-const requestFrame = typeof requestAnimationFrame === 'function'
-  ? requestAnimationFrame
-  : (callback: FrameRequestCallback): number => window.setTimeout(() => callback(Date.now()), 16);
-
-const cancelFrame = typeof cancelAnimationFrame === 'function'
-  ? cancelAnimationFrame
-  : (handle: number): void => window.clearTimeout(handle);
 
 const levelOptions: { value: LogLevelFilter; label: string }[] = [
   { value: 'all', label: '全部级别' },
@@ -43,12 +37,13 @@ const levelOptions: { value: LogLevelFilter; label: string }[] = [
 function downloadJson(filename: string, data: unknown): void {
   const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
   const url = URL.createObjectURL(blob);
-  const a = document.createElement('a');
+  const doc = getAcuHostDocument();
+  const a = doc.createElement('a');
   a.href = url;
   a.download = filename;
-  document.body.appendChild(a);
+  doc.body.appendChild(a);
   a.click();
-  document.body.removeChild(a);
+  doc.body.removeChild(a);
   URL.revokeObjectURL(url);
 }
 
@@ -104,7 +99,7 @@ export function useLogViewer() {
 
   function scheduleRefresh(): void {
     if (rafId !== null) return;
-    rafId = requestFrame(() => {
+    rafId = acuRequestAnimationFrame(() => {
       rafId = null;
       refresh();
     });
@@ -164,7 +159,7 @@ export function useLogViewer() {
     unsubscribe?.();
     unsubscribe = null;
     if (rafId !== null) {
-      cancelFrame(rafId);
+      acuCancelAnimationFrame(rafId);
       rafId = null;
     }
   });

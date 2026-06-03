@@ -1,8 +1,17 @@
+import {
+  acuClearTimeout,
+  acuGetComputedStyle,
+  acuMatchesMedia,
+  acuRequestAnimationFrame,
+  acuSetTimeout,
+  type AcuTimerHandle,
+} from '../../bootstrap/host-env';
+
 const MIN_DURATION_MS = 100;
 const MAX_DURATION_MS = 200;
 const MS_PER_PIXEL = 0.45;
 
-const transitionTimers = new WeakMap<HTMLElement, number>();
+const transitionTimers = new WeakMap<HTMLElement, AcuTimerHandle>();
 
 export interface AcuHeightTransitionOptions {
   restoreOverflow?: (el: HTMLElement) => void;
@@ -15,23 +24,17 @@ export function useAcuHeightTransition(options: AcuHeightTransitionOptions = {})
   const expandedTransform = options.expandedTransform ?? 'translateY(0)';
 
   function prefersReducedMotion(): boolean {
-    return typeof window !== 'undefined'
-      && typeof window.matchMedia === 'function'
-      && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+    return acuMatchesMedia('(prefers-reduced-motion: reduce)');
   }
 
   function scheduleFrame(callback: () => void): void {
-    if (typeof window !== 'undefined' && typeof window.requestAnimationFrame === 'function') {
-      window.requestAnimationFrame(callback);
-      return;
-    }
-    window.setTimeout(callback, 16);
+    acuRequestAnimationFrame(callback);
   }
 
   function clearTransitionTimer(el: HTMLElement): void {
     const timer = transitionTimers.get(el);
     if (timer !== undefined) {
-      window.clearTimeout(timer);
+      acuClearTimeout(timer);
       transitionTimers.delete(el);
     }
   }
@@ -57,13 +60,13 @@ export function useAcuHeightTransition(options: AcuHeightTransitionOptions = {})
   }
 
   function getBorderHeight(el: HTMLElement): number {
-    const style = window.getComputedStyle(el);
+    const style = acuGetComputedStyle(el);
     return (parseFloat(style.borderTopWidth) || 0) + (parseFloat(style.borderBottomWidth) || 0);
   }
 
   function getExpandedHeight(el: HTMLElement): number {
     const contentHeight = el.scrollHeight + getBorderHeight(el);
-    const maxHeight = window.getComputedStyle(el).maxHeight;
+    const maxHeight = acuGetComputedStyle(el).maxHeight;
     const parsedMax = Number.parseFloat(maxHeight);
     if (Number.isFinite(parsedMax) && parsedMax > 0) {
       return Math.min(contentHeight, parsedMax);
@@ -116,7 +119,7 @@ export function useAcuHeightTransition(options: AcuHeightTransitionOptions = {})
     };
 
     el.addEventListener('transitionend', onEnd);
-    transitionTimers.set(el, window.setTimeout(finish, duration + 60));
+    transitionTimers.set(el, acuSetTimeout(finish, duration + 60));
   }
 
   function beforeEnter(el: Element): void {

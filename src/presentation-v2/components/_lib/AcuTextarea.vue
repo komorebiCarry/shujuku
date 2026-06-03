@@ -15,6 +15,14 @@
 
 <script setup lang="ts">
 import { nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue';
+import {
+  acuCancelAnimationFrame,
+  acuClearTimeout,
+  acuGetComputedStyle,
+  acuRequestAnimationFrame,
+  acuSetTimeout,
+  type AcuTimerHandle,
+} from '../../bootstrap/host-env';
 
 const props = withDefaults(defineProps<{
   modelValue: string;
@@ -39,8 +47,8 @@ const emit = defineEmits<{
 
 const textareaRef = ref<HTMLTextAreaElement | null>(null);
 let resizeObserver: ResizeObserver | null = null;
-let resizeFrame: number | null = null;
-let resizeTimer: number | null = null;
+let resizeFrame: AcuTimerHandle | null = null;
+let resizeTimer: AcuTimerHandle | null = null;
 
 function normalizeRows(value: number | undefined, fallback: number): number {
   const rows = Math.trunc(Number(value));
@@ -60,7 +68,7 @@ function getLineHeight(style: CSSStyleDeclaration): number {
 }
 
 function getRowsHeight(el: HTMLTextAreaElement, rows: number): number {
-  const style = window.getComputedStyle(el);
+  const style = acuGetComputedStyle(el);
   const verticalInset =
     parsePixel(style.paddingTop)
     + parsePixel(style.paddingBottom)
@@ -93,11 +101,11 @@ function resizeTextarea(el = textareaRef.value): void {
 
 function clearScheduledResize(): void {
   if (resizeFrame !== null) {
-    window.cancelAnimationFrame(resizeFrame);
+    acuCancelAnimationFrame(resizeFrame);
     resizeFrame = null;
   }
   if (resizeTimer !== null) {
-    window.clearTimeout(resizeTimer);
+    acuClearTimeout(resizeTimer);
     resizeTimer = null;
   }
 }
@@ -105,11 +113,11 @@ function clearScheduledResize(): void {
 function scheduleTextareaResize(): void {
   if (!props.autoResize) return;
   clearScheduledResize();
-  resizeFrame = window.requestAnimationFrame(() => {
+  resizeFrame = acuRequestAnimationFrame(() => {
     resizeFrame = null;
     resizeTextarea();
   });
-  resizeTimer = window.setTimeout(() => {
+  resizeTimer = acuSetTimeout(() => {
     resizeTimer = null;
     resizeTextarea();
   }, 60);
@@ -149,7 +157,7 @@ onMounted(() => {
     resizeTextarea();
     scheduleTextareaResize();
     watchSizeForAutoResize();
-    void document.fonts?.ready.then(() => scheduleTextareaResize());
+    void textareaRef.value?.ownerDocument.fonts?.ready.then(() => scheduleTextareaResize());
   });
 });
 

@@ -108,6 +108,8 @@ watch(useChatChangedTick(), refreshAll);
 <style scoped>
 .acu-table-template-panel__status-line {
   margin: 0 0 10px;
+  font-size: var(--acu-font-size-body, 12px);
+  line-height: var(--acu-line-height-body, 1.45);
 }
 
 .acu-table-template-panel__preset-row {
