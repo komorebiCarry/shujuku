@@ -129,7 +129,7 @@ const statusKind = computed(() => {
     return "warning";
   if (
     store.staging.processedIndex != null &&
-    store.staging.processedIndex > 0 &&
+    store.staging.processedIndex >= 0 &&
     store.staging.processedIndex < store.staging.chunkCount
   )
     return "warning";
@@ -139,7 +139,7 @@ const statusKind = computed(() => {
 const injectLabel = computed(() => {
   if (
     store.staging.processedIndex != null &&
-    store.staging.processedIndex > 0 &&
+    store.staging.processedIndex >= 0 &&
     store.staging.processedIndex < store.staging.chunkCount
   ) {
     return "继续写入";
