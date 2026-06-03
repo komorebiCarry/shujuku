@@ -852,12 +852,14 @@ export async function processGroupedRuntimeChunk_ACU(
                 break;
             }
 
+            emitBucketProgress(bucketIndex, { phase: 'saving' });
             const applyResult = await applyUnifiedGroupFillResponses_ACU(responses, baseSnapshot, {
                 saveTargetIndex: bucket.saveTargetIndex,
                 updateMode: bucket.updateMode,
                 isImportMode: options.isImportMode === true,
             });
             if (applyResult.success) {
+                emitBucketProgress(bucketIndex, { phase: 'complete' });
                 bucketSucceeded = true;
                 break;
             }
