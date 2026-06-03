@@ -9,19 +9,18 @@
         :description="plotCopy.panels.worldbook.description"
       >
         <WorldbookEntryPickerBody
-          :model-value="plotWorldbook.selectorValue.value"
+          :source="plotWorldbook.source.value"
+          :selected-names="plotWorldbook.manualSelection.value"
           :names="worldbook.names.value"
-          :char-primary="worldbook.charPrimary.value"
           :selector-status="worldbook.status.value"
           :selector-error="worldbook.error.value"
-          :character-option-label="plotCharacterOptionLabel"
-          character-fallback-label="当前角色卡所有世界书"
           :current-label="currentWorldbookLabel"
           v-model:filter="entryFilter"
           :groups="wbEntries.groups.value"
           :loading="wbEntries.status.value === 'loading'"
           :empty-text="entryEmptyText"
-          @update:model-value="onWorldbookChange($event)"
+          @update:source="onWorldbookSourceChange($event)"
+          @toggle-book="onManualWorldbookToggle"
           @select-all="wbEntries.selectAll()"
           @deselect-all="wbEntries.deselectAll()"
           @toggle="(bookName: string, uid: number, checked: boolean) => wbEntries.toggleEntry(bookName, uid, checked)"
@@ -45,16 +44,13 @@ import { usePlotWorldbookEntries } from '../composables/usePlotWorldbookEntries'
 import { useChatChangedTick } from '../composables/useChatChangedListener';
 import { plotCopy } from '../copy/plot-copy';
 
+type WorldbookSource = 'character' | 'manual';
+
 const worldbook = useWorldbookSelector();
 const plotWorldbook = usePlotWorldbookConfig();
 const wbEntries = usePlotWorldbookEntries();
 const entryFilter = ref('');
 const entryEmptyText = ref(plotCopy.worldbook.emptyDefault);
-const plotCharacterOptionLabel = computed<string>(() =>
-  worldbook.charPrimary.value
-    ? `当前角色卡所有世界书 · 主册 ${worldbook.charPrimary.value}`
-    : '当前角色卡所有世界书',
-);
 
 async function refreshWorldbookEntries(): Promise<void> {
   const names = await plotWorldbook.resolveBookNames();
@@ -66,14 +62,19 @@ function resolveEntryEmptyText(names: string[]): string {
   if (plotWorldbook.source.value === 'character' && names.length === 0) {
     return plotCopy.worldbook.emptyCharacter;
   }
-  if (plotWorldbook.source.value === 'manual' && !plotWorldbook.manualBook.value) {
+  if (plotWorldbook.source.value === 'manual' && plotWorldbook.manualSelection.value.length === 0) {
     return plotCopy.worldbook.emptyManual;
   }
   return plotCopy.worldbook.emptyDefault;
 }
 
-function onWorldbookChange(value: string): void {
-  plotWorldbook.onSelectorChange(value);
+function onWorldbookSourceChange(value: WorldbookSource): void {
+  plotWorldbook.setSource(value);
+  void refreshWorldbookEntries();
+}
+
+function onManualWorldbookToggle(name: string, checked: boolean): void {
+  plotWorldbook.toggleManualBook(name, checked);
   void refreshWorldbookEntries();
 }
 
@@ -83,7 +84,8 @@ const currentWorldbookLabel = computed<string>(() => {
       ? `角色卡所有世界书 · 主册 ${worldbook.charPrimary.value}`
       : '角色卡所有世界书';
   }
-  return plotWorldbook.manualBook.value || '（未选择）';
+  const names = plotWorldbook.manualSelection.value;
+  return names.length ? names.join('、') : '（未选择）';
 });
 
 async function refreshAll(): Promise<void> {

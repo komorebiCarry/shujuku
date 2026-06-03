@@ -1,16 +1,14 @@
 <template>
   <div class="acu-v2-wb-entry-picker">
-    <WorldbookSelector
-      :model-value="modelValue"
+    <WorldbookSourcePicker
+      :source="source"
+      :selected-names="selectedNames"
       :names="names"
-      :char-primary="charPrimary"
       :status="selectorStatus"
       :error="selectorError"
       :filterable="filterable"
-      :show-character-option="showCharacterOption"
-      :character-option-label="characterOptionLabel"
-      :character-fallback-label="characterFallbackLabel"
-      @update:model-value="$emit('update:modelValue', $event)"
+      @update:source="$emit('update:source', $event)"
+      @toggle-book="(name: string, checked: boolean) => $emit('toggle-book', name, checked)"
     />
     <p class="acu-v2-wb-entry-picker__hint">
       目前已选: <strong>{{ currentLabel }}</strong>
@@ -34,10 +32,12 @@
 </template>
 
 <script setup lang="ts">
-import WorldbookSelector from './WorldbookSelector.vue';
+import WorldbookSourcePicker from './WorldbookSourcePicker.vue';
 import WorldbookEntryList from './WorldbookEntryList.vue';
 import WorldbookEntryToolbar from './WorldbookEntryToolbar.vue';
 import type { WorldbookLoadStatus } from '../composables/useWorldbookSelector';
+
+type WorldbookSource = 'character' | 'manual';
 
 interface WorldbookEntryItem {
   uid: number;
@@ -54,9 +54,9 @@ interface WorldbookEntryGroup {
 }
 
 withDefaults(defineProps<{
-  modelValue: string;
+  source: WorldbookSource;
+  selectedNames: string[];
   names: string[];
-  charPrimary: string | null;
   selectorStatus: WorldbookLoadStatus;
   selectorError: string;
   currentLabel: string;
@@ -65,19 +65,14 @@ withDefaults(defineProps<{
   loading: boolean;
   emptyText?: string;
   filterable?: boolean;
-  showCharacterOption?: boolean;
-  characterOptionLabel?: string;
-  characterFallbackLabel?: string;
 }>(), {
   filterable: true,
-  showCharacterOption: true,
   emptyText: '所选世界书中无可显示的条目。',
-  characterOptionLabel: undefined,
-  characterFallbackLabel: undefined,
 });
 
 defineEmits<{
-  (e: 'update:modelValue', value: string): void;
+  (e: 'update:source', value: WorldbookSource): void;
+  (e: 'toggle-book', name: string, checked: boolean): void;
   (e: 'update:filter', value: string): void;
   (e: 'select-all'): void;
   (e: 'deselect-all'): void;

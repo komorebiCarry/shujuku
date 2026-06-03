@@ -10,19 +10,18 @@
           :description="tableCopy.panels.entries.description"
         >
           <WorldbookEntryPickerBody
-            :model-value="entriesSource.selectorValue.value"
+            :source="entriesSource.source.value"
+            :selected-names="entriesSource.manualSelection.value"
             :names="entriesWb.names.value"
-            :char-primary="entriesWb.charPrimary.value"
             :selector-status="entriesWb.status.value"
             :selector-error="entriesWb.error.value"
-            :character-option-label="entriesCharacterOptionLabel"
-            character-fallback-label="当前角色卡所有世界书"
             :current-label="entriesSourceLabel"
             v-model:filter="entryFilter"
             :groups="entries.groups.value"
             :loading="entries.status.value === 'loading'"
             :empty-text="entryEmptyText"
-            @update:model-value="onEntriesSourceChange($event)"
+            @update:source="onEntriesSourceChange($event)"
+            @toggle-book="onEntriesManualBookToggle"
             @select-all="entries.selectAll()"
             @deselect-all="entries.deselectAll()"
             @toggle="(bookName: string, uid: number, checked: boolean) => entries.toggleEntry(bookName, uid, checked)"
@@ -167,6 +166,8 @@ import { formFillCopy } from '../copy/form-fill-copy';
 import { tableCopy } from '../copy/table-copy';
 import { useDialogStore } from '../stores/dialog-store';
 
+type WorldbookSource = 'character' | 'manual';
+
 const dialogStore = useDialogStore();
 const settings = useFormFillSettings();
 const injectionTarget = useFormFillInjectionTarget();
@@ -185,11 +186,6 @@ const panelNavItems = [
   { id: 'table-filter-panel', label: formFillCopy.nav.filter },
   { id: 'table-injection-target-panel', label: tableCopy.panels.injectionTarget.title },
 ];
-const entriesCharacterOptionLabel = computed(() =>
-  entriesWb.charPrimary.value
-    ? `当前角色卡所有世界书 · 主册 ${entriesWb.charPrimary.value}`
-    : '当前角色卡所有世界书',
-);
 const promptSlotSummary = computed(() => ({
   hasA: settings.promptSegments.value.some(
     (segment) => segment.mainSlot === 'A' || segment.isMain === true,
@@ -241,7 +237,8 @@ async function refreshEntriesGroups(): Promise<void> {
       ? `角色卡所有世界书 · 主册 ${charPrimary}`
       : '角色卡所有世界书';
   } else {
-    entriesSourceLabel.value = entriesSource.manualBook.value || '（未选择）';
+    const names = entriesSource.manualSelection.value;
+    entriesSourceLabel.value = names.length ? names.join('、') : '（未选择）';
   }
 }
 
@@ -249,20 +246,25 @@ function resolveEntryEmptyText(names: string[]): string {
   if (entriesSource.source.value === 'character' && names.length === 0) {
     return tableCopy.worldbook.emptyCharacter;
   }
-  if (entriesSource.source.value === 'manual' && !entriesSource.manualBook.value) {
+  if (entriesSource.source.value === 'manual' && entriesSource.manualSelection.value.length === 0) {
     return tableCopy.worldbook.emptyManual;
   }
   return tableCopy.worldbook.emptyDefault;
 }
 
-function onEntriesSourceChange(value: string): void {
-  entriesSource.onSelectorChange(value);
+function onEntriesSourceChange(value: WorldbookSource): void {
+  entriesSource.setSource(value);
   void refreshEntriesGroups();
 }
 
-function onInjectionTargetChange(value: string): void {
-  injectionTarget.onSelectorChange(value);
-  void refreshInjectionLabel();
+function onEntriesManualBookToggle(name: string, checked: boolean): void {
+  entriesSource.toggleManualBook(name, checked);
+  void refreshEntriesGroups();
+}
+
+async function onInjectionTargetChange(value: string): Promise<void> {
+  await injectionTarget.onSelectorChange(value);
+  await refreshInjectionLabel();
 }
 
 async function refreshAll(): Promise<void> {

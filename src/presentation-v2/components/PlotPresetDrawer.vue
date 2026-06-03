@@ -54,7 +54,7 @@
               @click="$emit('set-default', meta.name)"
             />
             <AcuIconButton
-              icon="fa-solid fa-file-export"
+              icon="fa-solid fa-upload"
               title="导出 JSON"
               @click="$emit('export', meta.name)"
             />

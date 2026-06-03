@@ -4,7 +4,7 @@
     :disabled="disabled || loading"
     :title="title"
     class="acu-btn"
-    :class="[`acu-btn--${variant}`, sizeClass, { 'acu-btn--icon-only': iconOnly, 'acu-btn--loading': loading }]"
+    :class="[`acu-btn--${variant}`, sizeClass, { 'acu-btn--icon-only': iconOnly, 'acu-btn--loading': loading, 'acu-btn--block': block }]"
     @click="$emit('click', $event)"
   >
     <i v-if="loading" class="fa-solid fa-spinner fa-spin acu-btn__spinner" />
@@ -25,6 +25,7 @@ const props = withDefaults(defineProps<{
   disabled?: boolean;
   loading?: boolean;
   iconOnly?: boolean;
+  block?: boolean;
   title?: string;
   nativeType?: 'button' | 'submit' | 'reset';
 }>(), {
@@ -33,6 +34,7 @@ const props = withDefaults(defineProps<{
   disabled: false,
   loading: false,
   iconOnly: false,
+  block: false,
   title: undefined,
   nativeType: 'button',
 });
@@ -57,6 +59,7 @@ const sizeClass = computed(() => `acu-btn--${props.size}`);
 }
 .acu-btn--md { min-height: 32px; padding: 6px 9px; font-size: var(--acu-font-size-body-lg, 13px); }
 .acu-btn--sm { min-height: 28px; padding: 4px 10px; font-size: var(--acu-font-size-body, 12px); }
+.acu-btn--block { width: 100%; min-width: 0; }
 .acu-btn--icon-only { min-width: 32px; padding: 6px 8px; }
 .acu-btn--icon-only.acu-btn--sm { min-width: 28px; padding: 4px 8px; }
 
