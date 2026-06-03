@@ -95,6 +95,7 @@
           <div class="acu-v2-data-mgmt-page__command-grid">
             <AcuFileButton
               variant="primary"
+              block
               accept=".json,application/json"
               :disabled="!!flow.busyAction.value"
               @file="flow.importCombinedSettings"
@@ -102,18 +103,21 @@
               合并导入（模板+指令）
             </AcuFileButton>
             <AcuButton
+              block
               :disabled="!!flow.busyAction.value"
               @click="flow.exportCombinedSettings"
             >
               合并导出（模板+指令）
             </AcuButton>
             <AcuButton
+              block
               :disabled="!!flow.busyAction.value"
               @click="flow.exportJsonData"
             >
               特殊导出
             </AcuButton>
             <AcuButton
+              block
               :loading="flow.busyAction.value === 'override-latest'"
               @click="onOverrideLatestLayer"
             >
@@ -199,12 +203,14 @@
               class="acu-v2-data-mgmt-page__command-grid acu-v2-data-mgmt-page__command-grid--cleanup"
             >
               <AcuButton
+                block
                 :loading="flow.busyAction.value === 'delete-current-local'"
                 @click="onDeleteLocalData('current')"
               >
                 删除当前标识本地数据
               </AcuButton>
               <AcuButton
+                block
                 variant="danger"
                 :loading="flow.busyAction.value === 'delete-all-local'"
                 @click="onDeleteLocalData('all')"

@@ -54,6 +54,19 @@ describe('AcuFileButton', () => {
     app.unmount();
   });
 
+  it('block 文件按钮让外层和内层按钮都占满容器', async () => {
+    const { app } = await mountFileButton({ block: true });
+
+    const root = document.querySelector('.acu-file-button') as HTMLElement | null;
+    const button = document.querySelector('button') as HTMLButtonElement | null;
+    expect(root).not.toBeNull();
+    expect(button).not.toBeNull();
+    expect(root!.classList.contains('acu-file-button--block')).toBe(true);
+    expect(button!.classList.contains('acu-btn--block')).toBe(true);
+
+    app.unmount();
+  });
+
   it('选择文件后派发 file 事件并清空 input', async () => {
     const { app, onFile } = await mountFileButton({ accept: 'application/json,.json' });
     const input = document.querySelector('.acu-file-button__input') as HTMLInputElement | null;

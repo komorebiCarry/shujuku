@@ -130,6 +130,8 @@ describe('ImportPage', () => {
 
     const clearButton = buttons.find(button => button.textContent?.includes('清空缓存'))!;
     const deleteButton = buttons.find(button => button.textContent?.includes('删除条目'))!;
+    const splitButton = buttons.find(button => button.textContent?.includes('选择并拆分'))!;
+    expect(splitButton.classList.contains('acu-btn--block')).toBe(true);
     expect(clearButton.classList.contains('acu-btn--default')).toBe(true);
     expect(deleteButton.classList.contains('acu-btn--danger')).toBe(true);
 

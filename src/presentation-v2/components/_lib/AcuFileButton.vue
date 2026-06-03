@@ -1,5 +1,5 @@
 <template>
-  <span class="acu-file-button">
+  <span class="acu-file-button" :class="{ 'acu-file-button--block': block }">
     <AcuButton
       v-bind="buttonProps"
       class="acu-file-button__button"
@@ -31,6 +31,7 @@ const props = withDefaults(defineProps<{
   size?: Size;
   disabled?: boolean;
   iconOnly?: boolean;
+  block?: boolean;
   title?: string;
 }>(), {
   accept: undefined,
@@ -38,6 +39,7 @@ const props = withDefaults(defineProps<{
   size: 'md',
   disabled: false,
   iconOnly: false,
+  block: false,
   title: undefined,
 });
 
@@ -52,6 +54,7 @@ const buttonProps = computed(() => ({
   size: props.size,
   disabled: props.disabled,
   iconOnly: props.iconOnly,
+  block: props.block,
   title: props.title,
 }));
 
@@ -74,6 +77,7 @@ function onChange(ev: Event): void {
 
 <style scoped>
 .acu-file-button { display: inline-flex; }
+.acu-file-button--block { width: 100%; min-width: 0; }
 .acu-file-button__input { display: none; }
 .acu-file-button__button--icon-only-default {
   background: transparent;

@@ -66,12 +66,14 @@
         <div class="acu-v2-import-page__action-grid">
           <AcuFileButton
             variant="primary"
+            block
             accept=".txt"
             :disabled="store.busy"
             @file="onFileSelected"
             >选择并拆分</AcuFileButton
           >
           <AcuButton
+            block
             :disabled="!store.canInject"
             :loading="store.busy"
             @click="inject"
@@ -79,10 +81,10 @@
             {{ injectLabel }}
             <template #loading-text>写入中...</template>
           </AcuButton>
-          <AcuButton :disabled="store.busy" @click="onClearStaging"
+          <AcuButton block :disabled="store.busy" @click="onClearStaging"
             >清空缓存</AcuButton
           >
-          <AcuButton variant="danger" :disabled="store.busy" @click="onDelete"
+          <AcuButton block variant="danger" :disabled="store.busy" @click="onDelete"
             >删除条目</AcuButton
           >
         </div>
