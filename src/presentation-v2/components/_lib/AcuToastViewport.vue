@@ -63,6 +63,7 @@ interface RenderedToastItem {
 }
 
 const TOAST_LEAVE_MS = 160;
+const DEFAULT_VISIBLE_TOAST_LIMIT = 4;
 const toast = useToastStore();
 const portalTarget = ref<HTMLElement | null>(null);
 const renderedItems = ref<RenderedToastItem[]>([]);
@@ -74,6 +75,13 @@ function iconForKind(kind: ToastKind): string {
   if (kind === "warning") return "fa-solid fa-triangle-exclamation";
   if (kind === "error") return "fa-solid fa-circle-exclamation";
   return "fa-solid fa-circle-info";
+}
+
+function cancelLeaveTimer(id: string): void {
+  const timer = leaveTimers.get(id);
+  if (timer === undefined) return;
+  acuClearTimeout(timer);
+  leaveTimers.delete(id);
 }
 
 async function runAction(item: ToastItem): Promise<void> {
@@ -113,12 +121,12 @@ watch(
     const nextById = new Map(items.map((item) => [item.id, item]));
     const currentById = new Map(renderedItems.value.map((entry) => [entry.item.id, entry]));
     const nextRendered: RenderedToastItem[] = [];
+    const renderedLimit = Math.max(items.length, DEFAULT_VISIBLE_TOAST_LIMIT);
 
     for (const item of items) {
       const existing = currentById.get(item.id);
       if (existing) {
-        acuClearTimeout(leaveTimers.get(item.id));
-        leaveTimers.delete(item.id);
+        cancelLeaveTimer(item.id);
         existing.item = item;
         existing.isClosing = false;
         nextRendered.push(existing);
@@ -129,6 +137,10 @@ watch(
 
     for (const entry of renderedItems.value) {
       if (nextById.has(entry.item.id)) continue;
+      if (nextRendered.length >= renderedLimit) {
+        cancelLeaveTimer(entry.item.id);
+        continue;
+      }
       if (!entry.isClosing) {
         entry.isClosing = true;
         leaveTimers.set(entry.item.id, acuSetTimeout(() => {
@@ -184,7 +196,7 @@ watch(
   gap: 8px;
   margin: 0;
   padding: 0;
-  overflow: hidden auto;
+  overflow: hidden;
   list-style: none;
 }
 
