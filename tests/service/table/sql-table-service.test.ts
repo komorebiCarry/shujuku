@@ -462,6 +462,85 @@ describe('SqlTableService', () => {
   });
 
   // ═══════════════════════════════════════════════════════════════
+  // 删除全表后 seedRows 自动回灌（applyEdits）
+  // ═══════════════════════════════════════════════════════════════
+  describe('删除全表后 applyEdits 自动回灌 seedRows', () => {
+    beforeEach(async () => {
+      mockMergeAll.mockResolvedValue(JSON.parse(JSON.stringify(testTableData)));
+      await service.loadFromChat();
+    });
+
+    it('DELETE 全表后 UPDATE 自动回灌 seedRows 并命中', () => {
+      // 先删除所有数据
+      const deleteResult = service.applyEdits('DELETE FROM inventory;');
+      expect(deleteResult.success).toBe(true);
+
+      // 验证表已空
+      const emptyQuery = service.executeQuery('SELECT COUNT(*) AS cnt FROM inventory');
+      expect(emptyQuery.values[0][0]).toBe(0);
+
+      // 设置 seedRows mock
+      mockGetEffectiveSeedRows.mockReturnValue([
+        ['1', '铁剑', '3'],
+        ['2', '治疗药水', '5'],
+      ]);
+
+      // 执行 UPDATE（应自动回灌 seedRows 后命中，同一事务）
+      const result = service.applyEdits("UPDATE inventory SET quantity = 10 WHERE item_name = '铁剑';");
+      expect(result.success).toBe(true);
+
+      // 验证 seedRows 已回灌且 UPDATE 生效
+      const queryResult = service.executeQuery('SELECT * FROM inventory ORDER BY row_id');
+      expect(queryResult.rowCount).toBe(2);
+      expect(queryResult.values[0]).toContain('铁剑');
+      expect(queryResult.values[0]).toContain(10);
+      expect(queryResult.values[1]).toContain('治疗药水');
+    });
+
+    it('非空表不触发 reseed', () => {
+      mockGetEffectiveSeedRows.mockReturnValue([
+        ['99', '不应出现的物品', '999'],
+      ]);
+
+      const result = service.applyEdits("UPDATE inventory SET quantity = 10 WHERE row_id = 1;");
+      expect(result.success).toBe(true);
+
+      const queryResult = service.executeQuery('SELECT * FROM inventory ORDER BY row_id');
+      expect(queryResult.rowCount).toBe(2);
+      const allItems = queryResult.values.map((r: any) => r[1]);
+      expect(allItems).not.toContain('不应出现的物品');
+    });
+
+    it('无 seedRows 的表不触发 reseed', () => {
+      service.applyEdits('DELETE FROM inventory;');
+      mockGetEffectiveSeedRows.mockReturnValue([]);
+
+      const result = service.applyEdits("UPDATE inventory SET quantity = 10 WHERE row_id = 1;");
+      expect(result.success).toBe(true);
+
+      const queryResult = service.executeQuery('SELECT COUNT(*) AS cnt FROM inventory');
+      expect(queryResult.values[0][0]).toBe(0);
+    });
+
+    it('reseed INSERT 与用户 SQL 在同一事务，失败一起回滚', () => {
+      service.applyEdits('DELETE FROM inventory;');
+      // seedRows 的 row_id=1 与后续 INSERT 的 row_id=1 冲突（PRIMARY KEY）
+      mockGetEffectiveSeedRows.mockReturnValue([
+        ['1', '铁剑', '3'],
+      ]);
+
+      // 用户 SQL 包含与 reseed 后 row_id 冲突的 INSERT
+      expect(() => service.applyEdits(
+        "INSERT INTO inventory VALUES (1, '冲突物品', 1);"
+      )).toThrow();
+
+      // 验证回滚：表仍为空（reseed 被回滚）
+      const queryResult = service.executeQuery('SELECT COUNT(*) AS cnt FROM inventory');
+      expect(queryResult.values[0][0]).toBe(0);
+    });
+  });
+
+  // ═══════════════════════════════════════════════════════════════
   // executeQuery
   // ═══════════════════════════════════════════════════════════════
   describe('executeQuery', () => {
@@ -486,6 +565,27 @@ describe('SqlTableService', () => {
       const result = service.executeQuery("SELECT * FROM inventory WHERE item_name = '不存在'");
       expect(result.rowCount).toBe(0);
       expect(result.values).toEqual([]);
+    });
+
+    it('已存在空表 + 有 seedRows 时 executeQuery 不触发 reseed', () => {
+      // 先加载有数据的表
+      service.applyEdits('DELETE FROM inventory;');
+      // 验证表已空
+      const emptyCheck = service.executeQuery('SELECT COUNT(*) AS cnt FROM inventory');
+      expect(emptyCheck.values[0][0]).toBe(0);
+
+      // mock seedRows 返回数据（如果 reseed 被错误触发，查询后表会有数据）
+      mockGetEffectiveSeedRows.mockReturnValue([
+        ['1', '铁剑', '3'],
+      ]);
+
+      // 执行查询（不应触发 reseed）
+      const queryResult = service.executeQuery('SELECT COUNT(*) AS cnt FROM inventory');
+      expect(queryResult.values[0][0]).toBe(0);
+
+      // 再次确认表仍为空（executeQuery 不应有写副作用）
+      const finalCheck = service.executeQuery('SELECT * FROM inventory');
+      expect(finalCheck.rowCount).toBe(0);
     });
   });
 
@@ -844,6 +944,79 @@ describe('SqlTableService', () => {
       const result = service.executeMutation('INSERT INTO nonexistent_table VALUES (1)');
       expect(result.changes).toBe(0);
       expect(result.errors.length).toBeGreaterThan(0);
+    });
+  });
+
+  // ═══════════════════════════════════════════════════════════════
+  // 删除全表后 executeMutation 自动回灌 seedRows
+  // ═══════════════════════════════════════════════════════════════
+  describe('删除全表后 executeMutation 自动回灌 seedRows', () => {
+    beforeEach(async () => {
+      mockMergeAll.mockResolvedValue(JSON.parse(JSON.stringify(testTableData)));
+      await service.loadFromChat();
+    });
+
+    it('DELETE 全表后 executeMutation UPDATE 自动回灌 seedRows 并命中', () => {
+      service.applyEdits('DELETE FROM inventory;');
+      mockGetEffectiveSeedRows.mockReturnValue([
+        ['1', '铁剑', '3'],
+        ['2', '治疗药水', '5'],
+      ]);
+
+      const result = service.executeMutation("UPDATE inventory SET quantity = 10 WHERE item_name = '铁剑'");
+      expect(result.changes).toBe(1);
+      expect(result.errors).toEqual([]);
+
+      const queryResult = service.executeQuery('SELECT * FROM inventory ORDER BY row_id');
+      expect(queryResult.rowCount).toBe(2);
+      expect(queryResult.values[0]).toContain(10);
+    });
+
+    it('非空表不触发 reseed', () => {
+      mockGetEffectiveSeedRows.mockReturnValue([
+        ['99', '不应出现的物品', '999'],
+      ]);
+
+      const result = service.executeMutation("UPDATE inventory SET quantity = 10 WHERE row_id = 1");
+      expect(result.changes).toBe(1);
+
+      const queryResult = service.executeQuery('SELECT * FROM inventory ORDER BY row_id');
+      const allItems = queryResult.values.map((r: any) => r[1]);
+      expect(allItems).not.toContain('不应出现的物品');
+    });
+
+    it('无 seedRows 的表不触发 reseed', () => {
+      service.applyEdits('DELETE FROM inventory;');
+      mockGetEffectiveSeedRows.mockReturnValue([]);
+
+      const result = service.executeMutation("UPDATE inventory SET quantity = 10 WHERE row_id = 1");
+      expect(result.changes).toBe(0);
+
+      const queryResult = service.executeQuery('SELECT COUNT(*) AS cnt FROM inventory');
+      expect(queryResult.values[0][0]).toBe(0);
+    });
+
+    it('reseed 成功但用户 SQL 失败时同步 JSON 视图避免状态分裂', () => {
+      service.applyEdits('DELETE FROM inventory;');
+      mockGetEffectiveSeedRows.mockReturnValue([
+        ['1', '铁剑', '3'],
+      ]);
+
+      // 用户 SQL 故意写错列名使其失败
+      const result = service.executeMutation("UPDATE inventory SET nonexistent_col = 1 WHERE row_id = 1");
+      expect(result.changes).toBe(0);
+      expect(result.errors.length).toBeGreaterThan(0);
+
+      // 验证 reseed 已落库（seedRows 作为初版快照保留）
+      const queryResult = service.executeQuery('SELECT * FROM inventory ORDER BY row_id');
+      expect(queryResult.rowCount).toBe(1);
+      expect(queryResult.values[0]).toContain('铁剑');
+
+      // 验证 JSON 视图已同步（直接检查全局 mockCurrentJsonTableData，绕过 getCurrentData 的二次同步）
+      const sheetContent = mockCurrentJsonTableData?.sheet_0?.content;
+      expect(Array.isArray(sheetContent)).toBe(true);
+      expect(sheetContent.length).toBeGreaterThanOrEqual(2); // 表头 + 至少 1 行 seedRows
+      expect(sheetContent[1]).toContain('铁剑');
     });
   });
 

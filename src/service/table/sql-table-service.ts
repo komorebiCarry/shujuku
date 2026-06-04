@@ -75,6 +75,7 @@ export class SqlTableService implements ITableStorageProvider {
   private engine: SqliteEngine;
   private syncBridge: SyncBridge;
   private _initialized = false;
+  private _existingTableSet?: Set<string>;
 
   constructor() {
     this.engine = new SqliteEngine();
@@ -130,6 +131,7 @@ export class SqlTableService implements ITableStorageProvider {
           logDebug_ACU('[SqlTableService] 没有找到表格数据，引擎已就绪，等待第一次填表时从模板建表');
         }
         this._initialized = true;
+        this._existingTableSet = undefined;
         return { loaded: false, source: 'empty' };
       }
 
@@ -143,6 +145,7 @@ export class SqlTableService implements ITableStorageProvider {
       this._buildNameMapper(mergedData as TableDataObject_ACU);
 
       this._initialized = true;
+      this._existingTableSet = undefined;
       logDebug_ACU('[SqlTableService] SQLite 数据库加载完成');
       return { loaded: true, source: 'merged' };
     } catch (e: any) {
@@ -234,6 +237,12 @@ export class SqlTableService implements ITableStorageProvider {
       return normalizeStatementValues(structNormalized);
     });
 
+    // 收集空表 seedRows INSERT，前置到 statements（同一事务，失败一起回滚）
+    const reseedInserts = this._collectReseedInsertsForEmptyTables();
+    if (reseedInserts.length > 0) {
+      statements.unshift(...reseedInserts);
+    }
+
     try {
       // 事务执行
       const result = this.engine.runBatch(statements);
@@ -250,7 +259,7 @@ export class SqlTableService implements ITableStorageProvider {
       return {
         success: true,
         modifiedKeys,
-        appliedEdits: statements.length,
+        appliedEdits: rawStatements.length,
       };
     } catch (e: any) {
       // 事务已回滚，数据保持原样
@@ -286,12 +295,21 @@ export class SqlTableService implements ITableStorageProvider {
     this._ensureInitialized();
     this._ensureTablesFromTemplate();
     try {
+      // 收集空表 seedRows INSERT 并执行（与用户 SQL 不在同一事务，计划已记录风险）
+      const reseedInserts = this._collectReseedInsertsForEmptyTables();
+      if (reseedInserts.length > 0) {
+        this.engine.runBatch(reseedInserts);
+        logDebug_ACU(`[SqlTableService] executeMutation 前置补回 ${reseedInserts.length} 条 seedRows`);
+      }
+
       // 对 SQL 做规范化：结构字符兼容化 + 受约束字段值规范化
       const normalizedSql = normalizeStatementValues(normalizeSqlStructure(sql));
       const result = this.engine.run(normalizedSql, params);
       this._syncToJson();
       return { changes: result.changes, errors: [] };
     } catch (e: any) {
+      // reseed 可能已成功落库，同步 JSON 视图避免 SQLite/JSON 状态分裂
+      this._syncToJson();
       return { changes: 0, errors: [e?.message || String(e)] };
     }
   }
@@ -303,12 +321,87 @@ export class SqlTableService implements ITableStorageProvider {
     this.engine.dispose();
     disposeGlobalNameMapper();
     this._initialized = false;
+    this._existingTableSet = undefined;
     logDebug_ACU('[SqlTableService] SQLite 引擎已销毁');
   }
 
   // ═══════════════════════════════════════════════════════════════
   // 内部方法
   // ═══════════════════════════════════════════════════════════════
+
+  /**
+   * 收集已存在空表的 seedRows INSERT 语句，用于 SQL 写入前补齐基底数据。
+   *
+   * 触发条件（全部满足才处理）：
+   * 1. 表在 SQLite 中已存在（由 _ensureTablesFromTemplate 保证）
+   * 2. SELECT COUNT(*) 返回 0（空表）
+   * 3. getEffectiveSeedRowsForSheet_ACU 返回非空
+   * 4. 表属于当前聊天模板/guide（有 DDL 且可解析表名）
+   *
+   * 幂等：非空表跳过；无 seedRows 跳过；DDL 缺失跳过。
+   *
+   * @returns 需要前置执行的 INSERT 语句数组（可能为空）
+   */
+  private _collectReseedInsertsForEmptyTables(): string[] {
+    const inserts: string[] = [];
+    if (!currentJsonTableData_ACU) return inserts;
+
+    const sheetKeys = Object.keys(currentJsonTableData_ACU).filter(k => k.startsWith('sheet_'));
+    if (sheetKeys.length === 0) return inserts;
+
+    for (const sheetKey of sheetKeys) {
+      try {
+        const sheet = (currentJsonTableData_ACU as any)[sheetKey];
+        if (!sheet?.sourceData?.ddl) continue;
+
+        const tableName = parseDDLTableName(sheet.sourceData.ddl);
+        if (!tableName) continue;
+
+        const existingTables = this._existingTableSet ??= new Set(this.engine.getTableNames());
+        // 检查表是否存在且为空
+        if (!existingTables.has(tableName)) continue;
+
+        const countResult = this.engine.query(`SELECT COUNT(*) AS cnt FROM "${tableName.replace(/"/g, '""')}";`);
+        const cnt = countResult?.values?.[0]?.[0];
+        if (cnt !== 0) continue; // 非空表，跳过
+
+        // 获取 seedRows
+        const seedRows = getEffectiveSeedRowsForSheet_ACU(sheetKey, { allowTemplateFallback: true });
+        if (!Array.isArray(seedRows) || seedRows.length === 0) continue;
+
+        // 构造临时 Sheet 对象用于 generateInserts
+        const headerRow = Array.isArray(sheet.content?.[0])
+          ? JSON.parse(JSON.stringify(sheet.content[0]))
+          : ['row_id'];
+        const content = [headerRow, ...seedRows.map((r: any) => Array.isArray(r) ? [...r] : [r])];
+        const stableContent = ensureStableRowIdsForSheetContent_ACU(content);
+
+        const tempSheet = {
+          uid: sheet.uid || sheetKey,
+          name: sheet.name || sheetKey,
+          sourceData: sheet.sourceData,
+          content: stableContent,
+          updateConfig: sheet.updateConfig || {},
+          exportConfig: sheet.exportConfig || {},
+          orderNo: sheet.orderNo ?? 0,
+        };
+
+        const sheetInserts = generateInserts(tempSheet as any, tableName);
+        if (sheetInserts.length > 0) {
+          inserts.push(...sheetInserts);
+          logDebug_ACU(`[SqlTableService] 空表 ${sheetKey} (${tableName}) 补回 ${sheetInserts.length} 行 seedRows`);
+        }
+      } catch (e: any) {
+        // 单表失败不阻塞其他表，但记录日志
+        logWarn_ACU(`[SqlTableService] 收集表 ${sheetKey} 的 seedRows INSERT 失败: ${e?.message}`);
+      }
+    }
+
+    if (inserts.length > 0) {
+      logDebug_ACU(`[SqlTableService] 共收集 ${inserts.length} 条 seedRows reseed INSERT 语句`);
+    }
+    return inserts;
+  }
 
   /** 从 TableDataObject 中提取所有 DDL，构建全局 NameMapper */
   private _buildNameMapper(data: TableDataObject_ACU): void {
