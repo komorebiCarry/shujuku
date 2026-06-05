@@ -98,9 +98,11 @@
       >
         <aside
           class="acu-v2-app__mobile-nav"
+          :style="mobileNavDrawerStyle"
           role="dialog"
           aria-modal="true"
           aria-label="一级页导航"
+          data-acu-mobile-nav-width="360px"
           @click.stop
         >
           <Sidebar variant="drawer" @navigate="closeMobileNav" />
@@ -153,6 +155,11 @@ const isThemeMenuRendered = ref(false);
 const isThemeMenuClosing = ref(false);
 const THEME_MENU_LEAVE_MS = 120;
 const MOBILE_NAV_LEAVE_MS = 150;
+const mobileNavDrawerStyle = {
+  width: "360px",
+  maxWidth: "calc(100% - 24px)",
+  flex: "0 0 360px",
+};
 let themeMenuCloseTimer: AcuTimerHandle | undefined;
 let mobileNavCloseTimer: AcuTimerHandle | undefined;
 
@@ -525,14 +532,14 @@ function clearMobileNavCloseTimer(): void {
 }
 
 .acu-v2-app__mobile-nav {
-  width: 280px;
-  max-width: calc(100vw - 72px - var(--acu-safe-left) - var(--acu-safe-right));
+  width: 360px;
+  max-width: calc(100% - 24px - var(--acu-safe-left, 0px) - var(--acu-safe-right, 0px));
   height: 100%;
   max-height: 100%;
   min-width: 0;
   min-height: 0;
   align-self: stretch;
-  flex: 0 1 280px;
+  flex: 0 1 360px;
   display: flex;
   flex-direction: column;
   background: var(--acu-sidebar-bg);
@@ -547,16 +554,16 @@ function clearMobileNavCloseTimer(): void {
   animation: mobile-nav-drawer-out 0.15s ease-in both;
 }
 
-@supports (width: min(280px, calc(100vw - 72px))) {
+@supports (width: min(360px, calc(100% - 24px))) {
   .acu-v2-app__mobile-nav {
-    width: min(280px, calc(100vw - 72px - var(--acu-safe-left) - var(--acu-safe-right)));
-    flex: 0 0 min(280px, calc(100vw - 72px - var(--acu-safe-left) - var(--acu-safe-right)));
+    width: min(360px, calc(100% - 24px - var(--acu-safe-left, 0px) - var(--acu-safe-right, 0px)));
+    flex: 0 0 min(360px, calc(100% - 24px - var(--acu-safe-left, 0px) - var(--acu-safe-right, 0px)));
   }
 }
 
 @supports (width: 100dvw) {
   .acu-v2-app__mobile-nav {
-    max-width: calc(100dvw - 72px - var(--acu-safe-left) - var(--acu-safe-right));
+    max-width: calc(100% - 24px - var(--acu-safe-left, 0px) - var(--acu-safe-right, 0px));
   }
 }
 

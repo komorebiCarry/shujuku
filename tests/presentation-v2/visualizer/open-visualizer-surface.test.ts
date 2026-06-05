@@ -628,6 +628,12 @@ describe('openVisualizerSurface_ACU', () => {
 
     const layer = document.querySelector<HTMLElement>('.acu-visualizer-surface__mobile-nav-layer');
     expect(layer).not.toBeNull();
+    const drawer = layer!.querySelector<HTMLElement>('.acu-visualizer-surface__mobile-nav');
+    expect(drawer).not.toBeNull();
+    expect(drawer!.getAttribute('data-acu-mobile-nav-width')).toBe('360px');
+    expect(drawer!.style.width).toBe('360px');
+    expect(drawer!.style.maxWidth).toBe('calc(100% - 24px)');
+    expect(drawer!.style.flex).toBe('0 0 360px');
     const sheetButton = Array.from(layer!.querySelectorAll<HTMLButtonElement>('button'))
       .find(button => button.textContent?.includes('事件记录'));
     expect(sheetButton).not.toBeUndefined();

@@ -20,6 +20,7 @@ import {
   __resetHostDocumentCacheForTests,
   getAcuHostDocument,
   getAcuHostSource,
+  getAcuHostWindow,
 } from './host-document';
 import { createHostDocumentApp, __resetHostRendererForTests } from './host-renderer';
 
@@ -36,7 +37,14 @@ let state: MountedState | null = null;
 function ensureMounted(): MountedState {
   if (state) return state;
   const doc = getAcuHostDocument();
+  const hostWindow = getAcuHostWindow();
   const source = getAcuHostSource();
+  const hostWidth = Math.round(
+    hostWindow.visualViewport?.width ||
+      hostWindow.innerWidth ||
+      doc.documentElement?.clientWidth ||
+      0,
+  );
 
   setSfcStyleHost({ document: doc });
 
@@ -46,6 +54,11 @@ function ensureMounted(): MountedState {
     root.id = ROOT_ID;
     root.style.display = 'none';
     doc.body.appendChild(root);
+  }
+  root.setAttribute('data-acu-host-source', source);
+  root.setAttribute('data-acu-host-width', String(hostWidth));
+  if (hostWidth > 0 && hostWidth <= 240) {
+    logDebug_ACU(`[ACU-V2] narrow host detected: source=${source}, width=${hostWidth}px`);
   }
 
   const pinia = createPinia();
@@ -64,7 +77,7 @@ function ensureMounted(): MountedState {
   themeStore.$subscribe(() => applyTheme(themeStore.activeTheme));
 
   state = { vueApp, pinia, root };
-  logDebug_ACU(`[ACU-V2] app mounted into ${source} (id=#${ROOT_ID})`);
+  logDebug_ACU(`[ACU-V2] app mounted into ${source} (id=#${ROOT_ID}, width=${hostWidth}px)`);
   return state;
 }
 

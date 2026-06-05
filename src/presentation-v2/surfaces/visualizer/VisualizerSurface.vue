@@ -441,9 +441,11 @@
     >
       <aside
         class="acu-visualizer-surface__mobile-nav"
+        :style="mobileNavDrawerStyle"
         role="dialog"
         aria-modal="true"
         aria-label="数据库导航"
+        data-acu-mobile-nav-width="360px"
         @click.stop
       >
         <VisualizerNavigation
@@ -497,6 +499,11 @@ const workspaceRef = ref<HTMLElement | null>(null);
 const paginationRef = ref<HTMLElement | null>(null);
 const VISUALIZER_MOBILE_NAV_LEAVE_MS = 150;
 const VISUALIZER_DATA_PAGE_SIZE = 30;
+const mobileNavDrawerStyle = {
+  width: "360px",
+  maxWidth: "calc(100% - 24px)",
+  flex: "0 0 360px",
+};
 let mobileNavCloseTimer: AcuTimerHandle | undefined;
 let paginationResizeObserver: ResizeObserver | undefined;
 
@@ -1778,14 +1785,14 @@ watch(rowCount, () => {
 }
 
 .acu-visualizer-surface__mobile-nav {
-  width: 280px;
-  max-width: calc(100vw - 72px - var(--acu-safe-left, 0px) - var(--acu-safe-right, 0px));
+  width: 360px;
+  max-width: calc(100% - 24px - var(--acu-safe-left, 0px) - var(--acu-safe-right, 0px));
   height: 100%;
   max-height: 100%;
   min-width: 0;
   min-height: 0;
   align-self: stretch;
-  flex: 0 1 280px;
+  flex: 0 1 360px;
   display: flex;
   flex-direction: column;
   padding: 24px 12px 16px;
@@ -1802,16 +1809,16 @@ watch(rowCount, () => {
   animation: visualizer-mobile-nav-drawer-out 0.15s ease-in both;
 }
 
-@supports (width: min(280px, calc(100vw - 72px))) {
+@supports (width: min(360px, calc(100% - 24px))) {
   .acu-visualizer-surface__mobile-nav {
-    width: min(280px, calc(100vw - 72px - var(--acu-safe-left, 0px) - var(--acu-safe-right, 0px)));
-    flex: 0 0 min(280px, calc(100vw - 72px - var(--acu-safe-left, 0px) - var(--acu-safe-right, 0px)));
+    width: min(360px, calc(100% - 24px - var(--acu-safe-left, 0px) - var(--acu-safe-right, 0px)));
+    flex: 0 0 min(360px, calc(100% - 24px - var(--acu-safe-left, 0px) - var(--acu-safe-right, 0px)));
   }
 }
 
 @supports (width: 100dvw) {
   .acu-visualizer-surface__mobile-nav {
-    max-width: calc(100dvw - 72px - var(--acu-safe-left, 0px) - var(--acu-safe-right, 0px));
+    max-width: calc(100% - 24px - var(--acu-safe-left, 0px) - var(--acu-safe-right, 0px));
   }
 }
 
