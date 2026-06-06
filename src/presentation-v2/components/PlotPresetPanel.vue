@@ -86,7 +86,7 @@
       :task-editing="management.taskEditing"
       :current-task-api-override="currentTaskApiOverride"
       :show-advanced-rates="devOptions.plotAdvanced.value"
-      :rates="rateValues"
+      :rates="management.draftRates"
       :before-close="() => management.confirmIfDirty()"
       @close="management.closeDrawer"
       @back="management.backToManage"
@@ -100,7 +100,7 @@
       @update-context-extract-rules="management.setContextExtractRules"
       @update-context-exclude-rules="management.setContextExcludeRules"
       @update-task-api-override="onTaskApiOverride"
-      @update-rate="rates.setRate"
+      @update-rate="management.setDraftRate"
     />
   </AcuPanel>
 </template>
@@ -111,7 +111,6 @@ import { useChatChangedTick } from "../composables/useChatChangedListener";
 import { useDevOptions } from "../composables/useDevOptions";
 import { useApiPresetSelectOptions } from "../composables/useApiPresetSelectOptions";
 import { usePlotPresetManagement } from "../composables/usePlotPresetManagement";
-import { usePlotRates } from "../composables/usePlotRates";
 import { useUiCloseGuard } from "../composables/useUiCloseGuard";
 import { plotCopy } from "../copy/plot-copy";
 import { useDialogStore } from "../stores/dialog-store";
@@ -149,7 +148,6 @@ const {
 } = useApiPresetSelectOptions();
 const management = usePlotPresetManagement();
 const devOptions = useDevOptions();
-const rates = usePlotRates();
 
 const presetDropdownItems = computed<PresetDropdownItem[]>(() => [
   {
@@ -167,13 +165,6 @@ const presetDropdownItems = computed<PresetDropdownItem[]>(() => [
 const apiPresetOptions = computed(() =>
   apiStore.presets.map((p) => ({ name: p.name })),
 );
-const rateValues = computed(() => ({
-  rateMain: rates.rateMain.value,
-  ratePersonal: rates.ratePersonal.value,
-  rateErotic: rates.rateErotic.value,
-  rateCuckold: rates.rateCuckold.value,
-  recallCount: rates.recallCount.value,
-}));
 const currentTaskApiOverride = computed<string>(() => {
   const taskId = management.taskEditing.currentTaskId.value;
   if (!taskId) return "";
@@ -233,14 +224,9 @@ async function onImportFile(file: File): Promise<void> {
 function refreshAll(): void {
   store.refreshFromSettings();
   apiStore.refreshFromSettings();
-  rates.refresh();
 }
 
 onMounted(refreshAll);
-watch(
-  () => store.activePresetName,
-  () => rates.refresh(),
-);
 watch(useChatChangedTick(), refreshAll);
 </script>
 

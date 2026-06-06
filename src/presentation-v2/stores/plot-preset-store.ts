@@ -13,7 +13,6 @@ import {
   applyPlotPresetToSettings_ACU,
   clearPlotPresetBindingForChat_ACU,
   ensurePlotTasksCompat_ACU,
-  findPlotPresetByName_ACU,
   getCurrentRuntimePlotPresetName_ACU,
   getPlotPresetBindingForChat_ACU,
   isDefaultPlotPresetSelection_ACU,
@@ -94,6 +93,28 @@ function findPresetIndex(presets: AcuV2PlotPreset[], name: string): number {
   const normalized = String(name || '').trim();
   if (!normalized) return -1;
   return presets.findIndex(p => p.name === normalized);
+}
+
+export const PLOT_RATE_FIELDS = ['rateMain', 'ratePersonal', 'rateErotic', 'rateCuckold', 'recallCount'] as const;
+export type PlotRateField = (typeof PLOT_RATE_FIELDS)[number];
+
+export function getDefaultPlotRateValueForV2(field: PlotRateField): number {
+  const n = Number((DEFAULT_PLOT_SETTINGS_ACU as Record<string, any>)[field]);
+  return Number.isFinite(n) ? n : 0;
+}
+
+function coercePlotRateForExport(field: PlotRateField, value: unknown): number {
+  const n = Number(value);
+  return Number.isFinite(n) ? n : getDefaultPlotRateValueForV2(field);
+}
+
+function stripDefaultPlotRatesForV2Export(target: Record<string, any>): void {
+  if (!target || typeof target !== 'object') return;
+  for (const field of PLOT_RATE_FIELDS) {
+    if (coercePlotRateForExport(field, target[field]) === getDefaultPlotRateValueForV2(field)) {
+      delete target[field];
+    }
+  }
 }
 
 function normalizeImportedPresetPayloads(parsed: unknown): Record<string, any>[] {
@@ -367,9 +388,10 @@ export const usePlotPresetStore = defineStore('acu-v2-plot-presets', {
 
     /** 导出指定预设为 JSON。返回 string 或 null（找不到时）。 */
     exportPresetAsJson(name: string): string | null {
-      const preset = findPlotPresetByName_ACU(name);
-      if (!preset) return null;
-      const exportable = stripPlotPresetWorldbookEntrySelectionForExport_ACU(preset);
+      const idx = findPresetIndex(this.presets, name);
+      if (idx < 0) return null;
+      const exportable = stripPlotPresetWorldbookEntrySelectionForExport_ACU(this.presets[idx].raw);
+      stripDefaultPlotRatesForV2Export(exportable);
       return JSON.stringify([exportable], null, 2);
     },
   },
