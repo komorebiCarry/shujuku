@@ -164,32 +164,34 @@
         </div>
 
         <div class="acu-v2-advanced-tools-page__log-control-row">
-          <div class="acu-v2-advanced-tools-page__log-actions">
-            <AcuButton :variant="logFlow.paused.value ? 'primary' : 'default'" @click="logFlow.setPaused(!logFlow.paused.value)">
-              <i :class="logFlow.paused.value ? 'fa-solid fa-play' : 'fa-solid fa-pause'"></i>
-              暂停
-            </AcuButton>
-            <AcuButton :disabled="!logFlow.totalCount.value" @click="logFlow.exportFiltered">
-              <i class="fa-solid fa-upload"></i>
-              导出
-            </AcuButton>
-            <AcuButton variant="danger" :disabled="!logFlow.totalCount.value" @click="logFlow.clearAll">
-              <i class="fa-solid fa-trash"></i>
-              清空
-            </AcuButton>
-          </div>
+          <div class="acu-v2-advanced-tools-page__log-control-main">
+            <div class="acu-v2-advanced-tools-page__log-actions">
+              <AcuButton :variant="logFlow.paused.value ? 'primary' : 'default'" @click="logFlow.setPaused(!logFlow.paused.value)">
+                <i :class="logFlow.paused.value ? 'fa-solid fa-play' : 'fa-solid fa-pause'"></i>
+                暂停
+              </AcuButton>
+              <AcuButton :disabled="!logFlow.totalCount.value" @click="logFlow.exportFiltered">
+                <i class="fa-solid fa-upload"></i>
+                导出
+              </AcuButton>
+              <AcuButton variant="danger" :disabled="!logFlow.totalCount.value" @click="logFlow.clearAll">
+                <i class="fa-solid fa-trash"></i>
+                清空
+              </AcuButton>
+            </div>
 
-          <div class="acu-v2-advanced-tools-page__toggles">
-            <AcuToggle
-              :model-value="logFlow.autoScroll.value"
-              label="自动滚动"
-              @update:model-value="logFlow.autoScroll.value = $event"
-            />
-            <AcuToggle
-              :model-value="logFlow.debugLogEnabled.value"
-              label="Debug"
-              @update:model-value="logFlow.setDebugCollection"
-            />
+            <div class="acu-v2-advanced-tools-page__toggles">
+              <AcuToggle
+                :model-value="logFlow.autoScroll.value"
+                label="自动滚动"
+                @update:model-value="logFlow.autoScroll.value = $event"
+              />
+              <AcuToggle
+                :model-value="logFlow.debugLogEnabled.value"
+                label="Debug"
+                @update:model-value="logFlow.setDebugCollection"
+              />
+            </div>
           </div>
 
           <p class="acu-v2-advanced-tools-page__hint">
@@ -472,25 +474,48 @@ watch(() => logFlow.visibleLogs.value.length, scrollLogListToTop, { flush: 'post
 
 .acu-v2-advanced-tools-page__log-control-row {
   display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-width: 0;
+}
+
+.acu-v2-advanced-tools-page__log-control-main {
+  min-width: 0;
+  display: flex;
   flex-wrap: wrap;
   gap: 10px 14px;
   align-items: center;
+  justify-content: space-between;
 }
 
 .acu-v2-advanced-tools-page__toggles {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 14px;
+  width: max-content;
+  max-width: 100%;
+  display: grid;
+  grid-template-columns: max-content max-content;
+  gap: 10px 18px;
   align-items: center;
-  margin-left: auto;
+  justify-content: flex-start;
+}
+
+.acu-v2-advanced-tools-page__toggles :deep(.acu-toggle) {
+  width: max-content;
+  max-width: none;
+  min-width: max-content;
+  white-space: nowrap;
+}
+
+.acu-v2-advanced-tools-page__toggles :deep(.acu-toggle__label) {
+  white-space: nowrap;
 }
 
 .acu-v2-advanced-tools-page__hint {
-  flex: 1 1 100%;
+  max-width: 100%;
   margin: 0;
   color: var(--acu-text-3);
   font-size: var(--acu-font-size-body, 12px);
   line-height: 1.55;
+  overflow-wrap: anywhere;
 }
 
 .acu-v2-advanced-tools-page__sql-history-list,
@@ -634,13 +659,14 @@ watch(() => logFlow.visibleLogs.value.length, scrollLogListToTop, { flush: 'post
     grid-template-columns: 1fr;
   }
 
-  .acu-v2-advanced-tools-page__log-control-row {
+  .acu-v2-advanced-tools-page__log-control-main {
     align-items: stretch;
     flex-direction: column;
+    justify-content: flex-start;
   }
 
   .acu-v2-advanced-tools-page__toggles {
-    margin-left: 0;
+    align-self: flex-start;
   }
 
   .acu-v2-advanced-tools-page__sql-history-item,
