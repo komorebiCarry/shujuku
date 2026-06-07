@@ -6,12 +6,19 @@
  */
 import { computed, reactive, ref } from 'vue';
 import { useDialogStore } from '../stores/dialog-store';
-import { getDefaultPlotPresetRawForV2, usePlotPresetStore } from '../stores/plot-preset-store';
+import {
+  getDefaultPlotPresetRawForV2,
+  getDefaultPlotRateValueForV2,
+  PLOT_RATE_FIELDS,
+  type PlotRateField,
+  usePlotPresetStore,
+} from '../stores/plot-preset-store';
 import { useToastStore } from '../stores/toast-store';
 import { usePlotTaskEditing } from './usePlotTaskEditing';
 import { normalizeExcludeRules_ACU, normalizeExtractRules_ACU } from '../../shared/utils';
 
 export type PlotDrawerView = 'closed' | 'manage' | 'create' | 'edit';
+export type { PlotRateField } from '../stores/plot-preset-store';
 
 export interface PlotContextRulePair {
   start: string;
@@ -34,6 +41,8 @@ interface DraftContextRules {
   excludeRules: PlotContextRulePair[];
 }
 
+type PlotRateDraft = Record<PlotRateField, number>;
+
 const DEFAULT_NEW_PRESET_NAME = '新预设';
 
 function emptyDraftMeta(): DraftMeta {
@@ -42,6 +51,28 @@ function emptyDraftMeta(): DraftMeta {
 
 function emptyContextRules(): DraftContextRules {
   return { extractRules: [], excludeRules: [] };
+}
+
+function coercePlotRate(field: PlotRateField, value: unknown): number {
+  const n = Number(value);
+  return Number.isFinite(n) ? n : getDefaultPlotRateValueForV2(field);
+}
+
+function readDraftRates(raw: Record<string, any> | null | undefined): PlotRateDraft {
+  return PLOT_RATE_FIELDS.reduce((acc, field) => {
+    acc[field] = coercePlotRate(field, raw?.[field]);
+    return acc;
+  }, {} as PlotRateDraft);
+}
+
+function writeDraftRates(raw: Record<string, any>, rates: PlotRateDraft): void {
+  for (const field of PLOT_RATE_FIELDS) {
+    raw[field] = coercePlotRate(field, rates[field]);
+  }
+}
+
+function emptyDraftRates(): PlotRateDraft {
+  return readDraftRates(null);
 }
 
 function defaultRawPreset(): Record<string, any> {
@@ -93,6 +124,7 @@ export function usePlotPresetManagement() {
   const originalName = ref<string>('');
   const draftMeta = reactive<DraftMeta>(emptyDraftMeta());
   const contextRules = reactive<DraftContextRules>(emptyContextRules());
+  const draftRates = reactive<PlotRateDraft>(emptyDraftRates());
   const draftRaw = ref<Record<string, any>>(defaultRawPreset());
   const error = ref<string>('');
   const initialSnapshot = ref<string>('');
@@ -127,6 +159,7 @@ export function usePlotPresetManagement() {
     return JSON.stringify({
       meta: draftMeta,
       contextRules,
+      rates: draftRates,
       tasks: taskEditing.tasks.value,
       directive: taskEditing.finalDirective.value,
     });
@@ -149,6 +182,7 @@ export function usePlotPresetManagement() {
   function resetDraft(): void {
     Object.assign(draftMeta, emptyDraftMeta());
     Object.assign(contextRules, emptyContextRules());
+    Object.assign(draftRates, emptyDraftRates());
     draftRaw.value = defaultRawPreset();
     originalName.value = '';
     error.value = '';
@@ -170,6 +204,7 @@ export function usePlotPresetManagement() {
     draftRaw.value = raw;
     contextRules.extractRules = normalizeRulePairs(raw.contextExtractRules, raw.contextExtractTags || '', 'extract');
     contextRules.excludeRules = normalizeRulePairs(raw.contextExcludeRules, raw.contextExcludeTags || '', 'exclude');
+    Object.assign(draftRates, readDraftRates(raw));
     taskEditing.loadFromRaw(raw.plotTasks || [], raw.finalSystemDirective || '');
     error.value = '';
     drawerView.value = 'create';
@@ -186,6 +221,7 @@ export function usePlotPresetManagement() {
     draftRaw.value = JSON.parse(JSON.stringify(target.raw || {}));
     contextRules.extractRules = normalizeRulePairs(target.raw?.contextExtractRules, target.raw?.contextExtractTags || '', 'extract');
     contextRules.excludeRules = normalizeRulePairs(target.raw?.contextExcludeRules, target.raw?.contextExcludeTags || '', 'exclude');
+    Object.assign(draftRates, readDraftRates(target.raw || null));
     taskEditing.loadFromRaw(target.raw?.plotTasks || [], target.raw?.finalSystemDirective || '');
     error.value = '';
     drawerView.value = 'edit';
@@ -235,12 +271,17 @@ export function usePlotPresetManagement() {
     contextRules.excludeRules = coerceRulePairs(rules);
   }
 
+  function setDraftRate(field: PlotRateField, value: number): void {
+    draftRates[field] = coercePlotRate(field, value);
+  }
+
   function saveDraft(): boolean {
     if (!validate()) return false;
     const merged = taskEditing.serializeIntoPresetRaw(draftRaw.value || {});
     merged.name = String(draftMeta.name || '').trim();
     merged.contextExtractRules = rulesForSave(contextRules.extractRules, 'extract');
     merged.contextExcludeRules = rulesForSave(contextRules.excludeRules, 'exclude');
+    writeDraftRates(merged, draftRates);
     delete merged.contextExtractTags;
     delete merged.contextExcludeTags;
     const ok = store.savePreset({ name: merged.name, raw: merged }, originalName.value);
@@ -286,10 +327,12 @@ export function usePlotPresetManagement() {
     draftMeta,
     draftRaw,
     contextRules,
+    draftRates,
     presetMeta,
     taskEditing,
     setContextExtractRules,
     setContextExcludeRules,
+    setDraftRate,
     openManage,
     openCreate,
     openEdit,

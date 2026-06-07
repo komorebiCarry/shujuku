@@ -116,6 +116,16 @@
         </div>
       </fieldset>
 
+      <PlotMatchReplaceFields
+        v-if="showAdvancedRates"
+        :rate-main="rates.rateMain"
+        :rate-personal="rates.ratePersonal"
+        :rate-erotic="rates.rateErotic"
+        :rate-cuckold="rates.rateCuckold"
+        :recall-count="rates.recallCount"
+        @update-rate="(field, value) => $emit('update-rate', field, value)"
+      />
+
       <PlotTaskList
         :tasks="taskEditing.tasks.value"
         :current-task-id="taskEditing.currentTaskId.value"
@@ -129,11 +139,8 @@
         :task="taskEditing.currentTask.value"
         :api-preset-options="apiPresetOptions"
         :task-api-override="currentTaskApiOverride"
-        :show-advanced-rates="showAdvancedRates"
-        :rates="rates"
         @patch="taskEditing.patchCurrent($event)"
         @task-api-override="onTaskApiOverride"
-        @update-rate="(field, value) => $emit('update-rate', field, value)"
         @segment-add="taskEditing.addSegment($event)"
         @segment-delete="taskEditing.deleteSegment($event)"
         @segment-move="(index, delta) => taskEditing.moveSegment(index, delta)"
@@ -166,8 +173,8 @@
 import type {
   PlotContextRulePair,
   PlotDrawerView,
+  PlotRateField,
 } from "../composables/usePlotPresetManagement";
-import type { PlotRateField } from "../composables/usePlotRates";
 import AcuButton from "./_lib/AcuButton.vue";
 import AcuDrawer from "./_lib/AcuDrawer.vue";
 import AcuFormRow from "./_lib/AcuFormRow.vue";
@@ -176,6 +183,7 @@ import AcuInput from "./_lib/AcuInput.vue";
 import AcuRulePairList from "./_lib/AcuRulePairList.vue";
 import AcuText from "./_lib/AcuText.vue";
 import AcuTextarea from "./_lib/AcuTextarea.vue";
+import PlotMatchReplaceFields from "./PlotMatchReplaceFields.vue";
 import PlotTaskEditor from "./PlotTaskEditor.vue";
 import PlotTaskList from "./PlotTaskList.vue";
 

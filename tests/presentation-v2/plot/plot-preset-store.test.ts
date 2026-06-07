@@ -195,6 +195,35 @@ describe('usePlotPresetStore', () => {
     expect(settings.plotSettings.promptPresets.map((p: any) => p.name)).toContain('新预设');
   });
 
+  it('savePreset 更新当前活动预设时应用预设内的匹配替换参数', async () => {
+    const settings = createSettings();
+    const { store } = await importStore(settings);
+    store.refreshFromSettings();
+
+    const ok = store.savePreset({
+      name: '记忆召回',
+      raw: {
+        name: '记忆召回',
+        plotTasks: [{ id: 't1', name: 'A edited', stage: 1, order: 0 }],
+        rateMain: 2.25,
+        ratePersonal: 1.75,
+        rateErotic: 0.5,
+        rateCuckold: 1.25,
+        recallCount: 42,
+      },
+    }, '记忆召回');
+
+    expect(ok).toBe(true);
+    const savedPreset = settings.plotSettings.promptPresets.find((preset: any) => preset.name === '记忆召回');
+    expect(savedPreset.rateMain).toBe(2.25);
+    expect(savedPreset.recallCount).toBe(42);
+    expect(settings.plotSettings.rateMain).toBe(2.25);
+    expect(settings.plotSettings.ratePersonal).toBe(1.75);
+    expect(settings.plotSettings.rateErotic).toBe(0.5);
+    expect(settings.plotSettings.rateCuckold).toBe(1.25);
+    expect(settings.plotSettings.recallCount).toBe(42);
+  });
+
   it('deletePreset 删除并清理 lastUsedPresetName', async () => {
     const settings = createSettings();
     const { store } = await importStore(settings);
@@ -323,6 +352,46 @@ describe('usePlotPresetStore', () => {
     const parsed = JSON.parse(json!);
     expect(Array.isArray(parsed)).toBe(true);
     expect(parsed[0].name).toBe('记忆召回');
+  });
+
+  it('exportPresetAsJson 省略等于默认值的匹配替换参数', async () => {
+    const settings = createSettings();
+    Object.assign(settings.plotSettings.promptPresets[0], {
+      rateMain: 1,
+      ratePersonal: 1,
+      rateErotic: 0,
+      rateCuckold: 1,
+      recallCount: 20,
+    });
+    const { store } = await importStore(settings);
+    store.refreshFromSettings();
+
+    const parsed = JSON.parse(store.exportPresetAsJson('记忆召回')!);
+    expect(parsed[0].rateMain).toBeUndefined();
+    expect(parsed[0].ratePersonal).toBeUndefined();
+    expect(parsed[0].rateErotic).toBeUndefined();
+    expect(parsed[0].rateCuckold).toBeUndefined();
+    expect(parsed[0].recallCount).toBeUndefined();
+  });
+
+  it('exportPresetAsJson 保留非默认匹配替换参数', async () => {
+    const settings = createSettings();
+    Object.assign(settings.plotSettings.promptPresets[0], {
+      rateMain: 1.5,
+      ratePersonal: 1,
+      rateErotic: 0,
+      rateCuckold: 1,
+      recallCount: 12,
+    });
+    const { store } = await importStore(settings);
+    store.refreshFromSettings();
+
+    const parsed = JSON.parse(store.exportPresetAsJson('记忆召回')!);
+    expect(parsed[0].rateMain).toBe(1.5);
+    expect(parsed[0].recallCount).toBe(12);
+    expect(parsed[0].ratePersonal).toBeUndefined();
+    expect(parsed[0].rateErotic).toBeUndefined();
+    expect(parsed[0].rateCuckold).toBeUndefined();
   });
 
   it('importPresetFromJson 非法 JSON 返回 null', async () => {

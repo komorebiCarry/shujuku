@@ -7,9 +7,10 @@
  * "console marker 正常但页面无内容"。
  *
  * 解析规则：
- * 1. window.parent 存在且 !== window，且能访问 parent.document → host
- * 2. 否则（顶层窗口或跨域不可访问）→ 当前 window/document
- * 3. 全程 try/catch；跨域抛错时降级到当前文档并打印可检索 warning
+ * 1. 从当前 window 沿 parent 链向上探测所有可访问 document
+ * 2. 选择最外层可访问 document
+ * 3. 否则（顶层窗口或跨域不可访问）→ 当前 window/document
+ * 4. 全程 try/catch；跨域抛错时降级到当前文档并打印可检索 warning
  */
 import { logWarn_ACU } from '../../shared/utils';
 
@@ -25,18 +26,28 @@ export interface ResolvedHost {
 
 let cachedHost: ResolvedHost | null = null;
 
-function probeParent(): ResolvedHost | null {
-  try {
-    if (typeof window === 'undefined') return null;
-    const parent = window.parent;
-    if (!parent || parent === window) return null;
-    const parentDoc = parent.document;
-    if (!parentDoc || !parentDoc.body) return null;
-    return { window: parent as Window, document: parentDoc, source: 'parent-document' };
-  } catch (err) {
-    logWarn_ACU(`${PARENT_PROBE_MARKER}: parent inaccessible (likely cross-origin), falling back. ${(err as Error)?.message ?? err}`);
-    return null;
+function probeOutermostAccessibleHost(): ResolvedHost | null {
+  if (typeof window === 'undefined') return null;
+  let current: Window = window;
+  let outermost: { window: Window; document: Document } | null = null;
+
+  while (current) {
+    try {
+      const doc = current.document;
+      if (!doc || !doc.body) break;
+      outermost = { window: current, document: doc };
+
+      const parent = current.parent;
+      if (!parent || parent === current) break;
+      current = parent as Window;
+    } catch (err) {
+      logWarn_ACU(`${PARENT_PROBE_MARKER}: parent inaccessible (likely cross-origin), falling back. ${(err as Error)?.message ?? err}`);
+      break;
+    }
   }
+
+  if (!outermost || outermost.window === window) return null;
+  return { window: outermost.window, document: outermost.document, source: 'parent-document' };
 }
 
 /**
@@ -48,7 +59,7 @@ function probeParent(): ResolvedHost | null {
  */
 export function resolveAcuHost(): ResolvedHost {
   if (cachedHost) return cachedHost;
-  const fromParent = probeParent();
+  const fromParent = probeOutermostAccessibleHost();
   if (fromParent) {
     cachedHost = fromParent;
     return cachedHost;

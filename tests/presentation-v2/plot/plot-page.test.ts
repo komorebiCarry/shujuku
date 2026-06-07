@@ -144,12 +144,51 @@ describe('PlotPage', () => {
     expect(drawer).not.toBeNull();
     const drawerText = drawer!.textContent || '';
     expect(drawerText).toContain('匹配替换（进阶）');
-    expect(drawerText).toContain('全局参数');
-    expect(drawerText.indexOf('当前任务使用的 API')).toBeLessThan(drawerText.indexOf('匹配替换（进阶）'));
-    expect(drawerText.indexOf('匹配替换（进阶）')).toBeLessThan(drawerText.indexOf('提示词段（promptGroup）'));
+    expect(drawerText).toContain('随当前剧情推进预设保存');
+    expect(drawerText.indexOf('标签筛选')).toBeLessThan(drawerText.indexOf('匹配替换（进阶）'));
+    expect(drawerText.indexOf('匹配替换（进阶）')).toBeLessThan(drawerText.indexOf('当前任务使用的 API'));
 
     const inputs = Array.from(document.querySelectorAll('.acu-v2-plot-match-fields input[type="number"]'));
     expect(inputs).toHaveLength(5);
+
+    mount.__resetAcuV2MountForTests();
+  });
+
+  it('编辑抽屉保存匹配替换参数到当前剧情推进预设', async () => {
+    const { mount, settings } = await mountPlotPage({ devOptions: { plotAdvanced: true } });
+
+    const editButton = Array.from(document.querySelectorAll('button'))
+      .find(b => b.getAttribute('title') === '编辑当前预设') as HTMLButtonElement | undefined;
+    expect(editButton).not.toBeUndefined();
+    editButton!.click();
+    await new Promise(r => setTimeout(r, 0));
+
+    const drawer = document.querySelector('.acu-v2-drawer') as HTMLElement | null;
+    expect(drawer).not.toBeNull();
+    const inputs = Array.from(drawer!.querySelectorAll('.acu-v2-plot-match-fields input[type="number"]')) as HTMLInputElement[];
+    expect(inputs).toHaveLength(5);
+
+    const values = ['2.25', '1.75', '0.5', '1.25', '42'];
+    for (let index = 0; index < inputs.length; index += 1) {
+      inputs[index].value = values[index];
+      inputs[index].dispatchEvent(new Event('change', { bubbles: true }));
+      await new Promise(r => setTimeout(r, 0));
+    }
+
+    const saveButton = Array.from(drawer!.querySelectorAll('button'))
+      .find(button => (button.textContent || '').includes('保存预设')) as HTMLButtonElement | undefined;
+    expect(saveButton).not.toBeUndefined();
+    saveButton!.click();
+    await new Promise(r => setTimeout(r, 0));
+
+    const savedPreset = settings.plotSettings.promptPresets.find((preset: any) => preset.name === '记忆召回');
+    expect(savedPreset.rateMain).toBe(2.25);
+    expect(savedPreset.ratePersonal).toBe(1.75);
+    expect(savedPreset.rateErotic).toBe(0.5);
+    expect(savedPreset.rateCuckold).toBe(1.25);
+    expect(savedPreset.recallCount).toBe(42);
+    expect(settings.plotSettings.rateMain).toBe(2.25);
+    expect(settings.plotSettings.recallCount).toBe(42);
 
     mount.__resetAcuV2MountForTests();
   });

@@ -2,7 +2,7 @@
   <fieldset class="acu-v2-plot-match-fields">
     <legend>匹配替换（进阶）</legend>
     <AcuText variant="hint" class="acu-v2-plot-match-fields__hint">
-      替换提示词占位符（sulv1~4、zhaohui）为全局参数，修改后即时生效并独立保存，不随预设导入导出。
+      替换提示词占位符（sulv1~4、zhaohui），随当前剧情推进预设保存；导出 JSON 时默认值会自动省略。
     </AcuText>
     <div class="acu-v2-plot-match-fields__grid">
       <AcuFormRow label="sulv1">
@@ -51,7 +51,7 @@
 </template>
 
 <script setup lang="ts">
-import type { PlotRateField } from "../composables/usePlotRates";
+import type { PlotRateField } from "../composables/usePlotPresetManagement";
 import AcuFormRow from "./_lib/AcuFormRow.vue";
 import AcuInput from "./_lib/AcuInput.vue";
 import AcuText from "./_lib/AcuText.vue";

@@ -298,9 +298,15 @@
                                 ? '取消锁定当前列'
                                 : '锁定当前列'
                             "
-                            @click.prevent="
-                              visualizer.toggleColumnLock(
-                                visualizer.currentSheetKey,
+                            @click.stop.prevent="
+                              handleFieldColumnLockClick(
+                                row.index,
+                                field.columnIndex,
+                              )
+                            "
+                            @pointerdown.stop.prevent="
+                              handleFieldColumnLockPointerDown(
+                                row.index,
                                 field.columnIndex,
                               )
                             "
@@ -328,9 +334,14 @@
                                 ? '取消锁定当前单元格'
                                 : '锁定当前单元格'
                             "
-                            @click.prevent="
-                              visualizer.toggleCellLock(
-                                visualizer.currentSheetKey,
+                            @click.stop.prevent="
+                              handleFieldCellLockClick(
+                                row.index,
+                                field.columnIndex,
+                              )
+                            "
+                            @pointerdown.stop.prevent="
+                              handleFieldCellLockPointerDown(
                                 row.index,
                                 field.columnIndex,
                               )
@@ -441,9 +452,11 @@
     >
       <aside
         class="acu-visualizer-surface__mobile-nav"
+        :style="mobileNavDrawerStyle"
         role="dialog"
         aria-modal="true"
         aria-label="数据库导航"
+        data-acu-mobile-nav-width="360px"
         @click.stop
       >
         <VisualizerNavigation
@@ -497,6 +510,11 @@ const workspaceRef = ref<HTMLElement | null>(null);
 const paginationRef = ref<HTMLElement | null>(null);
 const VISUALIZER_MOBILE_NAV_LEAVE_MS = 150;
 const VISUALIZER_DATA_PAGE_SIZE = 30;
+const mobileNavDrawerStyle = {
+  width: "360px",
+  maxWidth: "calc(100% - 24px)",
+  flex: "0 0 360px",
+};
 let mobileNavCloseTimer: AcuTimerHandle | undefined;
 let paginationResizeObserver: ResizeObserver | undefined;
 
@@ -612,6 +630,12 @@ const activeDataCell = ref<{ rowIndex: number; columnIndex: number } | null>(
 const activeFieldActions = ref<{
   rowIndex: number;
   columnIndex: number;
+} | null>(null);
+const fieldLockPointerAction = ref<{
+  kind: "column" | "cell";
+  rowIndex: number;
+  columnIndex: number;
+  at: number;
 } | null>(null);
 const activeDataTextareaRef = ref<HTMLTextAreaElement | null>(null);
 const editingColumnLayoutSnapshot = ref<boolean[] | null>(null);
@@ -884,6 +908,77 @@ function isFieldActionsActive(rowIndex: number, columnIndex: number): boolean {
 
 function clearFieldActions(): void {
   activeFieldActions.value = null;
+}
+
+function consumeFieldLockPointerAction(
+  kind: "column" | "cell",
+  rowIndex: number,
+  columnIndex: number,
+): boolean {
+  const action = fieldLockPointerAction.value;
+  fieldLockPointerAction.value = null;
+  return (
+    !!action &&
+    action.kind === kind &&
+    action.rowIndex === Math.trunc(Number(rowIndex)) &&
+    action.columnIndex === Math.trunc(Number(columnIndex)) &&
+    Date.now() - action.at < 1000
+  );
+}
+
+function markFieldLockPointerAction(
+  kind: "column" | "cell",
+  rowIndex: number,
+  columnIndex: number,
+): void {
+  fieldLockPointerAction.value = {
+    kind,
+    rowIndex: Math.trunc(Number(rowIndex)),
+    columnIndex: Math.trunc(Number(columnIndex)),
+    at: Date.now(),
+  };
+}
+
+function toggleFieldColumnLock(rowIndex: number, columnIndex: number): void {
+  setActiveFieldActions(rowIndex, columnIndex);
+  visualizer.toggleColumnLock(visualizer.currentSheetKey, columnIndex);
+}
+
+function toggleFieldCellLock(rowIndex: number, columnIndex: number): void {
+  setActiveFieldActions(rowIndex, columnIndex);
+  visualizer.toggleCellLock(visualizer.currentSheetKey, rowIndex, columnIndex);
+}
+
+function handleFieldColumnLockPointerDown(
+  rowIndex: number,
+  columnIndex: number,
+): void {
+  markFieldLockPointerAction("column", rowIndex, columnIndex);
+  toggleFieldColumnLock(rowIndex, columnIndex);
+}
+
+function handleFieldCellLockPointerDown(
+  rowIndex: number,
+  columnIndex: number,
+): void {
+  markFieldLockPointerAction("cell", rowIndex, columnIndex);
+  toggleFieldCellLock(rowIndex, columnIndex);
+}
+
+function handleFieldColumnLockClick(
+  rowIndex: number,
+  columnIndex: number,
+): void {
+  if (consumeFieldLockPointerAction("column", rowIndex, columnIndex)) return;
+  toggleFieldColumnLock(rowIndex, columnIndex);
+}
+
+function handleFieldCellLockClick(
+  rowIndex: number,
+  columnIndex: number,
+): void {
+  if (consumeFieldLockPointerAction("cell", rowIndex, columnIndex)) return;
+  toggleFieldCellLock(rowIndex, columnIndex);
 }
 
 function handleSurfacePointerDown(event: PointerEvent): void {
@@ -1709,8 +1804,14 @@ watch(rowCount, () => {
 }
 
 .acu-visualizer-surface__field-locks :deep(.acu-icon-btn--accent) {
-  color: var(--acu-accent);
-  background: var(--acu-accent-glow);
+  color: var(--acu-warning) !important;
+  background: color-mix(in srgb, var(--acu-warning) 16%, transparent) !important;
+}
+
+.acu-visualizer-surface__field-locks
+  :deep(.acu-icon-btn--accent:hover:not(:disabled)) {
+  color: var(--acu-warning) !important;
+  background: color-mix(in srgb, var(--acu-warning) 22%, transparent) !important;
 }
 
 .acu-visualizer-surface__field.is-locked {
@@ -1778,14 +1879,14 @@ watch(rowCount, () => {
 }
 
 .acu-visualizer-surface__mobile-nav {
-  width: 280px;
-  max-width: calc(100vw - 72px - var(--acu-safe-left, 0px) - var(--acu-safe-right, 0px));
+  width: 360px;
+  max-width: calc(100% - 24px - var(--acu-safe-left, 0px) - var(--acu-safe-right, 0px));
   height: 100%;
   max-height: 100%;
   min-width: 0;
   min-height: 0;
   align-self: stretch;
-  flex: 0 1 280px;
+  flex: 0 1 360px;
   display: flex;
   flex-direction: column;
   padding: 24px 12px 16px;
@@ -1802,16 +1903,16 @@ watch(rowCount, () => {
   animation: visualizer-mobile-nav-drawer-out 0.15s ease-in both;
 }
 
-@supports (width: min(280px, calc(100vw - 72px))) {
+@supports (width: min(360px, calc(100% - 24px))) {
   .acu-visualizer-surface__mobile-nav {
-    width: min(280px, calc(100vw - 72px - var(--acu-safe-left, 0px) - var(--acu-safe-right, 0px)));
-    flex: 0 0 min(280px, calc(100vw - 72px - var(--acu-safe-left, 0px) - var(--acu-safe-right, 0px)));
+    width: min(360px, calc(100% - 24px - var(--acu-safe-left, 0px) - var(--acu-safe-right, 0px)));
+    flex: 0 0 min(360px, calc(100% - 24px - var(--acu-safe-left, 0px) - var(--acu-safe-right, 0px)));
   }
 }
 
 @supports (width: 100dvw) {
   .acu-visualizer-surface__mobile-nav {
-    max-width: calc(100dvw - 72px - var(--acu-safe-left, 0px) - var(--acu-safe-right, 0px));
+    max-width: calc(100% - 24px - var(--acu-safe-left, 0px) - var(--acu-safe-right, 0px));
   }
 }
 

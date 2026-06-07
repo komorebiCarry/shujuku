@@ -163,11 +163,15 @@ describe('mount — 当前文档场景', () => {
     menuButton!.click();
     await Promise.resolve();
 
-    const drawer = document.querySelector('.acu-v2-app__mobile-nav');
+    const drawer = document.querySelector<HTMLElement>('.acu-v2-app__mobile-nav');
     expect(drawer).not.toBeNull();
     expect(menuButton!.getAttribute('aria-expanded')).toBe('true');
     expect(drawer!.querySelector('.acu-v2-app__mobile-nav-header')).toBeNull();
     expect(drawer!.textContent).toContain('SP·数据库 III');
+    expect(drawer!.getAttribute('data-acu-mobile-nav-width')).toBe('360px');
+    expect(drawer!.style.width).toBe('360px');
+    expect(drawer!.style.maxWidth).toBe('calc(100% - 24px)');
+    expect(drawer!.style.flex).toBe('0 0 360px');
 
     const formFillButton = drawer!.querySelector('[data-page-id="form-fill"]') as HTMLButtonElement | null;
     expect(formFillButton).not.toBeNull();
@@ -230,6 +234,7 @@ describe('mount — 父文档场景（iframe 模拟）', () => {
     const parentRoot = parentDom.window.document.getElementById(ROOT_ID);
     expect(parentRoot).not.toBeNull();
     expect(parentRoot!.parentElement).toBe(parentDom.window.document.body);
+    expect(parentRoot!.getAttribute('data-acu-host-source')).toBe('parent-document');
 
     const childRoot = document.getElementById(ROOT_ID);
     expect(childRoot).toBeNull();
@@ -246,6 +251,60 @@ describe('mount — 父文档场景（iframe 模拟）', () => {
     expect(childStyles.length).toBe(0);
 
     mount.__resetAcuV2MountForTests();
+  });
+
+  it('嵌套 iframe 时选择可访问链路中最外层宿主文档', async () => {
+    const narrowParent = new JSDOM('<!doctype html><html><head></head><body></body></html>');
+    const wideTop = new JSDOM('<!doctype html><html><head></head><body></body></html>');
+    Object.defineProperty(narrowParent.window, 'innerWidth', { value: 184, configurable: true });
+    Object.defineProperty(narrowParent.window, 'innerHeight', { value: 720, configurable: true });
+    Object.defineProperty(wideTop.window, 'innerWidth', { value: 1024, configurable: true });
+    Object.defineProperty(wideTop.window, 'innerHeight', { value: 768, configurable: true });
+    Object.defineProperty(narrowParent.window, 'parent', {
+      value: wideTop.window,
+      configurable: true,
+    });
+    setParent(narrowParent.window);
+
+    const { mount, host } = await freshImport();
+    expect(host.getAcuHostSource()).toBe('parent-document');
+    expect(host.getAcuHostDocument()).toBe(wideTop.window.document);
+
+    await mount.openAcuV2App();
+
+    expect(wideTop.window.document.getElementById(ROOT_ID)).not.toBeNull();
+    expect(narrowParent.window.document.getElementById(ROOT_ID)).toBeNull();
+    expect(document.getElementById(ROOT_ID)).toBeNull();
+
+    mount.__resetAcuV2MountForTests();
+    narrowParent.window.close();
+    wideTop.window.close();
+  });
+
+  it('嵌套 iframe 时即使最外层视口指标为 0，也选择最外层可访问文档', async () => {
+    const narrowParent = new JSDOM('<!doctype html><html><head></head><body></body></html>');
+    const outerTop = new JSDOM('<!doctype html><html><head></head><body></body></html>');
+    Object.defineProperty(narrowParent.window, 'innerWidth', { value: 184, configurable: true });
+    Object.defineProperty(narrowParent.window, 'innerHeight', { value: 720, configurable: true });
+    Object.defineProperty(outerTop.window, 'innerWidth', { value: 0, configurable: true });
+    Object.defineProperty(outerTop.window, 'innerHeight', { value: 0, configurable: true });
+    Object.defineProperty(narrowParent.window, 'parent', {
+      value: outerTop.window,
+      configurable: true,
+    });
+    setParent(narrowParent.window);
+
+    const { mount, host } = await freshImport();
+    expect(host.getAcuHostDocument()).toBe(outerTop.window.document);
+
+    await mount.openAcuV2App();
+
+    expect(outerTop.window.document.getElementById(ROOT_ID)).not.toBeNull();
+    expect(narrowParent.window.document.getElementById(ROOT_ID)).toBeNull();
+
+    mount.__resetAcuV2MountForTests();
+    narrowParent.window.close();
+    outerTop.window.close();
   });
 
   it('父文档挂载时，Vue 创建的表单控件属于父文档 realm', async () => {

@@ -11,6 +11,7 @@ import { isSqliteMode } from '../../../service/table/storage-mode';
 import {
   DEFAULT_ENTRY_PLACEMENT_ACU,
   DEFAULT_EXTRA_INDEX_PLACEMENT_ACU,
+  buildDefaultGlobalInjectionConfig_ACU,
   ensureExportConfigDefaults_ACU,
   getFixedPlacementDefaultsForTable_ACU,
   getGlobalInjectionConfigFromData_ACU,
@@ -347,9 +348,7 @@ export function useVisualizerConfigEditing() {
   }
 
   function getGlobalPlacement(key: GlobalPlacementKey): VisualizerPlacementDraft {
-    const fallback = key === 'wrapperPlacement'
-      ? { position: 'before_character_definition', depth: 2, order: 99980 }
-      : { position: 'before_character_definition', depth: 2, order: 99981 };
+    const fallback = buildDefaultGlobalInjectionConfig_ACU()[key];
     return clonePlacement((globalConfig.value as any)?.[key], fallback);
   }
 

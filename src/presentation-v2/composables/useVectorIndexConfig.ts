@@ -19,17 +19,18 @@ import {
   archiveSummaryVectorIndexNow_ACU,
   migrateLegacySummaryVectorIndexToContentAddressed_ACU,
 } from '../../service/vector/summary-vector-index-archive-service';
-import { getLatestSummaryVectorIndexSnapshotState_ACU } from '../../service/vector/summary-vector-index-state-service';
+import {
+  getLatestSummaryVectorIndexSnapshotState_ACU,
+} from '../../service/vector/summary-vector-index-state-service';
 import {
   getSummaryVectorIndexStats_ACU,
   inspectSummaryVectorIndexHealth_ACU,
 } from '../../service/vector/summary-vector-index-storage-service';
-import { deleteSummaryVectorIndexExternal_ACU } from '../../service/vector/summary-vector-index-storage-service';
 import { clearAllSummaryVectorIndexCaches_ACU } from '../../service/vector/summary-vector-index-cache-service';
-import { assignSummaryVectorIndexStateToTagData_ACU } from '../../service/vector/summary-vector-index-state-service';
+import { deleteCurrentSummaryVectorIndexFromChat_ACU } from '../../service/vector/summary-vector-index-chat-service';
 import { loadOrCreateJsonTableFromChatHistory_ACU } from '../../service/table/table-service';
 import { runTableUpdateCommit_ACU } from '../../service/table/table-update-commit';
-import { getLastMessageIndex_ACU, saveChatToHost_ACU } from '../../service/chat/chat-service';
+import { getLastMessageIndex_ACU } from '../../service/chat/chat-service';
 import { updateReadableLorebookEntry_ACU } from '../../service/worldbook/pipeline';
 import { defaultVectorMemoryConfig_ACU } from '../../shared/defaults';
 import { currentJsonTableData_ACU } from '../../service/runtime/state-manager';
@@ -41,33 +42,20 @@ type BadgeVariant = 'neutral' | 'accent' | 'success' | 'warning' | 'danger';
 type VectorMemoryConfigWithSummaryConcurrency = VectorMemoryConfig_ACU & {
   summaryIndexArchiveMaxConcurrency?: number;
 };
-const DEFAULT_RECENT_FIXED_INJECT_COUNT = 50;
+
+function getDefaultVectorMemoryConfigForV2(): VectorMemoryConfigWithSummaryConcurrency {
+  return defaultVectorMemoryConfig_ACU as VectorMemoryConfigWithSummaryConcurrency;
+}
+
+function getDefaultRecentFixedInjectCount(): number {
+  const value = Number((getDefaultVectorMemoryConfigForV2() as any).recentFixedInjectCount);
+  return Number.isFinite(value) && value > 0 ? Math.floor(value) : 50;
+}
 
 function updateGlobalVectorMemoryConfigFields_ACU(patch: Partial<VectorMemoryConfig_ACU>): VectorMemoryConfig_ACU {
   const config = getCurrentVectorMemoryConfig_ACU();
   Object.assign(config as unknown as Record<string, unknown>, patch);
   return config;
-}
-
-async function deleteCurrentSummaryVectorIndexFromChat_ACU(): Promise<boolean> {
-  const snapshot = getLatestSummaryVectorIndexSnapshotState_ACU();
-  const latestLayer = snapshot?.layers?.[0] || null;
-  const tagData = latestLayer?.tagData;
-  const manifest = tagData?.summaryVectorIndexManifest
-    || tagData?.summaryVectorIndexState?.manifest
-    || snapshot?.summaryVectorIndexState?.manifest
-    || null;
-  const hadState = !!tagData?.summaryVectorIndexState || !!tagData?.summaryVectorIndexManifest || !!manifest;
-  if (!hadState) return false;
-
-  if (manifest) {
-    await deleteSummaryVectorIndexExternal_ACU(manifest);
-  }
-  if (tagData) {
-    assignSummaryVectorIndexStateToTagData_ACU(tagData, null);
-  }
-  await saveChatToHost_ACU();
-  return true;
 }
 
 export interface VectorIndexMessage {
@@ -137,24 +125,25 @@ const STATUS_VARIANTS: Record<string, BadgeVariant> = {
 };
 
 function createEmptyForm(): VectorIndexForm {
+  const defaults = getDefaultVectorMemoryConfigForV2();
   return {
-    embeddingEndpoint: '',
-    embeddingModel: '',
-    embeddingApiKey: '',
-    rerankEndpoint: '',
-    rerankModel: '',
-    rerankApiKey: '',
-    summaryIndexKeywordMinRows: 100,
-    topK: 10,
-    minScore: 0.4,
-    recallCandidateLimit: 1000,
-    recentFixedInjectCount: 50,
-    vectorNamespace: 'chat',
-    summaryChunkSentenceCount: 2,
-    summaryIndexArchiveMaxConcurrency: 30,
-    keywordApiPreset: '',
-    keywordContextPairCount: 1,
-    keywordGenerationMaxAttempts: 3,
+    embeddingEndpoint: defaults.embeddingEndpoint || '',
+    embeddingModel: defaults.embeddingModel || '',
+    embeddingApiKey: defaults.embeddingApiKey || '',
+    rerankEndpoint: defaults.rerankEndpoint || '',
+    rerankModel: defaults.rerankModel || '',
+    rerankApiKey: defaults.rerankApiKey || '',
+    summaryIndexKeywordMinRows: defaults.summaryIndexKeywordMinRows,
+    topK: defaults.topK,
+    minScore: defaults.minScore,
+    recallCandidateLimit: defaults.recallCandidateLimit,
+    recentFixedInjectCount: defaults.recentFixedInjectCount,
+    vectorNamespace: defaults.vectorNamespace || 'chat',
+    summaryChunkSentenceCount: defaults.summaryChunkSentenceCount,
+    summaryIndexArchiveMaxConcurrency: defaults.summaryIndexArchiveMaxConcurrency ?? 30,
+    keywordApiPreset: defaults.keywordApiPreset || '',
+    keywordContextPairCount: defaults.keywordContextPairCount,
+    keywordGenerationMaxAttempts: defaults.keywordGenerationMaxAttempts,
   };
 }
 
@@ -286,11 +275,12 @@ export function useVectorIndexConfig() {
     if (key === 'recentFixedInjectCount') {
       const value = Number(raw);
       if (!Number.isFinite(value) || value <= 0) {
+        const fallback = getDefaultRecentFixedInjectCount();
         form.recentFixedInjectCount = Number.isFinite(value) ? Math.floor(value) : 0;
-        toast.warning('固定写入必须是正整数，已重置为默认值 50。');
-        form.recentFixedInjectCount = DEFAULT_RECENT_FIXED_INJECT_COUNT;
+        toast.warning(`固定写入必须是正整数，已重置为默认值 ${fallback}。`);
+        form.recentFixedInjectCount = fallback;
         updateGlobalVectorMemoryConfigFields_ACU({
-          recentFixedInjectCount: DEFAULT_RECENT_FIXED_INJECT_COUNT,
+          recentFixedInjectCount: fallback,
         });
         saveSettings_ACU();
         runValidation();

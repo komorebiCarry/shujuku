@@ -86,16 +86,6 @@
       </AcuFormRow>
     </fieldset>
 
-    <PlotMatchReplaceFields
-      v-if="showAdvancedRates"
-      :rate-main="rates.rateMain"
-      :rate-personal="rates.ratePersonal"
-      :rate-erotic="rates.rateErotic"
-      :rate-cuckold="rates.rateCuckold"
-      :recall-count="rates.recallCount"
-      @update-rate="(field, value) => $emit('update-rate', field, value)"
-    />
-
     <fieldset class="acu-v2-plot-task-editor__section">
       <legend>提示词段（promptGroup）</legend>
       <PlotPromptSegments
@@ -114,7 +104,6 @@
 
 <script setup lang="ts">
 import { computed } from "vue";
-import type { PlotRateField } from "../composables/usePlotRates";
 import type {
   PlotPromptSegment,
   PlotTaskDraft,
@@ -124,27 +113,17 @@ import AcuInput from "./_lib/AcuInput.vue";
 import type { AcuSelectOption } from "./_lib/AcuSelect.vue";
 import AcuSelect from "./_lib/AcuSelect.vue";
 import AcuToggle from "./_lib/AcuToggle.vue";
-import PlotMatchReplaceFields from "./PlotMatchReplaceFields.vue";
 import PlotPromptSegments from "./PlotPromptSegments.vue";
 
 const props = defineProps<{
   task: PlotTaskDraft | null;
   apiPresetOptions: Array<{ name: string }>;
   taskApiOverride: string;
-  showAdvancedRates: boolean;
-  rates: {
-    rateMain: number;
-    ratePersonal: number;
-    rateErotic: number;
-    rateCuckold: number;
-    recallCount: number;
-  };
 }>();
 
 const emit = defineEmits<{
   (e: "patch", patch: Partial<PlotTaskDraft>): void;
   (e: "task-api-override", value: string): void;
-  (e: "update-rate", field: PlotRateField, value: number): void;
   (e: "segment-add", position: "top" | "bottom"): void;
   (e: "segment-delete", index: number): void;
   (e: "segment-move", index: number, delta: -1 | 1): void;

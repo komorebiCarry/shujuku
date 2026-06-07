@@ -92,6 +92,19 @@ describe('AdvancedToolsPage log panel', () => {
     expect(page.querySelector('.acu-page-header')).toBeNull();
     expect(page.querySelector('.acu-v2-advanced-tools-page__log-panel .acu-panel__header')?.textContent || '').toContain('实时更新中');
 
+    const controlRow = page.querySelector<HTMLElement>('.acu-v2-advanced-tools-page__log-control-row');
+    expect(controlRow).not.toBeNull();
+    const [controlMain, hint] = Array.from(controlRow!.children) as HTMLElement[];
+    expect(controlMain.classList.contains('acu-v2-advanced-tools-page__log-control-main')).toBe(true);
+    expect(hint.classList.contains('acu-v2-advanced-tools-page__hint')).toBe(true);
+    const [actions, toggles] = Array.from(controlMain.children) as HTMLElement[];
+    expect(actions.classList.contains('acu-v2-advanced-tools-page__log-actions')).toBe(true);
+    expect(toggles.classList.contains('acu-v2-advanced-tools-page__toggles')).toBe(true);
+    const toggleLabels = Array.from(toggles.querySelectorAll<HTMLButtonElement>('.acu-toggle'))
+      .map(toggle => toggle.textContent?.trim());
+    expect(toggleLabels).toEqual(['自动滚动', 'Debug']);
+    expect(hint.textContent || '').toContain('当前显示');
+
     mount.__resetAcuV2MountForTests();
   });
 
