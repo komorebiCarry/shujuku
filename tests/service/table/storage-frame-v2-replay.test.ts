@@ -21,6 +21,30 @@ function makeCheckpointData() {
   } as any;
 }
 
+function makeDslCheckpointData() {
+  return {
+    mate: { type: 'acu', version: 1 },
+    sheet_a: {
+      uid: 'global_state',
+      name: '全局数据表',
+      content: [['row_id', '地点'], ['1', '起点']],
+      sourceData: {},
+      updateConfig: {},
+      exportConfig: {},
+      orderNo: 0,
+    },
+    sheet_b: {
+      uid: 'chronicle',
+      name: '纪要表',
+      content: [['row_id', '时间跨度', '地点', '纪要', '概要']],
+      sourceData: {},
+      updateConfig: {},
+      exportConfig: {},
+      orderNo: 1,
+    },
+  } as any;
+}
+
 describe('loadTableStateFromFramesV2_ACU', () => {
   it('从最后 checkpoint 开始，在同一个恢复 runtime 上顺序回放 sql_batch', async () => {
     const chat = [
@@ -124,5 +148,51 @@ describe('loadTableStateFromFramesV2_ACU', () => {
     const result = await loadTableStateFromFramesV2_ACU(chat, '');
 
     expect(result?.sheet_0.content[1]).toEqual(['1', '钢剑']);
+  });
+
+  it('回放无分号分隔且含前置文本的 table_edit_dsl', async () => {
+    const chat = [
+      {
+        is_user: false,
+        TavernDB_ACU_IsolatedData: {
+          '': {
+            _acu_storage_version: 2,
+            storageFrame: {
+              version: 2,
+              checkpoint: {
+                kind: 'full',
+                createdAt: 1,
+                reason: 'init',
+                data: makeDslCheckpointData(),
+                event: { filledSheetKeys: [], changedSheetKeys: [], groupKeys: [] },
+              },
+              logEntries: [{
+                seq: 1,
+                entryId: 'v2_dsl_1',
+                createdAt: 2,
+                source: 'auto_fill',
+                targetMessageIndex: 0,
+                aiFloor: 1,
+                filledSheetKeys: ['sheet_a', 'sheet_b'],
+                changedSheetKeys: ['sheet_a', 'sheet_b'],
+                groupKeys: [],
+                operations: [{
+                  kind: 'table_edit_dsl',
+                  text: '说明文字 updateRow(0, 0, {"0":"城镇(北区)"}) insertRow(1, {"0":"第一天","1":"城镇(北区)","2":"记录包含括号(测试)，不应破坏命令切分。","3":"抵达城镇"})',
+                }],
+              }],
+            },
+          },
+        },
+      },
+    ];
+
+    const result = await loadTableStateFromFramesV2_ACU(chat, '');
+
+    expect(result?.sheet_a.content[1]).toEqual(['1', '城镇(北区)']);
+    expect(result?.sheet_b.content).toEqual([
+      ['row_id', '时间跨度', '地点', '纪要', '概要'],
+      ['1', '第一天', '城镇(北区)', '记录包含括号(测试)，不应破坏命令切分。', '抵达城镇'],
+    ]);
   });
 });
