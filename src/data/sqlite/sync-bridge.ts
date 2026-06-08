@@ -37,7 +37,7 @@ export class SyncBridge {
    *
    * @param data 完整的表格数据对象（通常来自 mergeAllIndependentTables_ACU 的结果）
    */
-  loadFromTableData(data: TableDataObject_ACU): void {
+  loadFromTableData(data: TableDataObject_ACU, options: { strict?: boolean } = {}): void {
     if (!data || typeof data !== 'object') return;
     if (!this.engine.isReady) {
       throw new Error('SyncBridge: SqliteEngine 未初始化');
@@ -56,8 +56,11 @@ export class SyncBridge {
       try {
         this._loadSheet(key, sheet);
       } catch (e: any) {
-        // 单张表加载失败不影响其他表
-        logError_ACU(`[SyncBridge] 加载表 ${key} (${sheet.name}) 失败:`, e?.message || e);
+        const message = `[SyncBridge] 加载表 ${key} (${sheet.name}) 失败: ${e?.message || e}`;
+        logError_ACU(message);
+        if (options.strict) {
+          throw new Error(message);
+        }
       }
     }
   }

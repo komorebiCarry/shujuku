@@ -134,7 +134,7 @@ interface SqlReplayRuntime_ACU {
 async function ensureSqlReplayRuntime_ACU(runtime: SqlReplayRuntime_ACU, state: TableDataObject_ACU): Promise<void> {
   if (runtime.loaded) return;
   await runtime.engine.init();
-  runtime.syncBridge.loadFromTableData(state);
+  runtime.syncBridge.loadFromTableData(state, { strict: true });
   runtime.loaded = true;
 }
 

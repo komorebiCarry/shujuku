@@ -156,7 +156,7 @@ export class SqlTableService implements ITableStorageProvider {
         const runtimeSeedSource = (mergedData as TableDataObject_ACU | null) || currentJsonTableData_ACU || null;
         const runtimeSeedData = this._buildInitialRuntimeTableData_ACU(runtimeSeedSource);
         if (runtimeSeedData) {
-          this.syncBridge.loadFromTableData(runtimeSeedData);
+          this.syncBridge.loadFromTableData(runtimeSeedData, { strict: true });
           _set_currentJsonTableData_ACU(runtimeSeedData);
           this._buildNameMapper(runtimeSeedData);
           this._initialized = true;
@@ -175,7 +175,7 @@ export class SqlTableService implements ITableStorageProvider {
       }
 
       // 将 JSON 数据加载到 SQLite
-      this.syncBridge.loadFromTableData(mergedData as TableDataObject_ACU);
+      this.syncBridge.loadFromTableData(mergedData as TableDataObject_ACU, { strict: true });
 
       // 更新全局 JSON 视图
       _set_currentJsonTableData_ACU(mergedData as TableDataObject_ACU);
@@ -216,7 +216,7 @@ export class SqlTableService implements ITableStorageProvider {
       this.engine = new SqliteEngine();
       this.syncBridge = new SyncBridge(this.engine);
       await this.engine.init();
-      this.syncBridge.loadFromTableData(cloned);
+      this.syncBridge.loadFromTableData(cloned, { strict: true });
       _set_currentJsonTableData_ACU(cloned);
       this._buildNameMapper(cloned);
       this._initialized = true;
@@ -604,7 +604,7 @@ export class SqlTableService implements ITableStorageProvider {
 
       (partialData as any)[key] = sheetCopy;
     }
-    this.syncBridge.loadFromTableData(partialData);
+    this.syncBridge.loadFromTableData(partialData, { strict: true });
 
     // 合并新建的表到当前 JSON 视图
     if (currentJsonTableData_ACU) {
@@ -680,7 +680,7 @@ export async function applyParameterizedSqlMutationToTableDataSnapshot_ACU(
     const normalizedSql = normalizeStatementValues(normalizeSqlStructure(sql));
     const snapshotCopy = JSON.parse(JSON.stringify(tableData || {})) as TableDataObject_ACU;
     await engine.init();
-    syncBridge.loadFromTableData(snapshotCopy);
+    syncBridge.loadFromTableData(snapshotCopy, { strict: true });
     const result = engine.run(normalizedSql, params);
     const workingData = syncBridge.exportToTableData(resolveSnapshotMate_ACU(snapshotCopy));
     const modifiedTableNames = extractTableNamesFromStatements([normalizedSql]);
@@ -729,7 +729,7 @@ export async function applySqlEditsToTableDataSnapshot_ACU(
     const statements = rawStatements.map(stmt => normalizeStatementValues(normalizeSqlStructure(stmt)));
     const snapshotCopy = JSON.parse(JSON.stringify(tableData || {})) as TableDataObject_ACU;
     await engine.init();
-    syncBridge.loadFromTableData(snapshotCopy);
+    syncBridge.loadFromTableData(snapshotCopy, { strict: true });
     engine.runBatch(statements);
 
     const workingData = syncBridge.exportToTableData(resolveSnapshotMate_ACU(snapshotCopy));
