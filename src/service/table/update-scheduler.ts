@@ -191,6 +191,7 @@ export interface AutoUpdateResult {
     success: boolean;
     failedGroups: number;
     totalGroups: number;
+    errors?: string[];
     autoMergeTriggered?: boolean;
     autoMergeSuccess?: boolean;
 }
@@ -229,6 +230,12 @@ export async function executeAutoUpdatePlan_ACU(
     setAutoUpdating(true);
 
     const failedGroupKeys: string[] = [];
+    const failedGroupErrors: string[] = [];
+    const pushGroupError_ACU = (groupKey: string, error: unknown): void => {
+        const message = error instanceof Error ? error.message : String(error || '').trim();
+        if (!message) return;
+        failedGroupErrors.push(`group ${groupKey}: ${message}`);
+    };
     for (let start = 0; start < groupKeys.length; start += maxConcurrentGroups) {
         const chunkKeys = groupKeys.slice(start, start + maxConcurrentGroups);
         if (ops.processGroupedUpdates) {
@@ -247,6 +254,8 @@ export async function executeAutoUpdatePlan_ACU(
             const groupedResult = await ops.processGroupedUpdates(groupedChunk, 'auto_independent', {});
             if (!groupedResult.success) {
                 failedGroupKeys.push(...groupedResult.failedGroups);
+                const groupedError = groupedResult.error || '分组更新失败，未返回具体错误。';
+                groupedResult.failedGroups.forEach(groupKey => pushGroupError_ACU(groupKey, groupedError));
             }
         } else {
             const groupPromises = chunkKeys.map(key => (async () => {
@@ -264,15 +273,29 @@ export async function executeAutoUpdatePlan_ACU(
 
             const results = await Promise.allSettled(groupPromises);
             results.forEach((result, idx) =>{
-                if (result.status === 'rejected' || !result.value?.success) {
+                if (result.status === 'rejected') {
                     failedGroupKeys.push(chunkKeys[idx]);
+                    pushGroupError_ACU(chunkKeys[idx], result.reason || '分组更新异常退出。');
+                    return;
+                }
+                const rawResult = result.value?.success;
+                const groupSucceeded = typeof rawResult === 'object' && rawResult !== null && 'success' in rawResult
+                    ? (rawResult as { success?: boolean }).success !== false
+                    : !!rawResult;
+                if (!groupSucceeded) {
+                    failedGroupKeys.push(chunkKeys[idx]);
+                    const error = rawResult && typeof rawResult === 'object' && 'error' in rawResult
+                        ? (rawResult as { error?: unknown }).error
+                        : '分组更新失败，未返回具体错误。';
+                    pushGroupError_ACU(chunkKeys[idx], error);
                 }
             });
         }
     }
 
     if (failedGroupKeys.length > 0) {
-        logWarn_ACU(`并发分组更新失败 ${failedGroupKeys.length}/${totalGroups} 组。`);
+        const errorSummary = failedGroupErrors.length > 0 ? `原因：${failedGroupErrors.slice(0, 3).join('；')}` : '未返回具体原因。';
+        logWarn_ACU(`并发分组更新失败 ${failedGroupKeys.length}/${totalGroups} 组。${errorSummary}`);
     }
 
     // 并发更新完成后统一刷新数据链条
@@ -319,6 +342,7 @@ export async function executeAutoUpdatePlan_ACU(
         success: failedGroupKeys.length === 0,
         failedGroups: failedGroupKeys.length,
         totalGroups,
+        errors: failedGroupErrors,
         autoMergeTriggered,
         autoMergeSuccess,
     };

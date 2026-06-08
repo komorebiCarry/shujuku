@@ -219,7 +219,10 @@ let autoUpdateTriggerInFlight_ACU = false;
 
     // UI：根据返回值显示结果
     if (result.failedGroups > 0) {
-        showToastr_ACU('warning', `并发分组更新有 ${result.failedGroups} 组失败，请查看日志。`);
+        const firstError = Array.isArray(result.errors) && result.errors.length > 0 ? result.errors[0] : '';
+        showToastr_ACU('warning', firstError
+            ? `并发分组更新有 ${result.failedGroups} 组失败：${firstError}`
+            : `并发分组更新有 ${result.failedGroups} 组失败，请查看日志。`);
     }
     if (result.autoMergeTriggered && result.autoMergeSuccess) {
         showToastr_ACU('success', '自动合并纪要完成！');
