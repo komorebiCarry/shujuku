@@ -3,7 +3,7 @@ import { cloneIsolatedData_ACU, writeMessageIdentity_ACU } from '../../data/repo
 import type { TableDataObject_ACU } from '../../shared/models/table-data';
 import { logDebug_ACU, logWarn_ACU } from '../../shared/utils';
 import { getCurrentIsolationKey_ACU, settings_ACU } from '../runtime/state-manager';
-import type { TableMutationLogEntryV2_ACU, TableMutationSourceV2_ACU, TableStorageFrameV2_ACU, TableCheckpointV2_ACU, TableMutationWriteSetV2_ACU, TableMutationOperationV2_ACU } from './storage-frame-v2-types';
+import type { ManualRefillProgressV2_ACU, TableMutationLogEntryV2_ACU, TableMutationSourceV2_ACU, TableStorageFrameV2_ACU, TableCheckpointV2_ACU, TableMutationWriteSetV2_ACU, TableMutationOperationV2_ACU } from './storage-frame-v2-types';
 import { isV2TagData_ACU } from './storage-strategy-resolver';
 import { collectScheduleSummaryFromFramesV2_ACU } from './storage-frame-v2-replay';
 import type { TableWriteTransactionContext_ACU } from './table-write-transaction';
@@ -27,6 +27,7 @@ export interface PersistTableMutationV2Options_ACU {
   error?: string;
   forceCheckpoint?: boolean;
   checkpointReason?: TableCheckpointV2_ACU['reason'];
+  manualRefillProgress?: ManualRefillProgressV2_ACU;
   isolationKey?: string;
   baseRevision?: string | null;
   parentRevision?: string | null;
@@ -257,6 +258,7 @@ async function persistTableMutationLogV2Core_ACU(
       data: afterData,
       scheduleSummary: collectScheduleSummaryFromFramesV2_ACU(chat, isolationKey, { maxMessageIndex: target.index }),
       event: checkpointEvent,
+      ...(options.manualRefillProgress ? { manualRefillProgress: deepClone_ACU(options.manualRefillProgress) } : {}),
     };
     frame.headRevision = checkpointRevision;
     frame.logEntries = [];

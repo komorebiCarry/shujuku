@@ -103,6 +103,7 @@ function handleProgressEvent(event: CardUpdateProgressEvent, isSilentMode: boole
     switch (event.phase) {
         case 'complete':
             updateStatusDisplay();
+            notifyTableUpdate();
             break;
         case 'retry':
             showToastr_ACU('warning', message, { timeOut: 5000 });
@@ -258,14 +259,13 @@ export async function handleManualUpdate_ACU() {
             return;
         }
 
-        // 弹出确认框：告知用户将先清除对应楼层中本次选中表格的数据，再执行新的手动填表
-        // 这是防止 SQL 严格填表逻辑因旧数据残留导致写入失败的关键步骤
+        // 弹出确认框：手动填表将使用事务式重填，失败不会改动聊天记录中的旧数据
         const confirmed = await showCustomConfirm_ACU(
             '手动填表确认',
             '即将执行手动填表。\n\n' +
-            '为确保填表成功，系统将先清除本次涉及楼层中当前选中表格的数据，再进行新的数据填写。\n' +
-            '（此操作可防止 SQL 严格填表逻辑因旧数据残留导致写入失败）\n\n' +
-            '如果不想清空旧数据，可以选择取消。',
+            '系统会在内存中按当前上下文和批处理设置重填当前选中的表，全部成功后才写入新的完整 checkpoint。\n' +
+            '如果重填起点之前找不到可回放的 checkpoint，选中表会从空白结构开始重填；未选中的表会保持当前最新数据。\n\n' +
+            '失败或终止时不会清空聊天记录中的旧表格数据。',
             { confirmLabel: '确认并继续', cancelLabel: '取消' }
         );
 
@@ -275,7 +275,7 @@ export async function handleManualUpdate_ACU() {
             return;
         }
 
-        // 调用 service 层，传入 clearBeforeUpdate: true（用户已确认清空）
+        // 调用 service 层，启用事务式手动重填（兼容沿用 clearBeforeUpdate 参数名）
         _set_wasStoppedByUser_ACU(false);
         notifyTableFillStart();
         const stopButtonId = `acu-stop-manual-update-btn-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;

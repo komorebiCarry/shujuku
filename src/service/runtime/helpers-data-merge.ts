@@ -395,6 +395,13 @@ if (!Array.isArray(next.content)) next.content = guideHeader ? [guideHeader] : [
           if (!migrationResult.migrated) {
               throw new Error(`旧存储迁移到 V2 失败: ${migrationResult.error || '未执行迁移'}`);
           }
+          const postStrategy = resolveTableStorageStrategy_ACU(chat, currentIsolationKey, {
+              enabled: settings_ACU.dataIsolationEnabled,
+              code: settings_ACU.dataIsolationCode,
+          });
+          if (postStrategy.mode !== 'v2') {
+              throw new Error(`旧存储迁移后二次校验失败：当前模式=${postStrategy.mode}${postStrategy.mode === 'legacy-v1' ? `，reason=${postStrategy.reason}` : ''}`);
+          }
           return mergedLegacyData;
       }
 
@@ -555,6 +562,16 @@ if (!Array.isArray(next.content)) next.content = guideHeader ? [guideHeader] : [
           return false;
       }
 
+      const isolationKey = getCurrentIsolationKey_ACU();
+      const preStrategy = resolveTableStorageStrategy_ACU(chat, isolationKey, {
+          enabled: settings_ACU.dataIsolationEnabled,
+          code: settings_ACU.dataIsolationCode,
+      });
+      if (preStrategy.mode === 'legacy-v1') {
+          logWarn_ACU(`[InitialCheckpoint] 检测到旧存储，禁止写入 init checkpoint，等待迁移流程处理。reason=${preStrategy.reason}`);
+          return false;
+      }
+
       const firstAiIndex = chat.findIndex(m => m && !m.is_user);
       if (firstAiIndex === -1) {
           logWarn_ACU('[InitialCheckpoint] 找不到第一楼AI消息');
@@ -587,7 +604,6 @@ if (!Array.isArray(next.content)) next.content = guideHeader ? [guideHeader] : [
       const baseData = buildTemplateBaseStateDataForLocalStorage_ACU(templateObj);
       if (!baseData) return false;
 
-      const isolationKey = getCurrentIsolationKey_ACU();
       firstMsg._acu_local_template_base_state_seeded = GREETING_LOCAL_BASE_STATE_MARKER_ACU;
       _set_suppressWorldbookInjectionInGreeting_ACU(false);
 

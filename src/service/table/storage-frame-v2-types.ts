@@ -26,6 +26,19 @@ export interface TableCheckpointScheduleSummaryV2_ACU {
   lastChangedAiFloor?: number;
 }
 
+export interface ManualRefillProgressV2_ACU {
+  kind: 'manual_refill';
+  status: 'in_progress' | 'complete';
+  selectedSheetKeys: string[];
+  contextMessageIndices: number[];
+  originalStartMessageIndex: number;
+  targetMessageIndex: number;
+  batchSize: number;
+  completedUntilMessageIndex: number;
+  completedSheetMessageIndexByKey?: Record<string, number>;
+  updatedAt: number;
+}
+
 export interface TableCheckpointV2_ACU {
   kind: 'full';
   createdAt: number;
@@ -33,6 +46,7 @@ export interface TableCheckpointV2_ACU {
   data: TableDataObject_ACU;
   scheduleSummary?: Record<string, TableCheckpointScheduleSummaryV2_ACU>;
   event?: TableMutationEventV2_ACU;
+  manualRefillProgress?: ManualRefillProgressV2_ACU;
 }
 
 export type TableMutationOperationV2_ACU =

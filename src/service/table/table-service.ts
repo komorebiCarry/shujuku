@@ -18,12 +18,13 @@ import {
   setChatSheetGuideDataForIsolationKey_ACU,
 } from '../template/chat-scope';
 import { deleteAllGeneratedEntries_ACU } from '../worldbook/pipeline';
-import { mergeAllIndependentTables_ACU } from '../runtime/helpers-remaining';
+import { mergeAllIndependentTables_ACU, mergeAllIndependentTablesLegacyV1_ACU } from '../runtime/helpers-remaining';
 import { cloneIsolatedData_ACU, writeIsolatedTagData_ACU, writeMessageIdentity_ACU, readIsolatedTagData_ACU, readLegacyIndependentData_ACU, isLegacyMatchForIsolation_ACU } from '../../data/repositories/chat-message-data-repo';
 import { applyTableDelta_ACU, buildTableDelta_ACU, isDeltaTagData_ACU } from './table-delta';
 import { isV2TagData_ACU, resolveTableStorageStrategy_ACU } from './storage-strategy-resolver';
 import { persistTableMutationLogV2_ACU } from './storage-frame-v2-persist';
-import type { TableMutationOperationV2_ACU, TableMutationSourceV2_ACU, TableWriteConflictUnitV2_ACU } from './storage-frame-v2-types';
+import { migrateLegacyStorageToV2OnLoad_ACU } from './storage-v2-migration';
+import type { ManualRefillProgressV2_ACU, TableCheckpointV2_ACU, TableMutationOperationV2_ACU, TableMutationSourceV2_ACU, TableWriteConflictUnitV2_ACU } from './storage-frame-v2-types';
 import type { TableWriteTransactionContext_ACU } from './table-write-transaction';
 import type { TableDataObject_ACU } from '../../shared/models/table-data';
 
@@ -45,12 +46,56 @@ export interface TableChatPersistOptions_ACU {
   operations?: TableMutationOperationV2_ACU[];
   baseRevision?: string | null;
   revisionWriteSet?: TableWriteConflictUnitV2_ACU[];
+  forceCheckpoint?: boolean;
+  checkpointReason?: TableCheckpointV2_ACU['reason'];
+  manualRefillProgress?: ManualRefillProgressV2_ACU;
   /** 调用方已处于 transactionContext.runCommit 临界区内时使用，避免嵌套 commit 锁。 */
   assumeCommitLock?: boolean;
   transactionContext?: TableWriteTransactionContext_ACU;
 }
 
 const TABLE_PERSIST_COMMIT_MODEL_REQUIRED_ACU = 'Table persistence requires table update commit model; direct unsafe writes are not allowed.';
+
+export async function ensureLegacyStorageMigratedBeforeWrite_ACU(reason = 'table_write'): Promise<{
+  success: boolean;
+  migrated?: boolean;
+  data?: TableDataObject_ACU | null;
+  error?: string;
+}> {
+  const chat = getChatArray_ACU();
+  if (!Array.isArray(chat) || chat.length === 0) return { success: true, migrated: false };
+
+  const isolationKey = getCurrentIsolationKey_ACU();
+  const isolationConfig = {
+    enabled: settings_ACU.dataIsolationEnabled,
+    code: settings_ACU.dataIsolationCode,
+  };
+  const strategy = resolveTableStorageStrategy_ACU(chat, isolationKey, isolationConfig);
+  if (strategy.mode !== 'legacy-v1') return { success: true, migrated: false };
+
+  logWarn_ACU(`[LegacyMigrationGate] ${reason}: detected legacy-v1 before write, migrating first. reason=${strategy.reason}`);
+  const mergedLegacyData = await mergeAllIndependentTablesLegacyV1_ACU();
+  if (!mergedLegacyData || !Object.keys(mergedLegacyData).some(k => k.startsWith('sheet_'))) {
+    return { success: false, error: '旧存储迁移失败：无法从 legacy-v1 合并出有效表格数据。' };
+  }
+
+  const migrationResult = await migrateLegacyStorageToV2OnLoad_ACU({
+    data: mergedLegacyData,
+    isolationKey,
+    isolationConfig,
+  });
+  if (!migrationResult.migrated) {
+    return { success: false, error: `旧存储迁移到 V2 失败: ${migrationResult.error || '未执行迁移'}` };
+  }
+
+  const postStrategy = resolveTableStorageStrategy_ACU(chat, isolationKey, isolationConfig);
+  if (postStrategy.mode === 'legacy-v1') {
+    return { success: false, error: `旧存储迁移后仍检测到 legacy-v1: ${postStrategy.reason}` };
+  }
+
+  _set_currentJsonTableData_ACU(JSON.parse(JSON.stringify(mergedLegacyData)) as TableDataObject_ACU);
+  return { success: true, migrated: true, data: mergedLegacyData as TableDataObject_ACU };
+}
 
 export async function persistTablesToChatMessage_ACU(
   options: TableChatPersistOptions_ACU = {},
@@ -77,6 +122,9 @@ async function persistTablesToChatMessageWithLockOption_ACU(
     batchId,
     operations,
     revisionWriteSet,
+    forceCheckpoint,
+    checkpointReason,
+    manualRefillProgress,
     assumeCommitLock,
     transactionContext,
   } = options;
@@ -96,15 +144,27 @@ async function persistTablesToChatMessageWithLockOption_ACU(
       return { saved: false, error: 'chat history is empty' };
     }
 
-    const strategy = resolveTableStorageStrategy_ACU(chat, currentIsolationKey, {
+    let strategy = resolveTableStorageStrategy_ACU(chat, currentIsolationKey, {
       enabled: settings_ACU.dataIsolationEnabled,
       code: settings_ACU.dataIsolationCode,
     });
 
     if (strategy.mode === 'legacy-v1') {
-      const message = 'legacy-v1 table storage must be migrated during database load before any write; write-time fallback is not allowed.';
-      logError_ACU(message);
-      return { saved: false, error: message };
+      const migration = await ensureLegacyStorageMigratedBeforeWrite_ACU('persistTablesToChatMessage');
+      if (!migration.success) {
+        const message = migration.error || 'legacy-v1 table storage migration failed before write.';
+        logError_ACU(message);
+        return { saved: false, error: message };
+      }
+      strategy = resolveTableStorageStrategy_ACU(chat, currentIsolationKey, {
+        enabled: settings_ACU.dataIsolationEnabled,
+        code: settings_ACU.dataIsolationCode,
+      });
+      if (strategy.mode === 'legacy-v1') {
+        const message = `legacy-v1 table storage still detected after migration: ${strategy.reason}`;
+        logError_ACU(message);
+        return { saved: false, error: message };
+      }
     }
 
     let keysToSave: string[] = Array.isArray(targetSheetKeys)
@@ -150,8 +210,9 @@ async function persistTablesToChatMessageWithLockOption_ACU(
         groupKeys: metadataOnlyUpdateGroupKeys,
         requestId,
         batchId,
-        forceCheckpoint: strategy.mode === 'empty',
-        checkpointReason: strategy.mode === 'empty' ? 'init' : undefined,
+        forceCheckpoint: forceCheckpoint === true || strategy.mode === 'empty',
+        checkpointReason: checkpointReason || (strategy.mode === 'empty' ? 'init' : undefined),
+        manualRefillProgress,
         isolationKey: currentIsolationKey,
         revisionWriteSet,
         assumeCommitLock,

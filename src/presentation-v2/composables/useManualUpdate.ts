@@ -18,6 +18,7 @@ import {
   type CardUpdateProgressEvent,
 } from '../../service/table/update-orchestrator';
 import { refreshMergedDataAndNotify_ACU } from '../../service/worldbook/pipeline';
+import { topLevelWindow_ACU } from '../../shared/env';
 import { useDialogStore } from '../stores/dialog-store';
 import { useToastStore } from '../stores/toast-store';
 
@@ -281,11 +282,12 @@ export function useManualUpdate(): ManualUpdateState {
 
     const confirmed = await dialogStore.confirm({
       title: '执行手动填表',
-      message: '即将执行手动填表。\n\n为确保填表成功，系统将先清除本次涉及楼层中当前选中表格的数据，再进行新的数据填写。\n此操作可防止 SQL 严格填表逻辑因旧数据残留导致写入失败。\n\n如果不想清空旧数据，可以选择取消。',
+      message: '即将执行手动填表。\n\n系统会在内存中按当前上下文和批处理设置重填当前选中的表，全部成功后才写入新的完整 checkpoint。\n如果重填起点之前找不到可回放的 checkpoint，选中表会从空白结构开始重填；未选中的表会保持当前最新数据。\n\n失败或终止时不会清空聊天记录中的旧表格数据。',
       confirmLabel: '确认并继续',
       cancelLabel: '取消',
     });
     if (!confirmed) return;
+    // 兼容沿用 clearBeforeUpdate 参数名；service 层实际执行事务式重填，不会预清空聊天记录。
     const clearBeforeUpdate = true;
 
     manualUpdateBusy.value = true;
@@ -297,6 +299,10 @@ export function useManualUpdate(): ManualUpdateState {
     if (extra) _set_manualExtraHint_ACU(`以下为用户的额外填表要求,请严格遵守:\n${extra}`);
     const handleProgress = (event: CardUpdateProgressEvent) => {
       notifyProgress(progressLabel(event));
+      if (event.phase === 'complete') {
+        try { (topLevelWindow_ACU as any).AutoCardUpdaterAPI?._notifyTableUpdate?.(); } catch (_) {}
+        refreshTick.value++;
+      }
     };
 
     const runProcessBatch = (indices: number[], mode: string, options: any) =>

@@ -2,10 +2,10 @@ import type { TableDataObject_ACU } from '../../shared/models/table-data';
 import type { SqlMutationResult } from '../../shared/table-storage-provider';
 import { logError_ACU, logWarn_ACU } from '../../shared/utils';
 import { currentJsonTableData_ACU, getCurrentIsolationKey_ACU, _set_currentJsonTableData_ACU } from '../runtime/state-manager';
-import { persistTablesToChatMessage_ACU } from './table-service';
+import { ensureLegacyStorageMigratedBeforeWrite_ACU, persistTablesToChatMessage_ACU } from './table-service';
 import { getStorageProvider, reloadStorageProvider } from './table-storage-strategy';
 import { runTableWriteTransaction_ACU, type TableWriteTransactionContext_ACU } from './table-write-transaction';
-import type { TableMutationOperationV2_ACU, TableMutationSourceV2_ACU, TableWriteConflictUnitV2_ACU } from './storage-frame-v2-types';
+import type { ManualRefillProgressV2_ACU, TableCheckpointV2_ACU, TableMutationOperationV2_ACU, TableMutationSourceV2_ACU, TableWriteConflictUnitV2_ACU } from './storage-frame-v2-types';
 
 export interface TableUpdateCommitApplyContext_ACU {
   transactionContext: TableWriteTransactionContext_ACU;
@@ -20,6 +20,9 @@ export interface TableUpdateCommitPersistOverride_ACU {
   trackAsUpdate?: boolean;
   operations?: TableMutationOperationV2_ACU[];
   revisionWriteSet?: TableWriteConflictUnitV2_ACU[];
+  forceCheckpoint?: boolean;
+  checkpointReason?: TableCheckpointV2_ACU['reason'];
+  manualRefillProgress?: ManualRefillProgressV2_ACU;
 }
 
 export interface TableUpdateCommitApplyResult_ACU<T> {
@@ -71,6 +74,14 @@ export async function runTableUpdateCommit_ACU<T>(
   apply: (context: TableUpdateCommitApplyContext_ACU) => Promise<TableUpdateCommitApplyResult_ACU<T>> | TableUpdateCommitApplyResult_ACU<T>,
 ): Promise<RunTableUpdateCommitResult_ACU<T>> {
   try {
+    const migration = await ensureLegacyStorageMigratedBeforeWrite_ACU(options.reason);
+    if (!migration.success) {
+      return { success: false, error: migration.error || '旧存储迁移失败，已阻止本次写入。' };
+    }
+    if (migration.migrated) {
+      await reloadStorageProvider();
+    }
+
     return await runTableWriteTransaction_ACU({
       source: options.source,
       reason: options.reason,
@@ -104,6 +115,9 @@ export async function runTableUpdateCommit_ACU<T>(
             source: options.source,
             operations,
             revisionWriteSet,
+            forceCheckpoint: persistOptions.forceCheckpoint,
+            checkpointReason: persistOptions.checkpointReason,
+            manualRefillProgress: persistOptions.manualRefillProgress,
             assumeCommitLock: true,
             transactionContext,
           });

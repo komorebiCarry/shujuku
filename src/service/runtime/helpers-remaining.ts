@@ -41,6 +41,7 @@ export {
 // ═══ 数据合并/格式化/首楼初始化/阈值 ═══
 export {
     mergeAllIndependentTables_ACU,
+    mergeAllIndependentTablesLegacyV1_ACU,
     formatJsonToReadable_ACU,
     shouldSuppressWorldbookInjection_ACU,
     maybeLiftWorldbookSuppression_ACU,
