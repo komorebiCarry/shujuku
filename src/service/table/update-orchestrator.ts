@@ -578,7 +578,7 @@ async function buildManualRefillInitialData_ACU(
                 maxMessageIndex: firstMessageIndexOfRange - 1,
             }) as Record<string, any> | null;
         } catch (error) {
-            logWarn_ACU('[Manual Refill] 重放重填起点之前的数据失败，将从零开始重填选中表。', error);
+            logWarn_ACU('[Manual Refill] 重放重填起点之前的数据失败，将从零基底重建选中表。', error);
             refillBase = null;
         }
     }
@@ -1443,7 +1443,7 @@ export async function processGroupedRuntimeChunk_ACU(
             }
         }
 
-        if (!bucketSucceeded && (failedGroups.size > 0 || firstError || options.abortController?.signal.aborted)) {
+        if (!bucketSucceeded && options.abortController?.signal.aborted) {
             break;
         }
     }

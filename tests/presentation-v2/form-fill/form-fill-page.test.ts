@@ -734,7 +734,8 @@ describe('FormFillPage · 手动填表面板', () => {
 
     const dialogText = document.querySelector('.acu-dialog-layer')?.textContent || '';
     expect(dialogText).toContain('即将执行手动填表');
-    expect(dialogText).toContain('系统将先清除本次涉及楼层中当前选中表格的数据');
+    expect(dialogText).toContain('系统会在内存中按当前上下文和批处理设置重填当前选中的表');
+    expect(dialogText).toContain('失败或终止时不会清空聊天记录中的旧表格数据');
     expect(dialogText).toContain('确认并继续');
     expect(dialogText).not.toContain('直接填表');
     expect(document.querySelector('.acu-toast-viewport')?.textContent || '')

@@ -139,6 +139,7 @@ const mockPersistTablesToChatMessage = vi.fn().mockResolvedValue({ saved: true, 
 
 vi.mock('../../../src/service/table/table-service', () => ({
   checkIfFirstTimeInit_ACU: (...args: any[]) => mockCheckIfFirstTimeInit(...args),
+  ensureLegacyStorageMigratedBeforeWrite_ACU: vi.fn().mockResolvedValue({ success: true, migrated: false }),
   persistTablesToChatMessage_ACU: (...args: any[]) => mockPersistTablesToChatMessage(...args),
   saveIndependentTableToChatHistory_ACU: (...args: any[]) => mockSaveIndependentTable(...args),
 }));
@@ -445,8 +446,8 @@ describe('loadBatchBaseData_ACU', () => {
 // buildBatchMergeBase_ACU
 // ═══════════════════════════════════════════════════════════════
 describe('buildBatchMergeBase_ACU', () => {
-  it('无 guide 时使用模板', () => {
-    const result = buildBatchMergeBase_ACU(1);
+  it('无 guide 时使用模板', async () => {
+    const result = await buildBatchMergeBase_ACU(1);
     expect(result.data).not.toBeNull();
     expect(result.error).toBeNull();
   });
@@ -461,7 +462,7 @@ describe('buildBatchMergeBase_ACU', () => {
       sheet_0: { name: '从引导构建的数据' },
     });
 
-    const result = buildBatchMergeBase_ACU(1);
+    const result = await buildBatchMergeBase_ACU(1);
     expect(result.data).not.toBeNull();
     expect(result.error).toBeNull();
   });
@@ -1072,7 +1073,7 @@ describe('orchestrateManualUpdate_ACU', () => {
     expect(mockPersistTablesToChatMessage).toHaveBeenCalledTimes(1);
   });
 
-  it('预清空时只按选中表调用清理', async () => {
+  it('事务式手动重填不会预清空聊天记录中的旧表格数据', async () => {
     const { getChatArray_ACU, clearTableDataAtFloors_ACU } = await import('../../../src/service/chat/chat-service');
     vi.mocked(getChatArray_ACU).mockReturnValue([
       { is_user: true },
@@ -1088,8 +1089,7 @@ describe('orchestrateManualUpdate_ACU', () => {
 
     const result = await orchestrateManualUpdate_ACU(['sheet_0'], vi.fn().mockResolvedValue({ success: true }), mockRefreshData, { clearBeforeUpdate: true });
     expect(result.success).toBe(true);
-    expect(clearTableDataAtFloors_ACU).toHaveBeenCalled();
-    expect(vi.mocked(clearTableDataAtFloors_ACU).mock.calls[0][1]).toEqual(['sheet_0']);
+    expect(clearTableDataAtFloors_ACU).not.toHaveBeenCalled();
   });
 
   it('processBatch 失败时返回错误', async () => {
@@ -2201,15 +2201,9 @@ describe('processGroupedRuntimeChunk_ACU', () => {
       return '<tableEdit>sheet_0</tableEdit>';
     });
 
-    let parseAttempt = 0;
-    mockParseAndApplyTableEditsToData.mockImplementation((aiResponse: string, tableData: any) => {
-      parseAttempt++;
-      if (parseAttempt === 1) {
-        return { success: false, modifiedKeys: [], appliedEdits: 0 };
-      }
-      tableData.sheet_0.content.push(['2', '来自A']);
-      return { success: true, modifiedKeys: ['sheet_0'], appliedEdits: 1 };
-    });
+    mockPersistTablesToChatMessage
+      .mockResolvedValueOnce({ saved: false, error: 'group group_a 解析或应用失败' })
+      .mockResolvedValueOnce({ saved: true, messageIndex: 1 });
 
     const result = await processGroupedRuntimeChunk_ACU([
       { key: 'group_a', groupId: 0, indices: [1], batchSize: 2, sheetKeys: ['sheet_0'], requestOptions: null },
@@ -2219,7 +2213,7 @@ describe('processGroupedRuntimeChunk_ACU', () => {
     expect(capturedTableDataTexts).toHaveLength(2);
     expect(capturedTableDataTexts[1]).toContain('UNIFIED_GROUP_ERROR_FEEDBACK');
     expect(capturedTableDataTexts[1]).toContain('group group_a 解析或应用失败');
-    expect(mockPersistTablesToChatMessage).toHaveBeenCalledTimes(1);
+    expect(mockPersistTablesToChatMessage).toHaveBeenCalledTimes(2);
   });
 
   it('统一提交持续失败到耗尽重试时整 bucket 失败且不落盘', async () => {

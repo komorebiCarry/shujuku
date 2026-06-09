@@ -89,9 +89,11 @@ function tableListContainsSummaryOrOutline_ACU(targetSheetKeys: string[]): boole
     });
 }
 
-function collectIsolationKeysWithV2Frames_ACU(chat: any[]): string[] {
+function collectIsolationKeysWithV2Frames_ACU(chat: any[], options: { maxMessageIndex?: number } = {}): string[] {
     const keys = new Set<string>();
-    for (const msg of chat) {
+    const maxMessageIndex = Number.isInteger(options.maxMessageIndex) ? options.maxMessageIndex as number : Number.POSITIVE_INFINITY;
+    for (let i = 0; i < chat.length && i <= maxMessageIndex; i++) {
+        const msg = chat[i];
         if (!msg || msg.is_user) continue;
         const isolatedData = msg.TavernDB_ACU_IsolatedData;
         if (!isolatedData || typeof isolatedData !== 'object' || Array.isArray(isolatedData)) continue;
@@ -104,8 +106,35 @@ function collectIsolationKeysWithV2Frames_ACU(chat: any[]): string[] {
     return [...keys];
 }
 
-async function writeV2BoundaryCheckpointBeforePurge_ACU(chat: any[], anchorIndex: number): Promise<boolean> {
-    if (anchorIndex < 0 || !chat[anchorIndex] || chat[anchorIndex].is_user) return false;
+function hasV2FullCheckpointInRange_ACU(chat: any[], isolationKey: string, startIndex: number, endIndex: number): boolean {
+    if (!Array.isArray(chat) || startIndex > endIndex) return false;
+    const start = Math.max(0, startIndex);
+    const end = Math.min(chat.length - 1, endIndex);
+    for (let i = start; i <= end; i++) {
+        const msg = chat[i];
+        if (!msg || msg.is_user) continue;
+        const tagData = msg.TavernDB_ACU_IsolatedData?.[isolationKey];
+        if (isV2TagData_ACU(tagData) && tagData.storageFrame.checkpoint?.kind === 'full') {
+            return true;
+        }
+    }
+    return false;
+}
+
+function selectRetainedCheckpointAnchorIndex_ACU(chat: any[], retainedDataIndices: number[]): number | undefined {
+    const retainedAiIndices = retainedDataIndices.filter((idx: number) => idx >= 1 && chat[idx] && !chat[idx].is_user);
+    if (retainedAiIndices.length === 0) return undefined;
+    return retainedAiIndices[Math.floor(retainedAiIndices.length / 2)];
+}
+
+async function writeV2BoundaryCheckpointBeforePurge_ACU(
+    chat: any[],
+    anchorIndex: number,
+    options: { retainedStartIndex?: number; retainedEndIndex?: number } = {},
+): Promise<boolean> {
+    if (anchorIndex < 0 || !chat[anchorIndex] || chat[anchorIndex].is_user) {
+        throw new Error(`边界 checkpoint 写入失败：anchorIndex=${anchorIndex} 不是有效 AI 楼层。`);
+    }
 
     let changed = false;
     const isolationConfig = {
@@ -113,12 +142,23 @@ async function writeV2BoundaryCheckpointBeforePurge_ACU(chat: any[], anchorIndex
         code: settings_ACU.dataIsolationCode,
     };
 
-    for (const isolationKey of collectIsolationKeysWithV2Frames_ACU(chat)) {
+    const isolationKeys = collectIsolationKeysWithV2Frames_ACU(chat, { maxMessageIndex: anchorIndex });
+    const retainedStartIndex = Number.isInteger(options.retainedStartIndex) ? options.retainedStartIndex as number : undefined;
+    const retainedEndIndex = Number.isInteger(options.retainedEndIndex) ? options.retainedEndIndex as number : undefined;
+    for (const isolationKey of isolationKeys) {
         const strategy = resolveTableStorageStrategy_ACU(chat, isolationKey, isolationConfig);
         if (strategy.mode !== 'v2') continue;
 
+        if (retainedStartIndex !== undefined && retainedEndIndex !== undefined
+            && hasV2FullCheckpointInRange_ACU(chat, isolationKey, retainedStartIndex, retainedEndIndex)) {
+            logDebug_ACU(`[V2 Compaction] 保留窗口内已存在 isolationKey=[${isolationKey || '无标签'}] 的 full checkpoint，跳过重建。`);
+            continue;
+        }
+
         const data = await loadTableStateFromFramesV2_ACU(chat, isolationKey, { maxMessageIndex: anchorIndex });
-        if (!data) continue;
+        if (!data) {
+            throw new Error(`边界 checkpoint 写入失败：无法在 anchorIndex=${anchorIndex} 前恢复 isolationKey=[${isolationKey || '无标签'}] 的 V2 数据。`);
+        }
 
         const anchorMsg = chat[anchorIndex];
         if (!anchorMsg.TavernDB_ACU_IsolatedData || typeof anchorMsg.TavernDB_ACU_IsolatedData !== 'object' || Array.isArray(anchorMsg.TavernDB_ACU_IsolatedData)) {
@@ -345,21 +385,27 @@ async function purgeOldLayerDataCore_ACU() {
 
     logDebug_ACU(`[数据清理] 将清理 ${indicesToPurge.length} 层消息的本地数据（保留最近 ${retainCount} 层）...`);
 
-    // ── [V2 边界 checkpoint] 在删除旧 frame 前，先把恢复锚点压缩到边界保留楼层 ──
-    const anchorIndex = dataMessageIndices[cutoffIndex];
+    // ── [V2 边界 checkpoint] 删除旧 frame 前，保留窗口内已有 full checkpoint 就复用；没有才在窗口中间补一个 ──
+    const retainedDataIndices = dataMessageIndices.slice(cutoffIndex);
+    const retainedStartIndex = retainedDataIndices[0];
+    const retainedEndIndex = retainedDataIndices[retainedDataIndices.length - 1];
+    const anchorIndex = selectRetainedCheckpointAnchorIndex_ACU(chat, retainedDataIndices);
     if (anchorIndex !== undefined && anchorIndex >= 1 && chat[anchorIndex]) {
         try {
-            if (await writeV2BoundaryCheckpointBeforePurge_ACU(chat, anchorIndex)) {
+            if (await writeV2BoundaryCheckpointBeforePurge_ACU(chat, anchorIndex, { retainedStartIndex, retainedEndIndex })) {
                 await saveChatToHost_ACU();
             }
         } catch (error) {
             logError_ACU('[V2 Compaction] 写入边界 checkpoint 失败，已中止本次清理以避免恢复链断裂:', error);
             return;
         }
+    } else if (collectIsolationKeysWithV2Frames_ACU(chat, { maxMessageIndex: indicesToPurge[indicesToPurge.length - 1] }).length > 0) {
+        logError_ACU('[V2 Compaction] 找不到可写入边界 checkpoint 的保留 AI 楼层，已中止本次清理以避免恢复链断裂。');
+        return;
     }
 
     // ── [兜底快照] 在删除旧楼层之前，迁移冷表数据到边界保留楼层 ──
-    const retainedSet = new Set<number>(dataMessageIndices.slice(cutoffIndex));
+    const retainedSet = new Set<number>(retainedDataIndices);
 
     // 确认边界楼层有效且不是 chat[0]
     if (anchorIndex !== undefined && anchorIndex >= 1 && chat[anchorIndex]) {

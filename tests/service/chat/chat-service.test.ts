@@ -4,7 +4,7 @@
  */
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
-const { mockSettings, mockCurrentJsonTableData, mockGetChatArray, mockSaveChatToHost, mockSetChatMessages, mockEmitMessageUpdated, mockGetCurrentIsolationKey, mockGetLastOptimizationBase, mockSetLastOptimizationBase, mockSanitizeSheet, mockPersistTablesToChatMessage } = vi.hoisted(() => ({
+const { mockSettings, mockCurrentJsonTableData, mockGetChatArray, mockSaveChatToHost, mockSetChatMessages, mockEmitMessageUpdated, mockGetCurrentIsolationKey, mockGetLastOptimizationBase, mockSetLastOptimizationBase, mockSanitizeSheet, mockPersistTablesToChatMessage, mockRunTableUpdateCommit } = vi.hoisted(() => ({
   mockSettings: {
     retainRecentLayers: 3,
     dataIsolationEnabled: false,
@@ -23,6 +23,7 @@ const { mockSettings, mockCurrentJsonTableData, mockGetChatArray, mockSaveChatTo
   mockSetLastOptimizationBase: vi.fn(),
   mockSanitizeSheet: vi.fn((sheet: any) => sheet),
   mockPersistTablesToChatMessage: vi.fn(),
+  mockRunTableUpdateCommit: vi.fn(),
 }));
 
 vi.mock('../../../src/data/gateways/chat-gateway', () => ({
@@ -63,6 +64,10 @@ vi.mock('../../../src/service/table/table-service', () => ({
   persistTablesToChatMessage_ACU: mockPersistTablesToChatMessage,
 }));
 
+vi.mock('../../../src/service/table/table-update-commit', () => ({
+  runTableUpdateCommit_ACU: mockRunTableUpdateCommit,
+}));
+
 import {
   replaceChatMessage_ACU,
   getOriginalContent_ACU,
@@ -80,6 +85,16 @@ beforeEach(() => {
   mockGetCurrentIsolationKey.mockReturnValue('');
   mockSaveChatToHost.mockResolvedValue(undefined);
   mockPersistTablesToChatMessage.mockResolvedValue({ saved: true, messageIndex: 0 });
+  mockRunTableUpdateCommit.mockImplementation(async (options: any, apply: any) => {
+    mockPersistTablesToChatMessage(options);
+    const applied = await apply();
+    return {
+      success: applied?.success !== false,
+      value: applied?.value,
+      tableData: applied?.tableData,
+      saved: true,
+    };
+  });
 });
 
 // ═══ replaceChatMessage_ACU ═══

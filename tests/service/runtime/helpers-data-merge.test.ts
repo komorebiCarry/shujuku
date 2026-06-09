@@ -87,6 +87,36 @@ vi.mock('../../../src/service/template/template-preset-service', () => ({
 vi.mock('../../../src/shared/constants', () => ({
   TABLE_ORDER_FIELD_ACU: 'orderNo',
 }));
+
+vi.mock('../../../src/service/table/storage-strategy-resolver', () => ({
+  isV2TagData_ACU: vi.fn((tagData: any) => !!tagData?.storageFrame && tagData?._acu_storage_version === 2),
+  resolveTableStorageStrategy_ACU: vi.fn(() => ({ mode: 'none' })),
+}));
+
+vi.mock('../../../src/service/table/storage-v2-migration', () => ({
+  migrateLegacyStorageToV2OnLoad_ACU: vi.fn().mockResolvedValue({ migrated: true }),
+}));
+
+vi.mock('../../../src/service/table/storage-frame-v2-replay', () => ({
+  loadTableStateFromFramesV2_ACU: vi.fn().mockResolvedValue(null),
+}));
+
+vi.mock('../../../src/service/table/storage-frame-v2-persist', () => ({
+  persistTableMutationLogV2_ACU: vi.fn().mockResolvedValue({ saved: true, messageIndex: 0 }),
+}));
+
+vi.mock('../../../src/service/table/table-write-transaction', () => ({
+  runTableWriteTransaction_ACU: vi.fn(async (_options: any, task: any) => task({
+    transactionId: 'tx-test',
+    chatKey: 'test-chat',
+    isolationKey: '',
+    source: _options.source,
+    baseRevision: null,
+    writeSet: _options.writeSet,
+    runCommit: async (commitTask: any) => commitTask(),
+  })),
+}));
+
 import { migrateContentNullToRowId } from '../../../src/service/runtime/helpers-data-merge';
 
 describe('migrateContentNullToRowId', () => {
@@ -552,8 +582,36 @@ describe('mergeAllIndependentTables_ACU', () => {
 import { formatJsonToReadable_ACU, fillFirstLayerWithTemplateData_ACU, shouldSuppressWorldbookInjection_ACU, maybeLiftWorldbookSuppression_ACU, getEffectiveAutoUpdateThreshold_ACU, isNewChatGreetingStage_ACU, isSingleAiNoUserChat_ACU, buildTemplateBaseStateDataForLocalStorage_ACU, ensureInitialSeedCheckpoint_ACU, parseReadableToJson_ACU, GREETING_LOCAL_BASE_STATE_MARKER_ACU } from '../../../src/service/runtime/helpers-data-merge';
 import { settings_ACU, suppressWorldbookInjectionInGreeting_ACU, _set_suppressWorldbookInjectionInGreeting_ACU } from '../../../src/service/runtime/state-manager';
 import { saveChatToHost_ACU } from '../../../src/data/gateways/chat-gateway';
+import { persistTableMutationLogV2_ACU } from '../../../src/service/table/storage-frame-v2-persist';
 import { initIsolatedTagSlot_ACU, writeLegacyCompatData_ACU } from '../../../src/data/repositories/chat-message-data-repo';
 import { buildChatSheetGuideDataFromTemplateObj_ACU, setChatSheetGuideDataForIsolationKey_ACU, sanitizeTemplateSnapshotForChat_ACU } from '../../../src/service/template/chat-scope';
+
+function mockPersistV2CheckpointSuccess_ACU() {
+  vi.mocked(persistTableMutationLogV2_ACU).mockImplementation(async (options: any) => {
+    const chat = getChatArray_ACU() || [];
+    const target = chat[options.targetMessageIndex];
+    if (target) {
+      target.TavernDB_ACU_IsolatedData = target.TavernDB_ACU_IsolatedData || {};
+      target.TavernDB_ACU_IsolatedData[options.isolationKey || ''] = {
+        _acu_storage_version: 2,
+        storageFrame: {
+          version: 2,
+          checkpoint: {
+            kind: 'full',
+            createdAt: 1,
+            reason: options.checkpointReason || 'init',
+            data: JSON.parse(JSON.stringify(options.afterData || {})),
+          },
+          logEntries: [],
+        },
+      };
+    }
+    await saveChatToHost_ACU();
+    return { saved: true, messageIndex: options.targetMessageIndex };
+  });
+}
+
+
 import { _set_currentJsonTableData_ACU } from '../../../src/service/runtime/state-manager';
 
 describe('formatJsonToReadable_ACU', () => {
@@ -711,9 +769,10 @@ describe('fillFirstLayerWithTemplateData_ACU', () => {
     vi.mocked(reorderDataBySheetKeys_ACU).mockImplementation((data: any) => data);
     vi.mocked(sanitizeTemplateSnapshotForChat_ACU).mockReturnValue(null);
     vi.mocked(buildChatSheetGuideDataFromTemplateObj_ACU).mockReturnValue(null);
+    mockPersistV2CheckpointSuccess_ACU();
   });
 
-  it('正常填充：写入隔离标签数据、同步旧格式、保存聊天', async () => {
+  it('正常填充：写入 V2 初始化 checkpoint', async () => {
     const templateObj = {
       sheet_0: {
         name: '背包物品表',
@@ -723,11 +782,10 @@ describe('fillFirstLayerWithTemplateData_ACU', () => {
 
     const result = await fillFirstLayerWithTemplateData_ACU(templateObj);
     expect(result).toEqual({ success: true, messageIndex: 0, sheetCount: 1 });
-    // 验证写入了隔离标签数据
-    expect(vi.mocked(initIsolatedTagSlot_ACU)).toHaveBeenCalledTimes(1);
-    // 验证同步了旧格式
-    expect(vi.mocked(writeLegacyCompatData_ACU)).toHaveBeenCalledTimes(1);
-    // 验证保存了聊天
+    // 验证写入了 V2 checkpoint，不再同步旧格式
+    expect(vi.mocked(persistTableMutationLogV2_ACU)).toHaveBeenCalledTimes(1);
+    expect(vi.mocked(initIsolatedTagSlot_ACU)).not.toHaveBeenCalled();
+    expect(vi.mocked(writeLegacyCompatData_ACU)).not.toHaveBeenCalled();
     expect(vi.mocked(saveChatToHost_ACU)).toHaveBeenCalledTimes(1);
     // 验证更新了内存数据
     expect(vi.mocked(_set_currentJsonTableData_ACU)).toHaveBeenCalledTimes(1);
@@ -997,6 +1055,7 @@ describe('ensureInitialSeedCheckpoint_ACU', () => {
     vi.mocked(readIsolatedTagData_ACU).mockReturnValue(null);
     vi.mocked(readLegacyIndependentData_ACU).mockReturnValue(null);
     vi.mocked(isLegacyMatchForIsolation_ACU).mockReturnValue(false);
+    mockPersistV2CheckpointSuccess_ACU();
   });
 
   it('只有开场白、还没有用户消息时返回 false', async () => {

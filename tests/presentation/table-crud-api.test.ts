@@ -82,11 +82,13 @@ vi.mock('../../src/service/table/sql-table-service', () => ({
 }));
 
 vi.mock('../../src/service/table/table-service', () => ({
+  ensureLegacyStorageMigratedBeforeWrite_ACU: vi.fn().mockResolvedValue({ success: true, migrated: false }),
   persistTablesToChatMessage_ACU: mockPersistTablesToChatMessage,
   saveIndependentTableToChatHistory_ACU: vi.fn().mockResolvedValue({ saved: true }),
 }));
 
 vi.mock('../../src/service/table/table-write-transaction', () => ({
+  captureTableRuntimeRevisionForWriteSet_ACU: vi.fn(() => 'runtime-rev-head'),
   runTableWriteTransaction_ACU: mockRunTableWriteTransaction,
 }));
 

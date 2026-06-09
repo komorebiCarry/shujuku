@@ -493,7 +493,7 @@ if (!Array.isArray(next.content)) next.content = guideHeader ? [guideHeader] : [
       try {
           if (!message || message.is_user) return false;
           const tagData = readIsolatedTagData_ACU(message, isolationKey);
-          if (isV2TagData_ACU(tagData) && tagData.storageFrame.checkpoint?.kind === 'full') return true;
+          if (isV2TagData_ACU(tagData) && (tagData.storageFrame.checkpoint?.kind === 'full' || (tagData.storageFrame.logEntries || []).length > 0)) return true;
           if (tagData?.independentData && Object.keys(tagData.independentData).some(k => k.startsWith('sheet_'))) return true;
           if (isLegacyMatchForIsolation_ACU(message, { enabled: settings_ACU.dataIsolationEnabled, code: settings_ACU.dataIsolationCode })) {
               const legacyIndependent = readLegacyIndependentData_ACU(message);

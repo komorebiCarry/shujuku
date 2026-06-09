@@ -99,6 +99,13 @@ function hasAnyV2Checkpoint_ACU(chat: any[], isolationKey: string): boolean {
   });
 }
 
+function hasAnyV2Frame_ACU(chat: any[], isolationKey: string): boolean {
+  return chat.some(message => {
+    const tagData = message?.TavernDB_ACU_IsolatedData?.[isolationKey];
+    return isV2TagData_ACU(tagData);
+  });
+}
+
 export function getLatestTableStorageHeadRevisionV2_ACU(chat: any[] | null | undefined, isolationKey: string): string | null {
   if (!Array.isArray(chat) || chat.length === 0) return null;
   let headRevision: string | null = null;
@@ -229,6 +236,7 @@ async function persistTableMutationLogV2Core_ACU(
     : options.transactionContext?.baseRevision;
 
   const hasExistingCheckpoint = hasAnyV2Checkpoint_ACU(chat, isolationKey);
+  const hasExistingV2Frame = hasAnyV2Frame_ACU(chat, isolationKey);
   const hasMetadataOnlyFillEvent = filledSheetKeys.length > 0 || (Array.isArray(options.groupKeys) && options.groupKeys.length > 0);
   if (operations.length === 0 && !hasMetadataOnlyFillEvent && options.source !== 'import' && hasExistingCheckpoint) {
     return { saved: false, error: `V2 operation log requires explicit operations for source=${options.source}; snapshot diff fallback is not allowed.` };
@@ -254,7 +262,7 @@ async function persistTableMutationLogV2Core_ACU(
     frame.checkpoint = {
       kind: 'full',
       createdAt: now,
-      reason: options.checkpointReason || (!hasExistingCheckpoint ? 'init' : 'periodic'),
+      reason: options.checkpointReason || (!hasExistingCheckpoint ? (hasExistingV2Frame ? 'migration' : 'init') : 'periodic'),
       data: afterData,
       scheduleSummary: collectScheduleSummaryFromFramesV2_ACU(chat, isolationKey, { maxMessageIndex: target.index }),
       event: checkpointEvent,

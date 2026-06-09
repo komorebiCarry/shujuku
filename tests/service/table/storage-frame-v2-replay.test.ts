@@ -195,4 +195,36 @@ describe('loadTableStateFromFramesV2_ACU', () => {
       ['1', '第一天', '城镇(北区)', '记录包含括号(测试)，不应破坏命令切分。', '抵达城镇'],
     ]);
   });
+
+  it('无 full checkpoint 时拒绝从 data_replace/log-only 恢复不完整数据', async () => {
+    const chat = [
+      {
+        is_user: false,
+        TavernDB_ACU_IsolatedData: {
+          '': {
+            _acu_storage_version: 2,
+            storageFrame: {
+              version: 2,
+              logEntries: [{
+                seq: 1,
+                entryId: 'v2_import_data_replace',
+                createdAt: 1,
+                source: 'import',
+                targetMessageIndex: 0,
+                aiFloor: 1,
+                filledSheetKeys: ['sheet_a', 'sheet_b'],
+                changedSheetKeys: ['sheet_a', 'sheet_b'],
+                groupKeys: [],
+                operations: [{ kind: 'data_replace', data: makeDslCheckpointData(), reason: 'import' }],
+              }],
+            },
+          },
+        },
+      },
+    ];
+
+    const result = await loadTableStateFromFramesV2_ACU(chat, '');
+
+    expect(result).toBeNull();
+  });
 });

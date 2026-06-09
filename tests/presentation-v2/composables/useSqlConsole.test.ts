@@ -39,6 +39,7 @@ function mockSqlConsoleDeps(opts: {
     _set_currentJsonTableData_ACU: vi.fn(),
   }));
   vi.doMock('../../../src/service/table/table-service', () => ({
+    ensureLegacyStorageMigratedBeforeWrite_ACU: vi.fn().mockResolvedValue({ success: true, migrated: false }),
     persistTablesToChatMessage_ACU: vi.fn().mockResolvedValue({ saved: true, messageIndex: 1 }),
   }));
   vi.doMock('../../../src/service/table/table-write-transaction', () => ({

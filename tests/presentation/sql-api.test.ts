@@ -58,6 +58,7 @@ vi.mock('../../src/service/table/storage-frame-v2-persist', () => ({
 }));
 
 vi.mock('../../src/service/table/table-service', () => ({
+  ensureLegacyStorageMigratedBeforeWrite_ACU: vi.fn().mockResolvedValue({ success: true, migrated: false }),
   persistTablesToChatMessage_ACU: mocks.persistTablesToChatMessage,
 }));
 

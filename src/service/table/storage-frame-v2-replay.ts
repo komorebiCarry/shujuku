@@ -376,13 +376,16 @@ export function collectScheduleSummaryFromFramesV2_ACU(
   const frameRefs = getV2FrameRefs_ACU(chat, isolationKey)
     .filter(ref => options.maxMessageIndex === undefined || ref.messageIndex <= options.maxMessageIndex);
   const checkpointRef = [...frameRefs].reverse().find(ref => ref.frame.checkpoint?.kind === 'full');
-  if (!checkpointRef || !checkpointRef.frame.checkpoint) return {};
 
-  const summary: TableScheduleSummaryV2_ACU = deepClone_ACU(checkpointRef.frame.checkpoint.scheduleSummary || {});
-  applyEventToScheduleSummary_ACU(summary, checkpointRef.frame.checkpoint.event, checkpointRef.aiFloor);
+  const summary: TableScheduleSummaryV2_ACU = checkpointRef?.frame.checkpoint
+    ? deepClone_ACU(checkpointRef.frame.checkpoint.scheduleSummary || {})
+    : {};
+  if (checkpointRef?.frame.checkpoint) {
+    applyEventToScheduleSummary_ACU(summary, checkpointRef.frame.checkpoint.event, checkpointRef.aiFloor);
+  }
 
   for (const ref of frameRefs) {
-    if (ref.messageIndex < checkpointRef.messageIndex) continue;
+    if (checkpointRef && ref.messageIndex < checkpointRef.messageIndex) continue;
     const entries = [...(ref.frame.logEntries || [])].sort((a, b) => a.seq - b.seq);
     for (const entry of entries) {
       applyEventToScheduleSummary_ACU(summary, entry, ref.aiFloor);
@@ -405,24 +408,26 @@ export async function loadTableStateFromFramesV2_ACU(
     .filter(ref => options.maxMessageIndex === undefined || ref.messageIndex <= options.maxMessageIndex);
   const checkpointRef = [...frameRefs].reverse().find(ref => ref.frame.checkpoint?.kind === 'full');
 
-  if (!checkpointRef || !checkpointRef.frame.checkpoint) {
-    logWarn_ACU('[V2 Replay] 未找到 full checkpoint，无法恢复 V2 表格数据。');
+  if (!checkpointRef?.frame.checkpoint) {
+    logWarn_ACU('[V2 Replay] 未找到 full checkpoint，拒绝从 log-only/data_replace 恢复不完整 V2 表格数据。');
     return null;
   }
 
   const checkpoint = checkpointRef.frame.checkpoint;
-  const state = deepClone_ACU(checkpoint.data);
+  const state: TableDataObject_ACU = deepClone_ACU(checkpoint.data);
+  const replayStartMessageIndex = checkpointRef.messageIndex;
+  replayCheckpointSchedule_ACU(checkpoint, checkpointRef.aiFloor);
+
   const runtime: SqlReplayRuntime_ACU = {
     engine: new SqliteEngine(),
     syncBridge: null as unknown as SyncBridge,
     loaded: false,
   };
   runtime.syncBridge = new SyncBridge(runtime.engine);
-  replayCheckpointSchedule_ACU(checkpoint, checkpointRef.aiFloor);
 
   try {
     for (const ref of frameRefs) {
-      if (ref.messageIndex < checkpointRef.messageIndex) continue;
+      if (ref.messageIndex < replayStartMessageIndex) continue;
       const entries = [...(ref.frame.logEntries || [])].sort((a, b) => a.seq - b.seq);
       for (const entry of entries) {
         try {
