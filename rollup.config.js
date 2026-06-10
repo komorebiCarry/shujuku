@@ -22,7 +22,7 @@ const __dirname = dirname(__filename);
 const BUILD_MODE = process.env.BUILD_MODE || 'userscript';
 
 const USER_SCRIPT_BANNER = `// ==UserScript==
-// @name         SP·数据库 III
+// @name         SP·数据库 V
 // @namespace    http://tampermonkey.net/
 // @version      2.0.0
 // @description  SillyTavern 数据库自动更新与交火模式索引管理脚本。

@@ -164,7 +164,7 @@ let themeMenuCloseTimer: AcuTimerHandle | undefined;
 let mobileNavCloseTimer: AcuTimerHandle | undefined;
 
 const shellTitle = computed(() =>
-  visualizer.isActive ? "数据库编辑器" : router.activePage?.title || "SP·数据库 III",
+  visualizer.isActive ? "数据库编辑器" : router.activePage?.title || "SP·数据库 V",
 );
 
 function toggleThemeMenu(): void {
