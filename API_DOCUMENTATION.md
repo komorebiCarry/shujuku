@@ -197,21 +197,44 @@ console.log("表格数据:", JSON.stringify(tableData, null, 2));
 
 ---
 
-### `importTableAsJson(jsonString)`
+### `importTableAsJson(jsonString, options?)`
 
-导入并覆盖当前表格数据。
+导入并覆盖当前表格数据。默认作为外部 JSON 导入，会写入当前聊天持久化；如果用于删除楼层后的备份恢复，应传入运行时恢复模式，避免制造新的持久化事件。
 
 **参数**:
 | 参数名 | 类型 | 必填 | 说明 |
 |--------|------|------|------|
 | jsonString | string | 是 | JSON 格式的表格数据字符串 |
+| options | object | 否 | 导入选项；`{ persist: false }` 或 `{ mode: 'restore' }` 表示只恢复运行时，不写入聊天持久化 |
 
 **返回值**: `Promise<boolean>` - 导入是否成功
 
 **示例**:
 ```javascript
 const jsonData = '{"mate": {...}, "sheet_0": {...}}';
+// 外部 JSON 导入：写入聊天持久化
 const success = await window.AutoCardUpdaterAPI.importTableAsJson(jsonData);
+
+// 删除楼层/备份恢复：只恢复运行时，不新增 data_replace/checkpoint/log
+const restored = await window.AutoCardUpdaterAPI.importTableAsJson(jsonData, { persist: false });
+```
+
+---
+
+### `restoreTableAsJson(jsonString)`
+
+删除楼层/备份恢复专用：只把 JSON 表格数据恢复到当前运行时，不写入聊天持久化，不推进自动更新楼层标记。
+
+**参数**:
+| 参数名 | 类型 | 必填 | 说明 |
+|--------|------|------|------|
+| jsonString | string | 是 | JSON 格式的表格数据字符串 |
+
+**返回值**: `Promise<boolean>` - 恢复是否成功
+
+**示例**:
+```javascript
+const restored = await window.AutoCardUpdaterAPI.restoreTableAsJson(jsonData);
 ```
 
 ---

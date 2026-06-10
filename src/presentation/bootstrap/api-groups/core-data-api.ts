@@ -22,6 +22,13 @@ import { enqueueSummaryVectorIndexFlush_ACU } from '../../../service/vector/summ
 import { importTableJsonThroughCommit_ACU } from '../../../service/table/table-import-service';
 import type { ApiGroupContext } from './callback-api';
 
+function shouldPersistImportedTableJson_ACU(options: any): boolean {
+    if (!options || typeof options !== 'object') return true;
+    if (options.persist === false || options.runtimeOnly === true) return false;
+    const mode = String(options.mode || options.source || '').toLowerCase();
+    return !(mode === 'restore' || mode === 'runtime' || mode === 'runtime-only' || mode === 'delete-layer-restore');
+}
+
 export function createCoreDataApi(ctx: ApiGroupContext): Record<string, Function> {
     return {
         // 导出当前表格数据
@@ -29,36 +36,42 @@ export function createCoreDataApi(ctx: ApiGroupContext): Record<string, Function
             return currentJsonTableData_ACU || {};
         },
 
-        // 导入并覆盖当前表格数据
-        importTableAsJson: async function(jsonString: any) {
+        // 导入并覆盖当前表格数据；默认外部导入会持久化，传 { persist:false } / { mode:'restore' } 时仅恢复运行时。
+        importTableAsJson: async function(jsonString: any, options?: any) {
             if (typeof jsonString !== 'string' || jsonString.trim() === '') {
                 logError_ACU('importTableAsJson received invalid input.');
                 showToastr_ACU('error', '导入数据失败：输入为空。');
                 return false;
             }
             try {
-                const commitResult = await importTableJsonThroughCommit_ACU(jsonString);
+                const persist = shouldPersistImportedTableJson_ACU(options);
+                const commitResult = await importTableJsonThroughCommit_ACU(jsonString, { persist });
                 if (commitResult.success) {
-                    const targetMessageIndexForVectorSync = commitResult.messageIndex ?? -1;
-                    logDebug_ACU(`[importTableAsJson] 已通过服务层导入提交入口导入表格数据，messageIndex=${targetMessageIndexForVectorSync}。`);
+                    if (persist) {
+                        const targetMessageIndexForVectorSync = commitResult.messageIndex ?? -1;
+                        logDebug_ACU(`[importTableAsJson] 已通过服务层导入提交入口导入表格数据，messageIndex=${targetMessageIndexForVectorSync}。`);
 
-                    await refreshMergedDataAndNotifyWithUI_ACU();
+                        await refreshMergedDataAndNotifyWithUI_ACU();
 
-                    if (commitResult.hasSummaryTables && getCurrentWorldbookConfig_ACU().summaryVectorIndexModeEnabled === true) {
-                        try {
-                            const queueResult = await enqueueSummaryVectorIndexFlush_ACU({
-                                targetMessageIndex: targetMessageIndexForVectorSync >= 0 ? targetMessageIndexForVectorSync : undefined,
-                                mode: 'sync',
-                                reason: 'importTableAsJson',
-                            });
-                            if (!queueResult.queued && !queueResult.skipped) {
-                                logWarn_ACU(`[importTableAsJson] 交火向量索引防抖归档入队失败: reason=${queueResult.reason || 'unknown'}`);
-                            } else {
-                                logDebug_ACU(`[importTableAsJson] 交火向量索引防抖归档已入队: queued=${queueResult.queued}, reason=${queueResult.reason || 'ok'}`);
+                        if (commitResult.hasSummaryTables && getCurrentWorldbookConfig_ACU().summaryVectorIndexModeEnabled === true) {
+                            try {
+                                const queueResult = await enqueueSummaryVectorIndexFlush_ACU({
+                                    targetMessageIndex: targetMessageIndexForVectorSync >= 0 ? targetMessageIndexForVectorSync : undefined,
+                                    mode: 'sync',
+                                    reason: 'importTableAsJson',
+                                });
+                                if (!queueResult.queued && !queueResult.skipped) {
+                                    logWarn_ACU(`[importTableAsJson] 交火向量索引防抖归档入队失败: reason=${queueResult.reason || 'unknown'}`);
+                                } else {
+                                    logDebug_ACU(`[importTableAsJson] 交火向量索引防抖归档已入队: queued=${queueResult.queued}, reason=${queueResult.reason || 'ok'}`);
+                                }
+                            } catch (syncError) {
+                                logError_ACU('[importTableAsJson] 交火向量索引防抖归档入队异常（表格导入已完成）:', syncError);
                             }
-                        } catch (syncError) {
-                            logError_ACU('[importTableAsJson] 交火向量索引防抖归档入队异常（表格导入已完成）:', syncError);
                         }
+                    } else {
+                        logDebug_ACU('[importTableAsJson] 已按运行时恢复模式导入表格数据，未写入聊天持久化。');
+                        (topLevelWindow_ACU as any).AutoCardUpdaterAPI?._notifyTableUpdate?.();
                     }
 
                     return true;
@@ -70,6 +83,11 @@ export function createCoreDataApi(ctx: ApiGroupContext): Record<string, Function
                 showToastr_ACU('error', `导入数据失败: ${error?.message || String(error)}`);
                 return false;
             }
+        },
+
+        // 删除楼层/备份恢复专用：只恢复运行时数据，不制造新的 V2 data_replace/checkpoint/log。
+        restoreTableAsJson: async function(jsonString: any) {
+            return this.importTableAsJson(jsonString, { mode: 'restore', persist: false });
         },
 
         // 外部触发增量更新
