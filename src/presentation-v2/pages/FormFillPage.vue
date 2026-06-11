@@ -25,7 +25,22 @@
           <strong class="acu-text__value">{{
             dashboard.aiMessageCount.value
           }}</strong>
+          · 当前 full checkpoint:
+          <strong class="acu-text__value acu-v2-form-fill-page__checkpoint-label">
+            {{ manualUpdate.checkpointFloorsLabel.value }}
+          </strong>
         </AcuText>
+
+        <AcuMessage kind="info">
+          本次重填范围：{{ manualUpdate.manualRefillRangeLabel.value }}。
+        </AcuMessage>
+        <AcuMessage
+          v-if="manualUpdate.checkpointRiskMessage.value"
+          kind="error"
+          class="acu-v2-form-fill-page__checkpoint-risk"
+        >
+          {{ manualUpdate.checkpointRiskMessage.value }}
+        </AcuMessage>
 
         <AcuMessage v-if="!dashboard.hasTables.value" kind="info">
           当前尚未加载数据库表格。
@@ -112,6 +127,17 @@
             />
           </AcuFormRow>
         </div>
+
+        <AcuMessage kind="info">
+          当前 full checkpoint：{{ manualUpdate.checkpointFloorsLabel.value }}；本次重填范围：{{ manualUpdate.manualRefillRangeLabel.value }}。
+        </AcuMessage>
+        <AcuMessage
+          v-if="manualUpdate.checkpointRiskMessage.value"
+          kind="error"
+          class="acu-v2-form-fill-page__checkpoint-risk"
+        >
+          {{ manualUpdate.checkpointRiskMessage.value }}
+        </AcuMessage>
 
         <TableSelector
           :sheet-keys="manualUpdate.sheetKeys.value"
@@ -259,10 +285,19 @@ watch(useChatChangedTick(), () => {
   white-space: nowrap;
 }
 
+.acu-v2-form-fill-page__checkpoint-label {
+  color: var(--acu-accent);
+}
+
 .acu-v2-form-fill-page__manual-extra {
   display: flex;
   flex-direction: column;
   gap: 8px;
+}
+
+.acu-v2-form-fill-page__checkpoint-risk {
+  color: var(--acu-danger);
+  font-weight: 700;
 }
 
 .acu-v2-form-fill-page__table-wrap {

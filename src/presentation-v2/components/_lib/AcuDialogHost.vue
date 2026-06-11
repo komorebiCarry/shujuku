@@ -25,6 +25,9 @@
         </header>
 
         <p class="acu-dialog__message">{{ renderedDialog.message }}</p>
+        <p v-if="renderedDialog.dangerMessage" class="acu-dialog__danger-message">
+          {{ renderedDialog.dangerMessage }}
+        </p>
 
         <label v-if="renderedDialog.kind === 'prompt'" class="acu-dialog__field">
           <span>{{ renderedDialog.label }}</span>
@@ -208,6 +211,18 @@ watch(
   margin: 0;
   color: var(--acu-text-2);
   font-size: var(--acu-font-size-body, 12px);
+  line-height: 1.55;
+  white-space: pre-wrap;
+}
+
+.acu-dialog__danger-message {
+  margin: 0;
+  padding: 8px 10px;
+  border-radius: var(--acu-radius-sm);
+  background: color-mix(in srgb, var(--acu-danger) 10%, transparent);
+  color: var(--acu-danger);
+  font-size: var(--acu-font-size-body, 12px);
+  font-weight: 700;
   line-height: 1.55;
   white-space: pre-wrap;
 }

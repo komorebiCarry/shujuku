@@ -6,10 +6,13 @@ import {
   _set_isAutoUpdatingCard_ACU,
   _set_manualExtraHint_ACU,
   _set_wasStoppedByUser_ACU,
+  getCurrentIsolationKey_ACU,
 } from '../../service/runtime/state-manager';
+import { getChatArray_ACU } from '../../service/chat/chat-service';
 import { saveSettings_ACU } from '../../service/settings/settings-service';
 import { getCurrentWorldbookConfig_ACU } from '../../service/settings/settings-readers';
 import { getSortedSheetKeys_ACU } from '../../service/template/chat-scope';
+import { collectV2CheckpointFloorsFromChat_ACU } from '../../service/table/table-history';
 import {
   executeCardUpdateCore_ACU,
   orchestrateManualUpdate_ACU,
@@ -32,6 +35,9 @@ export interface ManualUpdateState {
   manualUpdateBusy: Ref<boolean>;
   sheetKeys: ComputedRef<string[]>;
   sheetNames: ComputedRef<Record<string, string>>;
+  checkpointFloorsLabel: ComputedRef<string>;
+  manualRefillRangeLabel: ComputedRef<string>;
+  checkpointRiskMessage: ComputedRef<string>;
   vectorIndexWarning: ComputedRef<boolean>;
   refresh: () => void;
   setManualContextDepth: (value: number | string) => void;
@@ -121,6 +127,36 @@ function manualDepthForOrchestrator_ACU(
   return manualDepth == null
     ? fallback
     : normalizeNonNegativeInteger(manualDepth, fallback);
+}
+
+interface ManualRefillRangeSummary {
+  indices: number[];
+  startAiFloor: number;
+  endAiFloor: number;
+}
+
+function resolveManualRefillRangeSummary_ACU(manualDepth: number): ManualRefillRangeSummary | null {
+  const chat = getChatArray_ACU();
+  if (!Array.isArray(chat) || chat.length === 0) return null;
+  const aiItems = chat
+    .map((msg: any, index: number) => (msg && !msg.is_user ? { index, aiFloor: 0 } : null))
+    .filter((item): item is { index: number; aiFloor: number } => item !== null);
+  aiItems.forEach((item, idx) => { item.aiFloor = idx + 1; });
+  const skip = normalizeNonNegativeInteger(settings_ACU.skipUpdateFloors, 0);
+  const effectiveAiItems = skip > 0 ? aiItems.slice(0, -skip) : aiItems.slice();
+  const contextItems = manualDepth > 0 ? effectiveAiItems.slice(-manualDepth) : effectiveAiItems;
+  if (!contextItems.length) return null;
+  return {
+    indices: contextItems.map(item => item.index),
+    startAiFloor: contextItems[0].aiFloor,
+    endAiFloor: contextItems[contextItems.length - 1].aiFloor,
+  };
+}
+
+function formatAiFloorRange_ACU(startAiFloor: number, endAiFloor: number): string {
+  return startAiFloor === endAiFloor
+    ? `AI 第 ${startAiFloor} 层`
+    : `AI 第 ${startAiFloor}~${endAiFloor} 层`;
 }
 
 function progressLabel(event: CardUpdateProgressEvent): string {
@@ -229,6 +265,49 @@ export function useManualUpdate(): ManualUpdateState {
     return names;
   });
 
+  const checkpointFloors = computed(() => {
+    void refreshTick.value;
+    try {
+      return collectV2CheckpointFloorsFromChat_ACU(getChatArray_ACU(), getCurrentIsolationKey_ACU());
+    } catch {
+      return [];
+    }
+  });
+
+  const checkpointFloorsLabel = computed<string>(() => {
+    const floors = checkpointFloors.value.map(item => item.aiFloor);
+    return floors.length > 0
+      ? floors.map(floor => `AI 第 ${floor} 层`).join('、')
+      : '当前隔离标签暂无 full checkpoint';
+  });
+
+  const manualRefillRange = computed<ManualRefillRangeSummary | null>(() => {
+    void refreshTick.value;
+    try {
+      return resolveManualRefillRangeSummary_ACU(manualContextDepth.value);
+    } catch {
+      return null;
+    }
+  });
+
+  const manualRefillRangeLabel = computed<string>(() => {
+    const range = manualRefillRange.value;
+    return range
+      ? formatAiFloorRange_ACU(range.startAiFloor, range.endAiFloor)
+      : '暂无可重填 AI 楼层';
+  });
+
+  const checkpointRiskMessage = computed<string>(() => {
+    const checkpoints = checkpointFloors.value;
+    const range = manualRefillRange.value;
+    if (checkpoints.length === 0 || !range) return '';
+    const checkpointIndexSet = new Set(range.indices);
+    const coveredCheckpoints = checkpoints.filter(item => checkpointIndexSet.has(item.messageIndex));
+    if (coveredCheckpoints.length !== checkpoints.length) return '';
+    const coveredFloors = coveredCheckpoints.map(item => `AI 第 ${item.aiFloor} 层`).join('、');
+    return `危险：当前聊天的所有 full checkpoint 都在本次重填范围内（${coveredFloors}）。继续重填将导致重填起点前没有可回放 checkpoint，选中表可能从空白结构开始重填，是否是预期行为？`;
+  });
+
   const vectorIndexWarning = computed<boolean>(() => {
     void refreshTick.value;
     try {
@@ -282,9 +361,11 @@ export function useManualUpdate(): ManualUpdateState {
 
     const confirmed = await dialogStore.confirm({
       title: '执行手动填表',
-      message: '即将执行手动填表。\n\n系统会在内存中按当前上下文和批处理设置重填当前选中的表，全部成功后才写入新的完整 checkpoint。\n如果重填起点之前找不到可回放的 checkpoint，选中表会从空白结构开始重填；未选中的表会保持当前最新数据。\n\n失败或终止时不会清空聊天记录中的旧表格数据。',
+      message: `即将执行手动填表。\n\n当前 full checkpoint：${checkpointFloorsLabel.value}\n本次重填范围：${manualRefillRangeLabel.value}\n\n系统会在内存中按当前上下文和批处理设置重填当前选中的表，全部成功后才写入新的完整 checkpoint。\n如果重填起点之前找不到可回放的 checkpoint，选中表会从空白结构开始重填；未选中的表会保持当前最新数据。\n\n失败或终止时不会清空聊天记录中的旧表格数据。`,
+      dangerMessage: checkpointRiskMessage.value || undefined,
       confirmLabel: '确认并继续',
       cancelLabel: '取消',
+      confirmVariant: checkpointRiskMessage.value ? 'danger' : undefined,
     });
     if (!confirmed) return;
     // 兼容沿用 clearBeforeUpdate 参数名；service 层实际执行事务式重填，不会预清空聊天记录。
@@ -364,6 +445,9 @@ export function useManualUpdate(): ManualUpdateState {
     manualUpdateBusy,
     sheetKeys,
     sheetNames,
+    checkpointFloorsLabel,
+    manualRefillRangeLabel,
+    checkpointRiskMessage,
     vectorIndexWarning,
     refresh,
     setManualContextDepth,

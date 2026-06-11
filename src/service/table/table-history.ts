@@ -12,6 +12,13 @@ export interface TableHistoryState_ACU {
     hasTrackedUpdate: boolean;
 }
 
+export interface TableCheckpointFloor_ACU {
+    messageIndex: number;
+    aiFloor: number;
+    reason?: string;
+    createdAt?: number;
+}
+
 interface ResolveTableHistoryOptions_ACU {
     sheetKey: string;
     isSummaryTable: boolean;
@@ -150,6 +157,31 @@ export function countAiMessagesUpToIndex_ACU(chat: ACUMessage[] | any[], message
         if (chat[i] && !chat[i].is_user) count += 1;
     }
     return count;
+}
+
+export function collectV2CheckpointFloorsFromChat_ACU(
+    chat: ACUMessage[] | any[] | null | undefined,
+    isolationKey: string,
+): TableCheckpointFloor_ACU[] {
+    if (!Array.isArray(chat)) return [];
+    const checkpoints: TableCheckpointFloor_ACU[] = [];
+    let aiFloor = 0;
+    for (let i = 0; i < chat.length; i += 1) {
+        const msg = chat[i];
+        if (!msg || msg.is_user) continue;
+        aiFloor += 1;
+        const tagData = readIsolatedTagData_ACU(msg, isolationKey) as any;
+        if (!isV2TagData_ACU(tagData)) continue;
+        const checkpoint = tagData.storageFrame.checkpoint;
+        if (checkpoint?.kind !== 'full') continue;
+        checkpoints.push({
+            messageIndex: i,
+            aiFloor,
+            reason: checkpoint.reason,
+            createdAt: checkpoint.createdAt,
+        });
+    }
+    return checkpoints;
 }
 
 export function resolveTableHistoryStateFromChat_ACU(

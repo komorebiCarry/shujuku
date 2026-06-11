@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { resolveTableHistoryStateFromChat_ACU } from '../../../src/service/table/table-history';
+import { collectV2CheckpointFloorsFromChat_ACU, resolveTableHistoryStateFromChat_ACU } from '../../../src/service/table/table-history';
 
 const settings = {
   dataIsolationEnabled: false,
@@ -268,5 +268,41 @@ describe('resolveTableHistoryStateFromChat_ACU', () => {
     expect(state.hasTrackedUpdate).toBe(true);
     expect(state.lastTrackedUpdateMessageIndex).toBe(2);
     expect(state.lastTrackedUpdateAiFloor).toBe(1);
+  });
+
+  it('收集当前隔离标签的 V2 full checkpoint AI 楼层', () => {
+    const chat = [
+      { is_user: true },
+      v2Message({
+        version: 2,
+        checkpoint: {
+          kind: 'full',
+          createdAt: 1,
+          reason: 'init',
+          data: { mate: {}, sheet_0: { name: '表A', content: [['row_id']] } },
+        },
+        logEntries: [],
+      }),
+      v2Message({
+        version: 2,
+        logEntries: [{ seq: 1, operations: [] }],
+      }),
+      { is_user: true },
+      v2Message({
+        version: 2,
+        checkpoint: {
+          kind: 'full',
+          createdAt: 2,
+          reason: 'periodic',
+          data: { mate: {}, sheet_0: { name: '表A', content: [['row_id'], ['2']] } },
+        },
+        logEntries: [],
+      }, true),
+    ];
+
+    expect(collectV2CheckpointFloorsFromChat_ACU(chat, '')).toEqual([
+      { messageIndex: 1, aiFloor: 1, reason: 'init', createdAt: 1 },
+      { messageIndex: 4, aiFloor: 3, reason: 'periodic', createdAt: 2 },
+    ]);
   });
 });

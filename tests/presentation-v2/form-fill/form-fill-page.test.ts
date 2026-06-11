@@ -46,7 +46,14 @@ function createTableData() {
   };
 }
 
-async function mountFormFillPage(settings = createSettings(), activePageId = 'form-fill') {
+async function mountFormFillPage(
+  settings = createSettings(),
+  activePageId = 'form-fill',
+  checkpointFloors = [
+    { messageIndex: 1, aiFloor: 1, reason: 'init', createdAt: 1 },
+    { messageIndex: 4, aiFloor: 3, reason: 'periodic', createdAt: 2 },
+  ],
+) {
   vi.resetModules();
   document.body.innerHTML = '';
   document.head.innerHTML = '';
@@ -158,6 +165,7 @@ async function mountFormFillPage(settings = createSettings(), activePageId = 'fo
     getActiveTemplatePresetMeta_ACU: () => ({ displayName: '默认预设', scopeLabel: '全局' }),
   }));
   vi.doMock('../../../src/service/table/table-history', () => ({
+    collectV2CheckpointFloorsFromChat_ACU: () => checkpointFloors,
     resolveTableHistoryStateFromChat_ACU: (_chat: any[], options: any) => ({
       latestAiMessageIndex: 4,
       latestDataMessageIndex: 3,
@@ -275,6 +283,9 @@ describe('FormFillPage', () => {
     expect(text).toContain('手动填表');
     expect(text).toContain('填表 API 预设');
     expect(text).toContain('本次填表附加要求');
+    expect(text).toContain('当前 full checkpoint');
+    expect(text).toContain('AI 第 1 层、AI 第 3 层');
+    expect(text).toContain('本次重填范围');
     expect(text).toContain('执行手动填表');
     expect(text).toContain('表格模板预设');
     expect(text).toContain('打开可视化表格编辑器');
@@ -650,6 +661,8 @@ describe('FormFillPage · 手动填表面板', () => {
     expect(text).toContain('手动处理最近 N 层');
     expect(text).toContain('每 N 层合并为一次填表');
     expect(text).toContain('本次填表附加要求');
+    expect(text).toContain('当前 full checkpoint');
+    expect(text).toContain('AI 第 1 层、AI 第 3 层');
     expect(text).toContain('执行手动填表');
     expect(panel.querySelector('.acu-v2-form-fill-page__manual-extra .acu-toggle')).toBeNull();
     expect(panel.querySelector('.acu-v2-form-fill-page__manual-extra textarea')).not.toBeNull();
@@ -734,6 +747,8 @@ describe('FormFillPage · 手动填表面板', () => {
 
     const dialogText = document.querySelector('.acu-dialog-layer')?.textContent || '';
     expect(dialogText).toContain('即将执行手动填表');
+    expect(dialogText).toContain('当前 full checkpoint：AI 第 1 层、AI 第 3 层');
+    expect(dialogText).toContain('本次重填范围：AI 第 1~3 层');
     expect(dialogText).toContain('系统会在内存中按当前上下文和批处理设置重填当前选中的表');
     expect(dialogText).toContain('失败或终止时不会清空聊天记录中的旧表格数据');
     expect(dialogText).toContain('确认并继续');
@@ -752,6 +767,35 @@ describe('FormFillPage · 手动填表面板', () => {
       onProgress: expect.any(Function),
     }));
     expect(manualExtraHintSetter).not.toHaveBeenCalled();
+
+    mount.__resetAcuV2MountForTests();
+  });
+
+  it('所有 checkpoint 都落入重填范围时在面板和确认弹窗中显示红色风险提示', async () => {
+    const settings = createSettings();
+    settings.manualUpdateContextDepth = 3;
+    const { mount } = await mountFormFillPage(settings, 'form-fill', [
+      { messageIndex: 1, aiFloor: 1, reason: 'init', createdAt: 1 },
+      { messageIndex: 4, aiFloor: 3, reason: 'periodic', createdAt: 2 },
+    ]);
+
+    const panel = Array.from(document.querySelectorAll<HTMLElement>('.acu-v2-form-fill-page__grid > .acu-panel'))
+      .find(item => item.querySelector('.acu-panel__title')?.textContent?.includes('手动填表'))!;
+    expect(panel.textContent || '').toContain('当前聊天的所有 full checkpoint 都在本次重填范围内');
+    expect(panel.textContent || '').toContain('AI 第 1 层、AI 第 3 层');
+    expect(panel.querySelector('.acu-v2-form-fill-page__checkpoint-risk')).not.toBeNull();
+
+    const button = Array.from(panel.querySelectorAll('button'))
+      .find(btn => btn.textContent?.includes('执行手动填表')) as HTMLButtonElement;
+    button.click();
+    await Promise.resolve();
+
+    const danger = document.querySelector<HTMLElement>('.acu-dialog__danger-message');
+    expect(danger).not.toBeNull();
+    expect(danger!.textContent || '').toContain('重填起点前没有可回放 checkpoint');
+    const confirmButton = Array.from(document.querySelectorAll<HTMLButtonElement>('.acu-dialog-layer button'))
+      .find(btn => btn.textContent?.includes('确认并继续'))!;
+    expect(confirmButton.className).toContain('danger');
 
     mount.__resetAcuV2MountForTests();
   });

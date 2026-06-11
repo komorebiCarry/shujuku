@@ -22,6 +22,7 @@ export interface AcuDialogRequest {
   kind: AcuDialogKind;
   title: string;
   message: string;
+  dangerMessage?: string;
   label?: string;
   initialValue?: string;
   placeholder?: string;
@@ -39,11 +40,12 @@ export interface AcuDialogRequest {
 }
 
 export interface ConfirmDialogOptions {
-  title: string;
-  message: string;
-  confirmLabel?: string;
-  cancelLabel?: string;
-  confirmVariant?: AcuDialogVariant;
+    title: string;
+    message: string;
+    dangerMessage?: string;
+    confirmLabel?: string;
+    cancelLabel?: string;
+    confirmVariant?: AcuDialogVariant;
 }
 
 export interface PromptDialogOptions {
@@ -110,6 +112,7 @@ export const useDialogStore = defineStore("acu-v2-dialog", {
         kind: "confirm",
         title: options.title,
         message: options.message,
+        dangerMessage: options.dangerMessage,
         confirmLabel: options.confirmLabel || "确认",
         cancelLabel: options.cancelLabel || "取消",
         confirmVariant: options.confirmVariant || "primary",
