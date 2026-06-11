@@ -83,6 +83,7 @@ export async function ensureLegacyStorageMigratedBeforeWrite_ACU(reason = 'table
     data: mergedLegacyData,
     isolationKey,
     isolationConfig,
+    skipUpdateFloors: settings_ACU.skipUpdateFloors,
   });
   if (!migrationResult.migrated) {
     return { success: false, error: `旧存储迁移到 V2 失败: ${migrationResult.error || '未执行迁移'}` };

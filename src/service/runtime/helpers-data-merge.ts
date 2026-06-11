@@ -391,6 +391,7 @@ if (!Array.isArray(next.content)) next.content = guideHeader ? [guideHeader] : [
                   enabled: settings_ACU.dataIsolationEnabled,
                   code: settings_ACU.dataIsolationCode,
               },
+              skipUpdateFloors: settings_ACU.skipUpdateFloors,
           });
           if (!migrationResult.migrated) {
               throw new Error(`旧存储迁移到 V2 失败: ${migrationResult.error || '未执行迁移'}`);

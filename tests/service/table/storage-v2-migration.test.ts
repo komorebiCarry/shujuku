@@ -77,6 +77,57 @@ describe('migrateLegacyStorageToV2OnLoad_ACU', () => {
     expect(resolveTableStorageStrategy_ACU(mockChatRef.value, '', { enabled: false, code: '' }).mode).toBe('v2');
   });
 
+  it('配置保留当前楼不更新时，旧存储迁移 checkpoint 落在当前 AI 楼的上一楼', async () => {
+    const data = { sheet_0: sheet('背包') } as any;
+    mockChatRef.value = [
+      {
+        is_user: false,
+        mes: 'previous ai',
+        TavernDB_ACU_IndependentData: { sheet_0: data.sheet_0 },
+        TavernDB_ACU_ModifiedKeys: ['sheet_0'],
+      },
+      { is_user: true },
+      { is_user: false, mes: 'current ai without fill' },
+    ];
+
+    const result = await migrateLegacyStorageToV2OnLoad_ACU({
+      data,
+      isolationKey: '',
+      isolationConfig: { enabled: false, code: '' },
+      skipUpdateFloors: 1,
+    });
+
+    expect(result).toMatchObject({ migrated: true, messageIndex: 0 });
+    expect(mockChatRef.value[0].TavernDB_ACU_IsolatedData['']._acu_storage_version).toBe(2);
+    expect(mockChatRef.value[0].TavernDB_ACU_IsolatedData[''].storageFrame.checkpoint.data).toEqual(data);
+    expect(mockChatRef.value[2].TavernDB_ACU_IsolatedData).toBeUndefined();
+  });
+
+  it('表级 skipFloors=1 时，旧存储迁移也落在当前 AI 楼的上一楼', async () => {
+    const data = { sheet_0: sheet('背包') } as any;
+    data.sheet_0.updateConfig = { skipFloors: 1 };
+    mockChatRef.value = [
+      {
+        is_user: false,
+        mes: 'previous ai',
+        TavernDB_ACU_IndependentData: { sheet_0: data.sheet_0 },
+        TavernDB_ACU_ModifiedKeys: ['sheet_0'],
+      },
+      { is_user: true },
+      { is_user: false, mes: 'current ai without fill' },
+    ];
+
+    const result = await migrateLegacyStorageToV2OnLoad_ACU({
+      data,
+      isolationKey: '',
+      isolationConfig: { enabled: false, code: '' },
+    });
+
+    expect(result).toMatchObject({ migrated: true, messageIndex: 0 });
+    expect(mockChatRef.value[0].TavernDB_ACU_IsolatedData['']._acu_storage_version).toBe(2);
+    expect(mockChatRef.value[2].TavernDB_ACU_IsolatedData).toBeUndefined();
+  });
+
   it('迁移 V1 隔离槽时保留其他隔离标签，并把旧 updateGroupKeys 写入 scheduleSummary', async () => {
     const data = {
       sheet_0: sheet('角色'),

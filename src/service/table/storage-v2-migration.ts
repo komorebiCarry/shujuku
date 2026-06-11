@@ -10,6 +10,7 @@ export interface LegacyToV2MigrationOptions_ACU {
   data: Record<string, any> | null;
   isolationKey: string;
   isolationConfig: IsolationConfig_ACU;
+  skipUpdateFloors?: number;
 }
 
 export interface LegacyToV2MigrationResult_ACU {
@@ -37,11 +38,32 @@ function countAiFloor_ACU(chat: any[], messageIndex: number): number {
   return count;
 }
 
-function findLatestAiMessage_ACU(chat: any[]): { message: any; index: number } | null {
-  for (let i = chat.length - 1; i >= 0; i -= 1) {
-    if (chat[i] && !chat[i].is_user) return { message: chat[i], index: i };
+function normalizeSkipUpdateFloors_ACU(value: unknown): number {
+  const num = Number(value);
+  return Number.isFinite(num) && num > 0 ? Math.trunc(num) : 0;
+}
+
+function resolveMigrationSkipUpdateFloors_ACU(data: Record<string, any> | null | undefined, inheritedSkip: unknown): number {
+  let maxSkip = normalizeSkipUpdateFloors_ACU(inheritedSkip);
+  for (const sheetKey of sheetKeysOfData_ACU(data)) {
+    const rawSkip = (data as any)?.[sheetKey]?.updateConfig?.skipFloors;
+    if (Number.isFinite(rawSkip) && rawSkip >= 0) {
+      maxSkip = Math.max(maxSkip, normalizeSkipUpdateFloors_ACU(rawSkip));
+    }
   }
-  return null;
+  return maxSkip;
+}
+
+function findMigrationTargetAiMessage_ACU(chat: any[], skipUpdateFloors: number): { message: any; index: number } | null {
+  const aiMessages: { message: any; index: number }[] = [];
+  for (let i = 0; i < chat.length; i += 1) {
+    if (chat[i] && !chat[i].is_user) aiMessages.push({ message: chat[i], index: i });
+  }
+  if (aiMessages.length === 0) return null;
+
+  const normalizedSkip = normalizeSkipUpdateFloors_ACU(skipUpdateFloors);
+  const targetAiIndex = Math.max(0, aiMessages.length - 1 - normalizedSkip);
+  return aiMessages[targetAiIndex];
 }
 
 function noteFilled_ACU(summary: LegacyScheduleSummary_ACU, sheetKey: string, aiFloor: number): void {
@@ -99,13 +121,17 @@ export function collectLegacyScheduleSummaryForMigration_ACU(
   isolationKey: string,
   isolationConfig: IsolationConfig_ACU,
   data: Record<string, any> | null,
+  options: { maxMessageIndex?: number } = {},
 ): LegacyScheduleSummary_ACU {
   if (!Array.isArray(chat) || chat.length === 0) return {};
   const allowedSheetKeys = new Set(sheetKeysOfData_ACU(data));
   if (allowedSheetKeys.size === 0) return {};
 
+  const maxMessageIndex = Number.isInteger(options.maxMessageIndex)
+    ? Math.max(0, Math.min(chat.length - 1, options.maxMessageIndex as number))
+    : chat.length - 1;
   const summary: LegacyScheduleSummary_ACU = {};
-  for (let i = 0; i < chat.length; i += 1) {
+  for (let i = 0; i <= maxMessageIndex; i += 1) {
     const message = chat[i];
     if (!message || message.is_user) continue;
     const aiFloor = countAiFloor_ACU(chat, i);
@@ -193,7 +219,8 @@ export async function migrateLegacyStorageToV2OnLoad_ACU(
     return { migrated: false };
   }
 
-  const target = findLatestAiMessage_ACU(chat);
+  const skipUpdateFloors = resolveMigrationSkipUpdateFloors_ACU(options.data, options.skipUpdateFloors);
+  const target = findMigrationTargetAiMessage_ACU(chat, skipUpdateFloors);
   if (!target) {
     return { migrated: false, error: 'no AI message found for legacy migration' };
   }
@@ -204,6 +231,7 @@ export async function migrateLegacyStorageToV2OnLoad_ACU(
     options.isolationKey,
     options.isolationConfig,
     options.data,
+    { maxMessageIndex: target.index },
   );
   const revision = buildMigrationRevision_ACU();
   const frame: TableStorageFrameV2_ACU = {
@@ -231,7 +259,7 @@ export async function migrateLegacyStorageToV2OnLoad_ACU(
   cleanupLegacyFieldsAfterV2Write_ACU(chat, options.isolationKey, options.isolationConfig);
 
   await saveChatToHost_ACU();
-  logDebug_ACU(`[V2 Migration] legacy-v1 migrated to V2 checkpoint: messageIndex=${target.index}, isolationKey=[${options.isolationKey || '无标签'}], sheets=${sheetKeys.length}`);
+  logDebug_ACU(`[V2 Migration] legacy-v1 migrated to V2 checkpoint: messageIndex=${target.index}, skipUpdateFloors=${skipUpdateFloors}, isolationKey=[${options.isolationKey || '无标签'}], sheets=${sheetKeys.length}`);
 
   return { migrated: true, messageIndex: target.index };
 }
