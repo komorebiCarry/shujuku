@@ -82,8 +82,13 @@ const descriptionTransition = useAcuHeightTransition({
   expandedTransform: 'none',
 });
 
+const emit = defineEmits<{
+  (e: 'description-toggle', open: boolean): void;
+}>();
+
 function toggleDescription(): void {
   descriptionOpen.value = !descriptionOpen.value;
+  emit('description-toggle', descriptionOpen.value);
 }
 
 function beforeDescriptionEnter(el: Element): void {

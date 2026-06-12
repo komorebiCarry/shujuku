@@ -2,6 +2,7 @@
   <AcuPanel
     :title="formFillCopy.panels.checkpoint.title"
     :description="formFillCopy.panels.checkpoint.description"
+    @description-toggle="handleDescriptionToggle"
   >
     <div class="acu-form-fill-checkpoint-panel__status-grid">
       <div class="acu-form-fill-checkpoint-panel__status-item">
@@ -32,7 +33,10 @@
       </strong>
     </AcuMessage>
 
-    <section class="acu-form-fill-checkpoint-panel__settings">
+    <section
+      v-if="checkpointSettingsUnlocked"
+      class="acu-form-fill-checkpoint-panel__settings"
+    >
       <h4 class="acu-form-fill-checkpoint-panel__section-title">
         自动生成 full checkpoint
       </h4>
@@ -83,8 +87,14 @@ const checkpointFieldKeys = new Set<NumberSettingKey>([
   "checkpointSingleOperationRatioPercent",
 ]);
 
+const UNLOCK_CLICK_COUNT_ACU = 5;
+const UNLOCK_CLICK_INTERVAL_MS_ACU = 2000;
+
 const settings = useFormFillSettings();
 const refreshTick = ref(0);
+const checkpointSettingsUnlocked = ref(false);
+const descriptionClickCount = ref(0);
+const lastDescriptionClickAt = ref(0);
 
 const checkpointFields = computed(() =>
   settings.numberFields.value.filter((field) => checkpointFieldKeys.has(field.key)),
@@ -136,6 +146,20 @@ function refresh(): void {
 function setCheckpointNumber(key: NumberSettingKey, value: number | string): void {
   settings.setNumber(key, value);
   refreshTick.value++;
+}
+
+function handleDescriptionToggle(_open: boolean): void {
+  if (checkpointSettingsUnlocked.value) return;
+
+  const now = Date.now();
+  descriptionClickCount.value = now - lastDescriptionClickAt.value <= UNLOCK_CLICK_INTERVAL_MS_ACU
+    ? descriptionClickCount.value + 1
+    : 1;
+  lastDescriptionClickAt.value = now;
+
+  if (descriptionClickCount.value >= UNLOCK_CLICK_COUNT_ACU) {
+    checkpointSettingsUnlocked.value = true;
+  }
 }
 
 onMounted(refresh);

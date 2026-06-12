@@ -19,7 +19,7 @@ export const formFillCopy = {
     },
     checkpoint: {
       title: "Checkpoint 设置",
-      description: "查看 checkpoint 后的增量状态，并调整自动生成 full checkpoint 的阈值。",
+      description: "查看 checkpoint 后的增量状态，用于判断是否接近自动生成 full checkpoint。",
     },
     filter: {
       title: "标签筛选",
