@@ -13,7 +13,7 @@ export const protagonistInfoSheet = {
 ddl: `CREATE TABLE protagonist_info ( -- 主角信息表
   row_id INTEGER PRIMARY KEY, -- 行号
   char_name TEXT NOT NULL, -- 人物名称
-  gender_age TEXT NOT NULL, -- 性别/年龄
+  gender_age TEXT, -- 性别/年龄
   appearance TEXT, -- 外貌特征
   occupation TEXT, -- 职业/身份
   past_experience TEXT, -- 过往经历

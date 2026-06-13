@@ -15,7 +15,7 @@ export const inventorySheet = {
   item_name TEXT NOT NULL UNIQUE, -- 物品名称
   quantity INTEGER NOT NULL DEFAULT 1 CHECK(quantity > 0), -- 数量
   description TEXT, -- 描述/效果
-  category TEXT NOT NULL -- 类别
+  category TEXT -- 类别
 );`
   },
   content: [

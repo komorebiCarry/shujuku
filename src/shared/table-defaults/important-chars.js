@@ -13,8 +13,8 @@ export const importantCharsSheet = {
     ddl: `CREATE TABLE important_characters ( -- 重要角色表
   row_id INTEGER PRIMARY KEY, -- 行号
   name TEXT NOT NULL UNIQUE, -- 姓名
-  gender_age TEXT NOT NULL, -- 性别/年龄
-  brief_intro TEXT CHECK(brief_intro IS NULL OR LENGTH(brief_intro) <= 20), -- 一句话介绍
+  gender_age TEXT, -- 性别/年龄
+  brief_intro TEXT, -- 一句话介绍
   appearance TEXT, -- 外貌特征
   key_items TEXT, -- 持有的重要物品
   is_absent TEXT NOT NULL DEFAULT '否' CHECK(is_absent IN ('是', '否')), -- 是否离场

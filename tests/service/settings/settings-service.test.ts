@@ -118,10 +118,12 @@ vi.mock('../../../src/shared/data-constants', () => ({
 }));
 
 vi.mock('../../../src/shared/defaults-json.js', () => ({
+  DEFAULT_BUILTIN_PLOT_PRESETS_ACU: [{ name: '时间召回', _acuBuiltinPresetId: 'time-recall', _acuBuiltinPresetVersion: 'test' }],
   DEFAULT_CHAR_CARD_PROMPT_ACU: [{ role: 'USER', content: '默认提示词' }],
   DEFAULT_MERGE_SUMMARY_PROMPT_ACU: '默认合并提示词',
   DEFAULT_PLOT_SETTINGS_ACU: { enabled: false },
   DEFAULT_TABLE_TEMPLATE_ACU: '{"mate":{"type":"chatSheets","version":1},"sheet_0":{"name":"默认表"}}',
+  ORIGINAL_DEFAULT_TABLE_TEMPLATE_ACU: JSON.stringify('{"mate":{"type":"chatSheets","version":1},"sheet_0":{"name":"默认表","content":[["row_id","值"]],"sourceData":{"ddl":"CREATE TABLE default_table (row_id INTEGER PRIMARY KEY, value TEXT);"}}}'),
   get TABLE_TEMPLATE_ACU() { return '{"mate":{"type":"chatSheets","version":1}}'; },
   _set_TABLE_TEMPLATE_ACU: mockSetTableTemplate,
 }));
@@ -130,6 +132,12 @@ vi.mock('../../../src/shared/defaults', () => ({
   DEFAULT_AUTO_UPDATE_FREQUENCY_ACU: 1,
   DEFAULT_AUTO_UPDATE_THRESHOLD_ACU: 3,
   DEFAULT_AUTO_UPDATE_TOKEN_THRESHOLD_ACU: 500,
+  DEFAULT_CHECKPOINT_CUMULATIVE_OPERATION_RATIO_PERCENT_ACU: 35,
+  DEFAULT_CHECKPOINT_MAX_ENTRIES_AFTER_CHECKPOINT_ACU: 50,
+  DEFAULT_CHECKPOINT_MAX_OPERATION_COUNT_AFTER_CHECKPOINT_ACU: 2000,
+  DEFAULT_CHECKPOINT_MAX_OPERATION_KB_AFTER_CHECKPOINT_ACU: 256,
+  DEFAULT_CHECKPOINT_SINGLE_OPERATION_RATIO_PERCENT_ACU: 50,
+  TABLE_TEMPLATE_DEFAULTS_REFRESH_VERSION_ACU: 'test-table-defaults-refresh',
   VECTOR_MEMORY_DEFAULTS_REFRESH_VERSION_ACU: 'spv3.6.3-keyword-prompt-content-based-refresh',
   defaultVectorMemoryConfig_ACU: { 
     enabled: false,

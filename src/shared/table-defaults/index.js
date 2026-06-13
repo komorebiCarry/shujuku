@@ -16,22 +16,65 @@ import { questsEventsSheet } from './quests-events.js';
 import { chronicleSheet } from './chronicle.js';
 import { optionsSheet } from './options.js';
 import { mateConfig } from './mate.js';
+import { romanceDefaultSheetOverrides } from './romance-overrides.js';
+
+function cloneTableDefault_ACU(value) {
+  return JSON.parse(JSON.stringify(value));
+}
+
+function buildOriginalDefaultTableTemplateObjectInternal_ACU() {
+  return {
+    [globalStateSheet.uid]: cloneTableDefault_ACU(globalStateSheet),
+    [protagonistInfoSheet.uid]: cloneTableDefault_ACU(protagonistInfoSheet),
+    [importantCharsSheet.uid]: cloneTableDefault_ACU(importantCharsSheet),
+    [protagonistSkillsSheet.uid]: cloneTableDefault_ACU(protagonistSkillsSheet),
+    [inventorySheet.uid]: cloneTableDefault_ACU(inventorySheet),
+    [questsEventsSheet.uid]: cloneTableDefault_ACU(questsEventsSheet),
+    [chronicleSheet.uid]: cloneTableDefault_ACU(chronicleSheet),
+    [optionsSheet.uid]: cloneTableDefault_ACU(optionsSheet),
+    mate: cloneTableDefault_ACU(mateConfig)
+  };
+}
+
+function applyRomanceDefaultOverrides_ACU(base) {
+  const overridesByName = new Map(
+    Object.values(romanceDefaultSheetOverrides || {})
+      .filter(sheet => sheet && typeof sheet === 'object' && sheet.name)
+      .map(sheet => [String(sheet.name), sheet])
+  );
+  Object.keys(base).forEach((sheetKey) => {
+    if (sheetKey === 'mate') return;
+    const currentSheet = base[sheetKey];
+    const overrideSheet = overridesByName.get(String(currentSheet?.name || ''));
+    if (!overrideSheet) return;
+    const nextSheet = cloneTableDefault_ACU(overrideSheet);
+    nextSheet.uid = currentSheet.uid || sheetKey;
+    nextSheet.orderNo = currentSheet.orderNo ?? nextSheet.orderNo;
+    base[sheetKey] = nextSheet;
+  });
+  return base;
+}
 
 /**
- * 构建默认表模板对象（普通 JS 对象，未序列化）
+ * 构建原始默认表模板对象（普通 JS 对象，未序列化）。
+ * 该模板保留 8 张原默认表，仅放宽 DDL 约束，供旧用户已保存模板继续使用。
+ */
+export function buildOriginalDefaultTableTemplateObject_ACU() {
+  return buildOriginalDefaultTableTemplateObjectInternal_ACU();
+}
+
+/**
+ * 构建当前默认表模板对象（普通 JS 对象，未序列化）。
+ * 当前默认以原默认 8 张表为基础，同名表使用恋爱特化表内容覆盖，不引入恋爱表新增表。
  */
 export function buildDefaultTableTemplateObject_ACU() {
-  return {
-    [globalStateSheet.uid]: globalStateSheet,
-    [protagonistInfoSheet.uid]: protagonistInfoSheet,
-    [importantCharsSheet.uid]: importantCharsSheet,
-    [protagonistSkillsSheet.uid]: protagonistSkillsSheet,
-    [inventorySheet.uid]: inventorySheet,
-    [questsEventsSheet.uid]: questsEventsSheet,
-    [chronicleSheet.uid]: chronicleSheet,
-    [optionsSheet.uid]: optionsSheet,
-    mate: mateConfig
-  };
+  return applyRomanceDefaultOverrides_ACU(buildOriginalDefaultTableTemplateObjectInternal_ACU());
+}
+
+export function buildOriginalDefaultTableTemplateString_ACU() {
+  const obj = buildOriginalDefaultTableTemplateObject_ACU();
+  const innerJson = JSON.stringify(obj, null, 2);
+  return JSON.stringify(innerJson);
 }
 
 /**

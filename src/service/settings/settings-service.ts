@@ -7,7 +7,7 @@
 // ═══════════════════════════════════════════════════════════════
 
 import { STORAGE_KEY_ALL_SETTINGS_ACU, STORAGE_KEY_CUSTOM_TEMPLATE_ACU, normalizeIsolationCode_ACU } from '../../shared/data-constants';
-import { DEFAULT_CHAR_CARD_PROMPT_ACU, DEFAULT_MERGE_SUMMARY_PROMPT_ACU, DEFAULT_PLOT_SETTINGS_ACU, DEFAULT_TABLE_TEMPLATE_ACU, TABLE_TEMPLATE_ACU, _set_TABLE_TEMPLATE_ACU} from '../../shared/defaults-json.js';
+import { DEFAULT_BUILTIN_PLOT_PRESETS_ACU, DEFAULT_CHAR_CARD_PROMPT_ACU, DEFAULT_MERGE_SUMMARY_PROMPT_ACU, DEFAULT_PLOT_SETTINGS_ACU, DEFAULT_TABLE_TEMPLATE_ACU, ORIGINAL_DEFAULT_TABLE_TEMPLATE_ACU, TABLE_TEMPLATE_ACU, _set_TABLE_TEMPLATE_ACU} from '../../shared/defaults-json.js';
 import { DEFAULT_AUTO_UPDATE_FREQUENCY_ACU, DEFAULT_AUTO_UPDATE_THRESHOLD_ACU, DEFAULT_AUTO_UPDATE_TOKEN_THRESHOLD_ACU, DEFAULT_CHECKPOINT_CUMULATIVE_OPERATION_RATIO_PERCENT_ACU, DEFAULT_CHECKPOINT_MAX_ENTRIES_AFTER_CHECKPOINT_ACU, DEFAULT_CHECKPOINT_MAX_OPERATION_COUNT_AFTER_CHECKPOINT_ACU, DEFAULT_CHECKPOINT_MAX_OPERATION_KB_AFTER_CHECKPOINT_ACU, DEFAULT_CHECKPOINT_SINGLE_OPERATION_RATIO_PERCENT_ACU, TABLE_TEMPLATE_DEFAULTS_REFRESH_VERSION_ACU, VECTOR_MEMORY_DEFAULTS_REFRESH_VERSION_ACU, buildDefaultPlotWorldbookConfig_ACU, buildDefaultContentOptimizationPromptGroup_ACU, defaultWorldbookConfig_ACU, defaultVectorMemoryConfig_ACU } from '../../shared/defaults';
 import { addDataIsolationHistory_ACU, ensureProfileExists_ACU, normalizeDataIsolationHistory_ACU } from '../../data/repositories/isolation-repo';
 import { globalMeta_ACU, loadGlobalMeta_ACU, readProfileSettingsFromStorage_ACU, readProfileTemplateFromStorage_ACU, sanitizeSettingsForProfileSave_ACU, saveGlobalMeta_ACU, writeProfileSettingsToStorage_ACU, writeProfileTemplateToStorage_ACU } from '../../data/repositories/profile-repo';
@@ -62,6 +62,66 @@ function applyGlobalPlotEnabledSetting_ACU(): boolean {
 
   settings_ACU.plotSettings.enabled = globalMeta_ACU.plotEnabledGlobal === true;
   return settings_ACU.plotSettings.enabled;
+}
+
+function ensureBuiltinPlotPresets_ACU(): boolean {
+  if (!settings_ACU.plotSettings || typeof settings_ACU.plotSettings !== 'object' || Array.isArray(settings_ACU.plotSettings)) {
+    settings_ACU.plotSettings = JSON.parse(JSON.stringify(DEFAULT_PLOT_SETTINGS_ACU));
+  }
+  if (!Array.isArray(settings_ACU.plotSettings.promptPresets)) {
+    settings_ACU.plotSettings.promptPresets = [];
+  }
+  if (!Array.isArray(DEFAULT_BUILTIN_PLOT_PRESETS_ACU)) return false;
+
+  let changed = false;
+  for (const builtinPreset of DEFAULT_BUILTIN_PLOT_PRESETS_ACU) {
+    const name = String((builtinPreset as any)?.name || '').trim();
+    if (!name) continue;
+    const idx = settings_ACU.plotSettings.promptPresets.findIndex((preset: any) => String(preset?.name || '').trim() === name);
+    const cloned = JSON.parse(JSON.stringify(builtinPreset));
+    if (idx < 0) {
+      settings_ACU.plotSettings.promptPresets.push(cloned);
+      changed = true;
+      continue;
+    }
+    const current = settings_ACU.plotSettings.promptPresets[idx];
+    if (
+      current?._acuBuiltinPresetId === cloned._acuBuiltinPresetId
+      && current?._acuBuiltinPresetVersion !== cloned._acuBuiltinPresetVersion
+    ) {
+      settings_ACU.plotSettings.promptPresets[idx] = cloned;
+      changed = true;
+    }
+  }
+  return changed;
+}
+
+function relaxStoredOriginalDefaultDdls_ACU(templateObj: any): boolean {
+  if (!templateObj || typeof templateObj !== 'object' || Array.isArray(templateObj)) return false;
+  const parseDefaultTemplate_ACU = () => {
+    const first = safeJsonParse_ACU(ORIGINAL_DEFAULT_TABLE_TEMPLATE_ACU, null);
+    return typeof first === 'string' ? safeJsonParse_ACU(first, null) : first;
+  };
+  const relaxedDefault = parseDefaultTemplate_ACU();
+  if (!relaxedDefault || typeof relaxedDefault !== 'object') return false;
+
+  const signatureToDdl = new Map<string, string>();
+  Object.keys(relaxedDefault).forEach((key) => {
+    const sheet = relaxedDefault[key];
+    if (!sheet?.name || !Array.isArray(sheet.content?.[0]) || typeof sheet.sourceData?.ddl !== 'string') return;
+    signatureToDdl.set(`${sheet.name}::${JSON.stringify(sheet.content[0])}`, sheet.sourceData.ddl);
+  });
+
+  let changed = false;
+  Object.keys(templateObj).forEach((key) => {
+    const sheet = templateObj[key];
+    if (!sheet?.name || !Array.isArray(sheet.content?.[0]) || !sheet.sourceData || typeof sheet.sourceData !== 'object') return;
+    const relaxedDdl = signatureToDdl.get(`${sheet.name}::${JSON.stringify(sheet.content[0])}`);
+    if (!relaxedDdl || sheet.sourceData.ddl === relaxedDdl) return;
+    sheet.sourceData.ddl = relaxedDdl;
+    changed = true;
+  });
+  return changed;
 }
 
 export function saveSettings_ACU(): SaveSettingsResult_ACU {
@@ -182,6 +242,7 @@ export   function loadSettings_ACU() {
 
       // 5) 加载设置（按标识 profile）
       const defaultSettings = buildDefaultSettings_ACU();
+      let shouldPersistSettingsAfterLoad_ACU = false;
 
       try {
           const savedSettings = readProfileSettingsFromStorage_ACU(activeCode);
@@ -300,6 +361,10 @@ export   function loadSettings_ACU() {
 
       // [兼容] 旧标签排除字段自动迁移为新规则组结构
       ensureTagRulesCompat_ACU(settings_ACU);
+      if (ensureBuiltinPlotPresets_ACU()) {
+          shouldPersistSettingsAfterLoad_ACU = true;
+          logDebug_ACU('[剧情推进预设] 已补齐内置预设：时间召回');
+      }
 
       settingsStorageReadyForSave_ACU = true;
 
@@ -339,7 +404,6 @@ export   function loadSettings_ACU() {
 
       // [交火模式] 一次性补齐默认归档/召回/关键词提示词参数。
       // 只能补缺失字段，绝不能在版本刷新时覆盖用户已经填写的模型、API、召回参数或提示词。
-      let shouldPersistSettingsAfterLoad_ACU = false;
       if (globalMeta_ACU.vectorMemoryConfigGlobal && typeof globalMeta_ACU.vectorMemoryConfigGlobal === 'object' && !Array.isArray(globalMeta_ACU.vectorMemoryConfigGlobal)) {
           const vectorConfig = globalMeta_ACU.vectorMemoryConfigGlobal as any;
           if (vectorConfig.defaultsRefreshVersion !== VECTOR_MEMORY_DEFAULTS_REFRESH_VERSION_ACU) {
@@ -407,7 +471,7 @@ export   function loadSettings_ACU() {
       if (shouldPersistSettingsAfterLoad_ACU) {
           saveGlobalMeta_ACU();
           persistSettingsToStorage_ACU(settings_ACU, activeCode);
-          logDebug_ACU(`[交火模式配置] 已持久化全局默认参数刷新版本: ${VECTOR_MEMORY_DEFAULTS_REFRESH_VERSION_ACU}`);
+          logDebug_ACU(`[设置加载] 已持久化加载期默认值补齐，交火配置版本: ${VECTOR_MEMORY_DEFAULTS_REFRESH_VERSION_ACU}`);
       }
 
       if (!Number.isFinite(settings_ACU.maxConcurrentGroups) || settings_ACU.maxConcurrentGroups < 1) {
@@ -474,6 +538,8 @@ export   function loadTemplateFromStorage_ACU(codeOverride: any = null) {
               if (parsedTemplate && parsedTemplate.mate && Object.keys(parsedTemplate).some(k => k.startsWith('sheet_'))) {
                   // [迁移] 0(沿用UI) -> -1(沿用UI)，并写入标记
                   migrateTemplateUpdateConfigSentinel_ACU(parsedTemplate);
+                  // [迁移] 对已保存的原默认表仅放宽 DDL 约束，不替换为新的恋爱特化默认表。
+                  relaxStoredOriginalDefaultDdls_ACU(parsedTemplate);
                   // [Profile] 模板载入时先补齐/修复顺序编号，并回写（编号可随导出/导入迁移）
                   const sheetKeys = Object.keys(parsedTemplate).filter(k => k.startsWith('sheet_'));
                   ensureSheetOrderNumbers_ACU(parsedTemplate, { baseOrderKeys: sheetKeys, forceRebuild: false });
@@ -527,13 +593,21 @@ function refreshDefaultTableTemplateOnce_ACU(activeCode: string) {
               return;
           }
 
+          const code = normalizeIsolationCode_ACU(activeCode || settings_ACU.dataIsolationCode || globalMeta_ACU?.activeIsolationCode || '');
+          const existingTemplate = readProfileTemplateFromStorage_ACU(code);
+          if (existingTemplate && existingTemplate.trim()) {
+              settings_ACU.tableTemplateDefaultsRefreshVersion = TABLE_TEMPLATE_DEFAULTS_REFRESH_VERSION_ACU;
+              saveSettings_ACU();
+              logDebug_ACU(`[模板默认值] 当前 profile 已有模板，保留用户/旧默认模板并记录版本: ${TABLE_TEMPLATE_DEFAULTS_REFRESH_VERSION_ACU}`);
+              return;
+          }
+
           const defaultSnapshot = getDefaultTemplateSnapshot_ACU();
           if (!defaultSnapshot?.templateStr) {
               logWarn_ACU('[模板默认值] 默认表格模板快照无效，跳过一次性刷新。');
               return;
           }
 
-          const code = normalizeIsolationCode_ACU(activeCode || settings_ACU.dataIsolationCode || globalMeta_ACU?.activeIsolationCode || '');
           _set_TABLE_TEMPLATE_ACU(defaultSnapshot.templateStr);
           writeProfileTemplateToStorage_ACU(code, TABLE_TEMPLATE_ACU);
           settings_ACU.tableTemplateDefaultsRefreshVersion = TABLE_TEMPLATE_DEFAULTS_REFRESH_VERSION_ACU;
