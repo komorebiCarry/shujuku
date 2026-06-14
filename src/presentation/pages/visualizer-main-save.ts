@@ -33,7 +33,7 @@ import { $popupInstance_ACU } from '../state/ui-refs';
 import { closeACUWindow } from '../window/window-system';
 import { isSqliteMode } from '../../service/table/storage-mode';
 import { reloadStorageProvider } from '../../service/table/table-storage-strategy';
-import { resolveTableHistoryStateFromChat_ACU, getLatestAiMessageIndexFromChat_ACU } from '../../service/table/table-history';
+import { getLatestAiMessageIndexFromChat_ACU, getLatestTableAppendMessageIndexFromChat_ACU } from '../../service/table/table-history';
 import { getCurrentWorldbookConfig_ACU } from '../../service/settings/settings-readers';
 import { enqueueSummaryVectorIndexFlush_ACU } from '../../service/vector/summary-vector-index-flush-queue';
 
@@ -257,7 +257,7 @@ import { enqueueSummaryVectorIndexFlush_ACU } from '../../service/vector/summary
           }
       }
 
-      // 2. Save to Chat History (per table, back to its original floor)
+      // 2. Save to Chat History (append to current effective latest AI floor)
       const chat = getChatArray_ACU();
       if (!chat.length) {
           showToastr_ACU('warning', '聊天记录为空，更改仅保存在内存，未持久化。');
@@ -266,43 +266,16 @@ import { enqueueSummaryVectorIndexFlush_ACU } from '../../service/vector/summary
           const isolationKey = getCurrentIsolationKey_ACU();
           const allSheetKeys = getSortedSheetKeys_ACU(currentJsonTableData_ACU);
           
-          // 2.2 计算最新一条 AI 楼层索引，作为兜底
+          // 2.2 计算当前有效追加楼层：所有 V2 追加日志必须落在最新可承载表数据的 AI 楼，不能按单表历史楼层回写。
           const latestAiIndex = getLatestAiMessageIndexFromChat_ACU(chat);
+          const appendTargetIndex = getLatestTableAppendMessageIndexFromChat_ACU(chat, isolationKey, settings_ACU);
           
-          // 2.3 查找每张表当前最新数据所在的原楼层
-          const bucketByIndex: Record<number, string[]> = {};
-          const resolveTargetIndexForSheet = (sheetKey: string) => {
-              const table = currentJsonTableData_ACU[sheetKey];
-              const history = resolveTableHistoryStateFromChat_ACU(chat, {
-                  sheetKey,
-                  isSummaryTable: table ? isSummaryOrOutlineTable_ACU(table.name) : false,
-                  isolationKey,
-                  settings: settings_ACU,
-              });
-              return history.latestDataMessageIndex !== -1 ? history.latestDataMessageIndex : latestAiIndex;
-          };
-          
-          allSheetKeys.forEach(key => {
-              const idx = resolveTargetIndexForSheet(key);
-              if (idx === -1) return; // 没有可保存的AI楼层
-              
-              if (!bucketByIndex[idx]) bucketByIndex[idx] = [];
-              bucketByIndex[idx].push(key);
-          });
-          
-          // 如果一个都没匹配到，但存在AI消息，则全部落在最新楼层以避免数据丢失
-          if (Object.keys(bucketByIndex).length === 0 && latestAiIndex !== -1) {
-              bucketByIndex[latestAiIndex] = [...allSheetKeys];
-          }
-          
-          if (Object.keys(bucketByIndex).length === 0) {
+          if (appendTargetIndex === -1) {
               showToastr_ACU('warning', '找不到AI消息，更改仅保存到内存，未持久化到聊天记录。');
           } else {
-              // 2.4 分楼层保存，每层只保存属于该层的表
-              for (const [indexStr, keys] of Object.entries(bucketByIndex)) {
-                  const idx = parseInt(indexStr, 10);
-                  if (Number.isNaN(idx)) continue;
-                  const sheetKeys = keys as string[];
+              // 2.4 统一保存到当前有效追加楼层，维护 V2 operation log 的时间顺序
+              const sheetKeys = [...allSheetKeys];
+              const idx = appendTargetIndex;
                   const writeSet = sheetKeys.map(sheetKey => ({ kind: 'sheet' as const, sheetKey }));
                   const commitResult = await runTableUpdateCommit_ACU<null>({
                       source: 'manual_crud',
@@ -362,7 +335,7 @@ import { enqueueSummaryVectorIndexFlush_ACU } from '../../service/vector/summary
               if (shouldSyncSummaryVectorIndexAfterSave_ACU && getCurrentWorldbookConfig_ACU().summaryVectorIndexModeEnabled === true) {
                   try {
                       const queueResult = await enqueueSummaryVectorIndexFlush_ACU({
-                          targetMessageIndex: latestAiIndex !== -1 ? latestAiIndex : undefined,
+                          targetMessageIndex: appendTargetIndex !== -1 ? appendTargetIndex : (latestAiIndex !== -1 ? latestAiIndex : undefined),
                           mode: 'sync',
                           reason: 'visualizer_save',
                       });
@@ -382,8 +355,7 @@ import { enqueueSummaryVectorIndexFlush_ACU } from '../../service/vector/summary
               if ($popupInstance_ACU && $popupInstance_ACU.length) {
                   loadTemplatePresetSelect_ACU({ keepGlobalValue: false });
               }
-              showToastr_ACU('success', '更改已按原楼层保存到聊天记录！');
-          }
+              showToastr_ACU('success', '更改已追加保存到当前最新有效楼层！');
       }
 
       // 3. Trigger UI Update & Worldbook Injection

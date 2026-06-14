@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { collectV2CheckpointFloorsFromChat_ACU, resolveTableHistoryStateFromChat_ACU } from '../../../src/service/table/table-history';
+import { collectV2CheckpointFloorsFromChat_ACU, getLatestTableAppendMessageIndexFromChat_ACU, resolveTableHistoryStateFromChat_ACU } from '../../../src/service/table/table-history';
 
 const settings = {
   dataIsolationEnabled: false,
@@ -268,6 +268,53 @@ describe('resolveTableHistoryStateFromChat_ACU', () => {
     expect(state.hasTrackedUpdate).toBe(true);
     expect(state.lastTrackedUpdateMessageIndex).toBe(2);
     expect(state.lastTrackedUpdateAiFloor).toBe(1);
+  });
+
+  it('追加日志目标使用最新可承载表数据的 AI 楼，不按单表历史楼层回写', () => {
+    const chat = [
+      v2Message({
+        version: 2,
+        checkpoint: {
+          kind: 'full',
+          createdAt: 1,
+          reason: 'init',
+          data: { mate: {}, sheet_0: { name: '表A', content: [['row_id']] } },
+          event: { filledSheetKeys: [], changedSheetKeys: [], groupKeys: [] },
+        },
+        logEntries: [],
+      }),
+      { is_user: true },
+      v2Message({
+        version: 2,
+        logEntries: [{
+          seq: 1,
+          entryId: 'sql_1',
+          createdAt: 2,
+          source: 'raw_sql_mutation',
+          targetMessageIndex: 2,
+          aiFloor: 2,
+          filledSheetKeys: [],
+          changedSheetKeys: [],
+          groupKeys: [],
+          operations: [{ kind: 'sql_batch', statements: ['INSERT INTO table_a (name) VALUES (\'x\')'] }],
+        }],
+      }),
+      { is_user: true },
+      { is_user: false, mes: '最新楼跳过填表' },
+    ];
+
+    expect(getLatestTableAppendMessageIndexFromChat_ACU(chat, '', settings)).toBe(2);
+  });
+
+  it('没有任何表数据帧时追加目标回退到最新 AI 楼', () => {
+    const chat = [
+      { is_user: true },
+      { is_user: false, mes: 'AI 1' },
+      { is_user: true },
+      { is_user: false, mes: 'AI 2' },
+    ];
+
+    expect(getLatestTableAppendMessageIndexFromChat_ACU(chat, '', settings)).toBe(3);
   });
 
   it('收集当前隔离标签的 V2 full checkpoint AI 楼层', () => {

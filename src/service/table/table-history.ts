@@ -1,5 +1,5 @@
 import type { ACUMessage } from '../../shared/host-api';
-import { readIsolatedTagData_ACU } from '../../data/repositories/chat-message-data-repo';
+import { hasAnyTableData_ACU, readIsolatedTagData_ACU } from '../../data/repositories/chat-message-data-repo';
 import { isV2TagData_ACU } from './storage-strategy-resolver';
 
 export interface TableHistoryState_ACU {
@@ -148,6 +148,30 @@ export function getLatestAiMessageIndexFromChat_ACU(chat: ACUMessage[] | any[]):
         if (chat[i] && !chat[i].is_user) return i;
     }
     return -1;
+}
+
+function hasAppendableTableDataFrame_ACU(msg: any, isolationKey: string, settings: any): boolean {
+    const tagData = readIsolatedTagData_ACU(msg, isolationKey) as any;
+    if (isV2TagData_ACU(tagData) && tagData.storageFrame) return true;
+    return hasAnyTableData_ACU(msg, isolationKey, {
+        enabled: !!settings?.dataIsolationEnabled,
+        code: String(settings?.dataIsolationCode || ''),
+    });
+}
+
+export function getLatestTableAppendMessageIndexFromChat_ACU(
+    chat: ACUMessage[] | any[],
+    isolationKey: string,
+    settings: any,
+): number {
+    if (!Array.isArray(chat)) return -1;
+    const latestAiMessageIndex = getLatestAiMessageIndexFromChat_ACU(chat);
+    for (let i = chat.length - 1; i >= 0; i -= 1) {
+        const msg = chat[i];
+        if (!msg || msg.is_user) continue;
+        if (hasAppendableTableDataFrame_ACU(msg, isolationKey, settings)) return i;
+    }
+    return latestAiMessageIndex;
 }
 
 export function countAiMessagesUpToIndex_ACU(chat: ACUMessage[] | any[], messageIndex: number): number {

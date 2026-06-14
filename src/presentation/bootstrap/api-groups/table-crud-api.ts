@@ -16,7 +16,7 @@ import type { ApiGroupContext } from './callback-api';
 import { isSqliteMode } from '../../../service/table/storage-mode';
 import { getNameMapper } from '../../../service/runtime/template-vars/name-mapper';
 import { parseDDLTableName } from '../../../shared/ddl-utils';
-import { resolveTableHistoryStateFromChat_ACU } from '../../../service/table/table-history';
+import { getLatestTableAppendMessageIndexFromChat_ACU } from '../../../service/table/table-history';
 import { enqueueSummaryVectorIndexFlush_ACU } from '../../../service/vector/summary-vector-index-flush-queue';
 import { getCurrentWorldbookConfig_ACU } from '../../../service/settings/settings-readers';
 import { runSqliteRuntimeMutationCommit_ACU, runTableUpdateCommit_ACU } from '../../../service/table/table-update-commit';
@@ -327,20 +327,17 @@ function assertSqlMutationChanged_ACU(
 }
 
 /**
- * 查找指定表格数据所在的最新聊天楼层索引
- * 复用逻辑：updateRow / insertRow / deleteRow 共享此函数
+ * 查找 V2 operation log 的当前有效追加楼层。
+ * 手动 CRUD 必须追加到最新可承载表数据的 AI 楼，不能按单表历史楼层回写。
  */
-function findTableLatestFloor(targetSheetKey: string, tableName: string): number {
+function findTableLatestFloor(_targetSheetKey: string, _tableName: string): number {
     const chat = SillyTavern_API_ACU.chat;
     if (!chat || chat.length === 0) return -1;
-    const history = resolveTableHistoryStateFromChat_ACU(chat as ACUMessage[], {
-        sheetKey: targetSheetKey,
-        isSummaryTable: isSummaryOrOutlineTable_ACU(tableName),
-        isolationKey: getCurrentIsolationKey_ACU(),
-        settings: settings_ACU,
-    });
-    if (history.latestDataMessageIndex !== -1) return history.latestDataMessageIndex;
-    return history.latestAiMessageIndex;
+    return getLatestTableAppendMessageIndexFromChat_ACU(
+        chat as ACUMessage[],
+        getCurrentIsolationKey_ACU(),
+        settings_ACU,
+    );
 }
 
 async function syncSummaryVectorIndexAfterTableEdit_ACU(
