@@ -14,7 +14,7 @@ import {
   isDefaultTemplatePresetSelection_ACU,
   normalizeTemplatePresetSelectionValue_ACU,
 } from '../../../shared/template-preset-utils';
-import { getChatArray_ACU } from '../../../service/chat/chat-service';
+import { getChatArray_ACU, saveChatToHost_ACU } from '../../../service/chat/chat-service';
 import {
   currentJsonTableData_ACU,
   getCurrentIsolationKey_ACU,
@@ -56,6 +56,10 @@ import { refreshMergedDataAndNotify_ACU } from '../../../service/worldbook/pipel
 import { enqueueSummaryVectorIndexFlush_ACU } from '../../../service/vector/summary-vector-index-flush-queue';
 import { useToastStore } from '../../stores/toast-store';
 import { useVisualizerStore, type VisualizerLockDraft, type VisualizerSaveTarget } from '../../stores/visualizer-store';
+import {
+  applyVisualizerPendingDataOps_ACU,
+  hasVisualizerPendingDataOps_ACU,
+} from '../../../presentation/pages/visualizer-data-ops';
 
 export interface VisualizerSaveInteractions {
   requestGlobalPresetName?: (defaultName: string) => string | null | Promise<string | null>;
@@ -363,38 +367,11 @@ export function useVisualizerSave(interactions: VisualizerSaveInteractions = {})
   const visualizer = useVisualizerStore();
   const toastStore = useToastStore();
 
-  async function save(target: VisualizerSaveTarget): Promise<boolean> {
+  async function runSaving(task: () => Promise<boolean>): Promise<boolean> {
     if (visualizer.isSaving) return false;
     visualizer.setSaving(true);
     try {
-      const orderedData = buildOrderedData(visualizer.tempData, visualizer.sheetOrder, visualizer.tableLockDrafts);
-
-      let globalTemplateResult: GlobalTemplateSaveResult | null = null;
-      if (target === 'global') {
-        globalTemplateResult = await saveGlobalTemplateSnapshot(orderedData, interactions);
-        if (globalTemplateResult.status === 'cancelled') return false;
-      }
-
-      _set_currentJsonTableData_ACU(cloneData(orderedData));
-      syncChatSheetGuide(orderedData, [...visualizer.sheetOrder], target === 'global');
-
-      const chatResult = await saveCurrentDataToChat(
-        [...visualizer.sheetOrder],
-        [...visualizer.deletedSheetKeys],
-      );
-      saveLockDrafts(visualizer.tableLockDrafts);
-      visualizer.markSaved(target);
-
-      if (target === 'global' && globalTemplateResult?.status === 'saved') {
-        toastStore.success(`已保存到全局预设：${globalTemplateResult.presetName}。`, { muteable: false });
-      } else if (target === 'global') {
-        toastStore.info('全局模板没有结构变化；当前聊天数据已同步。', { muteable: false });
-      } else if (chatResult === 'memory-only') {
-        toastStore.warning('找不到可写入的 AI 消息，修改已保存在运行内存中。', { muteable: false });
-      } else {
-        toastStore.success('已保存到当前聊天。', { muteable: false });
-      }
-      return true;
+      return await task();
     } catch (error) {
       const message = error instanceof Error ? error.message : '保存失败，请查看控制台日志。';
       logWarn_ACU('[ACU-V2 Visualizer] save failed:', error);
@@ -405,8 +382,73 @@ export function useVisualizerSave(interactions: VisualizerSaveInteractions = {})
     }
   }
 
+  async function saveDataToCurrentMessage(): Promise<boolean> {
+    return runSaving(async () => {
+      const result = await applyVisualizerPendingDataOps_ACU(visualizer);
+      if (!result.success) {
+        toastStore.error(result.error || '数据保存失败。', { muteable: false });
+        return false;
+      }
+      if (!result.changed) {
+        toastStore.info('没有需要保存的数据增量。', { muteable: false });
+        return false;
+      }
+      saveLockDrafts(visualizer.tableLockDrafts);
+      await refreshMergedDataAndNotify_ACU();
+      try {
+        (topLevelWindow_ACU as any).AutoCardUpdaterAPI?._notifyTableUpdate?.();
+      } catch {}
+      visualizer.markSaved('data');
+      toastStore.success('数据增量已保存到当前消息。', { muteable: false });
+      return true;
+    });
+  }
+
+  async function saveTemplateToCurrentChat(): Promise<boolean> {
+    return runSaving(async () => {
+      if (hasVisualizerPendingDataOps_ACU(visualizer)) {
+        toastStore.error('存在未保存的数据增量；本次是模板保存，已阻止混合提交。', { muteable: false });
+        return false;
+      }
+      const orderedData = buildOrderedData(visualizer.tempData, visualizer.sheetOrder, visualizer.tableLockDrafts);
+      syncChatSheetGuide(orderedData, [...visualizer.sheetOrder], false);
+      await saveChatToHost_ACU();
+      saveLockDrafts(visualizer.tableLockDrafts);
+      if (isSqliteMode()) await reloadStorageProvider();
+      await refreshMergedDataAndNotify_ACU();
+      visualizer.markSaved('template-chat');
+      toastStore.success('模板/结构已保存到当前聊天。', { muteable: false });
+      return true;
+    });
+  }
+
+  async function saveTemplateToGlobal(): Promise<boolean> {
+    return runSaving(async () => {
+      if (hasVisualizerPendingDataOps_ACU(visualizer)) {
+        toastStore.error('存在未保存的数据增量；本次是模板保存，已阻止混合提交。', { muteable: false });
+        return false;
+      }
+      const orderedData = buildOrderedData(visualizer.tempData, visualizer.sheetOrder, visualizer.tableLockDrafts);
+      const globalTemplateResult = await saveGlobalTemplateSnapshot(orderedData, interactions);
+      if (globalTemplateResult.status === 'cancelled') return false;
+      saveLockDrafts(visualizer.tableLockDrafts);
+      if (isSqliteMode()) await reloadStorageProvider();
+      await refreshMergedDataAndNotify_ACU();
+      visualizer.markSaved('template-global');
+      if (globalTemplateResult.status === 'saved') {
+        toastStore.success(`模板/结构已保存到全局预设：${globalTemplateResult.presetName}。`, { muteable: false });
+      } else {
+        toastStore.info('全局模板无变化。', { muteable: false });
+      }
+      return true;
+    });
+  }
+
   return {
-    saveToChat: () => save('chat'),
-    saveToGlobal: () => save('global'),
+    saveDataToCurrentMessage,
+    saveTemplateToCurrentChat,
+    saveTemplateToGlobal,
+    saveToChat: saveDataToCurrentMessage,
+    saveToGlobal: saveTemplateToGlobal,
   };
 }

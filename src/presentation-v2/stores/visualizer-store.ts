@@ -1,9 +1,16 @@
 import { defineStore } from 'pinia';
 import { TABLE_ORDER_FIELD_ACU } from '../../shared/constants';
+import {
+  createVisualizerTempRowId_ACU,
+  recordVisualizerCellUpdate_ACU,
+  recordVisualizerRowDelete_ACU,
+  recordVisualizerRowInsert_ACU,
+  resetVisualizerPendingDataOps_ACU,
+} from '../../presentation/pages/visualizer-data-ops';
 
 export type VisualizerMode = 'data' | 'config' | 'assistant' | 'global' | 'table-management';
 export type VisualizerOpenSource = 'external-api' | 'v2-shell';
-export type VisualizerSaveTarget = 'chat' | 'global';
+export type VisualizerSaveTarget = 'data' | 'template-chat' | 'template-global' | 'chat' | 'global';
 
 export interface VisualizerSheetItem {
   key: string;
@@ -72,6 +79,7 @@ interface VisualizerState {
   tempData: Record<string, any> | null;
   sheetOrder: string[];
   deletedSheetKeys: string[];
+  pendingDataOps: any;
   pendingLockChanges: any[];
   tableLockDrafts: Record<string, VisualizerLockDraft>;
   isLoading: boolean;
@@ -153,6 +161,7 @@ export const useVisualizerStore = defineStore('acu-v2-visualizer', {
     tempData: null,
     sheetOrder: [],
     deletedSheetKeys: [],
+    pendingDataOps: null,
     pendingLockChanges: [],
     tableLockDrafts: {},
     isLoading: false,
@@ -243,6 +252,7 @@ export const useVisualizerStore = defineStore('acu-v2-visualizer', {
       this.tempData = nextData;
       this.sheetOrder = nextOrder;
       this.deletedSheetKeys = [];
+      resetVisualizerPendingDataOps_ACU(this);
       this.pendingLockChanges = [];
       this.tableLockDrafts = {};
       this.currentSheetKey = nextOrder.includes(this.currentSheetKey || '')
@@ -322,8 +332,9 @@ export const useVisualizerStore = defineStore('acu-v2-visualizer', {
       const headers = Array.isArray(sheet.content[0]) ? sheet.content[0] : [null, '列1'];
       sheet.content[0] = headers;
       const row = new Array(headers.length).fill('');
-      row[0] = null;
+      row[0] = createVisualizerTempRowId_ACU();
       sheet.content.push(row);
+      if (this.currentSheetKey) recordVisualizerRowInsert_ACU(this, this.currentSheetKey, String(row[0]));
       this.setDirty(true);
     },
     deleteRow(rowIndex: number): void {
@@ -331,6 +342,8 @@ export const useVisualizerStore = defineStore('acu-v2-visualizer', {
       if (!sheet || !Array.isArray(sheet.content)) return;
       const target = Math.trunc(Number(rowIndex));
       if (target < 0 || target >= sheet.content.length - 1) return;
+      const rowId = sheet.content[target + 1]?.[0];
+      if (this.currentSheetKey) recordVisualizerRowDelete_ACU(this, this.currentSheetKey, rowId);
       sheet.content.splice(target + 1, 1);
       this.setDirty(true);
     },
@@ -342,11 +355,16 @@ export const useVisualizerStore = defineStore('acu-v2-visualizer', {
       if (row < 0 || col < 0) return;
       const contentRow = sheet.content[row + 1];
       if (!Array.isArray(contentRow)) return;
-      contentRow[col + 1] = String(value ?? '');
+      const nextValue = String(value ?? '');
+      const rowId = contentRow[0];
+      const columnName = Array.isArray(sheet.content[0]) ? sheet.content[0][col + 1] : '';
+      contentRow[col + 1] = nextValue;
+      if (this.currentSheetKey) recordVisualizerCellUpdate_ACU(this, this.currentSheetKey, rowId, columnName, nextValue);
       this.setDirty(true);
     },
     markSaved(target: VisualizerSaveTarget): void {
       this.deletedSheetKeys = [];
+      resetVisualizerPendingDataOps_ACU(this);
       this.pendingLockChanges = [];
       this.lastSavedTarget = target;
       this.lastSavedAt = Date.now();
@@ -465,6 +483,7 @@ export const useVisualizerStore = defineStore('acu-v2-visualizer', {
       this.tempData = null;
       this.sheetOrder = [];
       this.deletedSheetKeys = [];
+      resetVisualizerPendingDataOps_ACU(this);
       this.pendingLockChanges = [];
       this.tableLockDrafts = {};
       this.isLoading = false;

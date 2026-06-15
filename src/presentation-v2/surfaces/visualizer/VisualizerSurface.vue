@@ -428,17 +428,24 @@
           <AcuButton
             :disabled="saveDisabled"
             :loading="visualizer.isSaving"
-            @click="save.saveToChat"
+            variant="primary"
+            @click="save.saveDataToCurrentMessage"
           >
-            保存到当前聊天
+            保存数据到当前消息
           </AcuButton>
           <AcuButton
             :disabled="saveDisabled"
             :loading="visualizer.isSaving"
-            variant="primary"
-            @click="save.saveToGlobal"
+            @click="save.saveTemplateToCurrentChat"
           >
-            保存到全局模板
+            保存模板到当前聊天
+          </AcuButton>
+          <AcuButton
+            :disabled="saveDisabled"
+            :loading="visualizer.isSaving"
+            @click="save.saveTemplateToGlobal"
+          >
+            保存模板到全局
           </AcuButton>
         </div>
       </footer>
@@ -521,13 +528,13 @@ let paginationResizeObserver: ResizeObserver | undefined;
 const save = useVisualizerSave({
   requestGlobalPresetName(defaultName) {
     return openInputDialog({
-      title: "保存到全局模板",
+      title: "保存模板到全局",
       message:
-        "当前生效的是默认模板，保存到全局前需要给这份模板起一个名字。取消后不会写入聊天或清掉未保存状态。",
+        "当前生效的是默认模板，保存模板到全局前需要给这份模板起一个名字。取消后不会写入聊天或清掉未保存状态。",
       label: "模板预设名称",
       defaultValue: defaultName,
       placeholder: "例如：当前角色专用模板",
-      confirmLabel: "保存到全局",
+      confirmLabel: "保存模板到全局",
     });
   },
   confirmOverwriteGlobalPreset(presetName) {
@@ -1076,7 +1083,7 @@ const footerStatus = computed(() => {
   if (visualizer.isSaving) return "正在保存表格数据...";
   if (visualizer.dirty) return "有未保存修改，保存前只存在于编辑器草稿中。";
   if (visualizer.lastSavedAt) return "最近一次保存已完成。";
-  return "载入后可以编辑数据卡片，并选择保存到当前聊天或全局模板。";
+  return "载入后可以分别保存数据、当前聊天模板或全局模板。";
 });
 
 const saveDisabled = computed(
@@ -1255,7 +1262,7 @@ function openCloseDirtyDialog(): Promise<"save" | "discard" | "cancel"> {
     badge: { label: "未保存", variant: "warning" },
     cancelLabel: "取消关闭",
     actions: [
-      { value: "save", label: "保存到当前聊天", variant: "primary" },
+      { value: "save", label: "保存数据到当前消息", variant: "primary" },
       { value: "discard", label: "丢弃草稿", variant: "danger" },
     ],
   }).then((value) => value || "cancel");
