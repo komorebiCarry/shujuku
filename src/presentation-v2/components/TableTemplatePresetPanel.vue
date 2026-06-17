@@ -11,7 +11,7 @@
     </AcuMessage>
 
     <AcuText variant="status-line" class="acu-table-template-panel__status-line">
-      当前聊天: <strong class="acu-text__value">{{ templates.selectedChatPreset.value || '默认预设' }}</strong>
+      当前聊天: <strong class="acu-text__value">{{ templates.selectedChatPresetLabel.value }}</strong>
       <template v-if="templates.selectedGlobalPreset.value"> · 全局默认: <strong class="acu-text__value">{{ templates.selectedGlobalPreset.value }}</strong></template>
       <template v-else> · 全局默认: <strong class="acu-text__value">默认预设</strong></template>
       <AcuBadge :variant="templates.isChatOverridden.value ? 'accent' : 'neutral'">
@@ -23,7 +23,7 @@
       <AcuPresetDropdown
         :items="templates.chatPresetItems.value"
         :model-value="templates.selectedChatPreset.value"
-        :default-name="templates.selectedGlobalPreset.value"
+        :default-name="templates.selectedGlobalPresetValue.value"
         :disabled="templates.busy.value || management.busy.value"
         placeholder="默认预设"
         @update:model-value="templates.selectChatPreset($event)"

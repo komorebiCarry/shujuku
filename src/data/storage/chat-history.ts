@@ -44,6 +44,50 @@ function getChatFirstLayerMessageLocal_ACU(chat: unknown[]): Record<string, unkn
         : null;
 }
 
+function getActiveChatId_ACU(): string {
+    const api = SillyTavern_API_ACU as any;
+    try {
+        if (typeof api?.getCurrentChatId === 'function') {
+            const id = String(api.getCurrentChatId() ?? '').trim();
+            return id && id !== 'null' ? id : '';
+        }
+        if (api && Object.prototype.hasOwnProperty.call(api, 'chatId')) {
+            const id = String(api.chatId ?? '').trim();
+            return id && id !== 'null' ? id : '';
+        }
+    } catch (_) {
+        return '';
+    }
+    return '';
+}
+
+function hasActiveChatContext_ACU(chat: unknown[]): boolean {
+    if (!getChatFirstLayerMessageLocal_ACU(chat)) return false;
+    const api = SillyTavern_API_ACU as any;
+    if (api && (typeof api.getCurrentChatId === 'function' || Object.prototype.hasOwnProperty.call(api, 'chatId'))) {
+        return !!getActiveChatId_ACU();
+    }
+    return true;
+}
+
+function getChatMetadataOwnerField_ACU(field: string): string {
+    return `${field}__chatId`;
+}
+
+function getChatMetadataOwner_ACU(field: string): string {
+    const metadata = getChatMetadata_ACU();
+    return String(metadata?.[getChatMetadataOwnerField_ACU(field)] ?? '').trim();
+}
+
+function shouldUseChatMetadataContainer_ACU(field: string, metadataContainer: Record<string, unknown> | null, legacyContainer: Record<string, unknown> | null): boolean {
+    if (!metadataContainer) return false;
+    const activeChatId = getActiveChatId_ACU();
+    if (!activeChatId) return true;
+    const owner = getChatMetadataOwner_ACU(field);
+    if (owner) return owner === activeChatId;
+    return true;
+}
+
 function cloneContainer_ACU(container: Record<string, unknown>): Record<string, unknown> {
     return cloneScopedConfigData_ACU(container, {}) as Record<string, unknown>;
 }
@@ -62,11 +106,20 @@ function readContainer_ACU(raw: unknown): Record<string, unknown> | null {
 function writeChatMetadataField_ACU(field: string, value: Record<string, unknown> | null): void {
     const metadata = getChatMetadata_ACU();
     if (!metadata) return;
-    if (value && Object.keys(value).length > 0) metadata[field] = value;
-    else delete metadata[field];
+    const ownerField = getChatMetadataOwnerField_ACU(field);
+    const activeChatId = getActiveChatId_ACU();
+    const ownerValue = value && Object.keys(value).length > 0 && activeChatId ? activeChatId : undefined;
+    if (value && Object.keys(value).length > 0) {
+        metadata[field] = value;
+        if (ownerValue) metadata[ownerField] = ownerValue;
+        else delete metadata[ownerField];
+    } else {
+        delete metadata[field];
+        delete metadata[ownerField];
+    }
     try {
         const updater = (SillyTavern_API_ACU as any)?.updateChatMetadata;
-        if (typeof updater === 'function') updater({ [field]: value || undefined }, false);
+        if (typeof updater === 'function') updater({ [field]: value || undefined, [ownerField]: ownerValue }, false);
     } catch (_) {}
 }
 
@@ -125,9 +178,13 @@ function mergeLegacyGuideIntoMetadata_ACU(metadataContainer: Record<string, unkn
  * @returns 解析后的配置对象，或 null
  */
 export function getChatScopedConfigContainer_ACU(chat: unknown[]): Record<string, unknown> | null {
-    const metadataContainer = readContainer_ACU(getChatMetadata_ACU()?.[CHAT_SCOPED_CONFIG_FIELD_ACU]);
+    if (!hasActiveChatContext_ACU(chat)) return null;
+    const rawMetadataContainer = readContainer_ACU(getChatMetadata_ACU()?.[CHAT_SCOPED_CONFIG_FIELD_ACU]);
     const first = getChatFirstLayerMessageLocal_ACU(chat);
     const legacyContainer = first ? readContainer_ACU(first[CHAT_SCOPED_CONFIG_FIELD_ACU]) : null;
+    const metadataContainer = shouldUseChatMetadataContainer_ACU(CHAT_SCOPED_CONFIG_FIELD_ACU, rawMetadataContainer, legacyContainer)
+        ? rawMetadataContainer
+        : null;
     const merged = mergeLegacyScopedConfigIntoMetadata_ACU(metadataContainer, legacyContainer);
     if (merged.changed && merged.container) writeChatMetadataField_ACU(CHAT_SCOPED_CONFIG_FIELD_ACU, merged.container);
     return merged.container;
@@ -156,18 +213,23 @@ export function normalizeChatScopedConfigContainer_ACU(container: unknown): Reco
  * @returns 解析后的 guide 对象，或 null
  */
 export function getChatSheetGuideContainer_ACU(chat: unknown[]): Record<string, unknown> | null {
-    const metadataContainer = readContainer_ACU(getChatMetadata_ACU()?.[CHAT_SHEET_GUIDE_FIELD_ACU]);
+    if (!hasActiveChatContext_ACU(chat)) return null;
+    const rawMetadataContainer = readContainer_ACU(getChatMetadata_ACU()?.[CHAT_SHEET_GUIDE_FIELD_ACU]);
     const first = getChatFirstLayerMessageLocal_ACU(chat);
     const legacyContainer = first ? readContainer_ACU(first[CHAT_SHEET_GUIDE_FIELD_ACU]) : null;
+    const metadataContainer = shouldUseChatMetadataContainer_ACU(CHAT_SHEET_GUIDE_FIELD_ACU, rawMetadataContainer, legacyContainer)
+        ? rawMetadataContainer
+        : null;
     const merged = mergeLegacyGuideIntoMetadata_ACU(metadataContainer, legacyContainer);
     if (merged.changed && merged.container) writeChatMetadataField_ACU(CHAT_SHEET_GUIDE_FIELD_ACU, merged.container);
     return merged.container;
 }
 
 export function setChatScopedConfigContainer_ACU(chat: unknown[], container: Record<string, unknown> | null): void {
-    writeChatMetadataField_ACU(CHAT_SCOPED_CONFIG_FIELD_ACU, container);
+    if (!hasActiveChatContext_ACU(chat)) return;
     const first = getChatFirstLayerMessageLocal_ACU(chat);
     if (!first) return;
+    writeChatMetadataField_ACU(CHAT_SCOPED_CONFIG_FIELD_ACU, container);
     if (container && Object.keys(container).length > 0) {
         (first as Record<string, unknown>)[CHAT_SCOPED_CONFIG_FIELD_ACU] = container;
     } else {
@@ -176,9 +238,10 @@ export function setChatScopedConfigContainer_ACU(chat: unknown[], container: Rec
 }
 
 export function setChatSheetGuideContainer_ACU(chat: unknown[], container: Record<string, unknown> | null): void {
-    writeChatMetadataField_ACU(CHAT_SHEET_GUIDE_FIELD_ACU, container);
+    if (!hasActiveChatContext_ACU(chat)) return;
     const first = getChatFirstLayerMessageLocal_ACU(chat);
     if (!first) return;
+    writeChatMetadataField_ACU(CHAT_SHEET_GUIDE_FIELD_ACU, container);
     if (container && Object.keys(container).length > 0) {
         (first as Record<string, unknown>)[CHAT_SHEET_GUIDE_FIELD_ACU] = container;
     } else {

@@ -1,4 +1,3 @@
-import { TABLE_TEMPLATE_ACU } from '../../../shared/defaults-json.js';
 import { TABLE_ORDER_FIELD_ACU } from '../../../shared/constants';
 import { topLevelWindow_ACU } from '../../../shared/env';
 import { safeJsonStringify_ACU } from '../../../shared/json-helpers';
@@ -40,6 +39,7 @@ import { applyTemplateScopeForCurrentChat_ACU } from '../../../service/settings/
 import {
   buildChatSheetGuideDataFromData_ACU,
   getChatSheetGuideDataForIsolationKey_ACU,
+  getGlobalTemplateSnapshotForCurrentProfile_ACU,
   getSortedSheetKeys_ACU,
   materializeDataFromSheetGuide_ACU,
   sanitizeTemplateSnapshotForChat_ACU,
@@ -165,78 +165,38 @@ async function saveGlobalTemplateSnapshot(
   orderedData: Record<string, any>,
   interactions: VisualizerSaveInteractions,
 ): Promise<GlobalTemplateSaveResult> {
-  let templateObj: any = null;
-  try {
-    templateObj = JSON.parse(TABLE_TEMPLATE_ACU);
-  } catch {
-    templateObj = parseTableTemplateJson_ACU({ stripSeedRows: false });
-  }
-  if (!templateObj || typeof templateObj !== 'object') templateObj = {};
-
-  const tempGlobalCfg = getGlobalInjectionConfigFromData_ACU(orderedData, {
-    ensureWriteBack: true,
+  const templateObj: Record<string, any> = {};
+  Object.keys(orderedData || {}).forEach(key => {
+    if (!key.startsWith('sheet_')) templateObj[key] = cloneData(orderedData[key]);
   });
-  const prevGlobalCfgStr = safeJsonStringify_ACU(templateObj?.mate?.globalInjectionConfig || {}, '{}');
-  const nextGlobalCfgStr = safeJsonStringify_ACU(tempGlobalCfg || {}, '{}');
   if (!templateObj.mate || typeof templateObj.mate !== 'object') {
     templateObj.mate = { type: 'chatSheets', version: 1 };
   }
   if (!templateObj.mate.type) templateObj.mate.type = 'chatSheets';
   if (!Number.isFinite(templateObj.mate.version)) templateObj.mate.version = 1;
-  templateObj.mate.globalInjectionConfig = tempGlobalCfg;
-
-  let templateChanged = prevGlobalCfgStr !== nextGlobalCfgStr;
-
-  Object.keys(orderedData || {}).forEach(key => {
-    if (!key.startsWith('sheet_')) return;
-    const currentTable = orderedData[key];
-    if (!templateObj[key]) {
-      const newTemplateTable = cloneData(currentTable);
-      if (Array.isArray(newTemplateTable.content) && newTemplateTable.content.length > 1) {
-        newTemplateTable.content = [newTemplateTable.content[0]];
-      }
-      newTemplateTable[TABLE_ORDER_FIELD_ACU] = currentTable[TABLE_ORDER_FIELD_ACU];
-      templateObj[key] = newTemplateTable;
-      templateChanged = true;
-      return;
-    }
-
-    const templateTable = templateObj[key];
-    if (templateTable.name !== currentTable.name) {
-      templateTable.name = currentTable.name;
-      templateChanged = true;
-    }
-    for (const field of ['sourceData', 'updateConfig', 'exportConfig']) {
-      if (JSON.stringify(templateTable[field]) !== JSON.stringify(currentTable[field])) {
-        templateTable[field] = currentTable[field] ? cloneData(currentTable[field]) : {};
-        templateChanged = true;
-      }
-    }
-    if (templateTable[TABLE_ORDER_FIELD_ACU] !== currentTable[TABLE_ORDER_FIELD_ACU]) {
-      templateTable[TABLE_ORDER_FIELD_ACU] = currentTable[TABLE_ORDER_FIELD_ACU];
-      templateChanged = true;
-    }
-    const currentHeaders = Array.isArray(currentTable.content?.[0]) ? currentTable.content[0] : null;
-    if (currentHeaders && JSON.stringify(templateTable.content?.[0]) !== JSON.stringify(currentHeaders)) {
-      if (!Array.isArray(templateTable.content)) templateTable.content = [];
-      templateTable.content[0] = cloneData(currentHeaders);
-      templateChanged = true;
-    }
+  templateObj.mate.globalInjectionConfig = getGlobalInjectionConfigFromData_ACU(orderedData, {
+    ensureWriteBack: true,
   });
 
-  Object.keys(templateObj).forEach(key => {
-    if (key.startsWith('sheet_') && !orderedData?.[key]) {
-      delete templateObj[key];
-      templateChanged = true;
+  const orderedSheetKeys = getSortedSheetKeys_ACU(orderedData, { ignoreChatGuide: true });
+  orderedSheetKeys.forEach(key => {
+    const currentTable = orderedData?.[key];
+    if (!currentTable || typeof currentTable !== 'object') return;
+    const templateTable = cloneData(currentTable);
+    if (Array.isArray(templateTable.content) && templateTable.content.length > 1) {
+      templateTable.content = [templateTable.content[0]];
     }
+    templateTable[TABLE_ORDER_FIELD_ACU] = currentTable[TABLE_ORDER_FIELD_ACU];
+    templateObj[key] = templateTable;
   });
 
   ensureSheetOrderNumbers_ACU(templateObj, {
-    baseOrderKeys: getSortedSheetKeys_ACU(orderedData, { ignoreChatGuide: true }),
+    baseOrderKeys: orderedSheetKeys,
     forceRebuild: false,
   });
 
-  if (!templateChanged) return { status: 'unchanged' };
+  const currentGlobalSnapshot = getGlobalTemplateSnapshotForCurrentProfile_ACU();
+  const currentGlobalStr = currentGlobalSnapshot?.templateStr || '';
 
   const isolationKey = getCurrentIsolationKey_ACU();
   const activePresetName = normalizeTemplatePresetSelectionValue_ACU(
@@ -261,6 +221,7 @@ async function saveGlobalTemplateSnapshot(
   if (!preparedSnapshot?.templateStr) {
     throw new Error('无法生成模板快照。');
   }
+  if (currentGlobalStr && preparedSnapshot.templateStr === currentGlobalStr) return { status: 'unchanged' };
   const presetSaved = upsertTemplatePreset_ACU(finalGlobalPresetName, preparedSnapshot.templateStr);
   if (!presetSaved) throw new Error('无法写入全局预设库。');
 

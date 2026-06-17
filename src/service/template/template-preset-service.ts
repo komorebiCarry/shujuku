@@ -226,7 +226,7 @@ export function parseImportedTemplateData_ACU(templateData: any) {
 
 // ═══ 模板作用域持久化（纯数据操作） ═══
 
-export function persistTemplateScopeSelectionState_ACU(presetName: string, { source = 'ui', updateGlobal = false, save = true, persistChatScope = undefined as boolean | undefined, templateSource = TABLE_TEMPLATE_ACU, guideData = null as any, archivePreviousChatScope = false, scopeMode = undefined as string | undefined, registerChatPresetEntry = undefined as boolean | undefined } = {}) {
+export function persistTemplateScopeSelectionState_ACU(presetName: string, { source = 'ui', updateGlobal = false, save = true, persistChatScope = undefined as boolean | undefined, templateSource = null as any, guideData = null as any, archivePreviousChatScope = false, scopeMode = undefined as string | undefined, registerChatPresetEntry = undefined as boolean | undefined } = {}) {
     const _persistChatScope = persistChatScope ?? !updateGlobal;
     const _scopeMode = scopeMode ?? (_persistChatScope ? 'chat_override' : 'inherit_global');
     const _registerChatPresetEntry = registerChatPresetEntry ?? (!updateGlobal && !!_persistChatScope && normalizeTemplateScopeMode_ACU(_scopeMode) === 'chat_override');
@@ -244,6 +244,7 @@ export function persistTemplateScopeSelectionState_ACU(presetName: string, { sou
         let templateState = null;
 
         if (normalizedScopeMode === 'chat_override') {
+            const resolvedTemplateSource = templateSource || getGlobalTemplateSnapshotForCurrentProfile_ACU()?.templateStr || DEFAULT_TABLE_TEMPLATE_ACU;
             templateState = buildChatTemplateScopeStateFromCurrent_ACU({
                 isolationKey: normalizedKey,
                 presetName: normalizedPresetName,
@@ -251,7 +252,7 @@ export function persistTemplateScopeSelectionState_ACU(presetName: string, { sou
                 originGlobalName: getCurrentTemplatePresetName_ACU(settings_ACU, { requireExisting: false }),
                 originGlobalRevision: 0,
                 updatedAt: Date.now(),
-                templateSource,
+                templateSource: resolvedTemplateSource,
                 guideData,
             });
         } else if (normalizedScopeMode === 'preset_link') {
@@ -338,12 +339,27 @@ export async function applyTemplateSnapshotToScope_ACU(templateSource: any, { sc
     };
 }
 
-export async function applyTemplatePresetToCurrent_ACU(presetName: string, { source = 'ui', updateGlobal = true, save = true, persistChatScope = undefined as boolean | undefined } = {}) {
+export async function applyTemplatePresetToCurrent_ACU(presetName: string, { source = 'ui', updateGlobal = true, save = true, persistChatScope = undefined as boolean | undefined, chatSelectionSource = 'auto' as 'auto' | 'snapshot' | 'global' } = {}) {
     const _persistChatScope = persistChatScope ?? !updateGlobal;
     const name = normalizeTemplatePresetSelectionValue_ACU(presetName);
     const isDefaultPreset = isDefaultTemplatePresetSelection_ACU(name);
 
     if (!updateGlobal) {
+        if (chatSelectionSource === 'global') {
+            if (!isDefaultPreset && !getTemplatePreset_ACU(name)?.templateStr) return false;
+            const linkedPresetName = persistTemplateScopeSelectionState_ACU(name, {
+                source,
+                updateGlobal: false,
+                save,
+                persistChatScope: true,
+                scopeMode: 'preset_link',
+                registerChatPresetEntry: false,
+            });
+            applyTemplateScopeForCurrentChat_ACU();
+            try { await refreshMergedDataAndNotify_ACU(); } catch (e) {}
+            return { presetName: linkedPresetName, mode: 'preset_link', fromGlobalPreset: true, isDefault: isDefaultPreset };
+        }
+
         const activated = await activateChatTemplatePresetSelection_ACU(name, {
             source,
             save,
@@ -406,8 +422,8 @@ export function resolveTemplateForExport_ACU(
             } catch (e) { logWarn_ACU('[模板预设] resolveTemplateData: 从预设加载模板失败:', e); }
         }
 
-        // fallback: 全局快照
         if (!jsonData || typeof jsonData !== 'object') {
+            if (selectedPresetName) return null;
             const globalSnapshot = getGlobalTemplateSnapshotForCurrentProfile_ACU();
             if (globalSnapshot?.templateObj && typeof globalSnapshot.templateObj === 'object') {
                 jsonData = JSON.parse(JSON.stringify(globalSnapshot.templateObj));
@@ -418,22 +434,20 @@ export function resolveTemplateForExport_ACU(
         // chat scope
         const chatScopeState = getCurrentChatTemplateScopeState_ACU() || migrateLegacyTemplateScopeForCurrentChat_ACU();
         const effectivePresetName = normalizeTemplatePresetSelectionValue_ACU(resolveActiveTemplatePresetName_ACU({ fallbackToGlobal: true }));
-        const chatSnapshot = chatScopeState?.mode === 'chat_override' && chatScopeState?.templateStr
-            ? sanitizeTemplateSnapshotForChat_ACU(chatScopeState.templateStr)
-            : (sanitizeTemplateSnapshotForChat_ACU(TABLE_TEMPLATE_ACU) || getGlobalTemplateSnapshotForCurrentProfile_ACU());
+        let chatSnapshot = null as ReturnType<typeof sanitizeTemplateSnapshotForChat_ACU> | null;
+        if (chatScopeState?.mode === 'chat_override' && chatScopeState?.templateStr) {
+            chatSnapshot = sanitizeTemplateSnapshotForChat_ACU(chatScopeState.templateStr);
+        } else if (chatScopeState?.mode === 'preset_link') {
+            const linkedPresetName = normalizeTemplatePresetSelectionValue_ACU(chatScopeState.presetName || '');
+            chatSnapshot = linkedPresetName
+                ? sanitizeTemplateSnapshotForChat_ACU(getTemplatePreset_ACU(linkedPresetName)?.templateStr || null)
+                : getDefaultTemplateSnapshot_ACU();
+        } else {
+            chatSnapshot = getGlobalTemplateSnapshotForCurrentProfile_ACU();
+        }
         if (chatSnapshot?.templateObj && typeof chatSnapshot.templateObj === 'object') {
             jsonData = JSON.parse(JSON.stringify(chatSnapshot.templateObj));
             fromPresetName = normalizeTemplatePresetSelectionValue_ACU(chatScopeState?.presetName || effectivePresetName);
-        }
-    }
-
-    // 最终 fallback
-    if (!jsonData || typeof jsonData !== 'object') {
-        const fallbackSnapshot = normalizedScope === 'chat'
-            ? sanitizeTemplateSnapshotForChat_ACU(TABLE_TEMPLATE_ACU)
-            : getGlobalTemplateSnapshotForCurrentProfile_ACU();
-        if (fallbackSnapshot?.templateObj && typeof fallbackSnapshot.templateObj === 'object') {
-            jsonData = JSON.parse(JSON.stringify(fallbackSnapshot.templateObj));
         }
     }
 

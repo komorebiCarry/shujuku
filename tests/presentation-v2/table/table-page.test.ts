@@ -69,17 +69,20 @@ async function mountTablePage(opts: {
   vi.doMock('../../../src/presentation-v2/composables/useTableTemplatePresets', () => ({
     useTableTemplatePresets: () => {
       const selectedGlobalPreset = ref(opts.selectedGlobalPreset ?? 'global-A');
-      const selectedChatPreset = ref(opts.selectedChatPreset ?? 'global-A');
+      const selectedGlobalPresetValue = ref(`global:${selectedGlobalPreset.value}`);
+      const selectedChatPreset = ref(`global:${opts.selectedChatPreset ?? 'global-A'}`);
       return {
       busy: ref(false),
       message: ref(null),
       selectedGlobalPreset,
+      selectedGlobalPresetValue,
       selectedChatPreset,
-      isChatOverridden: computed(() => selectedChatPreset.value !== selectedGlobalPreset.value),
+      selectedChatPresetLabel: ref(`${opts.selectedChatPreset ?? 'global-A'}（全局预设）`),
+      isChatOverridden: computed(() => selectedChatPreset.value !== selectedGlobalPresetValue.value),
       chatPresetItems: ref([
-        { value: '', label: '默认预设', meta: '2 张表' },
-        { value: 'global-A', label: 'global-A', meta: '2 张表' },
-        { value: 'chat-A', label: 'chat-A', meta: '3 张表' },
+        { value: 'global:', label: '默认预设（全局）', meta: '2 张表' },
+        { value: 'global:global-A', label: 'global-A（全局预设）', meta: '2 张表' },
+        { value: 'snapshot:chat-A', label: 'chat-A（当前聊天快照）', meta: '3 张表' },
       ]),
       refresh,
       selectGlobalPreset,

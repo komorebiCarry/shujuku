@@ -249,6 +249,24 @@ describe('deleteLocalDataInChatCore_ACU', () => {
     expect(count).toBe(1);
   });
 
+  it('mode=current 删除无旧版 Identity 的 V2 当前隔离槽', async () => {
+    mockSettings.dataIsolationEnabled = true;
+    mockSettings.dataIsolationCode = 'tag_A';
+    mockGetCurrentIsolationKey.mockReturnValue('tag_A');
+    const chat = [
+      { is_user: false, TavernDB_ACU_IsolatedData: { tag_A: { storageFrame: { version: 2, checkpoint: { kind: 'full', data: {} }, logEntries: [] }, _acu_storage_version: 2 }, tag_B: { independentData: {} } } },
+      { is_user: false, TavernDB_ACU_IsolatedData: { tag_B: { independentData: {} } } },
+    ];
+    mockGetChatArray.mockReturnValue(chat);
+
+    const count = await deleteLocalDataInChatCore_ACU('current');
+
+    expect(count).toBe(1);
+    expect(chat[0].TavernDB_ACU_IsolatedData.tag_A).toBeUndefined();
+    expect(chat[0].TavernDB_ACU_IsolatedData.tag_B).toBeDefined();
+    expect(chat[1].TavernDB_ACU_IsolatedData.tag_B).toBeDefined();
+  });
+
   it('指定楼层范围', async () => {
     const chat = [
       { is_user: false, TavernDB_ACU_Data: {} }, // AI楼层1

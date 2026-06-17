@@ -2,8 +2,6 @@
  * service/template/chat-scope/chat-scope-guide.ts
  * Sheet Guide 数据操作（D 组）
  */
-import { DEFAULT_TABLE_TEMPLATE_ACU, TABLE_TEMPLATE_ACU, _set_TABLE_TEMPLATE_ACU} from '../../../shared/defaults-json.js';
-import { readProfileTemplateFromStorage_ACU, saveCurrentProfileTemplate_ACU } from '../../../data/repositories/profile-repo';
 import { DEFAULT_TEMPLATE_PRESET_OPTION_VALUE_ACU, deriveTemplatePresetNameForImport_ACU, getCurrentTemplatePresetName_ACU, normalizeTemplatePresetSelectionValue_ACU } from '../../../shared/template-preset-utils';
 import { CHAT_SCOPED_CONFIG_FIELD_ACU, CHAT_SHEET_GUIDE_FIELD_ACU, CHAT_SHEET_GUIDE_SEED_ROWS_FIELD_ACU, CHAT_SHEET_GUIDE_VERSION_ACU, CHAT_TEMPLATE_ARCHIVE_OPTION_PREFIX_ACU, LEGACY_CHAT_TABLE_HEADER_GUIDE_FIELD_ACU, MAX_CHAT_TEMPLATE_ARCHIVES_PER_TAG_ACU, getChatScopedConfigContainer_ACU, getChatSheetGuideContainer_ACU, normalizeChatScopedConfigContainer_ACU, setChatSheetGuideContainer_ACU } from '../../../data/storage/chat-history';
 import { getDefaultTemplateSnapshot_ACU, getTemplatePreset_ACU } from '../template-preset-service';
@@ -366,11 +364,6 @@ export function shouldUseOpeningSeedRows_ACU(): boolean {
           }
       }
 
-      const activeTemplateGuideData = buildGuideDataFromTemplateSource_ACU(TABLE_TEMPLATE_ACU);
-      if (activeTemplateGuideData) {
-          return activeTemplateGuideData;
-      }
-
       const globalSnapshot = getGlobalTemplateSnapshotForCurrentProfile_ACU();
       const globalGuideData = buildChatSheetGuideDataFromTemplateObj_ACU(globalSnapshot?.templateObj, { stripSeedRows: false });
       if (globalGuideData && Object.keys(globalGuideData).some(k => k.startsWith('sheet_'))) {
@@ -452,9 +445,15 @@ export function shouldUseOpeningSeedRows_ACU(): boolean {
 
   function getTemplateObjForSeedRows_ACU() {
       try {
-          if (_seedRowsTemplateCacheStr_ACU === TABLE_TEMPLATE_ACU && _seedRowsTemplateCacheObj_ACU) return _seedRowsTemplateCacheObj_ACU;
+          const snapshot = getGlobalTemplateSnapshotForCurrentProfile_ACU();
+          if (snapshot?.templateStr && _seedRowsTemplateCacheStr_ACU === snapshot.templateStr && _seedRowsTemplateCacheObj_ACU) return _seedRowsTemplateCacheObj_ACU;
+          if (snapshot?.templateObj) {
+              _seedRowsTemplateCacheStr_ACU = snapshot.templateStr || '';
+              _seedRowsTemplateCacheObj_ACU = JSON.parse(JSON.stringify(snapshot.templateObj));
+              return _seedRowsTemplateCacheObj_ACU;
+          }
           const obj = parseTableTemplateJson_ACU({ stripSeedRows: false });
-          _seedRowsTemplateCacheStr_ACU = TABLE_TEMPLATE_ACU;
+          _seedRowsTemplateCacheStr_ACU = JSON.stringify(obj || {});
           _seedRowsTemplateCacheObj_ACU = obj;
           return obj;
       } catch (e) {

@@ -411,8 +411,22 @@ import { normalizeIsolationCode_ACU } from '../../../shared/data-constants';
       return normalizedState;
   }
 
-  export function buildChatTemplateScopeStateFromCurrent_ACU({ isolationKey = getCurrentIsolationKey_ACU(), presetName = '', source = 'ui', originGlobalName = '', originGlobalRevision = 0, updatedAt = Date.now(), templateSource = TABLE_TEMPLATE_ACU as any, guideData = null }: any = {}) {
+  export function buildChatTemplateScopeStateFromCurrent_ACU(options: any = {}) {
+      const {
+          isolationKey = getCurrentIsolationKey_ACU(),
+          presetName = '',
+          source = 'ui',
+          originGlobalName = '',
+          originGlobalRevision = 0,
+          updatedAt = Date.now(),
+          templateSource = null,
+          guideData = null,
+      } = options || {};
       const normalizedKey = normalizeTemplateScopeIsolationKey_ACU(isolationKey);
+      if (!Object.prototype.hasOwnProperty.call(options || {}, 'templateSource')) {
+          logWarn_ACU('[TemplateScope] buildChatTemplateScopeStateFromCurrent_ACU 缺少 templateSource，已拒绝隐式使用运行时模板。');
+          return null;
+      }
       const templateSnapshot = sanitizeTemplateSnapshotForChat_ACU(templateSource);
       if (!templateSnapshot?.templateStr) return null;
 
@@ -617,7 +631,7 @@ import { normalizeIsolationCode_ACU } from '../../../shared/data-constants';
       const code = normalizeIsolationCode_ACU(settings_ACU?.dataIsolationCode || '');
       const previousTemplate = TABLE_TEMPLATE_ACU;
       const savedTemplate = readProfileTemplateFromStorage_ACU(code);
-      let snapshot = sanitizeTemplateSnapshotForChat_ACU(savedTemplate || previousTemplate);
+      let snapshot = sanitizeTemplateSnapshotForChat_ACU(savedTemplate || DEFAULT_TABLE_TEMPLATE_ACU);
       if (snapshot?.templateStr) {
           return snapshot;
       }
@@ -632,5 +646,5 @@ import { normalizeIsolationCode_ACU } from '../../../shared/data-constants';
           _set_TABLE_TEMPLATE_ACU(previousTemplate);
       }
 
-      return snapshot || sanitizeTemplateSnapshotForChat_ACU(previousTemplate);
+      return snapshot || sanitizeTemplateSnapshotForChat_ACU(DEFAULT_TABLE_TEMPLATE_ACU);
   }

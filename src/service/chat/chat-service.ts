@@ -707,6 +707,7 @@ async function deleteLocalDataInChatCoreInner_ACU(
 
     let deletedCount = 0;
     const targetIdentity = settings_ACU.dataIsolationEnabled ? settings_ACU.dataIsolationCode : null;
+    const currentIsolationKey = getCurrentIsolationKey_ACU();
 
     // 计算AI消息索引列表（只计算AI楼层）
     const aiMessageIndices = chat
@@ -731,7 +732,10 @@ async function deleteLocalDataInChatCoreInner_ACU(
         if (mode === 'all') {
             shouldDelete = true;
         } else {
-            if (settings_ACU.dataIsolationEnabled) {
+            const isolatedData = msg.TavernDB_ACU_IsolatedData;
+            if (isolatedData && typeof isolatedData === 'object' && !Array.isArray(isolatedData) && isolatedData[currentIsolationKey]) {
+                shouldDelete = true;
+            } else if (settings_ACU.dataIsolationEnabled) {
                 if (msg.TavernDB_ACU_Identity === targetIdentity) {
                     shouldDelete = true;
                 }
@@ -770,7 +774,6 @@ async function deleteLocalDataInChatCoreInner_ACU(
                     delete msg.TavernDB_ACU_IsolatedData;
                     modified = true;
                 } else {
-                    const currentIsolationKey = getCurrentIsolationKey_ACU();
                     if (msg.TavernDB_ACU_IsolatedData[currentIsolationKey]) {
                         await deleteVectorIndexManifestFromTagData_ACU(msg.TavernDB_ACU_IsolatedData[currentIsolationKey]);
                         delete msg.TavernDB_ACU_IsolatedData[currentIsolationKey];

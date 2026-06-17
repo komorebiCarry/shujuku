@@ -34,6 +34,8 @@ import {
   getChatScopedConfigContainer_ACU,
   normalizeChatScopedConfigContainer_ACU,
   getChatSheetGuideContainer_ACU,
+  setChatScopedConfigContainer_ACU,
+  setChatSheetGuideContainer_ACU,
 } from '../../../src/data/storage/chat-history';
 
 beforeEach(() => {
@@ -149,6 +151,94 @@ describe('getChatScopedConfigContainer_ACU', () => {
 
     expect((result!.template as any)[''].mode).toBe('chat_override');
   });
+
+  it('无活动聊天时不读取残留 chatMetadata', () => {
+    const metadataConfig = { version: 1, templateArchives: { '': [{ presetName: '少女前线', templateStr: '{"sheet_b":{"content":[["row_id"]]}}' }] } };
+    _set_SillyTavern_API_ACU({ chatMetadata: { [CHAT_SCOPED_CONFIG_FIELD_ACU]: metadataConfig } } as any);
+
+    expect(getChatScopedConfigContainer_ACU([])).toBeNull();
+  });
+
+  it('宿主明确无当前聊天时不读取残留 chatMetadata', () => {
+    const metadataConfig = { version: 1, templateArchives: { '': [{ presetName: '少女前线', templateStr: '{"sheet_b":{"content":[["row_id"]]}}' }] } };
+    _set_SillyTavern_API_ACU({
+      chatId: '',
+      getCurrentChatId: () => '',
+      chatMetadata: { [CHAT_SCOPED_CONFIG_FIELD_ACU]: metadataConfig },
+    } as any);
+
+    expect(getChatScopedConfigContainer_ACU([{}])).toBeNull();
+  });
+
+  it('新聊天不读取属于旧 chatId 的残留 chatMetadata', () => {
+    const metadataConfig = { version: 1, templateArchives: { '': [{ presetName: '少女前线', templateStr: '{"sheet_b":{"content":[["row_id"]]}}' }] } };
+    _set_SillyTavern_API_ACU({
+      chatId: 'new-chat',
+      getCurrentChatId: () => 'new-chat',
+      chatMetadata: {
+        [CHAT_SCOPED_CONFIG_FIELD_ACU]: metadataConfig,
+        [`${CHAT_SCOPED_CONFIG_FIELD_ACU}__chatId`]: 'old-chat',
+      },
+    } as any);
+
+    expect(getChatScopedConfigContainer_ACU([{}])).toBeNull();
+  });
+
+  it('无归属旧 chatMetadata 按旧数据兼容读取', () => {
+    const metadataConfig = { version: 1, template: { '': { mode: 'chat_override', templateStr: '{"sheet_b":{"content":[["row_id"]]}}' } } };
+    _set_SillyTavern_API_ACU({
+      chatId: 'new-chat',
+      getCurrentChatId: () => 'new-chat',
+      chatMetadata: { [CHAT_SCOPED_CONFIG_FIELD_ACU]: metadataConfig },
+    } as any);
+
+    const result = getChatScopedConfigContainer_ACU([{}]);
+    expect((result!.template as any)[''].mode).toBe('chat_override');
+  });
+
+  it('chatMetadata 归属当前 chatId 时允许读取', () => {
+    const metadataConfig = { version: 1, template: { '': { mode: 'chat_override', templateStr: '{"sheet_b":{"content":[["row_id"]]}}' } } };
+    _set_SillyTavern_API_ACU({
+      chatId: 'current-chat',
+      getCurrentChatId: () => 'current-chat',
+      chatMetadata: {
+        [CHAT_SCOPED_CONFIG_FIELD_ACU]: metadataConfig,
+        [`${CHAT_SCOPED_CONFIG_FIELD_ACU}__chatId`]: 'current-chat',
+      },
+    } as any);
+
+    const result = getChatScopedConfigContainer_ACU([{}]);
+    expect((result!.template as any)[''].mode).toBe('chat_override');
+  });
+
+  it('无活动聊天时不写入残留 chatMetadata', () => {
+    const metadata: any = {};
+    _set_SillyTavern_API_ACU({
+      chatId: '',
+      getCurrentChatId: () => '',
+      chatMetadata: metadata,
+      updateChatMetadata: vi.fn((next: any) => Object.assign(metadata, next)),
+    } as any);
+
+    setChatScopedConfigContainer_ACU([{}], { version: 1, templateArchives: { '': [{ presetName: '少女前线' }] } });
+
+    expect(metadata[CHAT_SCOPED_CONFIG_FIELD_ACU]).toBeUndefined();
+  });
+
+  it('写入 chatMetadata 时记录当前 chatId 归属', () => {
+    const metadata: any = {};
+    _set_SillyTavern_API_ACU({
+      chatId: 'current-chat',
+      getCurrentChatId: () => 'current-chat',
+      chatMetadata: metadata,
+      updateChatMetadata: vi.fn((next: any) => Object.assign(metadata, next)),
+    } as any);
+
+    setChatScopedConfigContainer_ACU([{}], { version: 1, templateArchives: { '': [{ presetName: '少女前线' }] } });
+
+    expect(metadata[CHAT_SCOPED_CONFIG_FIELD_ACU]).toBeDefined();
+    expect(metadata[`${CHAT_SCOPED_CONFIG_FIELD_ACU}__chatId`]).toBe('current-chat');
+  });
 });
 
 // ═══ normalizeChatScopedConfigContainer_ACU ═══
@@ -242,5 +332,44 @@ describe('getChatSheetGuideContainer_ACU', () => {
     const result = getChatSheetGuideContainer_ACU([{}]);
 
     expect((result!.tags as any)[''].data.sheet_meta.name).toBe('元数据');
+  });
+
+  it('无活动聊天时不读取残留 SheetGuide metadata', () => {
+    const metadataGuide = { version: 2, tags: { '': { data: { sheet_meta: { name: '元数据' } } } } };
+    _set_SillyTavern_API_ACU({
+      chatId: '',
+      getCurrentChatId: () => '',
+      chatMetadata: { [CHAT_SHEET_GUIDE_FIELD_ACU]: metadataGuide },
+    } as any);
+
+    expect(getChatSheetGuideContainer_ACU([{}])).toBeNull();
+  });
+
+  it('新聊天不读取属于旧 chatId 的残留 SheetGuide metadata', () => {
+    const metadataGuide = { version: 2, tags: { '': { data: { sheet_meta: { name: '元数据' } } } } };
+    _set_SillyTavern_API_ACU({
+      chatId: 'new-chat',
+      getCurrentChatId: () => 'new-chat',
+      chatMetadata: {
+        [CHAT_SHEET_GUIDE_FIELD_ACU]: metadataGuide,
+        [`${CHAT_SHEET_GUIDE_FIELD_ACU}__chatId`]: 'old-chat',
+      },
+    } as any);
+
+    expect(getChatSheetGuideContainer_ACU([{}])).toBeNull();
+  });
+
+  it('无活动聊天时不写入残留 SheetGuide metadata', () => {
+    const metadata: any = {};
+    _set_SillyTavern_API_ACU({
+      chatId: '',
+      getCurrentChatId: () => '',
+      chatMetadata: metadata,
+      updateChatMetadata: vi.fn((next: any) => Object.assign(metadata, next)),
+    } as any);
+
+    setChatSheetGuideContainer_ACU([{}], { version: 2, tags: { '': { data: { sheet_meta: { name: '元数据' } } } } });
+
+    expect(metadata[CHAT_SHEET_GUIDE_FIELD_ACU]).toBeUndefined();
   });
 });

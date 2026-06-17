@@ -3,7 +3,6 @@
  * 模板预设 API — 模板预设的列表/切换/导入
  */
 
-import { TABLE_TEMPLATE_ACU } from '../../../shared/defaults-json.js';
 import { deriveTemplatePresetNameForImport_ACU, normalizeTemplatePresetSelectionValue_ACU } from '../../../shared/template-preset-utils';
 import { logDebug_ACU, logError_ACU } from '../../../shared/utils';
 import {
@@ -12,6 +11,7 @@ import {
     listTemplatePresetNames_ACU,
     normalizeTemplateOperationScope_ACU,
     parseImportedTemplateData_ACU,
+    resolveTemplateForExport_ACU,
     upsertTemplatePreset_ACU,
 } from '../../../service/template/template-preset-service';
 import { refreshTemplatePresetSelectInUI_ACU } from '../../components/template-preset-ui';
@@ -142,10 +142,14 @@ export function createTemplatePresetApi(ctx: ApiGroupContext): Record<string, Fu
             }
         },
 
-        getTableTemplate: function() {
+        getTableTemplate: function(options: any = {}) {
             try {
-                if (TABLE_TEMPLATE_ACU) {
-                    return JSON.parse(TABLE_TEMPLATE_ACU);
+                const scope = normalizeTemplateOperationScope_ACU(options?.scope || 'chat');
+                const resolved = resolveTemplateForExport_ACU(scope, options?.presetName);
+                if (resolved?.jsonData) return resolved.jsonData;
+                if (scope !== 'global') {
+                    const fallbackGlobal = resolveTemplateForExport_ACU('global', options?.presetName);
+                    if (fallbackGlobal?.jsonData) return fallbackGlobal.jsonData;
                 }
                 return null;
             } catch (e) {

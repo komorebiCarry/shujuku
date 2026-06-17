@@ -10,6 +10,8 @@ async function importComposable() {
   let selectedGlobal = 'global-A';
   let selectedChat = 'global-A';
   let activeScope: 'global' | 'chat' = 'global';
+  let activeMode = 'inherit_global';
+  let chatEntries: any[] = [];
   const applyTemplatePresetToCurrent_ACU = vi.fn(async () => ({ presetName: selectedChat }));
   const resolveTemplateForExport_ACU = vi.fn(() => ({ jsonData: { sheet_1: {} }, fromPresetName: selectedChat || '默认预设' }));
   const ensureTemplateRecoveryOrDeleteCurrentIsolationData_ACU = vi.fn(async () => ({ success: true, dataWasReset: false }));
@@ -36,7 +38,7 @@ async function importComposable() {
   }));
   vi.doMock('../../../src/service/template/chat-scope', () => ({
     buildChatSheetGuideDataFromTemplateObj_ACU: (value: any) => value ? { sheet_1: value.sheet_1 || {} } : null,
-    listChatTemplatePresetEntries_ACU: () => [],
+    listChatTemplatePresetEntries_ACU: () => chatEntries,
     sanitizeChatSheetsObject_ACU: (value: any) => value,
   }));
   vi.doMock('../../../src/shared/template-preset-utils', () => ({
@@ -48,7 +50,7 @@ async function importComposable() {
   vi.doMock('../../../src/service/template/template-preset-service', () => ({
     applyTemplatePresetToCurrent_ACU,
     deleteTemplatePreset_ACU: vi.fn(() => true),
-    getActiveTemplatePresetMeta_ACU: () => ({ presetName: selectedChat, scope: activeScope, mode: activeScope === 'chat' ? 'chat_override' : 'inherit_global' }),
+    getActiveTemplatePresetMeta_ACU: () => ({ presetName: selectedChat, scope: activeScope, mode: activeMode }),
     ensureUniqueTemplatePresetName_ACU: (name: string) => name,
     getDefaultTemplateSnapshot_ACU: () => ({ templateObj: { sheet_1: {} }, templateStr: '{"sheet_1":{}}' }),
     getTemplatePreset_ACU: () => ({ templateStr: '{"sheet_1":{}}' }),
@@ -76,7 +78,9 @@ async function importComposable() {
     deleteLocalDataInChatCore_ACU,
     setSelectedGlobal: (value: string) => { selectedGlobal = value; },
     setSelectedChat: (value: string) => { selectedChat = value; },
-    setActiveScope: (value: 'global' | 'chat') => { activeScope = value; },
+    setActiveScope: (value: 'global' | 'chat') => { activeScope = value; activeMode = value === 'chat' ? 'chat_override' : 'inherit_global'; },
+    setActiveMode: (value: string) => { activeMode = value; activeScope = value === 'inherit_global' ? 'global' : 'chat'; },
+    setChatEntries: (value: any[]) => { chatEntries = value; },
   };
 }
 
@@ -106,6 +110,35 @@ describe('useTableTemplatePresets', () => {
     setSelectedChat('');
     presets.refresh();
     expect(presets.isChatOverridden.value).toBe(false);
+  });
+
+  it('同名全局预设和聊天快照在当前聊天下拉中可区分', async () => {
+    const { useTableTemplatePresets, setChatEntries, setSelectedChat, setActiveMode } = await importComposable();
+    setChatEntries([{ presetName: 'global-A', templateStr: '{"sheet_1":{"name":"本地"}}' }]);
+    setSelectedChat('global-A');
+    setActiveMode('chat_override');
+
+    const presets = useTableTemplatePresets();
+
+    expect(presets.chatPresetItems.value.map(item => item.label)).toEqual(expect.arrayContaining([
+      'global-A（全局预设）',
+      'global-A（当前聊天快照）',
+    ]));
+    expect(presets.selectedChatPresetLabel.value).toBe('global-A（当前聊天快照）');
+  });
+
+  it('选择同名全局项时按全局来源切换，不被本地快照抢占', async () => {
+    const { useTableTemplatePresets, applyTemplatePresetToCurrent_ACU, setChatEntries } = await importComposable();
+    setChatEntries([{ presetName: 'global-A', templateStr: '{"sheet_1":{"name":"本地"}}' }]);
+    const presets = useTableTemplatePresets();
+    const globalItem = presets.chatPresetItems.value.find(item => item.label === 'global-A（全局预设）');
+
+    await presets.selectChatPreset(globalItem!.value);
+
+    expect(applyTemplatePresetToCurrent_ACU).toHaveBeenCalledWith('global-A', expect.objectContaining({
+      updateGlobal: false,
+      chatSelectionSource: 'global',
+    }));
   });
 
   it('切换当前聊天模板前使用统一恢复 guard，guard 取消时不切换', async () => {

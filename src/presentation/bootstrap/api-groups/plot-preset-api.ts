@@ -10,7 +10,8 @@ import { SillyTavern_API_ACU } from '../../../shared/host-api';
 import { settings_ACU } from '../../../service/runtime/state-manager';
 import { getCurrentRuntimePlotPresetName_ACU, normalizePlotPresetExcludeRules_ACU, switchCurrentChatPlotPreset_ACU } from '../../../service/plot/plot-logic';
 import { fillFirstLayerWithTemplateData_ACU } from '../../../service/runtime/helpers-remaining';
-import { overwriteChatSheetGuideFromTemplate_ACU } from '../../../service/template/chat-scope';
+import { deleteLocalDataInChatCore_ACU } from '../../../service/chat/chat-service';
+import { clearCurrentChatTemplateSnapshots_ACU, overwriteChatSheetGuideFromTemplate_ACU } from '../../../service/template/chat-scope';
 import { isSqliteMode } from '../../../service/table/storage-mode';
 import { reloadStorageProvider } from '../../../service/table/table-storage-strategy';
 import { saveSettingsAndNotify_ACU } from '../../components/settings-ui-helpers';
@@ -253,6 +254,17 @@ export function createPlotPresetApi(ctx: ApiGroupContext): Record<string, Functi
                 if (options.injectTemplate !== false) {
                     logDebug_ACU('[游戏初始化] 开始注入数据库模板...');
                     try {
+                        if (options.resetExistingTableData !== false) {
+                            await deleteLocalDataInChatCore_ACU('current');
+                            await clearCurrentChatTemplateSnapshots_ACU({
+                                clearCurrentOverride: true,
+                                clearArchives: true,
+                                clearGuide: true,
+                                clearLegacyGuide: true,
+                                save: false,
+                            });
+                        }
+
                         let templateData;
 
                         if (options.templateData) {

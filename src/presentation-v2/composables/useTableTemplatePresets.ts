@@ -33,9 +33,30 @@ import { ensureTemplateRecoveryOrDeleteCurrentIsolationData_ACU } from './useTem
 export type TemplateScope = 'global' | 'chat';
 
 type MessageKind = 'success' | 'error' | 'info' | 'warning';
+type ChatPresetSelectionKind = 'global' | 'snapshot';
 
-function defaultPresetItem(label: string, meta?: string) {
-  return { value: '', label, meta };
+const CHAT_GLOBAL_PRESET_VALUE_PREFIX = 'global:';
+const CHAT_SNAPSHOT_PRESET_VALUE_PREFIX = 'snapshot:';
+
+function encodeChatPresetValue(kind: ChatPresetSelectionKind, name: string): string {
+  return `${kind === 'snapshot' ? CHAT_SNAPSHOT_PRESET_VALUE_PREFIX : CHAT_GLOBAL_PRESET_VALUE_PREFIX}${encodeURIComponent(name || '')}`;
+}
+
+function decodeChatPresetValue(value: string, chatEntries: any[] = []): { kind: ChatPresetSelectionKind; name: string } {
+  const raw = String(value || '');
+  if (raw.startsWith(CHAT_SNAPSHOT_PRESET_VALUE_PREFIX)) {
+    return { kind: 'snapshot', name: normalizeTemplatePresetSelectionValue_ACU(decodeURIComponent(raw.slice(CHAT_SNAPSHOT_PRESET_VALUE_PREFIX.length))) };
+  }
+  if (raw.startsWith(CHAT_GLOBAL_PRESET_VALUE_PREFIX)) {
+    return { kind: 'global', name: normalizeTemplatePresetSelectionValue_ACU(decodeURIComponent(raw.slice(CHAT_GLOBAL_PRESET_VALUE_PREFIX.length))) };
+  }
+  const normalized = normalizeTemplatePresetSelectionValue_ACU(raw);
+  const hasLocalSnapshot = chatEntries.some(entry => normalizeTemplatePresetSelectionValue_ACU(entry?.presetName || '') === normalized);
+  return { kind: hasLocalSnapshot ? 'snapshot' : 'global', name: normalized };
+}
+
+function defaultPresetItem(label: string, meta?: string, value = '') {
+  return { value, label, meta };
 }
 
 function countTemplateSheets(templateSource: unknown): number | null {
@@ -73,14 +94,15 @@ function downloadJson(jsonData: Record<string, any>, filename: string): void {
   URL.revokeObjectURL(url);
 }
 
-function resolveGuideDataForPresetSelection(name: string): Record<string, any> | null {
-  const normalized = normalizeTemplatePresetSelectionValue_ACU(name);
-  const localEntry = listChatTemplatePresetEntries_ACU()
-    .find(entry => normalizeTemplatePresetSelectionValue_ACU(entry?.presetName || '') === normalized);
+function resolveGuideDataForPresetSelection(selection: { kind: ChatPresetSelectionKind; name: string }): Record<string, any> | null {
+  const normalized = normalizeTemplatePresetSelectionValue_ACU(selection.name);
+  const localEntry = selection.kind === 'snapshot'
+    ? listChatTemplatePresetEntries_ACU().find(entry => normalizeTemplatePresetSelectionValue_ACU(entry?.presetName || '') === normalized)
+    : null;
   if (localEntry?.guideData && typeof localEntry.guideData === 'object') return localEntry.guideData;
-  const snapshot = normalized
-    ? getTemplatePreset_ACU(normalized)?.templateStr
-    : getDefaultTemplateSnapshot_ACU()?.templateObj;
+  const snapshot = selection.kind === 'snapshot' && localEntry?.templateStr
+    ? localEntry.templateStr
+    : (normalized ? getTemplatePreset_ACU(normalized)?.templateStr : getDefaultTemplateSnapshot_ACU()?.templateObj);
   const templateObj = typeof snapshot === 'string'
     ? safeJsonParse_ACU(snapshot, null)
     : snapshot;
@@ -95,7 +117,9 @@ export function useTableTemplatePresets() {
   const globalPresetNames = ref<string[]>([]);
   const chatPresetEntries = ref<any[]>([]);
   const selectedGlobalPreset = ref('');
-  const selectedChatPreset = ref('');
+  const selectedGlobalPresetValue = ref(encodeChatPresetValue('global', ''));
+  const selectedChatPreset = ref(encodeChatPresetValue('global', ''));
+  const selectedChatPresetLabel = ref('默认预设（全局）');
   const chatPresetItems = ref<Array<{ value: string; label: string; meta?: string }>>([]);
   const activeTemplateScope = ref<'global' | 'chat'>('global');
 
@@ -104,27 +128,40 @@ export function useTableTemplatePresets() {
   function buildChatPresetItems(
     globalNames: string[],
     chatEntries: any[],
-    currentGlobalPreset: string,
+    _currentGlobalPreset: string,
   ): Array<{ value: string; label: string; meta?: string }> {
-    const seen = new Set(['']);
-    const defaultSnapshot = currentGlobalPreset ? null : getDefaultTemplateSnapshot_ACU();
-    const currentGlobalTemplateSource = currentGlobalPreset
-      ? getTemplatePreset_ACU(currentGlobalPreset)?.templateStr
-      : (defaultSnapshot?.templateObj || defaultSnapshot?.templateStr);
-    const items = [defaultPresetItem('默认预设', formatSheetCountMeta(currentGlobalTemplateSource))];
+    const seen = new Set<string>();
+    const defaultSnapshot = getDefaultTemplateSnapshot_ACU();
+    const items = [defaultPresetItem('默认预设（全局）', formatSheetCountMeta(defaultSnapshot?.templateObj || defaultSnapshot?.templateStr), encodeChatPresetValue('global', ''))];
+    seen.add(encodeChatPresetValue('global', ''));
     for (const name of globalNames) {
       const normalized = normalizeTemplatePresetSelectionValue_ACU(name);
-      if (!normalized || seen.has(normalized)) continue;
-      seen.add(normalized);
-      items.push({ value: normalized, label: normalized, meta: formatSheetCountMeta(getTemplatePreset_ACU(normalized)?.templateStr) });
+      if (!normalized) continue;
+      const value = encodeChatPresetValue('global', normalized);
+      if (seen.has(value)) continue;
+      seen.add(value);
+      items.push({ value, label: `${normalized}（全局预设）`, meta: formatSheetCountMeta(getTemplatePreset_ACU(normalized)?.templateStr) });
     }
     for (const entry of chatEntries) {
       const normalized = normalizeTemplatePresetSelectionValue_ACU(entry?.presetName || '');
-      if (!normalized || seen.has(normalized)) continue;
-      seen.add(normalized);
-      items.push({ value: normalized, label: normalized, meta: formatSheetCountMeta(entry?.templateStr) });
+      const value = encodeChatPresetValue('snapshot', normalized);
+      if (seen.has(value)) continue;
+      seen.add(value);
+      items.push({ value, label: `${normalized || '默认预设'}（当前聊天快照）`, meta: formatSheetCountMeta(entry?.templateStr) });
     }
     return items;
+  }
+
+  function resolveSelectedChatPresetValue(
+    activeMeta: ReturnType<typeof getActiveTemplatePresetMeta_ACU>,
+    currentGlobalPreset: string,
+  ): string {
+    const activeName = normalizeTemplatePresetSelectionValue_ACU(
+      activeMeta.presetName || resolveActiveTemplatePresetName_ACU({ fallbackToGlobal: true }),
+    );
+    if (activeMeta.mode === 'chat_override') return encodeChatPresetValue('snapshot', activeName);
+    if (activeMeta.mode === 'preset_link') return encodeChatPresetValue('global', activeName);
+    return encodeChatPresetValue('global', currentGlobalPreset || '');
   }
 
   function refresh(): void {
@@ -134,20 +171,21 @@ export function useTableTemplatePresets() {
       getCurrentTemplatePresetName_ACU(settings_ACU, { requireExisting: false }),
     );
     const activeMeta = getActiveTemplatePresetMeta_ACU();
-    const nextSelectedChat = normalizeTemplatePresetSelectionValue_ACU(
-      activeMeta.presetName || resolveActiveTemplatePresetName_ACU({ fallbackToGlobal: true }),
-    );
-
-    globalPresetNames.value = nextGlobalNames;
-    chatPresetEntries.value = nextChatEntries;
-    selectedGlobalPreset.value = nextSelectedGlobal;
-    selectedChatPreset.value = nextSelectedChat;
-    activeTemplateScope.value = activeMeta.scope === 'chat' ? 'chat' : 'global';
-    chatPresetItems.value = buildChatPresetItems(
+    const nextItems = buildChatPresetItems(
       nextGlobalNames,
       nextChatEntries,
       nextSelectedGlobal,
     );
+    const nextSelectedChat = resolveSelectedChatPresetValue(activeMeta, nextSelectedGlobal);
+
+    globalPresetNames.value = nextGlobalNames;
+    chatPresetEntries.value = nextChatEntries;
+    selectedGlobalPreset.value = nextSelectedGlobal;
+    selectedGlobalPresetValue.value = encodeChatPresetValue('global', nextSelectedGlobal || '');
+    selectedChatPreset.value = nextSelectedChat;
+    selectedChatPresetLabel.value = nextItems.find(item => item.value === nextSelectedChat)?.label || '默认预设（全局）';
+    activeTemplateScope.value = activeMeta.scope === 'chat' ? 'chat' : 'global';
+    chatPresetItems.value = nextItems;
   }
 
   async function run<T>(action: () => Promise<T> | T): Promise<T | null> {
@@ -167,7 +205,8 @@ export function useTableTemplatePresets() {
   }
 
   async function selectGlobalPreset(name: string): Promise<void> {
-    const normalized = normalizeTemplatePresetSelectionValue_ACU(name);
+    const decoded = decodeChatPresetValue(name, chatPresetEntries.value);
+    const normalized = normalizeTemplatePresetSelectionValue_ACU(decoded.name);
     await run(async () => {
       const result = await applyTemplatePresetToCurrent_ACU(normalized, {
         source: 'v2_table_global_select',
@@ -186,16 +225,18 @@ export function useTableTemplatePresets() {
   }
 
   async function selectChatPreset(name: string): Promise<void> {
-    const normalized = normalizeTemplatePresetSelectionValue_ACU(name);
+    const selection = decodeChatPresetValue(name, chatPresetEntries.value);
+    const normalized = normalizeTemplatePresetSelectionValue_ACU(selection.name);
     await run(async () => {
-      const guideData = resolveGuideDataForPresetSelection(normalized);
+      const guideData = resolveGuideDataForPresetSelection(selection);
       const canProceed = await ensureTemplateSwitchCanProceed(guideData);
       if (!canProceed) return;
       const result = await applyTemplatePresetToCurrent_ACU(normalized, {
-        source: 'v2_table_chat_select',
+        source: selection.kind === 'snapshot' ? 'v2_table_chat_select_snapshot' : 'v2_table_chat_select_global',
         updateGlobal: false,
         save: true,
         persistChatScope: true,
+        chatSelectionSource: selection.kind,
       });
       if (!result) throw new Error('当前聊天模板预设切换失败。');
       if (isSqliteMode()) await reloadStorageProvider();
@@ -325,7 +366,9 @@ export function useTableTemplatePresets() {
   }
 
   function exportTemplate(scope: TemplateScope): void {
-    const selectedPresetName = scope === 'global' ? selectedGlobalPreset.value : selectedChatPreset.value;
+    const selectedPresetName = scope === 'global'
+      ? selectedGlobalPreset.value
+      : decodeChatPresetValue(selectedChatPreset.value, chatPresetEntries.value).name;
     const resolved = resolveTemplateForExport_ACU(scope, selectedPresetName);
     if (!resolved) {
       const text = '无法解析当前模板。';
@@ -349,7 +392,9 @@ export function useTableTemplatePresets() {
     busy,
     message,
     selectedGlobalPreset,
+    selectedGlobalPresetValue,
     selectedChatPreset,
+    selectedChatPresetLabel,
     isChatOverridden,
     chatPresetItems,
     refresh,

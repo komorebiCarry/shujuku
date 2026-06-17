@@ -52,6 +52,7 @@ const serviceMock = vi.hoisted(() => ({
   applyTemplateScopeForCurrentChat_ACU: vi.fn(() => ({ mode: 'chat_override' })),
   buildChatSheetGuideDataFromData_ACU: vi.fn((data: Record<string, any>) => data),
   getChatSheetGuideDataForIsolationKey_ACU: vi.fn(() => null),
+  getGlobalTemplateSnapshotForCurrentProfile_ACU: vi.fn(() => ({ templateObj: { mate: { type: 'chatSheets', version: 1 } } })),
   getSortedSheetKeys_ACU: vi.fn((data: Record<string, any>) =>
     Object.keys(data || {}).filter(key => key.startsWith('sheet_')),
   ),
@@ -119,6 +120,7 @@ vi.mock('../../../src/service/table/table-storage-strategy', () => ({
 vi.mock('../../../src/service/template/chat-scope', () => ({
   buildChatSheetGuideDataFromData_ACU: serviceMock.buildChatSheetGuideDataFromData_ACU,
   getChatSheetGuideDataForIsolationKey_ACU: serviceMock.getChatSheetGuideDataForIsolationKey_ACU,
+  getGlobalTemplateSnapshotForCurrentProfile_ACU: serviceMock.getGlobalTemplateSnapshotForCurrentProfile_ACU,
   getSortedSheetKeys_ACU: serviceMock.getSortedSheetKeys_ACU,
   materializeDataFromSheetGuide_ACU: serviceMock.materializeDataFromSheetGuide_ACU,
   sanitizeTemplateSnapshotForChat_ACU: serviceMock.sanitizeTemplateSnapshotForChat_ACU,
@@ -208,10 +210,18 @@ describe('useVisualizerSave', () => {
     expect(store.lastSavedTarget).toBeNull();
   });
 
-  it('保存模板到全局确认后会写入预设并清理 dirty', async () => {
+  it('保存模板到全局确认后会写入当前可视化草稿，不混入旧全局模板', async () => {
     const { useVisualizerStore } = await import('../../../src/presentation-v2/stores/visualizer-store');
     const { useVisualizerSave } = await import('../../../src/presentation-v2/composables/visualizer/useVisualizerSave');
     const store = useVisualizerStore();
+    serviceMock.getGlobalTemplateSnapshotForCurrentProfile_ACU.mockReturnValueOnce({
+      templateStr: '{"mate":{"type":"chatSheets","version":1},"sheet_old":{"name":"旧表","content":[["row_id"]]}}',
+      templateObj: { mate: { type: 'chatSheets', version: 1 }, sheet_old: { name: '旧表', content: [['row_id']] } },
+    });
+    serviceMock.sanitizeTemplateSnapshotForChat_ACU.mockImplementationOnce((value: any) => ({
+      templateStr: JSON.stringify(value),
+      templateObj: value,
+    }));
     store.loadSnapshot({
       mate: { type: 'chatSheets', version: 1 },
       sheet_test_vz2: sheet('确认测试表'),
@@ -224,6 +234,10 @@ describe('useVisualizerSave', () => {
 
     expect(saved).toBe(true);
     expect(serviceMock.upsertTemplatePreset_ACU).toHaveBeenCalledWith('现有预设', expect.any(String));
+    const savedTemplate = JSON.parse(serviceMock.upsertTemplatePreset_ACU.mock.calls[0][1]);
+    expect(savedTemplate.sheet_test_vz2.name).toBe('确认测试表');
+    expect(savedTemplate.sheet_test_vz2.content).toEqual([[null, '姓名', '状态']]);
+    expect(savedTemplate.sheet_old).toBeUndefined();
     expect(serviceMock.applyTemplatePresetToCurrent_ACU).toHaveBeenCalledWith('现有预设', expect.objectContaining({
       source: 'visualizer_v2_save_to_global',
       updateGlobal: true,
