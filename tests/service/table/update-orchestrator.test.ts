@@ -1723,6 +1723,33 @@ describe('applyUnifiedGroupFillResponses_ACU', () => {
     vi.mocked(isSqliteMode).mockReturnValue(false);
   });
 
+  it('SQL 模式下混合 SQL/非 SQL 响应直接失败，不退化为快照写入', async () => {
+    const { isSqliteMode } = await import('../../../src/service/table/storage-mode');
+    vi.mocked(isSqliteMode).mockReturnValue(true);
+    const inventoryDDL = `CREATE TABLE inventory (row_id INTEGER PRIMARY KEY, value TEXT NOT NULL);`;
+    const questDDL = `CREATE TABLE quest_log (row_id INTEGER PRIMARY KEY, value TEXT NOT NULL);`;
+    const baseSnapshot = {
+      mate: { type: 'acu', version: 1, updateConfigUiSentinel: 0, globalInjectionConfig: { readableEntryPlacement: { position: '', depth: 0, order: 0 }, wrapperPlacement: { position: '', depth: 0, order: 0 } } },
+      sheet_0: { uid: 'inventory', name: '表A', sourceData: { ddl: inventoryDDL }, content: [['row_id', 'value'], ['1', 'base-a']], updateConfig: {}, exportConfig: {}, orderNo: 0 },
+      sheet_1: { uid: 'quest_log', name: '表B', sourceData: { ddl: questDDL }, content: [['row_id', 'value'], ['1', 'base-b']], updateConfig: {}, exportConfig: {}, orderNo: 1 },
+    } as any;
+    const responses = [
+      { success: true, attempt: 1, aiResponse: "<tableEdit>INSERT INTO inventory VALUES (2, 'sql-a');</tableEdit>", tableEditText: "INSERT INTO inventory VALUES (2, 'sql-a');", job: { groupKey: 'a', groupId: 1, batchNumber: 1, saveTargetIndex: 3, targetSheetKeys: ['sheet_0'], updateMode: 'auto_standard', requestOptions: null, messagesForContext: [], baseSnapshot, isImportMode: false } },
+      { success: true, attempt: 1, aiResponse: '<tableEdit>insertRow(1,{"0":"dsl-b"})</tableEdit>', tableEditText: 'insertRow(1,{"0":"dsl-b"})', job: { groupKey: 'b', groupId: 2, batchNumber: 1, saveTargetIndex: 3, targetSheetKeys: ['sheet_1'], updateMode: 'auto_standard', requestOptions: null, messagesForContext: [], baseSnapshot, isImportMode: false } },
+    ];
+
+    mockCurrentJsonTableData = JSON.parse(JSON.stringify(baseSnapshot));
+    const result = await applyUnifiedGroupFillResponses_ACU(responses as any, baseSnapshot, { saveTargetIndex: 3, updateMode: 'auto_standard', isImportMode: false });
+
+    expect(result.success).toBe(false);
+    expect(result.error).toContain('禁止混合 SQL/非 SQL');
+    expect(result.error).toContain('b');
+    expect(mockApplySqlEditsToTableDataSnapshot).not.toHaveBeenCalled();
+    expect(mockParseAndApplyTableEditsToData).not.toHaveBeenCalled();
+    expect(mockPersistTablesToChatMessage).not.toHaveBeenCalled();
+    vi.mocked(isSqliteMode).mockReturnValue(false);
+  });
+
   it('SQL 模式统一提交失败时返回 SQL 错误且不保存', async () => {
     const { isSqliteMode } = await import('../../../src/service/table/storage-mode');
     vi.mocked(isSqliteMode).mockReturnValue(true);
@@ -2199,6 +2226,45 @@ describe('processGroupedRuntimeChunk_ACU', () => {
 
     expect(result.success).toBe(true);
     expect(result.failedGroups).toEqual([]);
+    expect(mockPersistTablesToChatMessage).toHaveBeenCalledTimes(1);
+    expect(mockParseAndApplyTableEditsToData).not.toHaveBeenCalled();
+    vi.mocked(isSqliteMode).mockReturnValue(false);
+  });
+
+  it('SQLite 分组混合 SQL/非 SQL 时只重试非 SQL 组，成功 SQL 组不重试', async () => {
+    const { getChatArray_ACU } = await import('../../../src/service/chat/chat-service');
+    const { parseTableTemplateJson_ACU } = await import('../../../src/shared/utils');
+    const { isSqliteMode } = await import('../../../src/service/table/storage-mode');
+    vi.mocked(isSqliteMode).mockReturnValue(true);
+    mockSettings.tableMaxRetries = 2;
+    const inventoryDDL = `CREATE TABLE inventory (row_id INTEGER PRIMARY KEY, value TEXT NOT NULL);`;
+    const questDDL = `CREATE TABLE quest_log (row_id INTEGER PRIMARY KEY, value TEXT NOT NULL);`;
+    vi.mocked(getChatArray_ACU).mockReturnValue([{ is_user: true }, { is_user: false, mes: 'AI回复' }]);
+    vi.mocked(parseTableTemplateJson_ACU).mockReturnValue({
+      mate: { type: 'acu', version: 1, updateConfigUiSentinel: 0, globalInjectionConfig: { readableEntryPlacement: { position: '', depth: 0, order: 0 }, wrapperPlacement: { position: '', depth: 0, order: 0 } } },
+      sheet_0: { uid: 'inventory', name: '表A', sourceData: { ddl: inventoryDDL }, content: [['row_id', 'value'], ['1', 'base-a']], updateConfig: {}, exportConfig: {}, orderNo: 0 },
+      sheet_1: { uid: 'quest_log', name: '表B', sourceData: { ddl: questDDL }, content: [['row_id', 'value'], ['1', 'base-b']], updateConfig: {}, exportConfig: {}, orderNo: 1 },
+    } as any);
+    mockCurrentJsonTableData = JSON.parse(JSON.stringify(vi.mocked(parseTableTemplateJson_ACU).getMockImplementation()?.() || {}));
+    const capturedTableDataTexts: string[] = [];
+    mockPrepareAIInput.mockImplementation(async () => ({ tableDataText: '模拟数据' }));
+    mockCallCustomOpenAI.mockImplementation(async (dynamicContent: any) => {
+      capturedTableDataTexts.push(dynamicContent.tableDataText);
+      if (mockCallCustomOpenAI.mock.calls.length === 1) return "<tableEdit>INSERT INTO inventory VALUES (2, 'sql-a');</tableEdit>";
+      if (mockCallCustomOpenAI.mock.calls.length === 2) return '<tableEdit>insertRow(1,{"0":"dsl-b"})</tableEdit>';
+      return "<tableEdit>INSERT INTO quest_log VALUES (2, 'sql-b');</tableEdit>";
+    });
+
+    const result = await processGroupedRuntimeChunk_ACU([
+      { key: 'group_a', groupId: 0, indices: [1], batchSize: 2, sheetKeys: ['sheet_0'], requestOptions: null },
+      { key: 'group_b', groupId: 1, indices: [1], batchSize: 2, sheetKeys: ['sheet_1'], requestOptions: null },
+    ], 'manual_independent');
+
+    expect(result.success).toBe(true);
+    expect(result.failedGroups).toEqual([]);
+    expect(mockCallCustomOpenAI).toHaveBeenCalledTimes(3);
+    expect(capturedTableDataTexts[2]).toContain('UNIFIED_GROUP_ERROR_FEEDBACK');
+    expect(capturedTableDataTexts[2]).toContain('未返回 SQL tableEdit');
     expect(mockPersistTablesToChatMessage).toHaveBeenCalledTimes(1);
     expect(mockParseAndApplyTableEditsToData).not.toHaveBeenCalled();
     vi.mocked(isSqliteMode).mockReturnValue(false);

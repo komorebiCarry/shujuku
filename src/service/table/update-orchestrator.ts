@@ -827,6 +827,22 @@ function sortGroupFillResponses_ACU(responses: GroupFillResponse_ACU[]): GroupFi
     });
 }
 
+function isGroupFillSqlResponse_ACU(response: GroupFillResponse_ACU): boolean {
+    return typeof response.tableEditText === 'string' && isSqlContent(response.tableEditText);
+}
+
+function getMixedSqliteNonSqlResponses_ACU(responses: GroupFillResponse_ACU[]): GroupFillResponse_ACU[] {
+    if (!isSqliteMode()) return [];
+    const hasSql = responses.some(isGroupFillSqlResponse_ACU);
+    if (!hasSql) return [];
+    return responses.filter(response => !isGroupFillSqlResponse_ACU(response));
+}
+
+function buildMixedSqliteFormatError_ACU(nonSqlResponses: GroupFillResponse_ACU[]): string {
+    const groupKeys = nonSqlResponses.map(response => response.job?.groupKey || 'unknown').join(', ');
+    return `SQLite 严格模式下同一批分组填表禁止混合 SQL/非 SQL 输出；以下 group 未返回 SQL tableEdit：${groupKeys}。请只重试这些 group，并输出 SQL。`;
+}
+
 async function applySqlResponsesToCurrentRuntime_ACU(
     responses: GroupFillResponse_ACU[],
     baseSnapshot: Record<string, any>,
@@ -928,10 +944,29 @@ export async function applyUnifiedGroupFillResponses_ACU(
         }
     }
 
+    const hasSqlResponse = isSqliteMode() && sortedResponses.some(isGroupFillSqlResponse_ACU);
+    const nonSqlResponsesInMixedSqlite = getMixedSqliteNonSqlResponses_ACU(sortedResponses);
+    if (hasSqlResponse && nonSqlResponsesInMixedSqlite.length > 0) {
+        return {
+            success: false,
+            modifiedKeys: [],
+            error: buildMixedSqliteFormatError_ACU(nonSqlResponsesInMixedSqlite),
+        };
+    }
+
     const allResponsesAreRuntimeSql = isSqliteMode()
         && !options.deferPersist
         && !options.forceSnapshotApply
-        && sortedResponses.every(response => typeof response.tableEditText === 'string' && isSqlContent(response.tableEditText));
+        && sortedResponses.length > 0
+        && sortedResponses.every(isGroupFillSqlResponse_ACU);
+
+    if (hasSqlResponse && !allResponsesAreRuntimeSql) {
+        return {
+            success: false,
+            modifiedKeys: [],
+            error: 'SQLite 严格模式下 SQL 填表禁止退化为快照写入；请使用 live SQLite runtime 提交或重试本组。',
+        };
+    }
 
     if (allResponsesAreRuntimeSql) {
         const operations: TableMutationOperationV2_ACU[] = [];
@@ -1318,13 +1353,12 @@ export async function processGroupedRuntimeChunk_ACU(
                 options.abortController,
                 { onProgress: event => emitBucketProgress(bucketIndex, event) },
             )));
-            const responses: GroupFillResponse_ACU[] = [];
+            let responses: GroupFillResponse_ACU[] = [];
             let collectFailed = false;
             let collectError: string | undefined;
 
             for (let i = 0; i < settledResponses.length; i++) {
                 const settledResponse = settledResponses[i];
-                const job = jobs[i];
                 if (settledResponse.status === 'rejected') {
                     collectFailed = true;
                     collectError = collectError || (settledResponse.reason instanceof Error ? settledResponse.reason.message : String(settledResponse.reason || 'AI响应收集失败'));
@@ -1342,6 +1376,44 @@ export async function processGroupedRuntimeChunk_ACU(
                 jobs.forEach(job => failedGroups.add(job.groupKey));
                 firstError = firstError || collectError || 'AI响应收集失败';
                 break;
+            }
+
+            if (isSqliteMode()) {
+                const responseByGroupKey = new Map<string, GroupFillResponse_ACU>();
+                responses.forEach(response => responseByGroupKey.set(response.job.groupKey, response));
+                let nonSqlResponses = getMixedSqliteNonSqlResponses_ACU(responses);
+                let formatError = nonSqlResponses.length > 0 ? buildMixedSqliteFormatError_ACU(nonSqlResponses) : '';
+                for (let formatAttempt = 1; nonSqlResponses.length > 0 && formatAttempt < maxBucketRetries; formatAttempt += 1) {
+                    emitBucketProgress(bucketIndex, {
+                        phase: 'retry',
+                        attempt: formatAttempt,
+                        maxRetries: maxBucketRetries,
+                        message: formatError.substring(0, 50),
+                    });
+                    const retryJobs = nonSqlResponses.map(response => response.job);
+                    const retrySettled = await Promise.allSettled(retryJobs.map(job => collectGroupFillResponse_ACU(
+                        job,
+                        { lastUnifiedError: formatError },
+                        options.abortController,
+                        { onProgress: event => emitBucketProgress(bucketIndex, event) },
+                    )));
+                    for (let i = 0; i < retrySettled.length; i++) {
+                        const settledResponse = retrySettled[i];
+                        if (settledResponse.status === 'fulfilled' && settledResponse.value.success && !settledResponse.value.aborted && settledResponse.value.aiResponse) {
+                            responseByGroupKey.set(settledResponse.value.job.groupKey, settledResponse.value);
+                        }
+                    }
+                    responses = jobs
+                        .map(job => responseByGroupKey.get(job.groupKey))
+                        .filter((response): response is GroupFillResponse_ACU => Boolean(response));
+                    nonSqlResponses = getMixedSqliteNonSqlResponses_ACU(responses);
+                    formatError = nonSqlResponses.length > 0 ? buildMixedSqliteFormatError_ACU(nonSqlResponses) : '';
+                }
+                if (nonSqlResponses.length > 0) {
+                    nonSqlResponses.forEach(response => failedGroups.add(response.job.groupKey));
+                    firstError = firstError || formatError;
+                    break;
+                }
             }
 
             emitBucketProgress(bucketIndex, { phase: 'saving' });
