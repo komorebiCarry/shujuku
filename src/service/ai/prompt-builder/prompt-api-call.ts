@@ -25,8 +25,6 @@ import { cloneStrictPromptSegments_ACU } from './strict-json-table-fill';
   }
 
   const STRICT_JSON_PROMPT_LEGACY_TOKEN_DENYLIST_ACU = [
-    '<tableEdit>',
-    '</tableEdit>',
     'insertRow',
     'updateRow',
     'deleteRow',

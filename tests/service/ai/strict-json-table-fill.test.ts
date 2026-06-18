@@ -5,6 +5,7 @@ vi.mock('../../../src/service/template/chat-scope', () => ({
 }));
 
 import { buildStrictJsonTableFillResponseFormatForData_ACU, extractStrictJsonTableFillResponse_ACU } from '../../../src/service/ai/prompt-builder/strict-json-table-fill';
+import { DEFAULT_CHAR_CARD_PROMPT_STRICT_JSON_ACU, DEFAULT_CHAR_CARD_PROMPT_SQL_STRICT_JSON_ACU } from '../../../src/shared/defaults-json.js';
 
 function tableData() {
   return {
@@ -37,6 +38,30 @@ function tableData() {
 }
 
 describe('strict-json-table-fill', () => {
+  it('keeps native default prompt details and only replaces output protocol', () => {
+    const mainPrompt = DEFAULT_CHAR_CARD_PROMPT_STRICT_JSON_ACU.find((segment: any) => segment.mainSlot === 'A')?.content || '';
+    expect(mainPrompt).toContain('必须逐表阅读每个表格的note部分');
+    expect(mainPrompt).toContain('可能还存在某些存放特殊填表规则的表格');
+    expect(mainPrompt).toContain('日志与纪要语气校准');
+    expect(mainPrompt).toContain('正常恋爱互动');
+    expect(mainPrompt).toContain('"format":"table_edit_ops_v1"');
+    expect(mainPrompt).toContain('where');
+    expect(mainPrompt).not.toContain('insertRow(表格ID');
+    expect(mainPrompt).not.toContain('updateRow(表格ID');
+    expect(mainPrompt).not.toContain('deleteRow(表格ID');
+  });
+
+  it('keeps sqlite default prompt SQL rules and only wraps SQL in JSON protocol', () => {
+    const mainPrompt = DEFAULT_CHAR_CARD_PROMPT_SQL_STRICT_JSON_ACU.find((segment: any) => segment.mainSlot === 'A')?.content || '';
+    expect(mainPrompt).toContain('必须逐表阅读每个表格的 DDL 注释和 Note 部分');
+    expect(mainPrompt).toContain('WHERE 条件选择原则');
+    expect(mainPrompt).toContain('CASE 条件更新');
+    expect(mainPrompt).toContain('禁止使用 DROP TABLE / ALTER TABLE / CREATE TABLE 等结构变更语句');
+    expect(mainPrompt).toContain('"format":"table_edit_sql_v1"');
+    expect(mainPrompt).toContain('"sql":""');
+    expect(mainPrompt).not.toContain('<tableEdit>\nINSERT INTO');
+  });
+
   it('converts native insert/update/delete ops to legacy internal DSL', () => {
     const response = JSON.stringify({
       format: 'table_edit_ops_v1',
