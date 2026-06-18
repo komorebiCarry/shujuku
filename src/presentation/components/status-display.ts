@@ -130,7 +130,12 @@ import { $popupInstance_ACU, $statusMessageSpan_ACU, $manualUpdateCardButton_ACU
           }
       }
       if (typeof updateApiStatusDisplay_ACU === 'function') updateApiStatusDisplay_ACU();
-      if ($charCardPromptSegmentsContainer_ACU) renderPromptSegments_ACU(s.charCardPrompt);
+      if ($charCardPromptSegmentsContainer_ACU) {
+          const promptForCurrentMode = s.strictJsonTableFillEnabled === true
+              ? (s.storageMode === 'sqlite' ? s.strictJsonSqlCharCardPrompt : s.strictJsonCharCardPrompt)
+              : s.charCardPrompt;
+          renderPromptSegments_ACU(promptForCurrentMode || s.charCardPrompt);
+      }
       if ($autoUpdateThresholdInput_ACU) $autoUpdateThresholdInput_ACU.val(s.autoUpdateThreshold);
       if ($autoUpdateFrequencyInput_ACU) $autoUpdateFrequencyInput_ACU.val(s.autoUpdateFrequency);
       if ($autoUpdateTokenThresholdInput_ACU) $autoUpdateTokenThresholdInput_ACU.val(s.autoUpdateTokenThreshold);

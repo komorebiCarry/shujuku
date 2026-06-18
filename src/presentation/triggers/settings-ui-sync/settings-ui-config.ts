@@ -1,7 +1,7 @@
 /**
  * presentation/triggers/settings-ui-sync/settings-ui-config.ts
  */
-import { DEFAULT_CHAR_CARD_PROMPT_ACU, DEFAULT_CHAR_CARD_PROMPT_SQL_ACU } from '../../../shared/defaults-json.js';
+import { DEFAULT_CHAR_CARD_PROMPT_ACU, DEFAULT_CHAR_CARD_PROMPT_SQL_ACU, DEFAULT_CHAR_CARD_PROMPT_STRICT_JSON_ACU, DEFAULT_CHAR_CARD_PROMPT_SQL_STRICT_JSON_ACU } from '../../../shared/defaults-json.js';
 import { AUTO_UPDATE_FLOOR_INCREASE_DELAY_ACU } from '../../../shared/defaults';
 import { updateCardUpdateStatusDisplay_ACU } from '../../components/update-status-display';
 import { getCharCardPromptFromUI_ACU, isAutoUpdatingCard_ACU, manualExtraHint_ACU, newMessageDebounceTimer_ACU, renderPromptSegments_ACU, wasStoppedByUser_ACU , _set_isAutoUpdatingCard_ACU, _set_manualExtraHint_ACU, _set_newMessageDebounceTimer_ACU} from '../../components/plot-editors';
@@ -27,6 +27,20 @@ import { topLevelWindow_ACU } from '../../../shared/env';
 import { isSummaryOrOutlineTable_ACU, logDebug_ACU, logError_ACU, logWarn_ACU } from '../../../shared/utils';
 import { executeContentOptimization_ACU } from '../../components/optimization-ui';
 import { maybeLiftWorldbookSuppression_ACU } from '../../../service/runtime/helpers-remaining';
+
+  function getCurrentPromptSettingKey_ACU(mode: 'native' | 'sqlite' = isSqliteMode() ? 'sqlite' : 'native') {
+    if (settings_ACU.strictJsonTableFillEnabled === true) {
+      return mode === 'sqlite' ? 'strictJsonSqlCharCardPrompt' : 'strictJsonCharCardPrompt';
+    }
+    return 'charCardPrompt';
+  }
+
+  function getDefaultPromptForMode_ACU(mode: 'native' | 'sqlite') {
+    if (settings_ACU.strictJsonTableFillEnabled === true) {
+      return mode === 'sqlite' ? DEFAULT_CHAR_CARD_PROMPT_SQL_STRICT_JSON_ACU : DEFAULT_CHAR_CARD_PROMPT_STRICT_JSON_ACU;
+    }
+    return mode === 'sqlite' ? DEFAULT_CHAR_CARD_PROMPT_SQL_ACU : DEFAULT_CHAR_CARD_PROMPT_ACU;
+  }
 
   export function saveCustomCharCardPrompt_ACU() {
     if (!$popupInstance_ACU || !$charCardPromptSegmentsContainer_ACU) {
@@ -60,14 +74,15 @@ import { maybeLiftWorldbookSuppression_ACU } from '../../../service/runtime/help
     } catch (e) {}
 
     // 保存为JSON数组格式
-    settings_ACU.charCardPrompt = newPromptSegments;
+    settings_ACU[getCurrentPromptSettingKey_ACU()] = newPromptSegments;
     saveSettingsAndNotify_ACU();
     showToastr_ACU('success', '更新预设已保存！');
     loadSettingsAndRefreshUI_ACU(); // This will re-render from the saved data.
   }
 
   export function resetDefaultCharCardPrompt_ACU() {
-    settings_ACU.charCardPrompt = isSqliteMode() ? DEFAULT_CHAR_CARD_PROMPT_SQL_ACU : DEFAULT_CHAR_CARD_PROMPT_ACU;
+    const mode = isSqliteMode() ? 'sqlite' : 'native';
+    settings_ACU[getCurrentPromptSettingKey_ACU(mode)] = getDefaultPromptForMode_ACU(mode);
     saveSettingsAndNotify_ACU();
     showToastr_ACU('info', '更新预设已恢复为默认值！');
     // loadSettings will trigger renderPromptSegments_ACU which correctly handles the string default
@@ -80,7 +95,7 @@ import { maybeLiftWorldbookSuppression_ACU } from '../../../service/runtime/help
    * 用于"模式切换后恢复目标模式默认提示词"场景——此时当前模式可能已完成切换。
    */
   export function applyModeDefaultCharCardPrompt_ACU(mode: 'native' | 'sqlite') {
-    settings_ACU.charCardPrompt = mode === 'sqlite' ? DEFAULT_CHAR_CARD_PROMPT_SQL_ACU : DEFAULT_CHAR_CARD_PROMPT_ACU;
+    settings_ACU[getCurrentPromptSettingKey_ACU(mode)] = getDefaultPromptForMode_ACU(mode);
     saveSettingsAndNotify_ACU();
     loadSettingsAndRefreshUI_ACU();
   }
@@ -372,4 +387,3 @@ import { maybeLiftWorldbookSuppression_ACU } from '../../../service/runtime/help
           $input.val(settings_ACU.importSplitSize);
       }
   }
-

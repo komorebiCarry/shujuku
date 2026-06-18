@@ -33,6 +33,8 @@ import { validateDDLTextAgainstHeaders_ACU } from "../../shared/ddl-utils";
 import {
   DEFAULT_CHAR_CARD_PROMPT_ACU,
   DEFAULT_CHAR_CARD_PROMPT_SQL_ACU,
+  DEFAULT_CHAR_CARD_PROMPT_STRICT_JSON_ACU,
+  DEFAULT_CHAR_CARD_PROMPT_SQL_STRICT_JSON_ACU,
 } from "../../shared/defaults-json.js";
 import { getAllLogs, subscribe, type LogEntry } from "../../shared/log-buffer";
 import type { StorageMode } from "../../shared/table-storage-provider";
@@ -1088,6 +1090,8 @@ export function useDashboardPage(): DashboardPageState {
         ? DEFAULT_CHAR_CARD_PROMPT_SQL_ACU
         : DEFAULT_CHAR_CARD_PROMPT_ACU,
     );
+    settings_ACU.strictJsonCharCardPrompt = clone(DEFAULT_CHAR_CARD_PROMPT_STRICT_JSON_ACU);
+    settings_ACU.strictJsonSqlCharCardPrompt = clone(DEFAULT_CHAR_CARD_PROMPT_SQL_STRICT_JSON_ACU);
     saveSettings_ACU();
     try {
       await switchStorageMode(mode);

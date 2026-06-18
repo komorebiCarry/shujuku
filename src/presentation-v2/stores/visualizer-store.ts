@@ -6,7 +6,7 @@ import {
   recordVisualizerRowDelete_ACU,
   recordVisualizerRowInsert_ACU,
   resetVisualizerPendingDataOps_ACU,
-} from '../../presentation/pages/visualizer-data-ops';
+} from '../../service/visualizer/visualizer-data-ops';
 
 export type VisualizerMode = 'data' | 'config' | 'assistant' | 'global' | 'table-management';
 export type VisualizerOpenSource = 'external-api' | 'v2-shell';

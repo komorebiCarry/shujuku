@@ -15,6 +15,8 @@ import {
 import {
   DEFAULT_CHAR_CARD_PROMPT_ACU,
   DEFAULT_CHAR_CARD_PROMPT_SQL_ACU,
+  DEFAULT_CHAR_CARD_PROMPT_STRICT_JSON_ACU,
+  DEFAULT_CHAR_CARD_PROMPT_SQL_STRICT_JSON_ACU,
 } from "../../shared/defaults-json.js";
 import {
   normalizeExcludeRules_ACU,
@@ -74,6 +76,7 @@ export interface FormFillSettingsState {
   numberFields: ComputedRef<FormFillNumberField[]>;
   tableApiPreset: Ref<string>;
   tableEditLastPairOnly: Ref<boolean>;
+  strictJsonTableFillEnabled: Ref<boolean>;
   extractRules: Ref<FormFillRulePair[]>;
   excludeRules: Ref<FormFillRulePair[]>;
   promptSegments: Ref<FormFillPromptSegment[]>;
@@ -87,6 +90,7 @@ export interface FormFillSettingsState {
     patch: Partial<Record<NumberSettingKey, number | string>>,
   ) => void;
   setTableEditLastPairOnly: (value: boolean) => void;
+  setStrictJsonTableFillEnabled: (value: boolean) => void;
   setExtractRules: (rules: FormFillRulePair[]) => void;
   setExcludeRules: (rules: FormFillRulePair[]) => void;
   addPromptSegment: (position: "top" | "bottom") => void;
@@ -323,11 +327,33 @@ function preparePromptForSave(
 }
 
 function currentDefaultPromptSegments(): FormFillPromptSegment[] {
+  if (settings_ACU.strictJsonTableFillEnabled === true) {
+    const defaults =
+      getCurrentStorageMode() === "sqlite"
+        ? DEFAULT_CHAR_CARD_PROMPT_SQL_STRICT_JSON_ACU
+        : DEFAULT_CHAR_CARD_PROMPT_STRICT_JSON_ACU;
+    return normalizePromptSegments(defaults);
+  }
   const defaults =
     getCurrentStorageMode() === "sqlite"
       ? DEFAULT_CHAR_CARD_PROMPT_SQL_ACU
       : DEFAULT_CHAR_CARD_PROMPT_ACU;
   return normalizePromptSegments(defaults);
+}
+
+function currentPromptSettingKey(): "charCardPrompt" | "strictJsonCharCardPrompt" | "strictJsonSqlCharCardPrompt" {
+  if (settings_ACU.strictJsonTableFillEnabled === true) {
+    return getCurrentStorageMode() === "sqlite"
+      ? "strictJsonSqlCharCardPrompt"
+      : "strictJsonCharCardPrompt";
+  }
+  return "charCardPrompt";
+}
+
+function currentPromptSource(): unknown {
+  const key = currentPromptSettingKey();
+  const value = settings_ACU[key];
+  return Array.isArray(value) && value.length > 0 ? value : currentDefaultPromptSegments();
 }
 
 function promptFingerprint(segments: FormFillPromptSegment[]): string {
@@ -340,6 +366,9 @@ export function useFormFillSettings(): FormFillSettingsState {
   const tableApiPreset = ref(String(settings_ACU.tableApiPreset || ""));
   const tableEditLastPairOnly = ref(
     settings_ACU.tableEditLastPairOnly !== false,
+  );
+  const strictJsonTableFillEnabled = ref(
+    settings_ACU.strictJsonTableFillEnabled === true,
   );
   const extractRules = ref<FormFillRulePair[]>([]);
   const excludeRules = ref<FormFillRulePair[]>([]);
@@ -370,6 +399,7 @@ export function useFormFillSettings(): FormFillSettingsState {
     values.value = nextValues;
     tableApiPreset.value = String(settings_ACU.tableApiPreset || "");
     tableEditLastPairOnly.value = settings_ACU.tableEditLastPairOnly !== false;
+    strictJsonTableFillEnabled.value = settings_ACU.strictJsonTableFillEnabled === true;
     extractRules.value = normalizeRules(
       settings_ACU.tableContextExtractRules,
       settings_ACU.tableContextExtractTags || "",
@@ -380,7 +410,7 @@ export function useFormFillSettings(): FormFillSettingsState {
       settings_ACU.tableContextExcludeTags || "",
       "exclude",
     );
-    promptSegments.value = normalizePromptSegments(settings_ACU.charCardPrompt);
+    promptSegments.value = normalizePromptSegments(currentPromptSource());
     promptDirty.value = false;
   }
 
@@ -416,6 +446,15 @@ export function useFormFillSettings(): FormFillSettingsState {
   function setTableEditLastPairOnly(value: boolean): void {
     tableEditLastPairOnly.value = !!value;
     settings_ACU.tableEditLastPairOnly = tableEditLastPairOnly.value;
+    saveSettings_ACU();
+    message.value = null;
+  }
+
+  function setStrictJsonTableFillEnabled(value: boolean): void {
+    strictJsonTableFillEnabled.value = !!value;
+    settings_ACU.strictJsonTableFillEnabled = strictJsonTableFillEnabled.value;
+    promptSegments.value = normalizePromptSegments(currentPromptSource());
+    promptDirty.value = false;
     saveSettings_ACU();
     message.value = null;
   }
@@ -505,7 +544,7 @@ export function useFormFillSettings(): FormFillSettingsState {
 
   function savePrompt(): void {
     const prepared = preparePromptForSave(promptSegments.value);
-    settings_ACU.charCardPrompt = clone(prepared);
+    settings_ACU[currentPromptSettingKey()] = clone(prepared);
     saveSettings_ACU();
     promptSegments.value = prepared;
     promptDirty.value = false;
@@ -573,6 +612,7 @@ export function useFormFillSettings(): FormFillSettingsState {
     numberFields,
     tableApiPreset,
     tableEditLastPairOnly,
+    strictJsonTableFillEnabled,
     extractRules,
     excludeRules,
     promptSegments,
@@ -584,6 +624,7 @@ export function useFormFillSettings(): FormFillSettingsState {
     setNumber,
     setNumbers,
     setTableEditLastPairOnly,
+    setStrictJsonTableFillEnabled,
     setExtractRules,
     setExcludeRules,
     addPromptSegment,

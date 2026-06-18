@@ -1400,7 +1400,7 @@ describe('orchestrateManualUpdate_ACU — 表级 API 预设覆盖', () => {
     expect(requestOptions.tableApiPreset).toBe('special-preset');
   });
 
-  it('表无覆盖预设时，requestOptions 为 null', async () => {
+  it('表无覆盖预设时，requestOptions 不携带 tableApiPreset', async () => {
     const { getChatArray_ACU } = await import('../../../src/service/chat/chat-service');
     vi.mocked(getChatArray_ACU).mockReturnValue([
       { is_user: true },
@@ -1415,7 +1415,7 @@ describe('orchestrateManualUpdate_ACU — 表级 API 预设覆盖', () => {
 
     const openAICall = mockCallCustomOpenAI.mock.calls[0];
     const requestOptions = openAICall[2];
-    expect(requestOptions).toBeNull();
+    expect(requestOptions?.tableApiPreset).toBeUndefined();
   });
 
   it('表名为空时忽略覆盖', async () => {
@@ -1434,7 +1434,7 @@ describe('orchestrateManualUpdate_ACU — 表级 API 预设覆盖', () => {
 
     const openAICall = mockCallCustomOpenAI.mock.calls[0];
     const requestOptions = openAICall[2];
-    expect(requestOptions).toBeNull();
+    expect(requestOptions?.tableApiPreset).toBeUndefined();
   });
 
   it('表名有空格时进行标准化匹配', async () => {

@@ -30,8 +30,7 @@ import { getLatestAiMessageIndexFromChat_ACU, getLatestTableAppendMessageIndexFr
 import { getCurrentWorldbookConfig_ACU } from '../../service/settings/settings-readers';
 import { enqueueSummaryVectorIndexFlush_ACU } from '../../service/vector/summary-vector-index-flush-queue';
 import { applyVisualizerPendingDataOps_ACU, hasVisualizerPendingDataOps_ACU } from './visualizer-data-ops';
-import { SqliteEngine } from '../../data/sqlite/sqlite-engine';
-import { SyncBridge } from '../../data/sqlite/sync-bridge';
+import { validateSqliteTemplateDataStrict_ACU } from '../../service/table/sqlite-template-validation';
 import { validateDDLTextAgainstHeaders_ACU } from '../../shared/ddl-utils';
 
 function cloneData_ACU<T>(value: T): T {
@@ -130,17 +129,9 @@ async function validateTemplateCompatibleWithRuntimeData_ACU(templateData: Recor
 
     if (!isSqliteMode()) return { success: true, data: candidate.data };
 
-    const engine = new SqliteEngine();
-    const syncBridge = new SyncBridge(engine);
-    try {
-        await engine.init();
-        syncBridge.loadFromTableData(candidate.data as any, { strict: true });
-        return { success: true, data: candidate.data };
-    } catch (error: any) {
-        return { success: false, error: error?.message || String(error) };
-    } finally {
-        engine.dispose();
-    }
+    const validation = await validateSqliteTemplateDataStrict_ACU(candidate.data);
+    if (!validation.success) return { success: false, error: validation.error };
+    return { success: true, data: candidate.data };
 }
 
 function buildTemplateObjectFromVisualizerData_ACU(templateData: Record<string, any>, orderedKeys: string[]): { templateObj: any; changed: boolean } {

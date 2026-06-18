@@ -816,6 +816,7 @@ export function splitSqlStatements(sql: string): string[] {
   return statements;
 }
 
+
 /**
  * 从 SQL 语句中提取表名（简单正则匹配）
  * 支持 INSERT INTO、UPDATE、DELETE FROM、ALTER TABLE

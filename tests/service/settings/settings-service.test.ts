@@ -120,6 +120,8 @@ vi.mock('../../../src/shared/data-constants', () => ({
 vi.mock('../../../src/shared/defaults-json.js', () => ({
   DEFAULT_BUILTIN_PLOT_PRESETS_ACU: [{ name: '时间召回', _acuBuiltinPresetId: 'time-recall', _acuBuiltinPresetVersion: 'test' }],
   DEFAULT_CHAR_CARD_PROMPT_ACU: [{ role: 'USER', content: '默认提示词' }],
+  DEFAULT_CHAR_CARD_PROMPT_STRICT_JSON_ACU: [{ role: 'USER', content: '默认 strict json 提示词' }],
+  DEFAULT_CHAR_CARD_PROMPT_SQL_STRICT_JSON_ACU: [{ role: 'USER', content: '默认 sql strict json 提示词' }],
   DEFAULT_MERGE_SUMMARY_PROMPT_ACU: '默认合并提示词',
   DEFAULT_PLOT_SETTINGS_ACU: { enabled: false },
   DEFAULT_TABLE_TEMPLATE_ACU: '{"mate":{"type":"chatSheets","version":1},"sheet_0":{"name":"默认表"}}',

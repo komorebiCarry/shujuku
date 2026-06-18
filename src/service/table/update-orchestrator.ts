@@ -39,6 +39,7 @@ function resolveTableApiPresetOverride_ACU(tableName: any): string {
 }
 import { checkIfFirstTimeInit_ACU, ensureLegacyStorageMigratedBeforeWrite_ACU } from './table-service';
 import { parseAndApplyTableEditsToData_ACU, prepareAIInput_ACU } from '../ai/prompt-builder';
+import { extractStrictJsonTableFillResponse_ACU } from '../ai/prompt-builder/strict-json-table-fill';
 import { isSqlContent } from '../ai/prompt-builder/table-edit-parser';
 import { buildGuidedBaseDataFromSheetGuide_ACU, getSortedSheetKeys_ACU } from '../template/chat-scope';
 import { isSqliteMode } from './storage-mode';
@@ -675,7 +676,11 @@ export async function collectGroupFillResponse_ACU(
         }
 
         try {
-            const aiResponse = await callCustomOpenAI_ACU(dynamicContent, abortController, job.requestOptions);
+            const aiResponse = await callCustomOpenAI_ACU(dynamicContent, abortController, {
+                ...(job.requestOptions || {}),
+                tableData: job.baseSnapshot,
+                targetSheetKeys: job.targetSheetKeys,
+            });
             if (abortController.signal.aborted || wasStoppedByUser_ACU) {
                 return { job, success: false, attempt, aborted: true };
             }
@@ -684,13 +689,27 @@ export async function collectGroupFillResponse_ACU(
             if (aiResponse && minReplyLength > 0 && aiResponse.length < minReplyLength) {
                 throw new Error(`AI回复过短 (${aiResponse.length} 字符)，低于阈值 (${minReplyLength} 字符)`);
             }
-            if (!aiResponse || !aiResponse.includes('<tableEdit>') || !aiResponse.includes('</tableEdit>')) {
-                throw new Error('AI响应中未找到完整有效的 <tableEdit> 标签');
+            let normalizedAiResponse = aiResponse;
+            let tableEditText = '';
+            if (settings_ACU.strictJsonTableFillEnabled === true) {
+                const extracted = extractStrictJsonTableFillResponse_ACU(aiResponse, {
+                    sqlite: isSqliteMode(),
+                    tableData: job.baseSnapshot,
+                    targetSheetKeys: job.targetSheetKeys,
+                });
+                if (!extracted.ok) {
+                    throw new Error(extracted.retryHint || extracted.error || '严格 JSON 填表响应格式无效');
+                }
+                normalizedAiResponse = extracted.normalizedResponse || aiResponse;
+                tableEditText = (extracted.tableEditText || '').trim();
+            } else {
+                if (!aiResponse || !aiResponse.includes('<tableEdit>') || !aiResponse.includes('</tableEdit>')) {
+                    throw new Error('AI响应中未找到完整有效的 <tableEdit> 标签');
+                }
+                tableEditText = (aiResponse.match(/<tableEdit>([\s\S]*?)<\/tableEdit>/i)?.[1] || '').trim();
             }
 
-            const tableEditText = (aiResponse.match(/<tableEdit>([\s\S]*?)<\/tableEdit>/i)?.[1] || '').trim();
-
-            return { job, success: true, attempt, aiResponse, tableEditText };
+            return { job, success: true, attempt, aiResponse: normalizedAiResponse, tableEditText };
         } catch (error: any) {
             lastErrorMessage = error?.message || '未知错误';
             logWarn_ACU(`第 ${attempt} 次尝试失败: ${lastErrorMessage}`);

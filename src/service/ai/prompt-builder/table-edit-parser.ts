@@ -10,6 +10,7 @@ import { isSummaryOrOutlineTable_ACU, logDebug_ACU, logError_ACU, logWarn_ACU } 
 import { applySummaryIndexSequenceToTable_ACU, formatSummaryIndexCode_ACU, getSummaryIndexColumnIndex_ACU, getTableLocksForSheet_ACU, isSpecialIndexLockEnabled_ACU } from '../../runtime/helpers-remaining';
 import { sanitizeJsonPipeline_ACU, coerceLooseRowObject_ACU } from './json-sanitizer';
 import { isSqliteMode } from '../../table/storage-mode';
+import { extractStrictJsonTableFillResponse_ACU } from './strict-json-table-fill';
 
   function normalizeAiResponseForTableEditParsing_ACU(text: string) {
     if (typeof text !== 'string') return '';
@@ -102,7 +103,21 @@ import { isSqliteMode } from '../../table/storage-mode';
         return false;
     }
 
-    const extracted = extractTableEditInner_ACU(aiResponse, { allowNoTableEditTags: true });
+    let responseForParsing = aiResponse;
+    if (settings_ACU?.strictJsonTableFillEnabled === true) {
+        const strictExtraction = extractStrictJsonTableFillResponse_ACU(aiResponse, {
+            sqlite: isSqliteMode(),
+            tableData,
+        });
+        if (!strictExtraction.ok) {
+            const error = strictExtraction.retryHint || strictExtraction.error || '严格 JSON 填表响应格式无效';
+            logWarn_ACU(error);
+            return { success: false, modifiedKeys: [] as string[], appliedEdits: 0, error };
+        }
+        responseForParsing = strictExtraction.normalizedResponse || aiResponse;
+    }
+
+    const extracted = extractTableEditInner_ACU(responseForParsing, { allowNoTableEditTags: true });
     if (!extracted || !extracted.inner) {
         logWarn_ACU('No recognizable table edit block found (missing <tableEdit> boundary and/or incomplete <!-- --> wrapper).');
         return true;

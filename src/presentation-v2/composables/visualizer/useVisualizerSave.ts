@@ -56,13 +56,13 @@ import {
 } from '../../../service/worldbook/injection-engine';
 import { refreshMergedDataAndNotify_ACU, updateReadableLorebookEntry_ACU } from '../../../service/worldbook/pipeline';
 import { enqueueSummaryVectorIndexFlush_ACU } from '../../../service/vector/summary-vector-index-flush-queue';
-import { useToastStore } from '../../stores/toast-store';
-import { ensureTemplateRecoveryOrDeleteCurrentIsolationData_ACU } from '../useTemplateRecoveryGuard';
-import { useVisualizerStore, type VisualizerLockDraft, type VisualizerSaveTarget } from '../../stores/visualizer-store';
 import {
   applyVisualizerPendingDataOps_ACU,
   hasVisualizerPendingDataOps_ACU,
-} from '../../../presentation/pages/visualizer-data-ops';
+} from '../../../service/visualizer/visualizer-data-ops';
+import { useToastStore } from '../../stores/toast-store';
+import { ensureTemplateRecoveryOrDeleteCurrentIsolationData_ACU } from '../useTemplateRecoveryGuard';
+import { useVisualizerStore, type VisualizerLockDraft, type VisualizerSaveTarget } from '../../stores/visualizer-store';
 
 export interface VisualizerSaveInteractions {
   requestGlobalPresetName?: (defaultName: string) => string | null | Promise<string | null>;

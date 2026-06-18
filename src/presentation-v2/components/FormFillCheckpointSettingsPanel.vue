@@ -62,13 +62,8 @@
 
 <script setup lang="ts">
 import { computed, onMounted, ref, watch } from "vue";
-import { getChatArray_ACU } from "../../service/chat/chat-service";
-import {
-  currentJsonTableData_ACU,
-  getCurrentIsolationKey_ACU,
-} from "../../service/runtime/state-manager";
-import { collectCheckpointGenerationStatusV2_ACU } from "../../service/table/storage-frame-v2-persist";
 import { useChatChangedTick } from "../composables/useChatChangedListener";
+import { useFormFillCheckpointStatus } from "../composables/useFormFillCheckpointStatus";
 import {
   useFormFillSettings,
   type NumberSettingKey,
@@ -102,15 +97,7 @@ const checkpointFields = computed(() =>
 const checkpointSettingsFingerprint = computed(() =>
   checkpointFields.value.map((field) => `${field.key}:${field.value}`).join("|"),
 );
-const status = computed(() => {
-  void refreshTick.value;
-  void checkpointSettingsFingerprint.value;
-  return collectCheckpointGenerationStatusV2_ACU(
-    getChatArray_ACU(),
-    getCurrentIsolationKey_ACU(),
-    currentJsonTableData_ACU || null,
-  );
-});
+const status = useFormFillCheckpointStatus(refreshTick, checkpointSettingsFingerprint);
 
 const currentCheckpointLabel = computed(() =>
   status.value.latestCheckpointAiFloor
