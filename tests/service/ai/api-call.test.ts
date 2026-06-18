@@ -282,50 +282,55 @@ describe('buildCustomApiRequestBody_ACU', () => {
     expect(body.top_p).toBe(0);
   });
 
-  it('bodyParams 能覆盖默认 temperature/top_p/max_tokens', () => {
+  it('bodyParams 作为 SillyTavern custom_include_body 透传给最终 provider', () => {
     const body = buildCustomApiRequestBody_ACU(
       [{ role: 'user', content: 'test' }],
       { url: 'https://api.example.com', model: 'gpt-4', temperature: 1.0, top_p: 0.95, max_tokens: 20000, bodyParams: 'temperature:0.3\ntop_p:0.5\nmax_tokens:100' },
     );
-    expect(body.temperature).toBe(0.3);
-    expect(body.top_p).toBe(0.5);
-    expect(body.max_tokens).toBe(100);
+    expect(body.temperature).toBe(1.0);
+    expect(body.top_p).toBe(0.95);
+    expect(body.max_tokens).toBe(20000);
+    expect(body.custom_include_body).toBe('temperature:0.3\ntop_p:0.5\nmax_tokens:100');
   });
 
-  it('bodyParams 每行 key: value 支持 JSON 对象值', () => {
+  it('bodyParams 保留 YAML 对象值给 SillyTavern 解析', () => {
     const body = buildCustomApiRequestBody_ACU(
       [{ role: 'user', content: 'test' }],
-      { url: 'https://api.example.com', model: 'gpt-4', bodyParams: 'response_format: {"type":"json_object"}\nmetadata: {"source":"acu"}' },
+      { url: 'https://api.example.com', model: 'gpt-4', bodyParams: 'response_format:\n  type: json_object\nmetadata:\n  source: acu' },
     );
-    expect(body.response_format).toEqual({ type: 'json_object' });
-    expect(body.metadata).toEqual({ source: 'acu' });
+    expect(body.custom_include_body).toBe('response_format:\n  type: json_object\nmetadata:\n  source: acu');
+    expect(body).not.toHaveProperty('response_format');
+    expect(body).not.toHaveProperty('metadata');
   });
 
-  it('bodyParams 每行 key: value 支持 JSON 数组和布尔值', () => {
+  it('bodyParams 保留数组和布尔 YAML 给 SillyTavern 解析', () => {
     const body = buildCustomApiRequestBody_ACU(
       [{ role: 'user', content: 'test' }],
-      { url: 'https://api.example.com', model: 'gpt-4', bodyParams: 'stop: ["</json>"]\nparallel_tool_calls: false' },
+      { url: 'https://api.example.com', model: 'gpt-4', bodyParams: 'stop:\n  - </json>\nparallel_tool_calls: false' },
     );
-    expect(body.stop).toEqual(['</json>']);
-    expect(body.parallel_tool_calls).toBe(false);
+    expect(body.custom_include_body).toBe('stop:\n  - </json>\nparallel_tool_calls: false');
+    expect(body).not.toHaveProperty('parallel_tool_calls');
   });
 
-  it('excludeBodyParams 删除指定字段', () => {
+  it('excludeBodyParams 作为 SillyTavern custom_exclude_body 透传', () => {
     const body = buildCustomApiRequestBody_ACU(
       [{ role: 'user', content: 'test' }],
       { url: 'https://api.example.com', model: 'gpt-4', temperature: 1.0, excludeBodyParams: 'temperature,top_p' },
     );
-    expect(body).not.toHaveProperty('temperature');
-    expect(body).not.toHaveProperty('top_p');
+    expect(body.temperature).toBe(1.0);
+    expect(body.top_p).toBe(0.95);
+    expect(body.custom_exclude_body).toBe('- temperature\n- top_p');
     expect(body).toHaveProperty('max_tokens');
   });
 
-  it('bodyParams 先覆盖 excludeBodyParams 后删除', () => {
+  it('bodyParams 与 excludeBodyParams 分别透传给 SillyTavern 合并与排除', () => {
     const body = buildCustomApiRequestBody_ACU(
       [{ role: 'user', content: 'test' }],
       { url: 'https://api.example.com', model: 'gpt-4', temperature: 1.0, bodyParams: 'temperature:0.3', excludeBodyParams: 'temperature' },
     );
-    expect(body).not.toHaveProperty('temperature');
+    expect(body.temperature).toBe(1.0);
+    expect(body.custom_include_body).toBe('temperature:0.3');
+    expect(body.custom_exclude_body).toBe('- temperature');
   });
 
 

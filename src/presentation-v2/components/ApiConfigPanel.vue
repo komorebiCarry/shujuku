@@ -135,14 +135,14 @@
         v-if="activeConnectionMode === 'custom'"
         class="acu-api-config-panel__editor-section"
       >
-        <AcuFormRow label="附加主体参数" hint="每行一个 key: value，会合并到请求体中。">
+        <AcuFormRow label="附加主体参数" hint="SillyTavern custom_include_body，填写 YAML object，会合并到最终模型请求体。">
           <AcuTextarea
             v-model="activeDraft.bodyParams"
             :rows="3"
-            placeholder="top_k: 50&#10;frequency_penalty: 0.5"
+            placeholder="response_format:&#10;  type: json_object&#10;top_k: 50"
           />
         </AcuFormRow>
-        <AcuFormRow label="排除主体参数" hint="逗号或换行分隔，从请求体中删除指定字段。">
+        <AcuFormRow label="排除主体参数" hint="会转换为 SillyTavern custom_exclude_body，从最终模型请求体删除指定字段。">
           <AcuTextarea
             v-model="activeDraft.excludeBodyParams"
             :rows="2"
