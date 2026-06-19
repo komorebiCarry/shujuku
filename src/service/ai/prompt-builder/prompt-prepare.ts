@@ -250,6 +250,9 @@ export function formatTableForSqliteMode(table: any, tableIndex: number, sheetKe
     const effectiveAllRows = (allRows.length > 0) ? allRows : (seedRows.length > 0 ? seedRows : []);
 
     if (effectiveAllRows.length === 0) {
+        if (table.sourceData?.initNode) {
+            text += `-- INIT: ${table.sourceData.initNode.replace(/\n/g, '\n-- ')}\n`;
+        }
         text += `-- (该表格为空，请进行初始化。)\n\n`;
         return text;
     }
