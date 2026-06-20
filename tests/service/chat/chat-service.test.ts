@@ -182,18 +182,71 @@ describe('getOriginalContent_ACU', () => {
 describe('purgeOldLayerData_ACU', () => {
   it('清理超出保留层数的旧数据', async () => {
     mockSettings.retainRecentLayers = 2;
-    const chat = [
-      { is_user: false }, // index 0: 保护
-      { is_user: false, TavernDB_ACU_Data: { sheet_0: {} } }, // index 1: 清理
-      { is_user: true },
-      { is_user: false, TavernDB_ACU_Data: { sheet_0: {} } }, // index 3: 保留
-      { is_user: false, TavernDB_ACU_Data: { sheet_0: {} } }, // index 4: 保留
-    ];
+    const chat = Array.from({ length: 25 }, (_, index) => ({
+      is_user: false,
+      TavernDB_ACU_Data: { sheet_0: { index } },
+    }));
     mockGetChatArray.mockReturnValue(chat);
     await purgeOldLayerData_ACU();
+    expect(chat[0].TavernDB_ACU_Data).toBeUndefined();
     expect(chat[1].TavernDB_ACU_Data).toBeUndefined();
+    expect(chat[2].TavernDB_ACU_Data).toBeUndefined();
     expect(chat[3].TavernDB_ACU_Data).toBeDefined();
+    expect(chat[24].TavernDB_ACU_Data).toBeDefined();
     expect(mockSaveChatToHost).toHaveBeenCalled();
+  });
+
+  it('chat[0] 只保护指导表字段，不保护普通本地数据', async () => {
+    mockSettings.retainRecentLayers = 1;
+    const chat = Array.from({ length: 23 }, (_, index) => ({
+      is_user: false,
+      TavernDB_ACU_InternalSheetGuide: index === 0 ? { sheet_0: { name: '指导表' } } : undefined,
+      TavernDB_ACU_Data: { sheet_0: { index } },
+    }));
+    mockGetChatArray.mockReturnValue(chat);
+
+    await purgeOldLayerData_ACU();
+
+    expect(chat[0].TavernDB_ACU_InternalSheetGuide).toEqual({ sheet_0: { name: '指导表' } });
+    expect(chat[0].TavernDB_ACU_Data).toBeUndefined();
+    expect(chat[1].TavernDB_ACU_Data).toBeUndefined();
+    expect(chat[2].TavernDB_ACU_Data).toBeDefined();
+  });
+
+  it('实际保留层的前20层缓冲区没有 checkpoint 时，在缓冲区最后一层补写 V2 checkpoint', async () => {
+    mockSettings.retainRecentLayers = 2;
+    const chat = Array.from({ length: 25 }, (_, index) => ({
+      is_user: false,
+      TavernDB_ACU_IsolatedData: {
+        '': {
+          storageFrame: {
+            version: 2,
+            ...(index === 0
+              ? {
+                  checkpoint: {
+                    kind: 'full',
+                    createdAt: 1,
+                    reason: 'init',
+                    data: { sheet_0: { name: '物品表', content: [['row_id', '物品名'], ['1', '剑']] } },
+                  },
+                }
+              : {}),
+            logEntries: [],
+          },
+          _acu_storage_version: 2,
+        },
+      },
+    }));
+    mockGetChatArray.mockReturnValue(chat);
+
+    await purgeOldLayerData_ACU();
+
+    expect(chat[0].TavernDB_ACU_IsolatedData).toBeUndefined();
+    expect(chat[22].TavernDB_ACU_IsolatedData[''].storageFrame.checkpoint).toEqual(expect.objectContaining({
+      kind: 'full',
+      reason: 'compaction',
+    }));
+    expect(chat[22].TavernDB_ACU_IsolatedData[''].storageFrame.checkpoint.data.sheet_0.content[1][1]).toBe('剑');
   });
 
   it('retainRecentLayers=0 时跳过', async () => {
