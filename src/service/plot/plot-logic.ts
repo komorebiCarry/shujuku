@@ -10,7 +10,7 @@ import { activePlotEditorSettings_ACU, buildDefaultPlotPromptGroup_ACU, currentE
 import { currentChatFileIdentifier_ACU, settings_ACU } from '../runtime/state-manager';
 import { getChatArray_ACU, saveChatToHost_ACU } from '../../data/gateways/chat-gateway';
 import { saveSettings_ACU } from '../settings/settings-service';
-import { buildChatPlotScopeStateFromSettings_ACU, clearCurrentChatPlotScopeState_ACU, getCurrentChatPlotScopeState_ACU, sanitizePlotSettingsSnapshotForChat_ACU, setCurrentChatPlotScopeState_ACU } from '../template/chat-scope';
+import { clearCurrentChatPlotScopeState_ACU, getCurrentChatPlotScopeState_ACU, sanitizePlotSettingsSnapshotForChat_ACU } from '../template/chat-scope';
 import { cleanChatName_ACU, logDebug_ACU, logWarn_ACU, normalizeExcludeRules_ACU, normalizeExtractRules_ACU, normalizeNonNegativeInteger_ACU, normalizePositiveInteger_ACU } from '../../shared/utils';
 import { getLastOptimizationBase_ACU, setLastOptimizationBase_ACU } from '../optimization/content-optimization';
 
@@ -302,7 +302,7 @@ export function getPlotPresetBindingForChat_ACU(chatId = currentChatFileIdentifi
     return normalizedBinding;
 }
 
-function setPlotPresetBindingForChat_ACU(chatId: string, presetName: string, { source = 'inherit', isExplicit = false } = {}) {
+export function setPlotPresetBindingForChat_ACU(chatId: string, presetName: string, { source = 'inherit', isExplicit = false } = {}) {
     const normalizedChatId = normalizePlotPresetBindingChatId_ACU(chatId);
     if (!normalizedChatId) return null;
     const normalizedSource = ['inherit', 'ui', 'api'].includes(source) ? source : 'inherit';
@@ -612,44 +612,33 @@ function queueSaveCurrentChatPlotScope_ACU(source = 'ui_plot_scope') {
 export function persistCurrentChatPlotEditorSnapshot_ACU({ source = 'ui_task_edit', save = true } = {}) {
     if (!settings_ACU?.plotSettings) return null;
     const normalizedPresetName = getCurrentRuntimePlotPresetName_ACU({ fallbackToGlobal: true });
-    const plotScopeState = buildChatPlotScopeStateFromSettings_ACU(settings_ACU.plotSettings, {
-      presetName: normalizedPresetName,
-      source,
-      originGlobalName: normalizePlotPresetSelectionValue_ACU(settings_ACU.plotSettings.lastUsedPresetName || ''),
-      originGlobalRevision: getPlotGlobalRevision_ACU(),
-      updatedAt: Date.now(),
-    });
-    if (!plotScopeState) return null;
-    setCurrentChatPlotScopeState_ACU(plotScopeState, { reason: `plot_scope_${source}` });
+    const hadLegacyChatScopeSnapshot = !!getCurrentChatPlotScopeState_ACU();
+    if (hadLegacyChatScopeSnapshot) {
+      clearCurrentChatPlotScopeState_ACU();
+    }
     setPlotPresetBindingForChat_ACU(currentChatFileIdentifier_ACU, normalizedPresetName, {
       source,
       isExplicit: source !== 'inherit',
     });
     if (save) {
       saveSettings_ACU();
-      queueSaveCurrentChatPlotScope_ACU(source);
+      if (hadLegacyChatScopeSnapshot) {
+        queueSaveCurrentChatPlotScope_ACU(`${source}_clear_legacy_plot_scope`);
+      }
     }
-    return plotScopeState;
+    return getPlotPresetBindingForChat_ACU(currentChatFileIdentifier_ACU);
 }
 
 export function persistPlotPresetSelectionState_ACU(presetName: string, options: { source?: string; updateGlobal?: boolean; save?: boolean; persistChatScope?: boolean } = {}) {
     const { source = 'ui', updateGlobal = false, save = true, persistChatScope = !updateGlobal } = options;
     const normalizedPresetName = normalizePlotPresetSelectionValue_ACU(presetName);
-    let shouldSaveChat = false;
+    const hadLegacyChatScopeSnapshot = !!getCurrentChatPlotScopeState_ACU();
 
     if (updateGlobal && settings_ACU?.plotSettings) {
       settings_ACU.plotSettings.lastUsedPresetName = normalizedPresetName;
     } else if (persistChatScope && settings_ACU?.plotSettings) {
-      const plotScopeState = buildChatPlotScopeStateFromSettings_ACU(settings_ACU.plotSettings, {
-        presetName: normalizedPresetName,
-        source,
-        originGlobalName: normalizePlotPresetSelectionValue_ACU(settings_ACU.plotSettings.lastUsedPresetName || ''),
-        originGlobalRevision: getPlotGlobalRevision_ACU(),
-        updatedAt: Date.now(),
-      });
-      if (plotScopeState) {
-        setCurrentChatPlotScopeState_ACU(plotScopeState, { reason: `plot_scope_${source}` });
-        shouldSaveChat = true;
+      if (hadLegacyChatScopeSnapshot) {
+        clearCurrentChatPlotScopeState_ACU();
       }
       setPlotPresetBindingForChat_ACU(currentChatFileIdentifier_ACU, normalizedPresetName, {
         source,
@@ -664,10 +653,10 @@ export function persistPlotPresetSelectionState_ACU(presetName: string, options:
 
     if (save) {
       saveSettings_ACU();
-      if (shouldSaveChat) {
+      if (hadLegacyChatScopeSnapshot && !updateGlobal) {
         Promise.resolve()
           .then(() => saveChatToHost_ACU())
-          .catch(error => logWarn_ACU('[剧情推进] 保存聊天级预设快照失败:', error));
+          .catch(error => logWarn_ACU('[剧情推进] 清理旧聊天级预设快照失败:', error));
       }
     }
 

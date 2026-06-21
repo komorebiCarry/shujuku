@@ -23,7 +23,6 @@ import {
   stripPlotPresetWorldbookEntrySelectionForExport_ACU,
   switchCurrentChatPlotPreset_ACU,
 } from '../../service/plot/plot-logic';
-import { clearCurrentChatPlotScopeState_ACU } from '../../service/template/chat-scope';
 
 /** 剧情推进预设的 v2 视图。绝大多数字段透明转发，仅取一个 name 做唯一键。 */
 export interface AcuV2PlotPreset {
@@ -201,18 +200,6 @@ export const usePlotPresetStore = defineStore('acu-v2-plot-presets', {
     /** D23.2：切换"当前聊天使用"——即 PresetDropdown 主操作。 */
     setActivePresetForCurrentChat(name: string): boolean {
       const normalized = normalizePlotPresetSelectionValue_ACU(name);
-      if (isDefaultPlotPresetSelection_ACU(normalized)) {
-        clearCurrentChatPlotScopeState_ACU();
-        resetPlotSettingsToDefault_ACU(settings_ACU.plotSettings as Record<string, any>);
-        persistPlotPresetSelectionState_ACU('', {
-          source: 'ui_v2_select_default',
-          updateGlobal: false,
-          save: true,
-          persistChatScope: false,
-        });
-        this.refreshFromSettings();
-        return true;
-      }
       const result = switchCurrentChatPlotPreset_ACU(normalized, { source: 'ui_v2', save: true });
       if (!result) return false;
       this.refreshFromSettings();
