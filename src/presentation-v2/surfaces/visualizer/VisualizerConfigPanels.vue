@@ -111,6 +111,19 @@
           />
         </AcuFormRow>
       </div>
+      <AcuFormRow
+        v-if="config.isSQLite.value"
+        label="填表发送数据模板"
+        hint="高级功能：只替换发送给填表 AI 的“当前数据”部分。建议直接 SELECT row_id 和需要的字段；系统会把多列结果展开为“字段: 值”的记录行。留空则继续使用“发送最新行数”。"
+      >
+        <AcuTextarea
+          :model-value="updateConfig.sendRowsSqlTemplate"
+          :rows="6"
+          auto-resize
+          :placeholder="sendRowsSqlTemplatePlaceholder"
+          @update:model-value="value => config.updateUpdateConfig('sendRowsSqlTemplate', value)"
+        />
+      </AcuFormRow>
     </AcuPanel>
 
     <AcuPanel
@@ -368,6 +381,7 @@ import AcuPanel from '../../components/_lib/AcuPanel.vue';
 import AcuSelect from '../../components/_lib/AcuSelect.vue';
 import AcuTextarea from '../../components/_lib/AcuTextarea.vue';
 import { useVisualizerConfigEditing } from '../../composables/visualizer/useVisualizerConfigEditing';
+import { parseDDLColumnNames } from '../../../shared/ddl-utils';
 import PlacementEditor from './VisualizerPlacementEditor.vue';
 
 defineEmits<{
@@ -388,6 +402,7 @@ const updateConfig = computed(() => {
     groupId: Number.isFinite(raw.groupId) ? raw.groupId : -1,
     skipFloors: Number.isFinite(raw.skipFloors) ? raw.skipFloors : -1,
     sendLatestRows: Number.isFinite(raw.sendLatestRows) ? raw.sendLatestRows : -1,
+    sendRowsSqlTemplate: String(raw.sendRowsSqlTemplate || ''),
   };
 });
 
@@ -401,6 +416,22 @@ const sourceData = computed(() => {
     deleteNode: String(raw.deleteNode || ''),
     ddl: String(raw.ddl || ''),
   };
+});
+
+const sendRowsSqlTemplatePlaceholder = computed(() => {
+  const ddlColumns = parseDDLColumnNames(sourceData.value.ddl);
+  const headers = ddlColumns.length > 0
+    ? ddlColumns
+    : (config.headers.value.length > 0 ? ['row_id', ...config.headers.value] : ['row_id']);
+  const tableNameMatch = String(sourceData.value.ddl || '').match(/CREATE\s+TABLE\s+(?:IF\s+NOT\s+EXISTS\s+)?([^\s(]+)/i);
+  const tableName = tableNameMatch?.[1] || 'your_table';
+  return [
+    `建议查询列：${headers.join(', ')}`,
+    `展开格式示例：row_id: 1, ${headers.slice(1).map((header, index) => `${header}: 值${index + 1}`).join(', ')}`,
+    '',
+    '示例模板：',
+    `{[sql "SELECT ${headers.join(', ')} FROM ${tableName} ORDER BY row_id ASC LIMIT 10"]}`,
+  ].join('\n');
 });
 
 const exportConfig = computed(() => config.exportConfig.value || {});

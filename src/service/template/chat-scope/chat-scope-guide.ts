@@ -599,7 +599,7 @@ export function shouldUseOpeningSeedRows_ACU(): boolean {
               name: s.name || k,
               sourceData: s.sourceData ? JSON.parse(JSON.stringify(s.sourceData)) : { note: '', initNode: '', insertNode: '', updateNode: '', deleteNode: '' },
               content: [headerRow],
-              updateConfig: s.updateConfig ? JSON.parse(JSON.stringify(s.updateConfig)) : { uiSentinel: -1, contextDepth: -1, updateFrequency: -1, batchSize: -1, skipFloors: -1, sendLatestRows: -1, groupId: -1 },
+              updateConfig: s.updateConfig ? JSON.parse(JSON.stringify(s.updateConfig)) : { uiSentinel: -1, contextDepth: -1, updateFrequency: -1, batchSize: -1, skipFloors: -1, sendLatestRows: -1, groupId: -1, sendRowsSqlTemplate: '' },
               exportConfig: ensureExportConfigDefaults_ACU(
                   s.exportConfig ? JSON.parse(JSON.stringify(s.exportConfig)) : null,
                   s.name || k

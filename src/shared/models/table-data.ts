@@ -13,6 +13,7 @@ export interface SheetUpdateConfig_ACU {
   updateFrequency: number;
   batchSize: number;
   skipFloors: number;
+  sendRowsSqlTemplate?: string;
 }
 
 /** 世界书导出位置配置 */

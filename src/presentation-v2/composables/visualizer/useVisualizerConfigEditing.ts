@@ -25,7 +25,7 @@ import { useToastStore } from '../../stores/toast-store';
 import { useVisualizerStore } from '../../stores/visualizer-store';
 
 type SourceDataKey = 'note' | 'initNode' | 'insertNode' | 'updateNode' | 'deleteNode' | 'ddl';
-type UpdateConfigKey = 'contextDepth' | 'updateFrequency' | 'batchSize' | 'groupId' | 'skipFloors' | 'sendLatestRows';
+type UpdateConfigKey = 'contextDepth' | 'updateFrequency' | 'batchSize' | 'groupId' | 'skipFloors' | 'sendLatestRows' | 'sendRowsSqlTemplate';
 type PlacementKey = 'entryPlacement' | 'extraIndexPlacement' | 'fixedEntryPlacement' | 'fixedIndexPlacement';
 type GlobalPlacementKey = 'readableEntryPlacement' | 'wrapperPlacement';
 type ExtraIndexMode = 'both' | 'index_only';
@@ -243,7 +243,7 @@ export function useVisualizerConfigEditing() {
     withSheet(sheet => {
       if (!sheet.updateConfig || typeof sheet.updateConfig !== 'object') sheet.updateConfig = {};
       sheet.updateConfig.uiSentinel = -1;
-      sheet.updateConfig[key] = intValue(value, -1);
+      sheet.updateConfig[key] = key === 'sendRowsSqlTemplate' ? stringValue(value) : intValue(value, -1);
     });
   }
 

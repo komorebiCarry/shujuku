@@ -13,6 +13,7 @@ import { applyContextTagFilters_ACU } from '../../runtime/helpers-remaining';
 import { isSqliteMode } from '../../table/storage-mode';
 import { ensureStorageProviderReady_ACU } from '../../table/table-storage-strategy';
 import { parseDDLColumnNames } from '../../../shared/ddl-utils';
+import { replaceDbSqlVariables } from '../../runtime/template-vars/sql-query-var';
 
   async function resolvePromptSourceTableData_ACU(options: any, sqlMode: boolean) {
     if (!sqlMode) {
@@ -261,6 +262,22 @@ export function formatTableForSqliteMode(table: any, tableIndex: number, sheetKe
         text += `-- SeedRows: 已提供模板基础数据（尚未写入聊天楼层数据；本次填表可直接基于这些行更新）\n`;
     }
 
+    const ddlColumnNames = parseDDLColumnNames(ddl);
+    const headers = (ddlColumnNames.length > 0) ? ddlColumnNames : (table.content[0] || []);
+    const sendRowsSqlTemplate = typeof table.updateConfig?.sendRowsSqlTemplate === 'string'
+        ? table.updateConfig.sendRowsSqlTemplate.trim()
+        : '';
+
+    if (sendRowsSqlTemplate) {
+        const renderedRows = replaceDbSqlVariables(sendRowsSqlTemplate).trim();
+        text += `\n-- 当前数据\n`;
+        text += renderedRows
+            ? `${renderedRows}\n`
+            : '-- (No data rows)\n';
+        text += '\n';
+        return text;
+    }
+
     // 行数限制逻辑（与原生模式一致）
     let rowsToProcess = effectiveAllRows;
     let startIndex = 0;
@@ -281,8 +298,6 @@ export function formatTableForSqliteMode(table: any, tableIndex: number, sheetKe
 
     // 输出当前数据（注释格式的表格）
     // 优先使用 DDL 中的英文列名作为表头，避免 AI 看到中文列名后用中文属性名写 SQL
-    const ddlColumnNames = parseDDLColumnNames(ddl);
-    const headers = (ddlColumnNames.length > 0) ? ddlColumnNames : (table.content[0] || []);
     text += `\n-- 当前数据 (${rowsToProcess.length} rows)\n`;
     text += `-- | ${headers.join(' | ')} |\n`;
     rowsToProcess.forEach((row: any) => {

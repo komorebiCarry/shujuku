@@ -13,6 +13,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 const mockGetEffectiveSeedRows = vi.fn(() => []);
 const mockEnsureChatSheetGuideSeeded = vi.fn().mockResolvedValue(null);
 const mockAttachSeedRows = vi.fn();
+const mockReplaceDbSqlVariables = vi.fn((content: string) => content);
 let mockCurrentJsonTableData: any = null;
 let mockSettings: any = {};
 
@@ -50,6 +51,10 @@ vi.mock('../../../src/service/runtime/helpers-remaining', () => ({
   applyContextTagFilters_ACU: vi.fn((c: string) => c),
 }));
 
+vi.mock('../../../src/service/runtime/template-vars/sql-query-var', () => ({
+  replaceDbSqlVariables: (content: string) => mockReplaceDbSqlVariables(content),
+}));
+
 let mockIsSqliteMode = true;
 vi.mock('../../../src/service/table/storage-mode', () => ({
   isSqliteMode: vi.fn(() => mockIsSqliteMode),
@@ -72,6 +77,7 @@ describe('formatTableForSqliteMode', () => {
     mockGetEffectiveSeedRows.mockReturnValue([]);
     mockEnsureChatSheetGuideSeeded.mockResolvedValue(null);
     mockAttachSeedRows.mockReset();
+    mockReplaceDbSqlVariables.mockImplementation((content: string) => content);
     mockRuntimeProvider.mode = 'sqlite';
     mockRuntimeProvider.getCurrentData.mockImplementation(() => mockCurrentJsonTableData);
     mockIsSqliteMode = true;
@@ -158,6 +164,36 @@ describe('formatTableForSqliteMode', () => {
     expect(result).toContain('-- | row_id | item_name |');
     expect(result).toContain('-- | 1 | 铁剑 |');
     expect(result).toContain('-- | 2 | 药水 |');
+  });
+
+  it('配置填表发送数据模板时只替换当前数据部分并保留 DDL 与规则', () => {
+    mockReplaceDbSqlVariables.mockReturnValue('-- | 9 | 自定义行 |');
+    const table = {
+      name: '背包物品表',
+      sourceData: {
+        ddl: 'CREATE TABLE inventory (row_id INTEGER PRIMARY KEY, item_name TEXT);',
+        note: '记录背包',
+        insertNode: '获得物品时插入',
+        updateNode: '数量变化时更新',
+        deleteNode: '丢弃时删除',
+      },
+      content: [['row_id', 'item_name'], ['1', '铁剑'], ['2', '药水']],
+      updateConfig: {
+        sendRowsSqlTemplate: '{[sql "SELECT row_id, item_name FROM inventory WHERE row_id = 9"]}',
+      },
+    };
+
+    const result = formatTableForSqliteMode(table, 0, 'sheet_0', null);
+
+    expect(mockReplaceDbSqlVariables).toHaveBeenCalledWith('{[sql "SELECT row_id, item_name FROM inventory WHERE row_id = 9"]}');
+    expect(result).toContain('CREATE TABLE inventory');
+    expect(result).toContain('-- Note: 记录背包');
+    expect(result).toContain('-- INSERT: 获得物品时插入');
+    expect(result).toContain('-- UPDATE: 数量变化时更新');
+    expect(result).toContain('-- DELETE: 丢弃时删除');
+    expect(result).toContain('-- 当前数据');
+    expect(result).toContain('-- | 9 | 自定义行 |');
+    expect(result).not.toContain('-- | 1 | 铁剑 |');
   });
 
   // ═══════════════════════════════════════════════════════════════
