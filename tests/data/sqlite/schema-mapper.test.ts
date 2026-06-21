@@ -243,6 +243,18 @@ describe('generateInserts', () => {
     expect(inserts[0]).toContain('NULL');
   });
 
+  it('空字符串保持为空字符串字面量而不是 NULL', () => {
+    const sheet = makeSheet({
+      content: [
+        ['row_id', 'name', 'note'],
+        ['1', '角色A', ''],
+      ],
+    });
+    const inserts = generateInserts(sheet, 'test_table');
+    expect(inserts[0]).toContain("'角色A', ''");
+    expect(inserts[0]).not.toContain("'角色A', NULL");
+  });
+
   it('数字字符串不加引号', () => {
     const sheet = makeSheet({
       content: [

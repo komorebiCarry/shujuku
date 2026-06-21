@@ -127,6 +127,31 @@ describe('SyncBridge', () => {
       expect(() => bridge.loadFromTableData(data)).toThrow('未初始化');
     });
 
+    it('加载快照时保留 NOT NULL 字段中的空字符串', () => {
+      const characterSheet = makeSheet({
+        uid: 'characters',
+        name: '角色表',
+        sourceData: {
+          note: '', initNode: '', deleteNode: '', updateNode: '', insertNode: '',
+          ddl: `CREATE TABLE characters ( -- 角色表
+  row_id INTEGER PRIMARY KEY, -- 行号
+  name TEXT NOT NULL, -- 姓名
+  note TEXT NOT NULL DEFAULT '' -- 备注
+);`,
+        },
+        content: [
+          ['row_id', '姓名', '备注'],
+          ['1', '角色A', ''],
+        ],
+      });
+      const data = makeTableData({ sheet_0: characterSheet });
+
+      expect(() => bridge.loadFromTableData(data, { strict: true })).not.toThrow();
+
+      const result = engine.query('SELECT note FROM characters WHERE name = ?;', ['角色A']);
+      expect(result.values[0][0]).toBe('');
+    });
+
     it('单张表加载失败不影响其他表', () => {
       // 第一张表 DDL 有语法错误
       const badSheet = makeSheet({

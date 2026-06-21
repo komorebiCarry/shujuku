@@ -242,7 +242,7 @@ function valueToString(val: SqlJsValueType): string | null {
  * null/undefined → NULL, 数字字符串 → 数字, 其他 → 带引号的字符串
  */
 function escapeValue(val: string | null | undefined): string {
-  if (val === null || val === undefined || val === '') return 'NULL';
+  if (val === null || val === undefined) return 'NULL';
   // 纯数字（整数或浮点数）直接输出
   if (/^-?\d+(\.\d+)?$/.test(val)) return val;
   // 字符串：单引号转义
@@ -275,5 +275,4 @@ function chineseToIdentifier(name: string): string {
   // 实在不行就用 col_ 前缀
   return `col_${ascii || 'unknown'}`;
 }
-
 
