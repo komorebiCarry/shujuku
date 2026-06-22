@@ -228,7 +228,7 @@ describe('generateInserts', () => {
     const sheet = makeSheet();
     const inserts = generateInserts(sheet, 'test_table');
     expect(inserts).toHaveLength(2);
-    expect(inserts[0]).toContain('INSERT INTO');
+    expect(inserts[0]).toContain('INSERT OR REPLACE INTO');
     expect(inserts[0]).toContain('test_table');
   });
 

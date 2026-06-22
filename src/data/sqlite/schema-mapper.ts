@@ -155,8 +155,10 @@ export function generateInserts(sheet: Sheet_ACU, tableName?: string): string[] 
       values.push(escapeValue(normalizedVal));
     }
 
+    // generateInserts 只用于把 JSON 快照灌入 SQLite。若同一快照内 row_id 重复，
+    // 应按快照合并语义让后出现的行覆盖旧行，而不是让整张表加载失败后从导出结果中消失。
     statements.push(
-      `INSERT INTO ${sanitizeIdentifier(tblName)} (${columnNames.map(sanitizeIdentifier).join(', ')}) VALUES (${values.join(', ')});`
+      `INSERT OR REPLACE INTO ${sanitizeIdentifier(tblName)} (${columnNames.map(sanitizeIdentifier).join(', ')}) VALUES (${values.join(', ')});`
     );
   }
 
@@ -275,4 +277,3 @@ function chineseToIdentifier(name: string): string {
   // 实在不行就用 col_ 前缀
   return `col_${ascii || 'unknown'}`;
 }
-

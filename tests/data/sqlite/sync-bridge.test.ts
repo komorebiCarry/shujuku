@@ -174,6 +174,28 @@ describe('SyncBridge', () => {
       // 好的表应该正常加载
       expect(engine.getTableNames()).toContain('inventory');
     });
+
+    it('同一快照内重复 row_id 时保留最后一行且不让整表从导出结果消失', () => {
+      const duplicatedRowSheet = makeSheet({
+        content: [
+          ['row_id', '物品名称', '数量', '描述'],
+          ['1', '旧种子行', '1', '模板 seedRows'],
+          ['1', '新快照行', '9', '后续消息覆盖'],
+        ],
+      });
+
+      expect(() => bridge.loadFromTableData(makeTableData({ sheet_0: duplicatedRowSheet }))).not.toThrow();
+      expect(engine.query('SELECT item_name, quantity, description FROM inventory ORDER BY row_id;').values).toEqual([
+        ['新快照行', 9, '后续消息覆盖'],
+      ]);
+
+      const exported = bridge.exportToTableData(makeMate());
+      expect(Object.keys(exported).filter(k => k.startsWith('sheet_'))).toEqual(['sheet_0']);
+      expect((exported.sheet_0 as Sheet_ACU).content).toEqual([
+        ['row_id', '物品名称', '数量', '描述'],
+        ['1', '新快照行', '9', '后续消息覆盖'],
+      ]);
+    });
   });
 
   // ═══════════════════════════════════════════════════════════════
