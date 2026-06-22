@@ -52,7 +52,7 @@ export interface PersistTableMutationV2Options_ACU {
   revisionWriteSet?: TableMutationWriteSetV2_ACU;
   /** 调用方已处于 transactionContext.runCommit 临界区内时使用，避免嵌套 commit 锁。 */
   assumeCommitLock?: boolean;
-  transactionContext?: Pick<TableWriteTransactionContext_ACU, 'runCommit' | 'baseRevision' | 'writeSet'>;
+  transactionContext?: Pick<TableWriteTransactionContext_ACU, 'runCommit' | 'baseRevision' | 'writeSet' | 'assertFresh'>;
 }
 
 function safeJsonByteLength_ACU(value: unknown): number {
@@ -314,6 +314,11 @@ async function persistTableMutationLogV2Core_ACU(
   const target = findTargetAiMessage_ACU(chat, options.targetMessageIndex);
   if (!target) {
     return { saved: false, error: 'no AI message found' };
+  }
+
+  options.transactionContext?.assertFresh?.('persistTableMutationLogV2:before_persist');
+  if (!chat[target.index] || chat[target.index] !== target.message || target.message.is_user) {
+    return { saved: false, error: 'target AI message changed before persist; abort stale table write.' };
   }
 
   const isolationKey = options.isolationKey ?? getCurrentIsolationKey_ACU();

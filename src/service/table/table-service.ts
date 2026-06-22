@@ -228,6 +228,8 @@ async function persistTablesToChatMessageWithLockOption_ACU(
       return { saved: false, error: TABLE_PERSIST_COMMIT_MODEL_REQUIRED_ACU };
     }
 
+    transactionContext.assertFresh?.('persistTablesToChatMessage:before_v2_persist');
+
     return persistV2InTransaction(transactionContext);
   };
 
@@ -286,6 +288,12 @@ async function persistTablesToChatMessageLegacyV1WithLockOption_ACU(
     if (!targetMessage) {
       logWarn_ACU('Save failed: No AI message found.');
       return { saved: false, error: 'no AI message found' };
+    }
+
+    const transactionContext = options.transactionContext;
+    transactionContext?.assertFresh?.('persistTablesToChatMessage:before_legacy_persist');
+    if (finalIndex < 0 || !chat[finalIndex] || chat[finalIndex] !== targetMessage || targetMessage.is_user) {
+      return { saved: false, error: 'target AI message changed before legacy persist; abort stale table write.' };
     }
 
     // 查找上一个 AI 楼层的 tagData 作为 delta 的 base

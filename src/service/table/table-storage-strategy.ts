@@ -10,6 +10,7 @@ import { getCurrentStorageMode } from './storage-mode';
 import { NativeTableServiceAdapter } from './native-table-service-adapter';
 import { SqlTableService } from './sql-table-service';
 import { logDebug_ACU, logError_ACU } from '../../shared/utils';
+import { invalidateTableRuntimeRevision_ACU } from './table-write-transaction';
 
 /** 当前活跃的 Provider 实例 */
 let currentProvider: ITableStorageProvider | null = null;
@@ -155,6 +156,7 @@ export function disposeStorageProvider(): void {
  * 不切换模式，只重新从聊天消息加载
  */
 export async function reloadStorageProvider(): Promise<void> {
+  invalidateTableRuntimeRevision_ACU({ reason: 'reloadStorageProvider' });
   if (!currentProvider) {
     await initStorageProvider();
     return;

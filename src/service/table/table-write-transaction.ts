@@ -163,6 +163,17 @@ function bumpRuntimeRevision_ACU(scopeKey: string, writeSet: TableWriteConflictU
   return `runtime:${revision}`;
 }
 
+export function invalidateTableRuntimeRevision_ACU(parts: {
+  chatKey?: string | null;
+  isolationKey?: string | null;
+  reason?: string;
+} = {}): string {
+  const chatKey = normalizeScopePart_ACU(parts.chatKey ?? currentChatFileIdentifier_ACU, 'current-chat');
+  const isolationKey = normalizeScopePart_ACU(parts.isolationKey ?? getCurrentIsolationKey_ACU(), 'default');
+  const scopeKey = getRuntimeScopeKey_ACU({ chatKey, isolationKey });
+  return bumpRuntimeRevision_ACU(scopeKey, [{ kind: 'all' }]);
+}
+
 function getLock_ACU(scopeKey: string): ReadWriteLock_ACU {
   let lock = keyedLocks_ACU.get(scopeKey);
   if (!lock) {
