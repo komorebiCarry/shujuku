@@ -99,27 +99,48 @@ describe('mount — 当前文档场景', () => {
     mount.__resetAcuV2MountForTests();
   });
 
-  it('主题按钮可以打开主题菜单，并在外部点击后关闭', async () => {
+  it('外观按钮可以打开外观菜单，设置界面缩放，并在外部点击后关闭', async () => {
     const { mount } = await freshImport();
     await mount.openAcuV2App();
 
-    const themeButton = document.querySelector('.acu-v2-app__theme-btn') as HTMLButtonElement | null;
-    expect(themeButton).not.toBeNull();
-    expect(themeButton!.classList.contains('acu-icon-btn')).toBe(true);
+    const appearanceButton = document.querySelector('.acu-v2-app__appearance-btn') as HTMLButtonElement | null;
+    expect(appearanceButton).not.toBeNull();
+    expect(appearanceButton!.classList.contains('acu-icon-btn')).toBe(true);
+    expect(appearanceButton!.getAttribute('aria-expanded')).toBe('false');
 
-    themeButton!.click();
+    appearanceButton!.click();
     await Promise.resolve();
 
-    const menu = document.querySelector('.acu-v2-app__theme-menu') as HTMLElement | null;
+    const menu = document.querySelector('.acu-v2-app__appearance-menu') as HTMLElement | null;
     expect(menu).not.toBeNull();
+    expect(appearanceButton!.getAttribute('aria-expanded')).toBe('true');
+    expect(menu!.textContent).toContain('主题');
+    expect(menu!.textContent).toContain('界面缩放');
+    expect(menu!.textContent).toContain('100%');
+    expect(menu!.textContent).toContain('125%');
     expect(menu!.textContent).toContain('浅色');
     expect(menu!.textContent).toContain('地雷色');
     expect(menu!.querySelector('[title^="内置主题不可删除"]')).toBeNull();
+
+    const scale125 = Array.from(menu!.querySelectorAll<HTMLButtonElement>('.acu-segmented__item'))
+      .find(button => button.textContent?.includes('125%'));
+    expect(scale125).not.toBeUndefined();
+    scale125!.click();
+    await nextTick();
+
+    const app = document.querySelector('.acu-v2-app') as HTMLElement | null;
+    expect(app).not.toBeNull();
+    expect(app!.style.getPropertyValue('--acu-ui-scale')).toBe('1.25');
+    expect(app!.style.getPropertyValue('--acu-font-size-body')).toBe('15px');
+    expect(JSON.parse(localStorage.getItem(STORAGE_KEY)!)).toMatchObject({
+      appearance: { uiScale: '125' },
+    });
 
     document.body.click();
     await Promise.resolve();
 
     expect(menu!.classList.contains('is-closing')).toBe(true);
+    expect(appearanceButton!.getAttribute('aria-expanded')).toBe('false');
 
     mount.__resetAcuV2MountForTests();
   });
@@ -337,19 +358,19 @@ describe('mount — 父文档场景（iframe 模拟）', () => {
     mount.__resetAcuV2MountForTests();
   });
 
-  it('父文档挂载时，主题菜单响应父文档外部点击关闭', async () => {
+  it('父文档挂载时，外观菜单响应父文档外部点击关闭', async () => {
     const { mount } = await freshImport();
 
     await mount.openAcuV2App();
 
     const parentDoc = parentDom.window.document;
-    const themeButton = parentDoc.querySelector('.acu-v2-app__theme-btn') as HTMLButtonElement | null;
-    expect(themeButton).not.toBeNull();
+    const appearanceButton = parentDoc.querySelector('.acu-v2-app__appearance-btn') as HTMLButtonElement | null;
+    expect(appearanceButton).not.toBeNull();
 
-    themeButton!.click();
+    appearanceButton!.click();
     await Promise.resolve();
 
-    const menu = parentDoc.querySelector('.acu-v2-app__theme-menu') as HTMLElement | null;
+    const menu = parentDoc.querySelector('.acu-v2-app__appearance-menu') as HTMLElement | null;
     expect(menu).not.toBeNull();
 
     parentDoc.body.dispatchEvent(new parentDom.window.Event('pointerdown', { bubbles: true }));

@@ -200,6 +200,18 @@ export const usePlotPresetStore = defineStore('acu-v2-plot-presets', {
     /** D23.2：切换"当前聊天使用"——即 PresetDropdown 主操作。 */
     setActivePresetForCurrentChat(name: string): boolean {
       const normalized = normalizePlotPresetSelectionValue_ACU(name);
+      if (isDefaultPlotPresetSelection_ACU(normalized)) {
+        ensureSettingsShape();
+        resetPlotSettingsToDefault_ACU(settings_ACU.plotSettings as Record<string, any>);
+        persistPlotPresetSelectionState_ACU('', {
+          source: 'ui_v2',
+          updateGlobal: false,
+          save: true,
+          persistChatScope: true,
+        });
+        this.refreshFromSettings();
+        return true;
+      }
       const result = switchCurrentChatPlotPreset_ACU(normalized, { source: 'ui_v2', save: true });
       if (!result) return false;
       this.refreshFromSettings();

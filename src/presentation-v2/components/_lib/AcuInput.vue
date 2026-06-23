@@ -108,11 +108,19 @@ function onWheel(ev: WheelEvent): void {
   transition: background 0.15s ease, box-shadow 0.15s ease;
 }
 
-.acu-input--md { min-height: 32px; padding: 6px 9px !important; font-size: var(--acu-font-size-body, 12px) !important; }
-.acu-input--sm { min-height: 26px; padding: 3px 7px !important; font-size: var(--acu-font-size-caption, 11px) !important; }
+.acu-input--md {
+  min-height: var(--acu-control-height-md, 32px);
+  padding: var(--acu-control-padding-y-md, 6px) var(--acu-control-padding-x-md, 9px) !important;
+  font-size: var(--acu-font-size-body, 12px) !important;
+}
+.acu-input--sm {
+  min-height: var(--acu-control-height-sm, 26px);
+  padding: var(--acu-control-padding-y-sm, 3px) var(--acu-control-padding-x-sm, 7px) !important;
+  font-size: var(--acu-font-size-caption, 11px) !important;
+}
 
-.acu-input-shell--number .acu-input--md { padding-right: 30px !important; }
-.acu-input-shell--number .acu-input--sm { padding-right: 25px !important; }
+.acu-input-shell--number .acu-input--md { padding-right: var(--acu-control-number-padding-right-md, 30px) !important; }
+.acu-input-shell--number .acu-input--sm { padding-right: var(--acu-control-number-padding-right-sm, 25px) !important; }
 
 .acu-input:hover:not(:disabled) {
   background: linear-gradient(var(--acu-hover-overlay), var(--acu-hover-overlay)), var(--acu-bg-2) !important;

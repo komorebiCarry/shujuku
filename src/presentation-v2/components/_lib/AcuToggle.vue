@@ -41,7 +41,7 @@ function onClick(): void {
 
 <style scoped>
 .acu-toggle {
-  display: inline-flex; align-items: center; gap: 8px;
+  display: inline-flex; align-items: center; gap: var(--acu-toggle-gap, 8px);
   flex: 0 0 auto;
   padding: 0; border: 0; background: transparent;
   font: inherit; font-size: var(--acu-font-size-body, 12px); color: var(--acu-text-2);
@@ -51,10 +51,11 @@ function onClick(): void {
 
 .acu-toggle__track {
   position: relative; flex-shrink: 0;
-  width: 36px; height: 20px;
+  width: var(--acu-toggle-track-width, 36px);
+  height: var(--acu-toggle-track-height, 20px);
   background: var(--acu-bg-2);
   border: 0;
-  border-radius: 10px;
+  border-radius: var(--acu-toggle-track-radius, 10px);
   transition: background 0.2s ease, box-shadow 0.2s ease;
 }
 
@@ -63,8 +64,11 @@ function onClick(): void {
 }
 
 .acu-toggle__thumb {
-  position: absolute; top: 2px; left: 2px;
-  width: 16px; height: 16px;
+  position: absolute;
+  top: var(--acu-toggle-thumb-offset, 2px);
+  left: var(--acu-toggle-thumb-offset, 2px);
+  width: var(--acu-toggle-thumb-size, 16px);
+  height: var(--acu-toggle-thumb-size, 16px);
   background: #fff;
   border-radius: 50%;
   box-shadow: 0 1px 3px rgba(0, 0, 0, 0.2);
@@ -72,7 +76,7 @@ function onClick(): void {
 }
 
 .acu-toggle--on .acu-toggle__thumb {
-  transform: translateX(16px);
+  transform: translateX(var(--acu-toggle-thumb-translate, 16px));
 }
 
 .acu-toggle__label { white-space: nowrap; }
