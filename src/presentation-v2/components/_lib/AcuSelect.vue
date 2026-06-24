@@ -95,8 +95,8 @@ onBeforeUnmount(() => {
 }
 
 .acu-select__trigger {
-  display: flex; align-items: center; gap: 8px; width: 100%;
-  min-height: 32px; padding: 6px 9px;
+  display: flex; align-items: center; gap: var(--acu-space-2, 8px); width: 100%;
+  min-height: var(--acu-control-height-md, 32px); padding: var(--acu-control-padding-y-md, 6px) var(--acu-control-padding-x-md, 9px);
   margin: 0 !important;
   background: var(--acu-bg-2) !important; border: 0 !important;
   border-radius: var(--acu-radius-sm); color: var(--acu-text-1);
@@ -121,26 +121,26 @@ onBeforeUnmount(() => {
 .acu-select__caret--open { transform: rotate(180deg); }
 
 .acu-select__menu {
-  position: absolute; top: calc(100% + 4px); left: 0; right: 0; z-index: 100;
-  margin: 0; padding: 4px 0; list-style: none;
+  position: absolute; top: calc(100% + var(--acu-space-1, 4px)); left: 0; right: 0; z-index: 100;
+  margin: 0; padding: var(--acu-space-1, 4px) 0; list-style: none;
   background: var(--acu-bg-1); border: 1px solid var(--acu-border);
   border-radius: var(--acu-radius-sm); box-shadow: var(--acu-shadow);
-  max-height: 240px; overflow-y: auto;
+  max-height: var(--acu-menu-max-height, 240px); overflow-y: auto;
 }
 
 .acu-select__item {
-  padding: 8px 12px; cursor: pointer; font-size: var(--acu-font-size-body-lg, 13px);
+  padding: var(--acu-space-2, 8px) var(--acu-space-3, 12px); cursor: pointer; font-size: var(--acu-font-size-body-lg, 13px);
   color: var(--acu-text-2); transition: background 0.1s ease;
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
 .acu-select__item:hover { background: var(--acu-hover-overlay); color: var(--acu-text-1); }
 .acu-select__item--active { color: var(--acu-on-accent); background: var(--acu-accent); }
 
-.acu-select__empty { padding: 12px; text-align: center; color: var(--acu-text-3); font-size: var(--acu-font-size-body, 12px); }
+.acu-select__empty { padding: var(--acu-space-3, 12px); text-align: center; color: var(--acu-text-3); font-size: var(--acu-font-size-body, 12px); }
 
 /* ── sm variant ── */
-.acu-select--sm .acu-select__trigger { min-height: 26px; padding: 3px 7px; font-size: var(--acu-font-size-caption, 11px); }
-.acu-select--sm .acu-select__item { padding: 6px 10px; font-size: var(--acu-font-size-body, 12px); }
+.acu-select--sm .acu-select__trigger { min-height: var(--acu-control-height-sm, 26px); padding: var(--acu-control-padding-y-sm, 3px) var(--acu-control-padding-x-sm, 7px); font-size: var(--acu-font-size-caption, 11px); }
+.acu-select--sm .acu-select__item { padding: var(--acu-space-150, 6px) var(--acu-space-250, 10px); font-size: var(--acu-font-size-body, 12px); }
 
 .acu-select--disabled { pointer-events: none; opacity: 0.5; }
 </style>

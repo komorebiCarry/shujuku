@@ -176,12 +176,12 @@ describe("AcuToastViewport", () => {
     await nextTick();
 
     const source = readToastViewportSource();
-    expect(source).toContain("top: calc(62px + var(--acu-safe-top, 0px));");
-    expect(source).toContain("right: calc(18px + var(--acu-safe-right, 0px));");
+    expect(source).toContain("top: calc(var(--acu-toast-top, 62px) + var(--acu-safe-top, 0px));");
+    expect(source).toContain("right: calc(var(--acu-toast-edge-gap, 18px) + var(--acu-safe-right, 0px));");
     expect(source).toContain("bottom: auto;");
     expect(source).toContain("box-shadow:");
     expect(source).toContain("overflow: visible;");
-    expect(source).toContain("width: clamp(240px, 70vw");
+    expect(source).toContain("width: clamp(var(--acu-menu-min-width, 240px), 70vw");
     expect(source).not.toContain("backdrop-filter:");
     expect(source).not.toContain("bottom: calc(18px + var(--acu-safe-bottom, 0px));");
   });

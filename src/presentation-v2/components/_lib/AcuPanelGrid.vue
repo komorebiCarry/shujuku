@@ -25,7 +25,7 @@ const gridStyle = computed<Record<string, string>>(() => ({
   min-width: 0;
   display: grid;
   grid-template-columns: repeat(var(--acu-panel-grid-columns), minmax(0, 1fr));
-  gap: 16px;
+  gap: var(--acu-panel-grid-gap, 16px);
   align-items: stretch;
 }
 

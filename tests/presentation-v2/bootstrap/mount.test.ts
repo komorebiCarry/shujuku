@@ -14,6 +14,7 @@ import { nextTick } from 'vue';
 const ROOT_ID = 'acu-app-v2';
 const STYLE_DATA_ATTR = 'data-acu-v2-sfc';
 const STORAGE_KEY = 'acu_v2_ui_state';
+const APPEARANCE_STYLE_NODE_ID = 'acu-v2-appearance';
 
 type MountModule = typeof import('../../../src/presentation-v2/bootstrap/mount');
 type HostModule = typeof import('../../../src/presentation-v2/bootstrap/host-document');
@@ -114,12 +115,51 @@ describe('mount — 当前文档场景', () => {
     expect(menu).not.toBeNull();
     expect(menu!.textContent).toContain('浅色');
     expect(menu!.textContent).toContain('地雷色');
+    expect(menu!.textContent).toContain('界面缩放');
     expect(menu!.querySelector('[title^="内置主题不可删除"]')).toBeNull();
 
     document.body.click();
     await Promise.resolve();
 
     expect(menu!.classList.contains('is-closing')).toBe(true);
+
+    mount.__resetAcuV2MountForTests();
+  });
+
+  it('外观菜单可以切换界面缩放，并持久化到 appearance section', async () => {
+    const { mount } = await freshImport();
+    await mount.openAcuV2App();
+
+    const root = document.getElementById(ROOT_ID);
+    const style = document.getElementById(APPEARANCE_STYLE_NODE_ID) as HTMLStyleElement | null;
+    expect(root).not.toBeNull();
+    expect(style).not.toBeNull();
+    expect(root!.getAttribute('data-acu-ui-scale')).toBe('100');
+    expect(style!.textContent).toContain('--acu-ui-scale: 1;');
+
+    const themeButton = document.querySelector('.acu-v2-app__theme-btn') as HTMLButtonElement | null;
+    expect(themeButton).not.toBeNull();
+    themeButton!.click();
+    await Promise.resolve();
+
+    const menu = document.querySelector('.acu-v2-app__theme-menu') as HTMLElement | null;
+    expect(menu).not.toBeNull();
+    const scaleButtons = Array.from(
+      menu!.querySelectorAll<HTMLButtonElement>('.acu-v2-app__scale-control .acu-segmented__item'),
+    );
+    const option125 = scaleButtons.find(button => button.textContent?.trim() === '125%');
+    expect(option125).not.toBeNull();
+
+    option125!.click();
+    await Promise.resolve();
+
+    expect(root!.getAttribute('data-acu-ui-scale')).toBe('125');
+    expect(style!.textContent).toContain('--acu-ui-scale: 1.25;');
+    expect(style!.textContent).toContain('--acu-font-size-body: 15px;');
+    expect(JSON.parse(localStorage.getItem(STORAGE_KEY)!)).toEqual({
+      appearance: { uiScale: '125' },
+    });
+    expect(menu!.textContent).toContain('125%');
 
     mount.__resetAcuV2MountForTests();
   });
@@ -168,10 +208,10 @@ describe('mount — 当前文档场景', () => {
     expect(menuButton!.getAttribute('aria-expanded')).toBe('true');
     expect(drawer!.querySelector('.acu-v2-app__mobile-nav-header')).toBeNull();
     expect(drawer!.textContent).toContain('SP·数据库 V');
-    expect(drawer!.getAttribute('data-acu-mobile-nav-width')).toBe('360px');
-    expect(drawer!.style.width).toBe('360px');
-    expect(drawer!.style.maxWidth).toBe('calc(100% - 24px)');
-    expect(drawer!.style.flex).toBe('0 0 360px');
+    expect(drawer!.getAttribute('data-acu-mobile-nav-width')).toBe('var(--acu-mobile-nav-width)');
+    expect(drawer!.style.width).toBe('var(--acu-mobile-nav-width)');
+    expect(drawer!.style.maxWidth).toBe('calc(100% - var(--acu-mobile-nav-edge-gap))');
+    expect(drawer!.style.flex).toBe('0 0 var(--acu-mobile-nav-width)');
 
     const formFillButton = drawer!.querySelector('[data-page-id="form-fill"]') as HTMLButtonElement | null;
     expect(formFillButton).not.toBeNull();

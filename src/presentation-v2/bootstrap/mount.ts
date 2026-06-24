@@ -12,8 +12,10 @@ import { createPinia, type Pinia } from 'pinia';
 import { logDebug_ACU } from '../../shared/utils';
 import { setSfcStyleHost } from '../build/sfc-style-runtime';
 import App from '../App.vue';
+import { useAppearanceStore } from '../stores/appearance-store';
 import { useRootShellStore } from '../stores/root-shell-store';
 import { useThemeStore } from '../stores/theme-store';
+import { applyAppearance, __resetAppearanceInjectorForTests } from '../theme/appearance-injector';
 import { applyTheme } from '../theme/theme-injector';
 import { __resetUiCloseGuardsForTests } from '../composables/useUiCloseGuard';
 import {
@@ -63,6 +65,15 @@ function ensureMounted(): MountedState {
 
   const pinia = createPinia();
   root.textContent = '';
+  // 主题与外观：先应用一次，避免首帧缺少 root token；订阅后续变更。
+  const themeStore = useThemeStore(pinia);
+  applyTheme(themeStore.activeTheme);
+  themeStore.$subscribe(() => applyTheme(themeStore.activeTheme));
+
+  const appearanceStore = useAppearanceStore(pinia);
+  applyAppearance(appearanceStore.uiScaleOption);
+  appearanceStore.$subscribe(() => applyAppearance(appearanceStore.uiScaleOption));
+
   const vueApp = createHostDocumentApp(App, {
     onClose: () => closeAcuV2App(),
   }, doc);
@@ -70,11 +81,6 @@ function ensureMounted(): MountedState {
   vueApp.mount(root);
   root.removeAttribute('v-cloak');
   root.setAttribute('data-v-app', '');
-
-  // 主题：先应用一次 + 订阅后续变更，确保切主题立刻刷新 <style>
-  const themeStore = useThemeStore(pinia);
-  applyTheme(themeStore.activeTheme);
-  themeStore.$subscribe(() => applyTheme(themeStore.activeTheme));
 
   state = { vueApp, pinia, root };
   logDebug_ACU(`[ACU-V2] app mounted into ${source} (id=#${ROOT_ID}, width=${hostWidth}px)`);
@@ -123,6 +129,7 @@ export function __resetAcuV2MountForTests(): void {
     state = null;
   }
   __resetUiCloseGuardsForTests();
+  __resetAppearanceInjectorForTests();
   __resetHostDocumentCacheForTests();
   __resetHostRendererForTests();
 }

@@ -122,7 +122,7 @@ function cleanupDescriptionTransition(el: Element): void {
 
 <style scoped>
 .acu-panel {
-  min-width: 0; padding: 16px;
+  min-width: 0; padding: var(--acu-panel-padding, 16px);
   background: var(--acu-bg-1);
   border: 1px solid var(--acu-border);
   border-radius: var(--acu-radius-md);
@@ -131,12 +131,12 @@ function cleanupDescriptionTransition(el: Element): void {
 }
 .acu-panel__header {
   display: flex; align-items: center; justify-content: space-between;
-  gap: 12px; margin-bottom: 12px;
-  min-height: 32px;
+  gap: var(--acu-panel-gap, 12px); margin-bottom: var(--acu-panel-gap, 12px);
+  min-height: var(--acu-control-height-md, 32px);
   transition: margin-bottom 0.15s ease;
 }
 .acu-panel__header--description-open {
-  margin-bottom: 8px;
+  margin-bottom: var(--acu-space-2, 8px);
 }
 .acu-panel__title {
   margin: 0;
@@ -150,13 +150,13 @@ function cleanupDescriptionTransition(el: Element): void {
   margin-left: auto;
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: var(--acu-space-2, 8px);
   flex-shrink: 0;
 }
-.acu-panel__actions { display: flex; align-items: center; gap: 8px; flex-shrink: 0; }
+.acu-panel__actions { display: flex; align-items: center; gap: var(--acu-space-2, 8px); flex-shrink: 0; }
 .acu-panel__description-button {
-  width: 28px;
-  height: 28px;
+  width: var(--acu-button-height-sm, 28px);
+  height: var(--acu-button-height-sm, 28px);
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -180,13 +180,13 @@ function cleanupDescriptionTransition(el: Element): void {
   outline: none;
   box-shadow: 0 0 0 2px var(--acu-accent-glow);
 }
-.acu-panel__body { display: flex; flex-direction: column; gap: 12px; min-width: 0; flex: 1 1 auto; }
+.acu-panel__body { display: flex; flex-direction: column; gap: var(--acu-panel-gap, 12px); min-width: 0; flex: 1 1 auto; }
 .acu-panel__description-region {
   min-width: 0;
   overflow: hidden;
 }
 .acu-panel__description-region-inner {
-  padding-bottom: 12px;
+  padding-bottom: var(--acu-panel-gap, 12px);
   overflow: hidden;
 }
 </style>

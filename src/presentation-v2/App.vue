@@ -20,61 +20,82 @@
               <div class="acu-v2-app__theme-switcher">
                 <AcuIconButton
                   class="acu-v2-app__theme-btn"
-                  icon="fa-solid fa-palette"
-                  :title="'主题：' + themeStore.activeTheme.name"
+                  icon="fa-solid fa-gear"
+                  :title="'外观：' + themeStore.activeTheme.name + '，界面缩放 ' + appearanceStore.uiScaleLabel"
+                  aria-label="打开外观菜单"
+                  :aria-expanded="isThemeMenuOpen"
                   @click="toggleThemeMenu"
                 />
-                <ul
+                <div
                   v-if="isThemeMenuRendered"
                   class="acu-v2-app__theme-menu"
                   :class="{ 'is-closing': isThemeMenuClosing }"
-                  role="listbox"
-                  :aria-label="'选择主题'"
+                  role="dialog"
+                  aria-label="外观设置"
                 >
-                  <li
-                    v-for="t in themeStore.themes"
-                    :key="t.id"
-                    role="option"
-                    :aria-selected="t.id === themeStore.activeId"
-                    class="acu-v2-app__theme-option"
-                    :class="{ 'is-active': t.id === themeStore.activeId }"
-                    @click="selectTheme(t.id)"
-                  >
-                    <span class="acu-v2-app__theme-option-main">
-                      <span
-                        class="acu-v2-app__theme-swatch"
-                        :style="{
-                          '--acu-theme-swatch-bg': t.tokens.bg0,
-                          '--acu-theme-swatch-accent': t.tokens.accent,
-                        }"
-                      ></span>
-                      <span class="acu-v2-app__theme-name">{{ t.name }}</span>
-                      <span v-if="isCustomThemeId(t.id)" class="acu-v2-app__theme-tag">自定义</span>
-                    </span>
-                    <span class="acu-v2-app__theme-tools" @click.stop>
-                      <AcuIconButton
-                        icon="fa-solid fa-upload"
-                        size="sm"
-                        :title="'导出主题：' + t.name"
-                        @click="exportTheme(t.id)"
-                      />
-                      <AcuIconButton
-                        v-if="isCustomThemeId(t.id)"
-                        icon="fa-solid fa-trash"
-                        size="sm"
-                        variant="danger"
-                        :title="'删除自定义主题：' + t.name"
-                        @click="deleteTheme(t.id)"
-                      />
-                    </span>
-                  </li>
-                  <li class="acu-v2-app__theme-menu-footer">
-                    <AcuFileButton size="sm" accept="application/json,.json" @file="importThemeFile">
-                      <i class="fa-solid fa-download"></i>
-                      导入主题
-                    </AcuFileButton>
-                  </li>
-                </ul>
+                  <section class="acu-v2-app__appearance-section" aria-labelledby="acu-v2-theme-section-title">
+                    <div id="acu-v2-theme-section-title" class="acu-v2-app__appearance-section-title">主题</div>
+                    <ul class="acu-v2-app__theme-list" role="listbox" aria-label="选择主题">
+                      <li
+                        v-for="t in themeStore.themes"
+                        :key="t.id"
+                        role="option"
+                        :aria-selected="t.id === themeStore.activeId"
+                        class="acu-v2-app__theme-option"
+                        :class="{ 'is-active': t.id === themeStore.activeId }"
+                        @click="selectTheme(t.id)"
+                      >
+                        <span class="acu-v2-app__theme-option-main">
+                          <span
+                            class="acu-v2-app__theme-swatch"
+                            :style="{
+                              '--acu-theme-swatch-bg': t.tokens.bg0,
+                              '--acu-theme-swatch-accent': t.tokens.accent,
+                            }"
+                          ></span>
+                          <span class="acu-v2-app__theme-name">{{ t.name }}</span>
+                          <span v-if="isCustomThemeId(t.id)" class="acu-v2-app__theme-tag">自定义</span>
+                        </span>
+                        <span class="acu-v2-app__theme-tools" @click.stop>
+                          <AcuIconButton
+                            icon="fa-solid fa-upload"
+                            size="sm"
+                            :title="'导出主题：' + t.name"
+                            @click="exportTheme(t.id)"
+                          />
+                          <AcuIconButton
+                            v-if="isCustomThemeId(t.id)"
+                            icon="fa-solid fa-trash"
+                            size="sm"
+                            variant="danger"
+                            :title="'删除自定义主题：' + t.name"
+                            @click="deleteTheme(t.id)"
+                          />
+                        </span>
+                      </li>
+                    </ul>
+                    <div class="acu-v2-app__theme-menu-footer">
+                      <AcuFileButton size="sm" accept="application/json,.json" @file="importThemeFile">
+                        <i class="fa-solid fa-download"></i>
+                        导入主题
+                      </AcuFileButton>
+                    </div>
+                  </section>
+                  <section class="acu-v2-app__appearance-section" aria-labelledby="acu-v2-scale-section-title">
+                    <div class="acu-v2-app__scale-heading">
+                      <span id="acu-v2-scale-section-title" class="acu-v2-app__appearance-section-title">界面缩放</span>
+                      <span class="acu-v2-app__scale-current">{{ appearanceStore.uiScaleLabel }}</span>
+                    </div>
+                    <AcuSegmentedControl
+                      class="acu-v2-app__scale-control"
+                      :options="uiScaleOptions"
+                      :model-value="appearanceStore.uiScale"
+                      size="sm"
+                      aria-label="界面缩放"
+                      @update:model-value="setUiScale"
+                    />
+                  </section>
+                </div>
               </div>
               <AcuIconButton
                 class="acu-v2-app__close"
@@ -102,7 +123,7 @@
           role="dialog"
           aria-modal="true"
           aria-label="一级页导航"
-          data-acu-mobile-nav-width="360px"
+          data-acu-mobile-nav-width="var(--acu-mobile-nav-width)"
           @click.stop
         >
           <Sidebar variant="drawer" @navigate="closeMobileNav" />
@@ -121,6 +142,7 @@ import { computed, onBeforeUnmount, onMounted, ref, watch } from "vue";
 import AcuDialogHost from "./components/_lib/AcuDialogHost.vue";
 import AcuFileButton from "./components/_lib/AcuFileButton.vue";
 import AcuIconButton from "./components/_lib/AcuIconButton.vue";
+import AcuSegmentedControl from "./components/_lib/AcuSegmentedControl.vue";
 import AcuToastViewport from "./components/_lib/AcuToastViewport.vue";
 import MainArea from "./components/MainArea.vue";
 import Sidebar from "./components/Sidebar.vue";
@@ -138,11 +160,17 @@ import VisualizerSurface from "./surfaces/visualizer/VisualizerSurface.vue";
 import type { AcuV2ThemeId } from "./theme/theme-types";
 import { getAcuHostDocument } from "./bootstrap/host-document";
 import { acuClearTimeout, acuSetTimeout, type AcuTimerHandle } from "./bootstrap/host-env";
+import {
+  ACU_UI_SCALE_OPTIONS,
+  useAppearanceStore,
+  type AcuUiScale,
+} from "./stores/appearance-store";
 
 const emit = defineEmits<{ (event: "close"): void }>();
 const rootShell = useRootShellStore();
 const router = useRouterStore();
 const dialogStore = useDialogStore();
+const appearanceStore = useAppearanceStore();
 const themeStore = useThemeStore();
 const toastStore = useToastStore();
 const uiMode = useUiModeStore();
@@ -156,15 +184,22 @@ const isThemeMenuClosing = ref(false);
 const THEME_MENU_LEAVE_MS = 120;
 const MOBILE_NAV_LEAVE_MS = 150;
 const mobileNavDrawerStyle = {
-  width: "360px",
-  maxWidth: "calc(100% - 24px)",
-  flex: "0 0 360px",
+  width: "var(--acu-mobile-nav-width)",
+  maxWidth: "calc(100% - var(--acu-mobile-nav-edge-gap))",
+  flex: "0 0 var(--acu-mobile-nav-width)",
 };
 let themeMenuCloseTimer: AcuTimerHandle | undefined;
 let mobileNavCloseTimer: AcuTimerHandle | undefined;
 
 const shellTitle = computed(() =>
   visualizer.isActive ? "数据库编辑器" : router.activePage?.title || "SP·数据库 V",
+);
+
+const uiScaleOptions = computed(() =>
+  ACU_UI_SCALE_OPTIONS.map(option => ({
+    value: option.value,
+    label: option.label,
+  })),
 );
 
 function toggleThemeMenu(): void {
@@ -175,6 +210,10 @@ function toggleThemeMenu(): void {
 function selectTheme(id: AcuV2ThemeId): void {
   themeStore.setTheme(id);
   closeThemeMenu();
+}
+
+function setUiScale(value: string): void {
+  appearanceStore.setUiScale(value as AcuUiScale);
 }
 
 function readFileText(file: File): Promise<string> {
@@ -352,21 +391,10 @@ function clearMobileNavCloseTimer(): void {
   --acu-safe-right: max(env(safe-area-inset-right, 0px), var(--acu-native-safe-right, 0px));
   --acu-safe-bottom: max(env(safe-area-inset-bottom, 0px), var(--acu-native-safe-bottom, 0px));
   --acu-safe-left: max(env(safe-area-inset-left, 0px), var(--acu-native-safe-left, 0px));
-  --acu-font-size-micro: 10px;
-  --acu-font-size-caption: 11px;
-  --acu-font-size-body: 12px;
-  --acu-font-size-body-lg: 13px;
-  --acu-font-size-section-title: 12px;
-  --acu-font-size-list-title: 13px;
-  --acu-font-size-panel-title: 15px;
-  --acu-font-size-page-title: 22px;
-  --acu-line-height-caption: 1.5;
-  --acu-line-height-body: 1.45;
-  --acu-line-height-readable: 1.55;
   box-sizing: border-box;
   color: var(--acu-text-1);
   font-family: var(--acu-font-ui);
-  font-size: var(--acu-font-size-body);
+  font-size: var(--acu-font-size-body, 12px);
 }
 
 :global(#acu-app-v2),
@@ -388,7 +416,7 @@ function clearMobileNavCloseTimer(): void {
 .acu-v2-app {
   color: var(--acu-text-1);
   font-family: var(--acu-font-ui);
-  font-size: var(--acu-font-size-body);
+  font-size: var(--acu-font-size-body, 12px);
 }
 
 .acu-v2-app__shell {
@@ -414,7 +442,7 @@ function clearMobileNavCloseTimer(): void {
   background: var(--acu-bg-0);
   color: var(--acu-text-1);
   font-family: var(--acu-font-ui);
-  font-size: var(--acu-font-size-body);
+  font-size: var(--acu-font-size-body, 12px);
 }
 
 .acu-v2-app__header {
@@ -423,8 +451,12 @@ function clearMobileNavCloseTimer(): void {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  min-height: 50px;
-  padding: 8px 12px 8px 20px;
+  min-height: var(--acu-shell-header-height, 50px);
+  padding:
+    var(--acu-space-2, 8px)
+    var(--acu-space-3, 12px)
+    var(--acu-space-2, 8px)
+    var(--acu-space-5, 20px);
   background: var(--acu-bg-0);
   border-bottom: 1px solid var(--acu-border-2);
   flex: 0 0 auto;
@@ -434,14 +466,14 @@ function clearMobileNavCloseTimer(): void {
   display: flex;
   align-items: center;
   min-width: 0;
-  gap: 8px;
+  gap: var(--acu-space-2, 8px);
   flex: 1 1 auto;
 }
 
 .acu-v2-app__menu {
   display: none;
   flex: 0 0 auto;
-  font-size: 14px;
+  font-size: var(--acu-font-size-body-lg, 13px);
   background: transparent;
   color: var(--acu-text-2);
   box-shadow: none;
@@ -466,8 +498,8 @@ function clearMobileNavCloseTimer(): void {
 }
 
 .acu-v2-app__close {
-  width: 30px;
-  height: 30px;
+  width: var(--acu-shell-header-action-size, 30px);
+  height: var(--acu-shell-header-action-size, 30px);
   border: 0;
   background: transparent;
   color: var(--acu-text-2);
@@ -532,14 +564,14 @@ function clearMobileNavCloseTimer(): void {
 }
 
 .acu-v2-app__mobile-nav {
-  width: 360px;
-  max-width: calc(100% - 24px - var(--acu-safe-left, 0px) - var(--acu-safe-right, 0px));
+  width: var(--acu-mobile-nav-width, 360px);
+  max-width: calc(100% - var(--acu-mobile-nav-edge-gap, 24px) - var(--acu-safe-left, 0px) - var(--acu-safe-right, 0px));
   height: 100%;
   max-height: 100%;
   min-width: 0;
   min-height: 0;
   align-self: stretch;
-  flex: 0 1 360px;
+  flex: 0 1 var(--acu-mobile-nav-width, 360px);
   display: flex;
   flex-direction: column;
   background: var(--acu-sidebar-bg);
@@ -554,16 +586,16 @@ function clearMobileNavCloseTimer(): void {
   animation: mobile-nav-drawer-out 0.15s ease-in both;
 }
 
-@supports (width: min(360px, calc(100% - 24px))) {
+@supports (width: min(1px, 100%)) {
   .acu-v2-app__mobile-nav {
-    width: min(360px, calc(100% - 24px - var(--acu-safe-left, 0px) - var(--acu-safe-right, 0px)));
-    flex: 0 0 min(360px, calc(100% - 24px - var(--acu-safe-left, 0px) - var(--acu-safe-right, 0px)));
+    width: min(var(--acu-mobile-nav-width, 360px), calc(100% - var(--acu-mobile-nav-edge-gap, 24px) - var(--acu-safe-left, 0px) - var(--acu-safe-right, 0px)));
+    flex: 0 0 min(var(--acu-mobile-nav-width, 360px), calc(100% - var(--acu-mobile-nav-edge-gap, 24px) - var(--acu-safe-left, 0px) - var(--acu-safe-right, 0px)));
   }
 }
 
 @supports (width: 100dvw) {
   .acu-v2-app__mobile-nav {
-    max-width: calc(100% - 24px - var(--acu-safe-left, 0px) - var(--acu-safe-right, 0px));
+    max-width: calc(100% - var(--acu-mobile-nav-edge-gap, 24px) - var(--acu-safe-left, 0px) - var(--acu-safe-right, 0px));
   }
 }
 
@@ -578,7 +610,7 @@ function clearMobileNavCloseTimer(): void {
 .acu-v2-app__header-right {
   display: flex;
   align-items: center;
-  gap: 4px;
+  gap: var(--acu-space-1, 4px);
   flex: 0 0 auto;
 }
 
@@ -587,12 +619,12 @@ function clearMobileNavCloseTimer(): void {
 }
 
 .acu-v2-app__theme-btn {
-  width: 30px;
-  height: 30px;
+  width: var(--acu-shell-header-action-size, 30px);
+  height: var(--acu-shell-header-action-size, 30px);
   border: 0;
   background: transparent;
   color: var(--acu-text-2);
-  font-size: 14px;
+  font-size: var(--acu-font-size-body-lg, 13px);
   cursor: pointer;
   border-radius: var(--acu-radius-sm);
 }
@@ -604,14 +636,13 @@ function clearMobileNavCloseTimer(): void {
 
 .acu-v2-app__theme-menu {
   position: absolute;
-  top: calc(100% + 6px);
+  top: calc(100% + var(--acu-menu-offset, 6px));
   right: 0;
   z-index: 10;
-  list-style: none;
   margin: 0;
-  padding: 4px;
-  width: min(280px, calc(100vw - 24px));
-  min-width: 240px;
+  padding: var(--acu-menu-padding, 4px);
+  width: min(var(--acu-menu-width, 300px), calc(100vw - var(--acu-mobile-nav-edge-gap, 24px)));
+  min-width: min(var(--acu-menu-min-width, 240px), calc(100vw - var(--acu-mobile-nav-edge-gap, 24px)));
   background: var(--acu-bg-1);
   border: 1px solid var(--acu-border);
   border-radius: var(--acu-radius-md);
@@ -624,12 +655,35 @@ function clearMobileNavCloseTimer(): void {
   animation: theme-menu-out 0.12s ease-in both;
 }
 
+.acu-v2-app__appearance-section {
+  min-width: 0;
+}
+
+.acu-v2-app__appearance-section + .acu-v2-app__appearance-section {
+  margin-top: var(--acu-menu-section-gap, 8px);
+  padding-top: var(--acu-menu-section-gap, 8px);
+  border-top: 1px solid var(--acu-border);
+}
+
+.acu-v2-app__appearance-section-title {
+  color: var(--acu-text-3);
+  font-size: var(--acu-font-size-caption, 11px);
+  font-weight: 700;
+  letter-spacing: 0;
+}
+
+.acu-v2-app__theme-list {
+  list-style: none;
+  margin: var(--acu-space-1, 4px) 0 0;
+  padding: 0;
+}
+
 .acu-v2-app__theme-option {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 8px;
-  padding: 7px 10px;
+  gap: var(--acu-space-2, 8px);
+  padding: var(--acu-menu-option-padding-y, 7px) var(--acu-menu-option-padding-x, 10px);
   font-size: var(--acu-font-size-body-lg, 13px);
   color: var(--acu-text-2);
   border-radius: var(--acu-radius-sm);
@@ -651,7 +705,7 @@ function clearMobileNavCloseTimer(): void {
 .acu-v2-app__theme-option-main {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: var(--acu-space-2, 8px);
   min-width: 0;
   flex: 1 1 auto;
 }
@@ -665,7 +719,7 @@ function clearMobileNavCloseTimer(): void {
 
 .acu-v2-app__theme-tag {
   flex: 0 0 auto;
-  padding: 1px 5px;
+  padding: var(--acu-space-025, 1px) var(--acu-space-125, 5px);
   border-radius: var(--acu-radius-sm);
   background: color-mix(in srgb, var(--acu-accent) 12%, transparent);
   color: var(--acu-accent);
@@ -681,7 +735,7 @@ function clearMobileNavCloseTimer(): void {
 .acu-v2-app__theme-tools {
   display: inline-flex;
   align-items: center;
-  gap: 4px;
+  gap: var(--acu-space-1, 4px);
   flex: 0 0 auto;
   opacity: 0.72;
 }
@@ -713,10 +767,10 @@ function clearMobileNavCloseTimer(): void {
 
 .acu-v2-app__theme-swatch {
   display: block;
-  width: 18px;
-  height: 18px;
+  width: var(--acu-menu-swatch-size, 18px);
+  height: var(--acu-menu-swatch-size, 18px);
   border-radius: 999px;
-  flex: 0 0 18px;
+  flex: 0 0 var(--acu-menu-swatch-size, 18px);
   background: linear-gradient(
     135deg,
     var(--acu-theme-swatch-bg) 0 56%,
@@ -732,13 +786,34 @@ function clearMobileNavCloseTimer(): void {
 .acu-v2-app__theme-menu-footer {
   display: flex;
   justify-content: stretch;
-  margin-top: 4px;
-  padding: 7px 6px 4px;
+  margin-top: var(--acu-space-1, 4px);
+  padding:
+    var(--acu-menu-option-padding-y, 7px)
+    var(--acu-space-150, 6px)
+    var(--acu-space-1, 4px);
   border-top: 1px solid var(--acu-border);
 }
 
 .acu-v2-app__theme-menu-footer :deep(.acu-file-button),
 .acu-v2-app__theme-menu-footer :deep(.acu-btn) {
+  width: 100%;
+}
+
+.acu-v2-app__scale-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--acu-space-2, 8px);
+  margin-bottom: var(--acu-space-175, 7px);
+}
+
+.acu-v2-app__scale-current {
+  color: var(--acu-text-2);
+  font-size: var(--acu-font-size-caption, 11px);
+  font-weight: 600;
+}
+
+.acu-v2-app__scale-control {
   width: 100%;
 }
 
@@ -786,12 +861,12 @@ function clearMobileNavCloseTimer(): void {
 
 @media (max-width: 720px) {
   .acu-v2-app__header {
-    min-height: 48px;
-    padding: 8px 10px;
+    min-height: var(--acu-shell-header-height-compact, 48px);
+    padding: var(--acu-space-2, 8px) var(--acu-space-250, 10px);
   }
 
   .acu-v2-app__header-left {
-    gap: 6px;
+    gap: var(--acu-space-150, 6px);
   }
 
   .acu-v2-app__menu {
@@ -799,7 +874,7 @@ function clearMobileNavCloseTimer(): void {
   }
 
   .acu-v2-app__page-title {
-    font-size: 18px;
+    font-size: var(--acu-font-size-page-title-compact, 18px);
   }
 
   .acu-v2-app__desktop-sidebar {

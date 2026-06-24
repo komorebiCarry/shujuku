@@ -54,14 +54,14 @@ const sizeClass = computed(() => `acu-btn--${props.size}`);
   color: var(--acu-text-1);
   border-radius: var(--acu-radius-sm);
   cursor: pointer;
-  display: inline-flex; align-items: center; justify-content: center; gap: 6px;
+  display: inline-flex; align-items: center; justify-content: center; gap: var(--acu-space-150, 6px);
   transition: background 0.15s ease, border-color 0.15s ease, color 0.15s ease, box-shadow 0.15s ease, opacity 0.15s ease;
 }
-.acu-btn--md { min-height: 32px; padding: 6px 9px; font-size: var(--acu-font-size-body-lg, 13px); }
-.acu-btn--sm { min-height: 28px; padding: 4px 10px; font-size: var(--acu-font-size-body, 12px); }
+.acu-btn--md { min-height: var(--acu-button-height-md, 32px); padding: var(--acu-control-padding-y-md, 6px) var(--acu-control-padding-x-md, 9px); font-size: var(--acu-font-size-body-lg, 13px); }
+.acu-btn--sm { min-height: var(--acu-button-height-sm, 28px); padding: var(--acu-space-1, 4px) var(--acu-space-250, 10px); font-size: var(--acu-font-size-body, 12px); }
 .acu-btn--block { width: 100%; min-width: 0; }
-.acu-btn--icon-only { min-width: 32px; padding: 6px 8px; }
-.acu-btn--icon-only.acu-btn--sm { min-width: 28px; padding: 4px 8px; }
+.acu-btn--icon-only { min-width: var(--acu-button-height-md, 32px); padding: var(--acu-control-padding-y-md, 6px) var(--acu-space-2, 8px); }
+.acu-btn--icon-only.acu-btn--sm { min-width: var(--acu-button-height-sm, 28px); padding: var(--acu-space-1, 4px) var(--acu-space-2, 8px); }
 
 .acu-btn:hover:not(:disabled) {
   background: linear-gradient(var(--acu-hover-overlay), var(--acu-hover-overlay)), var(--acu-bg-2);

@@ -91,7 +91,7 @@ function move(delta: number): void {
   border: 0;
   border-radius: var(--acu-radius-sm);
   background: var(--acu-bg-2);
-  padding: 3px;
+  padding: var(--acu-space-075, 3px);
   overflow: hidden;
 }
 
@@ -101,9 +101,9 @@ function move(delta: number): void {
 
 .acu-segmented__thumb {
   position: absolute;
-  inset: 3px auto 3px 3px;
-  width: calc((100% - 6px) / var(--acu-segment-count));
-  border-radius: calc(var(--acu-radius-sm) - 2px);
+  inset: var(--acu-space-075, 3px) auto var(--acu-space-075, 3px) var(--acu-space-075, 3px);
+  width: calc((100% - var(--acu-space-150, 6px)) / var(--acu-segment-count));
+  border-radius: calc(var(--acu-radius-sm) - var(--acu-space-050, 2px));
   background: var(--acu-accent);
   transform: translateX(calc(var(--acu-segment-index) * 100%));
   transition: transform 0.16s ease, background 0.16s ease;
@@ -123,7 +123,7 @@ function move(delta: number): void {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  gap: 6px;
+  gap: var(--acu-space-150, 6px);
   transition: background 0.15s ease, color 0.15s ease;
   z-index: 1;
 }
@@ -149,7 +149,7 @@ function move(delta: number): void {
 .acu-segmented__item:focus-visible::before {
   content: '';
   position: absolute;
-  inset: 2px;
+  inset: var(--acu-space-050, 2px);
   border-radius: var(--acu-radius-sm);
   box-shadow: 0 0 0 2px var(--acu-accent-glow);
   pointer-events: none;
@@ -157,16 +157,16 @@ function move(delta: number): void {
 }
 
 .acu-segmented--md .acu-segmented__item {
-  min-height: 30px;
-  padding: 0 8px;
-  border-radius: calc(var(--acu-radius-sm) - 2px);
+  min-height: var(--acu-segment-height-md, 30px);
+  padding: 0 var(--acu-space-2, 8px);
+  border-radius: calc(var(--acu-radius-sm) - var(--acu-space-050, 2px));
 }
 
 .acu-segmented--sm .acu-segmented__item {
-  min-height: 24px;
-  padding: 0 7px;
+  min-height: var(--acu-segment-height-sm, 24px);
+  padding: 0 var(--acu-space-175, 7px);
   font-size: var(--acu-font-size-body, 12px);
-  border-radius: calc(var(--acu-radius-sm) - 2px);
+  border-radius: calc(var(--acu-radius-sm) - var(--acu-space-050, 2px));
 }
 
 .acu-segmented__label {

@@ -88,14 +88,14 @@ function onChange(ev: Event): void {
   color: var(--acu-text-1);
 }
 .acu-file-button__button--icon-only-default.acu-file-button__button--md {
-  width: 32px;
-  min-width: 32px;
+  width: var(--acu-icon-button-size-md, 32px);
+  min-width: var(--acu-icon-button-size-md, 32px);
 }
 .acu-file-button__button--icon-only-default.acu-file-button__button--sm {
-  width: 22px;
-  min-width: 22px;
-  min-height: 22px;
-  padding: 4px;
+  width: var(--acu-icon-button-size-sm, 22px);
+  min-width: var(--acu-icon-button-size-sm, 22px);
+  min-height: var(--acu-icon-button-size-sm, 22px);
+  padding: var(--acu-space-1, 4px);
   font-size: var(--acu-font-size-micro, 10px);
 }
 </style>
