@@ -15,7 +15,7 @@ defineProps<{
 
 <style scoped>
 .acu-form-row {
-  display: flex; flex-direction: column; gap: var(--acu-form-row-gap, 5px);
+  display: flex; flex-direction: column; gap: 5px;
   color: var(--acu-text-2); font-size: var(--acu-font-size-body, 12px);
   min-width: 0;
 }

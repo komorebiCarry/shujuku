@@ -96,8 +96,7 @@ onBeforeUnmount(() => {
 
 .acu-select__trigger {
   display: flex; align-items: center; gap: 8px; width: 100%;
-  min-height: var(--acu-control-height-md, 32px);
-  padding: var(--acu-control-padding-y-md, 6px) var(--acu-control-padding-x-md, 9px);
+  min-height: 32px; padding: 6px 9px;
   margin: 0 !important;
   background: var(--acu-bg-2) !important; border: 0 !important;
   border-radius: var(--acu-radius-sm); color: var(--acu-text-1);
@@ -140,11 +139,7 @@ onBeforeUnmount(() => {
 .acu-select__empty { padding: 12px; text-align: center; color: var(--acu-text-3); font-size: var(--acu-font-size-body, 12px); }
 
 /* ── sm variant ── */
-.acu-select--sm .acu-select__trigger {
-  min-height: var(--acu-control-height-sm, 26px);
-  padding: var(--acu-control-padding-y-sm, 3px) var(--acu-control-padding-x-sm, 7px);
-  font-size: var(--acu-font-size-caption, 11px);
-}
+.acu-select--sm .acu-select__trigger { min-height: 26px; padding: 3px 7px; font-size: var(--acu-font-size-caption, 11px); }
 .acu-select--sm .acu-select__item { padding: 6px 10px; font-size: var(--acu-font-size-body, 12px); }
 
 .acu-select--disabled { pointer-events: none; opacity: 0.5; }

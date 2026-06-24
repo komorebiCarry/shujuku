@@ -91,7 +91,7 @@ function move(delta: number): void {
   border: 0;
   border-radius: var(--acu-radius-sm);
   background: var(--acu-bg-2);
-  padding: var(--acu-segmented-padding, 3px);
+  padding: 3px;
   overflow: hidden;
 }
 
@@ -101,8 +101,8 @@ function move(delta: number): void {
 
 .acu-segmented__thumb {
   position: absolute;
-  inset: var(--acu-segmented-padding, 3px) auto var(--acu-segmented-padding, 3px) var(--acu-segmented-padding, 3px);
-  width: calc((100% - var(--acu-segmented-padding-total, 6px)) / var(--acu-segment-count));
+  inset: 3px auto 3px 3px;
+  width: calc((100% - 6px) / var(--acu-segment-count));
   border-radius: calc(var(--acu-radius-sm) - 2px);
   background: var(--acu-accent);
   transform: translateX(calc(var(--acu-segment-index) * 100%));
@@ -157,14 +157,14 @@ function move(delta: number): void {
 }
 
 .acu-segmented--md .acu-segmented__item {
-  min-height: var(--acu-segmented-height-md, 30px);
-  padding: 0 var(--acu-segmented-padding-x-md, 8px);
+  min-height: 30px;
+  padding: 0 8px;
   border-radius: calc(var(--acu-radius-sm) - 2px);
 }
 
 .acu-segmented--sm .acu-segmented__item {
-  min-height: var(--acu-segmented-height-sm, 24px);
-  padding: 0 var(--acu-segmented-padding-x-sm, 7px);
+  min-height: 24px;
+  padding: 0 7px;
   font-size: var(--acu-font-size-body, 12px);
   border-radius: calc(var(--acu-radius-sm) - 2px);
 }

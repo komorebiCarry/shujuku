@@ -41,8 +41,8 @@
       <AcuIconButton
         icon="fa-solid fa-clock-rotate-left"
         title="恢复历史模板归档"
-        :disabled="templates.busy.value || management.busy.value || !(templates.chatArchiveItems?.value?.length)"
-        @click="templates.restoreArchivedChatTemplate?.()"
+        :disabled="templates.busy.value || management.busy.value || templates.chatArchiveItems.value.length === 0"
+        @click="templates.restoreArchivedChatTemplate"
       />
       <AcuIconButton
         icon="fa-solid fa-gear"

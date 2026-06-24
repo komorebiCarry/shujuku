@@ -21,7 +21,7 @@ const variantClass = computed(() => `acu-badge--${props.variant}`);
 <style scoped>
 .acu-badge {
   display: inline-flex; align-items: center;
-  padding: var(--acu-badge-padding-y, 2px) var(--acu-badge-padding-x, 8px); border-radius: var(--acu-radius-sm);
+  padding: 2px 8px; border-radius: var(--acu-radius-sm);
   font-size: var(--acu-font-size-caption, 11px); font-weight: 500;
   white-space: nowrap; line-height: 1.6;
 }

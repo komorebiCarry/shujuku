@@ -35,7 +35,7 @@ defineEmits<{
 
 <style scoped>
 .acu-icon-btn {
-  --acu-icon-btn-size: var(--acu-icon-size-md, 32px);
+  --acu-icon-btn-size: 32px;
   --acu-icon-btn-font-size: var(--acu-font-size-body-lg, 13px);
   appearance: none !important;
   -webkit-appearance: none !important;
@@ -92,12 +92,12 @@ defineEmits<{
 }
 
 .acu-icon-btn--md {
-  --acu-icon-btn-size: var(--acu-icon-size-md, 32px);
+  --acu-icon-btn-size: 32px;
   --acu-icon-btn-font-size: var(--acu-font-size-body-lg, 13px);
 }
 
 .acu-icon-btn--sm {
-  --acu-icon-btn-size: var(--acu-icon-size-sm, 22px);
+  --acu-icon-btn-size: 22px;
   --acu-icon-btn-font-size: var(--acu-font-size-micro, 10px);
   background: var(--acu-bg-2) !important;
 }
