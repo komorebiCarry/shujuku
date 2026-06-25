@@ -35,8 +35,8 @@ defineEmits<{
 
 <style scoped>
 .acu-icon-btn {
-  --acu-icon-btn-size: 32px;
-  --acu-icon-btn-font-size: var(--acu-font-size-body-lg, 13px);
+  --acu-icon-btn-size: var(--acu-icon-button-size-md, 32px);
+  --acu-icon-btn-font-size: var(--acu-icon-inline-md, 13px);
   appearance: none !important;
   -webkit-appearance: none !important;
   flex: 0 0 auto;
@@ -92,13 +92,13 @@ defineEmits<{
 }
 
 .acu-icon-btn--md {
-  --acu-icon-btn-size: 32px;
-  --acu-icon-btn-font-size: var(--acu-font-size-body-lg, 13px);
+  --acu-icon-btn-size: var(--acu-icon-button-size-md, 32px);
+  --acu-icon-btn-font-size: var(--acu-icon-inline-md, 13px);
 }
 
 .acu-icon-btn--sm {
-  --acu-icon-btn-size: 22px;
-  --acu-icon-btn-font-size: var(--acu-font-size-micro, 10px);
+  --acu-icon-btn-size: var(--acu-icon-button-size-sm, 22px);
+  --acu-icon-btn-font-size: var(--acu-icon-inline-sm, 10px);
   background: var(--acu-bg-2) !important;
 }
 

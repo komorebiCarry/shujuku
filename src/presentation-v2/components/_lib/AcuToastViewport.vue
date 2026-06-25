@@ -187,14 +187,14 @@ watch(
 
 .acu-toast-viewport__list {
   position: absolute;
-  top: calc(62px + var(--acu-safe-top, 0px));
-  right: calc(18px + var(--acu-safe-right, 0px));
+  top: calc(var(--acu-toast-top, 62px) + var(--acu-safe-top, 0px));
+  right: calc(var(--acu-toast-edge-gap, 18px) + var(--acu-safe-right, 0px));
   bottom: auto;
-  width: min(360px, calc(100% - 36px - var(--acu-safe-left, 0px) - var(--acu-safe-right, 0px)));
-  max-height: calc(100% - 80px - var(--acu-safe-top, 0px) - var(--acu-safe-bottom, 0px));
+  width: min(var(--acu-toast-width, 360px), calc(100% - var(--acu-toast-edge-gap, 18px) - var(--acu-toast-edge-gap, 18px) - var(--acu-safe-left, 0px) - var(--acu-safe-right, 0px)));
+  max-height: calc(100% - var(--acu-toast-top, 62px) - var(--acu-toast-edge-gap, 18px) - var(--acu-safe-top, 0px) - var(--acu-safe-bottom, 0px));
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: var(--acu-space-2, 8px);
   margin: 0;
   padding: 0;
   overflow: visible;
@@ -206,10 +206,10 @@ watch(
   position: relative;
   min-width: 0;
   display: grid;
-  grid-template-columns: 26px minmax(0, 1fr) auto auto;
+  grid-template-columns: var(--acu-control-height-sm, 26px) minmax(0, 1fr) auto auto;
   align-items: center;
-  gap: 8px;
-  padding: 10px 12px;
+  gap: var(--acu-space-2, 8px);
+  padding: var(--acu-space-250, 10px) var(--acu-space-3, 12px);
   overflow: hidden;
   border: 1px solid color-mix(in srgb, var(--acu-toast-tone) 22%, var(--acu-border-2));
   border-radius: var(--acu-radius-md);
@@ -249,8 +249,8 @@ watch(
 .acu-v2-toast__icon {
   --acu-icon-color: var(--acu-toast-tone);
   min-width: 0;
-  width: 26px;
-  height: 26px;
+  width: var(--acu-control-height-sm, 26px);
+  height: var(--acu-control-height-sm, 26px);
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -303,24 +303,24 @@ watch(
 
 @media (max-width: 640px) {
   .acu-toast-viewport__list {
-    top: calc(58px + var(--acu-safe-top, 0px));
+    top: calc(var(--acu-toast-top-compact, 58px) + var(--acu-safe-top, 0px));
     right: auto;
     bottom: auto;
     left: calc(50% + (var(--acu-safe-left, 0px) - var(--acu-safe-right, 0px)) / 2);
-    width: clamp(240px, 70vw, calc(100% - 24px - var(--acu-safe-left, 0px) - var(--acu-safe-right, 0px)));
-    max-height: calc(100% - 70px - var(--acu-safe-top, 0px) - var(--acu-safe-bottom, 0px));
+    width: clamp(var(--acu-menu-min-width, 240px), 70vw, calc(100% - var(--acu-toast-edge-gap-compact, 12px) - var(--acu-toast-edge-gap-compact, 12px) - var(--acu-safe-left, 0px) - var(--acu-safe-right, 0px)));
+    max-height: calc(100% - var(--acu-toast-top-compact, 58px) - var(--acu-toast-edge-gap-compact, 12px) - var(--acu-safe-top, 0px) - var(--acu-safe-bottom, 0px));
     transform: translateX(-50%);
   }
 
   .acu-v2-toast {
-    grid-template-columns: 22px minmax(0, 1fr) auto;
-    gap: 7px;
-    padding: 8px 9px;
+    grid-template-columns: var(--acu-icon-button-size-sm, 22px) minmax(0, 1fr) auto;
+    gap: var(--acu-space-175, 7px);
+    padding: var(--acu-space-2, 8px) var(--acu-space-225, 9px);
   }
 
   .acu-v2-toast__icon {
-    width: 22px;
-    height: 22px;
+    width: var(--acu-icon-button-size-sm, 22px);
+    height: var(--acu-icon-button-size-sm, 22px);
     font-size: var(--acu-font-size-body, 12px);
   }
 

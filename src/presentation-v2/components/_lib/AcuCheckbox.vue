@@ -43,7 +43,7 @@ function onClick(): void {
 
 <style scoped>
 .acu-checkbox {
-  display: inline-flex; align-items: flex-start; gap: 7px;
+  display: inline-flex; align-items: flex-start; gap: var(--acu-space-175, 7px);
   padding: 0; border: 0; background: transparent;
   font: inherit; font-size: var(--acu-font-size-body, 12px); color: var(--acu-text-2);
   cursor: pointer; user-select: none;
@@ -53,10 +53,10 @@ function onClick(): void {
 
 .acu-checkbox__box {
   flex-shrink: 0;
-  width: 16px; height: 16px; margin-top: 1px;
+  width: var(--acu-checkbox-size, 16px); height: var(--acu-checkbox-size, 16px); margin-top: var(--acu-space-025, 1px);
   display: flex; align-items: center; justify-content: center;
   border: 0;
-  border-radius: 3px;
+  border-radius: var(--acu-space-075, 3px);
   background: var(--acu-bg-2);
   transition: background 0.15s ease, box-shadow 0.15s ease;
 }
@@ -67,7 +67,7 @@ function onClick(): void {
 
 .acu-checkbox__icon {
   display: block;
-  width: 12px; height: 12px;
+  width: var(--acu-checkbox-icon-size, 12px); height: var(--acu-checkbox-icon-size, 12px);
   color: #fff;
   fill: none;
   stroke: currentColor;

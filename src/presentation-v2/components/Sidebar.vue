@@ -76,13 +76,13 @@ function toggleMode(): void {
   min-width: 0;
   min-height: 0;
   background: var(--acu-sidebar-bg);
-  padding: 24px 12px 16px;
+  padding: var(--acu-space-6, 24px) var(--acu-space-3, 12px) var(--acu-panel-padding, 16px);
   overflow-y: auto;
 }
 
 .acu-v2-sidebar--desktop {
-  width: 220px;
-  flex: 0 0 220px;
+  width: var(--acu-sidebar-width, 220px);
+  flex: 0 0 var(--acu-sidebar-width, 220px);
   border-right: 1px solid var(--acu-border-2);
 }
 
@@ -94,15 +94,15 @@ function toggleMode(): void {
 .acu-v2-sidebar__brand {
   display: flex;
   align-items: center;
-  gap: 10px;
-  padding: 4px 4px 20px;
-  margin-bottom: 14px;
+  gap: var(--acu-space-250, 10px);
+  padding: var(--acu-space-1, 4px) var(--acu-space-1, 4px) var(--acu-space-5, 20px);
+  margin-bottom: var(--acu-page-gap, 14px);
 }
 
 .acu-v2-sidebar__brand-mark {
-  width: 34px;
-  height: 34px;
-  flex: 0 0 34px;
+  width: var(--acu-space-850, 34px);
+  height: var(--acu-space-850, 34px);
+  flex: 0 0 var(--acu-space-850, 34px);
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -132,13 +132,13 @@ function toggleMode(): void {
 
 .acu-v2-sidebar__brand-tag {
   display: block;
-  margin-top: 3px;
+  margin-top: var(--acu-space-075, 3px);
   font-size: var(--acu-font-size-caption, 11px);
   color: var(--acu-text-3);
 }
 
 .acu-v2-sidebar__group {
-  margin-bottom: 12px;
+  margin-bottom: var(--acu-panel-gap, 12px);
 }
 
 .acu-v2-sidebar__mode {
@@ -146,10 +146,10 @@ function toggleMode(): void {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  gap: 7px;
-  min-height: 32px;
-  margin: 0 0 14px;
-  padding: 7px 10px;
+  gap: var(--acu-space-175, 7px);
+  min-height: var(--acu-control-height-md, 32px);
+  margin: 0 0 var(--acu-page-gap, 14px);
+  padding: var(--acu-space-175, 7px) var(--acu-space-250, 10px);
   border: 1px solid var(--acu-border-2);
   border-radius: var(--acu-radius-sm);
   background: color-mix(in srgb, var(--acu-bg-1) 72%, transparent);
@@ -166,7 +166,7 @@ function toggleMode(): void {
 }
 
 .acu-v2-sidebar__group-title {
-  padding: 7px 12px 6px;
+  padding: var(--acu-space-175, 7px) var(--acu-space-3, 12px) var(--acu-space-150, 6px);
   font-size: var(--acu-font-size-caption, 11px);
   font-weight: 600;
   letter-spacing: 0.06em;
@@ -177,7 +177,7 @@ function toggleMode(): void {
 .acu-v2-sidebar__item {
   display: block;
   width: 100%;
-  padding: 10px 12px;
+  padding: var(--acu-space-250, 10px) var(--acu-space-3, 12px);
   border: 0;
   background: transparent;
   text-align: left;

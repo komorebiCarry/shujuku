@@ -187,7 +187,7 @@ watch(
   min-width: 0 !important;
   box-sizing: border-box !important;
   margin: 0 !important;
-  padding: 8px 10px !important;
+  padding: var(--acu-space-2, 8px) var(--acu-space-250, 10px) !important;
   border: 0 !important;
   border-radius: var(--acu-radius-sm) !important;
   background: var(--acu-bg-2) !important;

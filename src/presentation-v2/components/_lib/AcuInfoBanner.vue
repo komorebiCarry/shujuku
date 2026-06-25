@@ -32,8 +32,8 @@ const iconClass = computed(() => {
 .acu-info-banner {
   display: flex;
   align-items: flex-start;
-  gap: 10px;
-  padding: 9px 10px;
+  gap: var(--acu-space-250, 10px);
+  padding: var(--acu-space-225, 9px) var(--acu-space-250, 10px);
   border-radius: var(--acu-radius-sm);
   font-size: var(--acu-font-size-body-lg, 13px);
   line-height: 1.55;
@@ -45,7 +45,7 @@ const iconClass = computed(() => {
 
 .acu-info-banner__icon {
   flex-shrink: 0;
-  margin-top: 2px;
+  margin-top: var(--acu-space-050, 2px);
   font-size: var(--acu-font-size-body-lg, 13px);
   line-height: 1.55;
 }

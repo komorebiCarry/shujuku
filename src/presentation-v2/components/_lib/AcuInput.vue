@@ -108,11 +108,11 @@ function onWheel(ev: WheelEvent): void {
   transition: background 0.15s ease, box-shadow 0.15s ease;
 }
 
-.acu-input--md { min-height: 32px; padding: 6px 9px !important; font-size: var(--acu-font-size-body, 12px) !important; }
-.acu-input--sm { min-height: 26px; padding: 3px 7px !important; font-size: var(--acu-font-size-caption, 11px) !important; }
+.acu-input--md { min-height: var(--acu-control-height-md, 32px); padding: var(--acu-control-padding-y-md, 6px) var(--acu-control-padding-x-md, 9px) !important; font-size: var(--acu-font-size-body, 12px) !important; }
+.acu-input--sm { min-height: var(--acu-control-height-sm, 26px); padding: var(--acu-control-padding-y-sm, 3px) var(--acu-control-padding-x-sm, 7px) !important; font-size: var(--acu-font-size-caption, 11px) !important; }
 
-.acu-input-shell--number .acu-input--md { padding-right: 30px !important; }
-.acu-input-shell--number .acu-input--sm { padding-right: 25px !important; }
+.acu-input-shell--number .acu-input--md { padding-right: calc(var(--acu-control-padding-x-md, 9px) + var(--acu-space-5, 20px)) !important; }
+.acu-input-shell--number .acu-input--sm { padding-right: calc(var(--acu-control-padding-x-sm, 7px) + var(--acu-space-450, 18px)) !important; }
 
 .acu-input:hover:not(:disabled) {
   background: linear-gradient(var(--acu-hover-overlay), var(--acu-hover-overlay)), var(--acu-bg-2) !important;
@@ -138,13 +138,13 @@ function onWheel(ev: WheelEvent): void {
 .acu-input__number-indicator {
   position: absolute;
   top: 50%;
-  right: 9px;
-  width: 10px;
+  right: var(--acu-control-padding-x-md, 9px);
+  width: var(--acu-icon-inline-sm, 10px);
   display: flex;
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  gap: 2px;
+  gap: var(--acu-space-050, 2px);
   color: var(--acu-text-3);
   pointer-events: none;
   transform: translateY(-50%);
@@ -152,26 +152,26 @@ function onWheel(ev: WheelEvent): void {
 }
 
 .acu-input-shell--sm .acu-input__number-indicator {
-  right: 7px;
-  width: 8px;
-  gap: 1px;
+  right: var(--acu-control-padding-x-sm, 7px);
+  width: var(--acu-space-2, 8px);
+  gap: var(--acu-space-025, 1px);
 }
 
 .acu-input__number-caret {
   width: 0;
   height: 0;
-  border-left: 4px solid transparent;
-  border-right: 4px solid transparent;
+  border-left: var(--acu-space-1, 4px) solid transparent;
+  border-right: var(--acu-space-1, 4px) solid transparent;
 }
 
-.acu-input__number-caret--up { border-bottom: 4px solid currentColor; }
-.acu-input__number-caret--down { border-top: 4px solid currentColor; }
+.acu-input__number-caret--up { border-bottom: var(--acu-space-1, 4px) solid currentColor; }
+.acu-input__number-caret--down { border-top: var(--acu-space-1, 4px) solid currentColor; }
 
 .acu-input-shell--sm .acu-input__number-caret {
-  border-left-width: 3px;
-  border-right-width: 3px;
+  border-left-width: var(--acu-space-075, 3px);
+  border-right-width: var(--acu-space-075, 3px);
 }
 
-.acu-input-shell--sm .acu-input__number-caret--up { border-bottom-width: 3px; }
-.acu-input-shell--sm .acu-input__number-caret--down { border-top-width: 3px; }
+.acu-input-shell--sm .acu-input__number-caret--up { border-bottom-width: var(--acu-space-075, 3px); }
+.acu-input-shell--sm .acu-input__number-caret--down { border-top-width: var(--acu-space-075, 3px); }
 </style>

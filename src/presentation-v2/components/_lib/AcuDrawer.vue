@@ -47,7 +47,7 @@ const props = withDefaults(defineProps<{
   beforeClose?: () => boolean | Promise<boolean>;
 }>(), {
   showBack: false,
-  width: '480px',
+  width: 'var(--acu-drawer-width, 480px)',
   beforeClose: undefined,
 });
 
@@ -160,17 +160,17 @@ function clearCloseTimer(): void {
 .acu-v2-drawer__header {
   flex: 0 0 auto;
   display: flex; align-items: center; justify-content: space-between;
-  gap: 12px; padding: 14px 16px;
+  gap: var(--acu-panel-gap, 12px); padding: var(--acu-page-gap, 14px) var(--acu-panel-padding, 16px);
   border-bottom: 0;
 }
 
-.acu-v2-drawer__header-left { display: flex; align-items: center; gap: 10px; }
+.acu-v2-drawer__header-left { display: flex; align-items: center; gap: var(--acu-space-250, 10px); }
 .acu-v2-drawer__header h3 { margin: 0; font-size: var(--acu-font-size-panel-title, 15px); }
 
 .acu-v2-drawer__body {
   flex: 1; min-height: 0;
-  overflow-y: auto; padding: 16px;
-  display: flex; flex-direction: column; gap: 14px;
+  overflow-y: auto; padding: var(--acu-panel-padding, 16px);
+  display: flex; flex-direction: column; gap: var(--acu-page-gap, 14px);
 }
 
 @keyframes acu-drawer-layer-in {

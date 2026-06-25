@@ -52,12 +52,12 @@ watch(() => shell.scrollResetTick, resetScroll);
 .acu-v2-main :deep(.acu-v2-plot-page),
 .acu-v2-main :deep(.acu-v2-table-page),
 .acu-v2-main :deep(.acu-v2-vector-index-page) {
-  padding: 20px;
-  gap: 14px;
+  padding: var(--acu-page-padding, 20px);
+  gap: var(--acu-page-gap, 14px);
 }
 
 .acu-v2-main__empty {
-  padding: 24px;
+  padding: var(--acu-space-6, 24px);
   font-size: var(--acu-font-size-body-lg, 13px);
   color: var(--acu-text-3);
 }
@@ -76,7 +76,7 @@ watch(() => shell.scrollResetTick, resetScroll);
   .acu-v2-main :deep(.acu-v2-plot-page),
   .acu-v2-main :deep(.acu-v2-table-page),
   .acu-v2-main :deep(.acu-v2-vector-index-page) {
-    padding: 14px;
+    padding: var(--acu-page-padding-compact, 14px);
   }
 }
 </style>
