@@ -16,6 +16,32 @@
         aria-label="Agent 世界书模式"
         @update:model-value="onModeChange"
       />
+      <div class="acu-v2-agent-wb-control__api-selects">
+        <AcuFormRow
+          :label="plotCopy.agentControl.apiPresets.decisionLabel"
+          :hint="plotCopy.agentControl.apiPresets.decisionHint"
+        >
+          <AcuSelect
+            :options="agentControl.apiPresetOptions.value"
+            :model-value="agentControl.agentApiPreset.value"
+            :placeholder="plotCopy.agentControl.apiPresets.followCurrentLabel"
+            size="sm"
+            @update:model-value="agentControl.setAgentApiPreset"
+          />
+        </AcuFormRow>
+        <AcuFormRow
+          :label="plotCopy.agentControl.apiPresets.skillLabel"
+          :hint="plotCopy.agentControl.apiPresets.skillHint"
+        >
+          <AcuSelect
+            :options="agentControl.apiPresetOptions.value"
+            :model-value="agentControl.agentSkillApiPreset.value"
+            :placeholder="plotCopy.agentControl.apiPresets.followCurrentLabel"
+            size="sm"
+            @update:model-value="agentControl.setAgentSkillApiPreset"
+          />
+        </AcuFormRow>
+      </div>
       <div class="acu-v2-agent-wb-control__actions">
         <AcuButton size="sm" variant="danger" :loading="agentControl.busy.value === 'takeover'" :disabled="agentControl.busy.value !== null || !agentControl.isAgentMode.value" @click="runTakeover">
           {{ plotCopy.agentControl.takeover.button }}
@@ -38,7 +64,9 @@ import { usePlotWorldbookAgentControl } from '../composables/usePlotWorldbookAge
 import { plotCopy } from '../copy/plot-copy';
 import AcuBadge from './_lib/AcuBadge.vue';
 import AcuButton from './_lib/AcuButton.vue';
+import AcuFormRow from './_lib/AcuFormRow.vue';
 import AcuSegmentedControl, { type AcuSegmentedOption } from './_lib/AcuSegmentedControl.vue';
+import AcuSelect from './_lib/AcuSelect.vue';
 
 type AcuBadgeVariant = 'neutral' | 'accent' | 'success' | 'warning' | 'danger';
 
@@ -77,5 +105,6 @@ async function runSkillify(): Promise<void> {
 .acu-v2-agent-wb-control__title { font-size: var(--acu-font-size-body-lg, 13px); font-weight: 600; color: var(--acu-text-1); }
 .acu-v2-agent-wb-control__desc { margin: 3px 0 0; font-size: var(--acu-font-size-caption, 11px); color: var(--acu-text-3); line-height: 1.5; }
 .acu-v2-agent-wb-control__body { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+.acu-v2-agent-wb-control__api-selects { display: grid; grid-template-columns: repeat(2, minmax(180px, 1fr)); gap: 8px; flex: 1 1 380px; min-width: 240px; }
 .acu-v2-agent-wb-control__actions { display: flex; flex-wrap: wrap; gap: 6px; }
 </style>

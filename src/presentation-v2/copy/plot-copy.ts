@@ -30,6 +30,13 @@ export const plotCopy = {
       inactive: "未接管",
       active: (count: number) => `接管中 · 已屏蔽 ${count} 条`,
     },
+    apiPresets: {
+      decisionLabel: "Agent 决策 API",
+      decisionHint: "用于 Agent 判断世界书条目是否应启用；留空则使用当前 API 配置。",
+      skillLabel: "Agent Skill 化 API",
+      skillHint: "用于一键生成世界书 Skill 元数据；留空则使用当前 API 配置。",
+      followCurrentLabel: "使用当前 API 配置",
+    },
     takeover: {
       button: "接管原绿灯",
       confirm: {

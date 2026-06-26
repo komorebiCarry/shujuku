@@ -15,6 +15,11 @@ import { useToastStore } from '../stores/toast-store';
 
 export type AgentWorldbookBusyAction = 'takeover' | 'restore' | 'skillify' | null;
 
+interface AgentApiPresetOption {
+  value: string;
+  label: string;
+}
+
 function ensureAgentControl_ACU(): Record<string, any> {
   if (!settings_ACU.plotSettings || typeof settings_ACU.plotSettings!== 'object') settings_ACU.plotSettings = {} as any;
   const plot = settings_ACU.plotSettings as Record<string, any>;
@@ -31,19 +36,52 @@ function countSnapshotEntries(snapshot: AgentWorldbookControlSnapshot_ACU): numb
   return Object.values(snapshot.books || {}).reduce((sum, entries) => sum + (Array.isArray(entries) ? entries.length : 0), 0);
 }
 
+function getAgentApiPresetOptions_ACU(): AgentApiPresetOption[] {
+  const seen = new Set<string>();
+  const options: AgentApiPresetOption[] = [{
+    value: '',
+    label: plotCopy.agentControl.apiPresets.followCurrentLabel,
+  }];
+  const presets = Array.isArray(settings_ACU.apiPresets) ? settings_ACU.apiPresets : [];
+  for (const preset of presets) {
+    const name = typeof preset?.name === 'string' ? preset.name.trim() : '';
+    if (!name || seen.has(name)) continue;
+    seen.add(name);
+    options.push({ value: name, label: name });
+  }
+  return options;
+}
+
+function normalizeAgentApiPreset_ACU(value: unknown): string {
+  const name = String(value || '').trim();
+  if (!name) return '';
+  return getAgentApiPresetOptions_ACU().some(option => option.value === name) ? name : '';
+}
+
 export function usePlotWorldbookAgentControl() {
   const toast = useToastStore();
   const dialog = useDialogStore();
   const mode = ref<AgentWorldbookControlMode_ACU>('disabled');
+  const agentApiPreset = ref('');
+  const agentSkillApiPreset = ref('');
   const snapshot = ref<AgentWorldbookControlSnapshot_ACU>(getPlotAgentWorldbookSnapshot_ACU());
   const busy = ref<AgentWorldbookBusyAction>(null);
 
   const isAgentMode = computed(() => mode.value === 'agent');
   const snapshotEntryCount = computed(() => countSnapshotEntries(snapshot.value));
+  const apiPresetOptions = computed<AgentApiPresetOption[]>(getAgentApiPresetOptions_ACU);
 
   function refresh(): void {
     const control = ensureAgentControl_ACU();
+    const nextAgentApiPreset = normalizeAgentApiPreset_ACU(control.agentApiPreset);
+    const nextAgentSkillApiPreset = normalizeAgentApiPreset_ACU(control.agentSkillApiPreset);
+    const shouldSave = control.agentApiPreset !== nextAgentApiPreset || control.agentSkillApiPreset !== nextAgentSkillApiPreset;
+    control.agentApiPreset = nextAgentApiPreset;
+    control.agentSkillApiPreset = nextAgentSkillApiPreset;
+    if (shouldSave) saveSettings_ACU();
     mode.value = control.mode as AgentWorldbookControlMode_ACU;
+    agentApiPreset.value = nextAgentApiPreset;
+    agentSkillApiPreset.value = nextAgentSkillApiPreset;
     snapshot.value = getPlotAgentWorldbookSnapshot_ACU();
   }
 
@@ -54,6 +92,20 @@ export function usePlotWorldbookAgentControl() {
     saveSettings_ACU();
     refresh();
     toast.info(plotCopy.agentControl.modeChanged[next], { muteable: false });
+  }
+
+  function setAgentApiPreset(next: string): void {
+    const control = ensureAgentControl_ACU();
+    control.agentApiPreset = normalizeAgentApiPreset_ACU(next);
+    saveSettings_ACU();
+    refresh();
+  }
+
+  function setAgentSkillApiPreset(next: string): void {
+    const control = ensureAgentControl_ACU();
+    control.agentSkillApiPreset = normalizeAgentApiPreset_ACU(next);
+    saveSettings_ACU();
+    refresh();
   }
 
   async function takeover(): Promise<boolean> {
@@ -110,6 +162,7 @@ export function usePlotWorldbookAgentControl() {
   }
 
   async function skillifyAll(): Promise<boolean> {
+    refresh();
     const confirmed = await dialog.confirm(plotCopy.agentControl.skillify.confirm);
     if (!confirmed) return false;
     busy.value = 'skillify';
@@ -139,5 +192,21 @@ export function usePlotWorldbookAgentControl() {
 
   refresh();
 
-  return { mode, snapshot, busy, isAgentMode, snapshotEntryCount, refresh, setMode, takeover, restore, skillifyAll };
+  return {
+    mode,
+    agentApiPreset,
+    agentSkillApiPreset,
+    snapshot,
+    busy,
+    isAgentMode,
+    snapshotEntryCount,
+    apiPresetOptions,
+    refresh,
+    setMode,
+    setAgentApiPreset,
+    setAgentSkillApiPreset,
+    takeover,
+    restore,
+    skillifyAll,
+  };
 }
