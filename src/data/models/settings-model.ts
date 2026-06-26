@@ -17,6 +17,25 @@ export type AgentWorldbookControlMode_ACU = 'disabled' | 'passive' | 'agent';
 export type AgentSkillMetadataPolicy_ACU = 'comment_block' | 'content_block' | 'settings_map';
 export type WorldbookSkillMetaUpdatedBy_ACU = 'manual' | 'agent-skillify';
 
+export interface PromptSegment_ACU {
+  role: string;
+  content: string;
+  deletable: boolean;
+  mainSlot?: string;
+  isMain?: boolean;
+  isMain2?: boolean;
+}
+
+export interface AgentContextSettings_ACU {
+  decisionRecentContextCharLimit: number;
+  decisionPreviousPlotCharLimit: number;
+  decisionWorldbookContentPreviewLimit: number;
+  decisionWorldbookCandidateLimit: number;
+  skillifyContentPreviewLimit: number;
+  skillifyMaxEntries: number;
+  plotWorldbookScanMessageLimit: number;
+}
+
 /** 世界书条目 Skill 元数据 */
 export interface WorldbookSkillMeta_ACU {
   version: 1;
@@ -38,6 +57,10 @@ export interface AgentWorldbookControl_ACU {
   finalInjectionMode: 'prompt_template';
   restoreOnDisable: boolean;
   maxSkillifyConcurrency: number;
+  contextSettings: AgentContextSettings_ACU;
+  contextSettingsConfigured?: boolean;
+  agentDecisionPromptSegments: PromptSegment_ACU[];
+  agentSkillifyPromptSegments: PromptSegment_ACU[];
   maxEntriesPerChannel: {
     plot: number;
     tableFill: number;

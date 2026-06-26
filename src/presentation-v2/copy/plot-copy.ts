@@ -91,5 +91,57 @@ export const plotCopy = {
       noCandidates: "当前范围没有可 Skill 化的世界书条目。",
       error: "一键 Skill 化失败",
     },
+    advanced: {
+      button: "Agent 高级设置",
+      title: "Agent 世界书高级设置",
+      description: "编辑 Agent 决策、Skill 化提示词模板，并控制上下文截断与候选数量上限。",
+    },
+    contextSettings: {
+      title: "上下文参数",
+      description: "这些参数会影响 Agent 决策、世界书 Skill 化和剧情世界书扫描。输入会被硬上限夹紧，别指望把模型窗口当垃圾桶无限塞。",
+      resetButton: "恢复默认上下文参数",
+      resetSuccess: "已恢复默认上下文参数。",
+      fields: {
+        decisionRecentContextCharLimit: {
+          label: "最近上下文截断",
+          hint: "进入 Agent 决策提示词的最近对话上下文最大字符数。",
+        },
+        decisionPreviousPlotCharLimit: {
+          label: "上轮剧情截断",
+          hint: "进入 Agent 决策提示词的上轮剧情文本最大字符数。",
+        },
+        decisionWorldbookContentPreviewLimit: {
+          label: "决策世界书预览截断",
+          hint: "每条候选世界书条目进入决策提示词的内容预览字符数。",
+        },
+        decisionWorldbookCandidateLimit: {
+          label: "决策世界书候选数",
+          hint: "进入 Agent 决策提示词的世界书候选条目最大数量。",
+        },
+        skillifyContentPreviewLimit: {
+          label: "Skill 化内容预览截断",
+          hint: "生成 Skill 元数据时，每条世界书内容预览的最大字符数。",
+        },
+        skillifyMaxEntries: {
+          label: "Skill 化最大条目数",
+          hint: "一键 Skill 化单次最多处理的世界书条目数量。",
+        },
+        plotWorldbookScanMessageLimit: {
+          label: "剧情世界书扫描消息数",
+          hint: "剧情推进读取世界书内容时回看的聊天消息数量；未显式保存旧配置时仍回退原 contextTurnCount。",
+        },
+      },
+    },
+    prompts: {
+      title: "提示词模板",
+      description: "可使用 {{agent.*}} 与 {{agent.skillify.*}} 占位符。未知占位符会原样保留，写错了模型不会替你变聪明。",
+      decisionTitle: "Agent 决策提示词",
+      decisionReset: "恢复默认决策提示词",
+      decisionResetSuccess: "已恢复默认决策提示词。",
+      skillifyTitle: "Agent Skill 化提示词",
+      skillifyReset: "恢复默认 Skill 化提示词",
+      skillifyResetSuccess: "已恢复默认 Skill 化提示词。",
+      emptyText: "暂无提示词段。保存时会回退默认模板。",
+    },
   },
 };

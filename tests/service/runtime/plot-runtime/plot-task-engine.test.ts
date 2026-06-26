@@ -382,6 +382,64 @@ describe('getWorldbookContentForPlot_ACU', () => {
     expect(options.isSelected({ bookName: '书A', uid: 999, normalizedComment: 'TavernDB-ACU-自动生成条目' })).toBe(true);
   });
 
+
+  it('Agent 上下文参数未显式配置时继续使用旧 contextTurnCount', async () => {
+    mockGetChatArray.mockReturnValue([
+      { mes: '旧消息1' },
+      { mes: '旧消息2' },
+      { mes: '旧消息3' },
+      { mes: '旧消息4' },
+    ]);
+
+    await getWorldbookContentForPlot_ACU(
+      {
+        contextTurnCount: 3,
+        agentWorldbookControl: {
+          contextSettingsConfigured: false,
+          contextSettings: { plotWorldbookScanMessageLimit: 1 },
+        },
+        plotWorldbookConfig: {
+          source: 'manual',
+          manualSelection: ['书A'],
+        },
+      },
+      '当前输入',
+    );
+
+    const options = mockBuildCombinedWorldbookContentByStrategy.mock.calls[0][0];
+    expect(options.baseScanText).not.toContain('旧消息1');
+    expect(options.baseScanText).toContain('旧消息2');
+    expect(options.baseScanText).toContain('旧消息3');
+    expect(options.baseScanText).toContain('旧消息4');
+    expect(options.baseScanText).toContain('当前输入');
+  });
+
+  it('Agent 上下文参数显式配置后使用 plotWorldbookScanMessageLimit', async () => {
+    mockGetChatArray.mockReturnValue([
+      { mes: '旧消息1' },
+      { mes: '旧消息2' },
+      { mes: '旧消息3' },
+    ]);
+
+    await getWorldbookContentForPlot_ACU(
+      {
+        contextTurnCount: 3,
+        agentWorldbookControl: {
+          contextSettingsConfigured: true,
+          contextSettings: { plotWorldbookScanMessageLimit: 1 },
+        },
+        plotWorldbookConfig: { source: 'manual', manualSelection: ['书A'] },
+      },
+      '当前输入',
+    );
+
+    const options = mockBuildCombinedWorldbookContentByStrategy.mock.calls[0][0];
+    expect(options.baseScanText).not.toContain('旧消息1');
+    expect(options.baseScanText).not.toContain('旧消息2');
+    expect(options.baseScanText).toContain('旧消息3');
+    expect(options.baseScanText).toContain('当前输入');
+  });
+
   it('角色模式会合并 primary 和 additional 世界书并去重', async () => {
     mockGetCharLorebooks.mockResolvedValue({
       primary: '主书',

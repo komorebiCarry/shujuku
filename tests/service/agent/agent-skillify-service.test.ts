@@ -1,20 +1,25 @@
-import { describe, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const { mockGetLorebookEntriesByNames } = vi.hoisted(() => ({
   mockGetLorebookEntriesByNames: vi.fn(async () => ({})),
 }));
 
+const { mockCallAIWithPreset, mockSettings } = vi.hoisted(() => ({
+  mockCallAIWithPreset: vi.fn(),
+  mockSettings: {
+    plotSettings: {
+      plotWorldbookConfig: {},
+      agentWorldbookControl: { maxSkillifyConcurrency: 1 } as any,
+    },
+  },
+}));
+
 vi.mock('../../../src/service/ai/api-call', () => ({
-  callAIWithPreset_ACU: vi.fn(),
+  callAIWithPreset_ACU: mockCallAIWithPreset,
 }));
 
 vi.mock('../../../src/service/runtime/state-manager', () => ({
-  settings_ACU: {
-    plotSettings: {
-      plotWorldbookConfig: {},
-      agentWorldbookControl: { maxSkillifyConcurrency: 1 },
-    },
-  },
+  settings_ACU: mockSettings,
 }));
 
 vi.mock('../../../src/service/worldbook/worldbook-service', () => ({
@@ -31,12 +36,19 @@ vi.mock('../../../src/service/agent/agent-worldbook-skill-meta', () => ({
 }));
 
 import {
+  buildWorldbookSkillifyPrompt_ACU,
   collectWorldbookSkillifyCandidates_ACU,
   isDatabaseGeneratedWorldbookEntryForAgent_ACU,
   isWorldbookEntrySkillifyCandidate_ACU,
 } from '../../../src/service/agent/agent-skillify-service';
 
 describe('agent worldbook skillify candidate filtering', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockSettings.plotSettings.agentWorldbookControl = { maxSkillifyConcurrency: 1 };
+    mockGetLorebookEntriesByNames.mockResolvedValue({});
+  });
+
   it('excludes database-generated TavernDB entries from Agent candidates', () => {
     expect(isDatabaseGeneratedWorldbookEntryForAgent_ACU({ comment: 'TavernDB-ACU-ReadableDataTable', keys: ['db'] })).toBe(true);
     expect(isWorldbookEntrySkillifyCandidate_ACU({ comment: 'TavernDB-ACU-ReadableDataTable', keys: ['db'] })).toBe(false);
@@ -92,5 +104,46 @@ describe('agent worldbook skillify candidate filtering', () => {
 
     expect(candidates).toHaveLength(1);
     expect(candidates[0]).toMatchObject({ uid: 'normal', bookName: '剧情书' });
+  });
+
+  it('renders editable skillify prompt placeholders', () => {
+    mockSettings.plotSettings.agentWorldbookControl.agentSkillifyPromptSegments = [
+      { role: 'user', deletable: true, content: 'B={{agent.skillify.bookName}};U={{agent.skillify.uid}};K={{agent.skillify.keysText}};C={{agent.skillify.contentPreview}};M={{agent.skillify.existingSkillMetaJson}}' },
+    ];
+
+    const messages = buildWorldbookSkillifyPrompt_ACU({
+      bookName: '剧情书',
+      uid: 7,
+      comment: '酒馆地点',
+      keys: ['酒馆', '夜晚'],
+      contentPreview: '灯火昏暗',
+      existingSkillMeta: { version: 1, description: '旧描述', triggerWhen: '旧触发', updatedAt: 1, updatedBy: 'manual' },
+    });
+
+    expect(messages).toHaveLength(1);
+    expect(messages[0].content).toContain('B=剧情书');
+    expect(messages[0].content).toContain('U=7');
+    expect(messages[0].content).toContain('K=酒馆、夜晚');
+    expect(messages[0].content).toContain('C=灯火昏暗');
+    expect(messages[0].content).toContain('旧描述');
+  });
+
+  it('uses context settings for default skillify preview limit and max entries', async () => {
+    mockSettings.plotSettings.agentWorldbookControl.contextSettings = {
+      skillifyContentPreviewLimit: 1,
+      skillifyMaxEntries: 1,
+    };
+    mockGetLorebookEntriesByNames.mockResolvedValueOnce({
+      '剧情书': [
+        { uid: 'a', comment: '地点A', content: 'A'.repeat(250), enabled: true, keys: ['A'] },
+        { uid: 'b', comment: '地点B', content: 'B'.repeat(250), enabled: true, keys: ['B'] },
+      ],
+    });
+
+    const candidates = await collectWorldbookSkillifyCandidates_ACU(['剧情书']);
+
+    expect(candidates).toHaveLength(1);
+    expect(candidates[0].uid).toBe('a');
+    expect(candidates[0].contentPreview).toBe(`${'A'.repeat(200)}\n...[已截断 50 字]`);
   });
 });

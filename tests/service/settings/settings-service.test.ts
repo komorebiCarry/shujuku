@@ -155,6 +155,18 @@ vi.mock('../../../src/shared/defaults', () => ({
     summaryPromptGroup: []
   },
   buildDefaultPlotWorldbookConfig_ACU: () => ({ source: 'character', manualSelection: [] }),
+  buildDefaultAgentWorldbookControl_ACU: () => ({
+    enabled: false,
+    mode: 'disabled',
+    scopeMode: 'follow_worldbook_page_selection',
+    agentApiPreset: '',
+    agentSkillApiPreset: '',
+    contextSettingsConfigured: false,
+    contextSettings: {},
+    agentDecisionPromptSegments: [],
+    agentSkillifyPromptSegments: [],
+    maxEntriesPerChannel: { plot: 20, tableFill: 20, finalGeneration: 20 },
+  }),
   buildDefaultContentOptimizationPromptGroup_ACU: () => [],
 }));
 

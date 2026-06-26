@@ -13,6 +13,63 @@ import { handleManualUpdate_ACU } from '../../triggers/update-process';
 import { deleteApiPreset_ACU, loadApiPreset_ACU } from '../../triggers/settings-ui-sync';
 import { saveSettingsAndNotify_ACU } from '../../components/settings-ui-helpers';
 import type { ApiGroupContext } from './callback-api';
+import {
+    buildDefaultAgentWorldbookControl_ACU,
+} from '../../../shared/defaults';
+import {
+    clonePromptSegments_ACU,
+    getDefaultAgentDecisionPromptSegments_ACU,
+    getDefaultAgentSkillifyPromptSegments_ACU,
+    normalizeEditablePromptSegments_ACU,
+    normalizeAgentContextSettings_ACU,
+} from '../../../service/agent/agent-prompt-template';
+
+type AgentContextSettingsForApi_ACU = ReturnType<typeof normalizeAgentContextSettings_ACU>;
+type PromptSegmentForApi_ACU = {
+    role: string;
+    content: string;
+    deletable: boolean;
+    mainSlot?: string;
+    isMain?: boolean;
+    isMain2?: boolean;
+};
+
+function ensureAgentWorldbookControlForApi_ACU(): Record<string, any> {
+    if (!settings_ACU.plotSettings || typeof settings_ACU.plotSettings !== 'object' || Array.isArray(settings_ACU.plotSettings)) {
+        settings_ACU.plotSettings = {} as any;
+    }
+    const plotSettings = settings_ACU.plotSettings as Record<string, any>;
+    if (!plotSettings.agentWorldbookControl || typeof plotSettings.agentWorldbookControl !== 'object' || Array.isArray(plotSettings.agentWorldbookControl)) {
+        plotSettings.agentWorldbookControl = buildDefaultAgentWorldbookControl_ACU();
+    }
+    return plotSettings.agentWorldbookControl as Record<string, any>;
+}
+
+function getAgentContextSettingsForApi_ACU(): AgentContextSettingsForApi_ACU {
+    return normalizeAgentContextSettings_ACU(settings_ACU.plotSettings?.agentWorldbookControl?.contextSettings);
+}
+
+function patchAgentContextSettingsForApi_ACU(patch: unknown): AgentContextSettingsForApi_ACU | null {
+    if (!patch || typeof patch !== 'object' || Array.isArray(patch)) return null;
+    const current = getAgentContextSettingsForApi_ACU() as unknown as Record<string, number>;
+    const next: Record<string, number> = { ...current };
+    for (const key of Object.keys(current)) {
+        if (!Object.prototype.hasOwnProperty.call(patch, key)) continue;
+        const raw = Number((patch as Record<string, unknown>)[key]);
+        if (!Number.isFinite(raw)) return null;
+        next[key] = Math.trunc(raw);
+    }
+    return normalizeAgentContextSettings_ACU(next);
+}
+
+function getAgentPromptSegmentsForApi_ACU(value: unknown, fallback: PromptSegmentForApi_ACU[]): PromptSegmentForApi_ACU[] {
+    return clonePromptSegments_ACU(normalizeEditablePromptSegments_ACU(value, fallback));
+}
+
+function normalizeAgentPromptSegmentsForApi_ACU(value: unknown, fallback: PromptSegmentForApi_ACU[]): PromptSegmentForApi_ACU[] | null {
+    if (!Array.isArray(value)) return null;
+    return normalizeEditablePromptSegments_ACU(value, fallback);
+}
 
 export function createSettingsConfigApi(_ctx: ApiGroupContext): Record<string, Function> {
     return {
@@ -294,6 +351,158 @@ export function createSettingsConfigApi(_ctx: ApiGroupContext): Record<string, F
                 }
             } catch (e) {
                 logError_ACU('loadApiPreset failed:', e);
+                return false;
+            }
+        },
+
+        // =========================
+        // Agent 世界书提示词与上下文参数 API
+        // =========================
+
+        getAgentPromptConfig: function() {
+            try {
+                const control = ensureAgentWorldbookControlForApi_ACU();
+                return {
+                    contextSettings: getAgentContextSettingsForApi_ACU(),
+                    agentDecisionPromptSegments: getAgentPromptSegmentsForApi_ACU(
+                        control.agentDecisionPromptSegments,
+                        getDefaultAgentDecisionPromptSegments_ACU(),
+                    ),
+                    agentSkillifyPromptSegments: getAgentPromptSegmentsForApi_ACU(
+                        control.agentSkillifyPromptSegments,
+                        getDefaultAgentSkillifyPromptSegments_ACU(),
+                    ),
+                };
+            } catch (e) {
+                logError_ACU('getAgentPromptConfig failed:', e);
+                return {
+                    contextSettings: normalizeAgentContextSettings_ACU(undefined),
+                    agentDecisionPromptSegments: getDefaultAgentDecisionPromptSegments_ACU(),
+                    agentSkillifyPromptSegments: getDefaultAgentSkillifyPromptSegments_ACU(),
+                };
+            }
+        },
+
+        getAgentContextSettings: function() {
+            try {
+                return getAgentContextSettingsForApi_ACU();
+            } catch (e) {
+                logError_ACU('getAgentContextSettings failed:', e);
+                return normalizeAgentContextSettings_ACU(undefined);
+            }
+        },
+
+        setAgentContextSettings: function(patch: any) {
+            try {
+                const normalized = patchAgentContextSettingsForApi_ACU(patch);
+                if (!normalized) {
+                    logError_ACU('setAgentContextSettings: Invalid context settings patch');
+                    return false;
+                }
+                const control = ensureAgentWorldbookControlForApi_ACU();
+                control.contextSettings = normalized;
+                control.contextSettingsConfigured = true;
+                saveSettingsAndNotify_ACU();
+                logDebug_ACU('Agent context settings saved:', normalized);
+                return true;
+            } catch (e) {
+                logError_ACU('setAgentContextSettings failed:', e);
+                return false;
+            }
+        },
+
+        resetAgentContextSettings: function() {
+            try {
+                const control = ensureAgentWorldbookControlForApi_ACU();
+                control.contextSettings = normalizeAgentContextSettings_ACU(undefined);
+                control.contextSettingsConfigured = true;
+                saveSettingsAndNotify_ACU();
+                logDebug_ACU('Agent context settings reset');
+                return true;
+            } catch (e) {
+                logError_ACU('resetAgentContextSettings failed:', e);
+                return false;
+            }
+        },
+
+        getAgentDecisionPromptSegments: function() {
+            try {
+                const control = ensureAgentWorldbookControlForApi_ACU();
+                return getAgentPromptSegmentsForApi_ACU(control.agentDecisionPromptSegments, getDefaultAgentDecisionPromptSegments_ACU());
+            } catch (e) {
+                logError_ACU('getAgentDecisionPromptSegments failed:', e);
+                return getDefaultAgentDecisionPromptSegments_ACU();
+            }
+        },
+
+        setAgentDecisionPromptSegments: function(segments: any) {
+            try {
+                const normalized = normalizeAgentPromptSegmentsForApi_ACU(segments, getDefaultAgentDecisionPromptSegments_ACU());
+                if (!normalized) {
+                    logError_ACU('setAgentDecisionPromptSegments: segments must be an array');
+                    return false;
+                }
+                const control = ensureAgentWorldbookControlForApi_ACU();
+                control.agentDecisionPromptSegments = normalized;
+                saveSettingsAndNotify_ACU();
+                logDebug_ACU('Agent decision prompt segments saved');
+                return true;
+            } catch (e) {
+                logError_ACU('setAgentDecisionPromptSegments failed:', e);
+                return false;
+            }
+        },
+
+        resetAgentDecisionPromptSegments: function() {
+            try {
+                const control = ensureAgentWorldbookControlForApi_ACU();
+                control.agentDecisionPromptSegments = getDefaultAgentDecisionPromptSegments_ACU();
+                saveSettingsAndNotify_ACU();
+                logDebug_ACU('Agent decision prompt segments reset');
+                return true;
+            } catch (e) {
+                logError_ACU('resetAgentDecisionPromptSegments failed:', e);
+                return false;
+            }
+        },
+
+        getAgentSkillifyPromptSegments: function() {
+            try {
+                const control = ensureAgentWorldbookControlForApi_ACU();
+                return getAgentPromptSegmentsForApi_ACU(control.agentSkillifyPromptSegments, getDefaultAgentSkillifyPromptSegments_ACU());
+            } catch (e) {
+                logError_ACU('getAgentSkillifyPromptSegments failed:', e);
+                return getDefaultAgentSkillifyPromptSegments_ACU();
+            }
+        },
+
+        setAgentSkillifyPromptSegments: function(segments: any) {
+            try {
+                const normalized = normalizeAgentPromptSegmentsForApi_ACU(segments, getDefaultAgentSkillifyPromptSegments_ACU());
+                if (!normalized) {
+                    logError_ACU('setAgentSkillifyPromptSegments: segments must be an array');
+                    return false;
+                }
+                const control = ensureAgentWorldbookControlForApi_ACU();
+                control.agentSkillifyPromptSegments = normalized;
+                saveSettingsAndNotify_ACU();
+                logDebug_ACU('Agent skillify prompt segments saved');
+                return true;
+            } catch (e) {
+                logError_ACU('setAgentSkillifyPromptSegments failed:', e);
+                return false;
+            }
+        },
+
+        resetAgentSkillifyPromptSegments: function() {
+            try {
+                const control = ensureAgentWorldbookControlForApi_ACU();
+                control.agentSkillifyPromptSegments = getDefaultAgentSkillifyPromptSegments_ACU();
+                saveSettingsAndNotify_ACU();
+                logDebug_ACU('Agent skillify prompt segments reset');
+                return true;
+            } catch (e) {
+                logError_ACU('resetAgentSkillifyPromptSegments failed:', e);
                 return false;
             }
         },

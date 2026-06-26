@@ -20,6 +20,7 @@ import { getNormalizedPlotMessageRole_ACU, tryRenderPlotTemplateWithEjs_ACU, ren
 import { getPlotFromHistory_ACU, savePlotToLatestMessage_ACU } from './plot-history-preset';
 import { abortableDelay } from '../../../shared/abortable-delay';
 import { runAgentDecisionForPlot_ACU, type AgentDecisionResult_ACU, type AgentWorldbookRef_ACU } from '../../agent/agent-decision-engine';
+import { normalizeAgentContextSettings_ACU } from '../../agent/agent-prompt-template';
 
   function checkPlotAbortRequested_ACU() {
     if (abortController_ACU && abortController_ACU.signal.aborted) {
@@ -686,9 +687,14 @@ import { runAgentDecisionForPlot_ACU, type AgentDecisionResult_ACU, type AgentWo
         return '';
       }
 
-      const historyLimit = Number.isFinite(apiSettings.contextTurnCount)
-        ? Math.max(1, apiSettings.contextTurnCount)
-        : 3;
+      const hasAgentScanLimit = apiSettings?.agentWorldbookControl?.contextSettingsConfigured === true;
+      const rawAgentScanLimit = apiSettings?.agentWorldbookControl?.contextSettings?.plotWorldbookScanMessageLimit;
+      const agentContextSettings = hasAgentScanLimit && Number.isFinite(Number(rawAgentScanLimit))
+        ? normalizeAgentContextSettings_ACU(apiSettings?.agentWorldbookControl?.contextSettings)
+        : null;
+      const historyLimit = agentContextSettings
+        ? agentContextSettings.plotWorldbookScanMessageLimit
+        : (Number.isFinite(apiSettings.contextTurnCount) ? Math.max(1, Math.trunc(apiSettings.contextTurnCount)) : 3);
       const chatArray = getChatArray_ACU();
       const recentMessages = historyLimit > 0 ? chatArray.slice(-historyLimit) : chatArray;
       const historyAndUserText = `${recentMessages.map((message: any) => message.mes || '').join('\n')}\n${userMessage || ''}`;

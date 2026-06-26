@@ -43,6 +43,9 @@
         </AcuFormRow>
       </div>
       <div class="acu-v2-agent-wb-control__actions">
+        <AcuButton size="sm" @click="advancedOpen = true">
+          {{ plotCopy.agentControl.advanced.button }}
+        </AcuButton>
         <AcuButton size="sm" variant="danger" :loading="agentControl.busy.value === 'takeover'" :disabled="agentControl.busy.value !== null || !agentControl.isAgentMode.value" @click="runTakeover">
           {{ plotCopy.agentControl.takeover.button }}
         </AcuButton>
@@ -54,16 +57,23 @@
         </AcuButton>
       </div>
     </div>
+
+    <WorldbookAgentAdvancedPanel
+      :open="advancedOpen"
+      @close="advancedOpen = false"
+      @changed="emit('changed')"
+    />
   </section>
 </template>
 
 <script setup lang="ts">
-import { computed } from 'vue';
+import { computed, ref } from 'vue';
 import type { AgentWorldbookControlMode_ACU } from '../../data/models/settings-model';
 import { usePlotWorldbookAgentControl } from '../composables/usePlotWorldbookAgentControl';
 import { plotCopy } from '../copy/plot-copy';
 import AcuBadge from './_lib/AcuBadge.vue';
 import AcuButton from './_lib/AcuButton.vue';
+import WorldbookAgentAdvancedPanel from './WorldbookAgentAdvancedPanel.vue';
 import AcuFormRow from './_lib/AcuFormRow.vue';
 import AcuSegmentedControl, { type AcuSegmentedOption } from './_lib/AcuSegmentedControl.vue';
 import AcuSelect from './_lib/AcuSelect.vue';
@@ -72,6 +82,7 @@ type AcuBadgeVariant = 'neutral' | 'accent' | 'success' | 'warning' | 'danger';
 
 const emit = defineEmits<{ (e: 'changed'): void }>();
 const agentControl = usePlotWorldbookAgentControl();
+const advancedOpen = ref(false);
 
 const modeOptions: AcuSegmentedOption[] = [
   { value: 'disabled', label: plotCopy.agentControl.modes.disabled },

@@ -10,6 +10,69 @@
 // [剧情推进] 默认世界书选择
 
 
+export const DEFAULT_AGENT_CONTEXT_SETTINGS_ACU = {
+  decisionRecentContextCharLimit: 1500,
+  decisionPreviousPlotCharLimit: 3000,
+  decisionWorldbookContentPreviewLimit: 1000,
+  decisionWorldbookCandidateLimit: 100,
+  skillifyContentPreviewLimit: 1200,
+  skillifyMaxEntries: 100,
+  plotWorldbookScanMessageLimit: 3,
+};
+
+export const AGENT_CONTEXT_SETTINGS_LIMITS_ACU = {
+  decisionRecentContextCharLimit: { min: 200, max: 12000 },
+  decisionPreviousPlotCharLimit: { min: 200, max: 20000 },
+  decisionWorldbookContentPreviewLimit: { min: 200, max: 5000 },
+  decisionWorldbookCandidateLimit: { min: 1, max: 300 },
+  skillifyContentPreviewLimit: { min: 200, max: 5000 },
+  skillifyMaxEntries: { min: 1, max: 300 },
+  plotWorldbookScanMessageLimit: { min: 1, max: 20 },
+};
+
+export function buildDefaultAgentDecisionPromptSegments_ACU() {
+  return [
+    {
+      role: 'system',
+      content: [
+        '你是 SillyTavern 插件 SP·数据库的前置控制 Agent。',
+        '你必须基于用户输入、前文剧情、推进任务 Skill、世界书 Skill 元数据，决定本轮剧情推进任务和世界书绿灯条目。',
+        '只返回严格 JSON 对象，不要 Markdown，不要解释。',
+        'JSON 结构：{{agent.outputSchemaJson}}',
+        'taskId 必须来自候选任务。世界书 bookName/uid 必须来自候选世界书。effectiveStage 必须为正整数，effectiveOrder 必须为非负整数。',
+      ].join('\n'),
+      deletable: false,
+    },
+    {
+      role: 'user',
+      content: [
+        '用户输入：\n{{agent.userMessage}}',
+        '上轮剧情：\n{{agent.previousPlot}}',
+        '最近上下文：\n{{agent.recentContext}}',
+        '候选推进任务 JSON：\n{{agent.tasksJson}}',
+        '候选世界书条目 JSON：\n{{agent.worldbookEntriesJson}}',
+        '通道条目上限 JSON：\n{{agent.maxEntriesPerChannelJson}}',
+      ].join('\n\n'),
+      deletable: true,
+    },
+  ];
+}
+
+export function buildDefaultAgentSkillifyPromptSegments_ACU() {
+  return [
+    {
+      role: 'system',
+      content: '你是 SillyTavern 世界书条目的 Skill 元数据生成器。根据条目名称、关键词和内容预览，生成用于 Agent 判断是否触发该条目的描述和触发时机。只返回严格 JSON 对象，不要 Markdown，不要解释。JSON 结构：{{agent.skillify.outputSchemaJson}}',
+      deletable: false,
+    },
+    {
+      role: 'user',
+      content: '世界书: {{agent.skillify.bookName}}\n条目 uid: {{agent.skillify.uid}}\n条目名称/备注: {{agent.skillify.comment}}\n关键词: {{agent.skillify.keysText}}\n已有 Skill 元数据 JSON: {{agent.skillify.existingSkillMetaJson}}\n内容预览:\n{{agent.skillify.contentPreview}}',
+      deletable: true,
+    },
+  ];
+}
+
 export function buildDefaultAgentWorldbookControl_ACU() {
   return {
     enabled: false,
@@ -22,6 +85,10 @@ export function buildDefaultAgentWorldbookControl_ACU() {
     finalInjectionMode: 'prompt_template' as const,
     restoreOnDisable: true,
     maxSkillifyConcurrency: 2,
+    contextSettings: JSON.parse(JSON.stringify(DEFAULT_AGENT_CONTEXT_SETTINGS_ACU)),
+    contextSettingsConfigured: false,
+    agentDecisionPromptSegments: buildDefaultAgentDecisionPromptSegments_ACU(),
+    agentSkillifyPromptSegments: buildDefaultAgentSkillifyPromptSegments_ACU(),
     maxEntriesPerChannel: {
       plot: 20,
       tableFill: 20,

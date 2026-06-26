@@ -8,7 +8,7 @@
 
 import { STORAGE_KEY_ALL_SETTINGS_ACU, STORAGE_KEY_CUSTOM_TEMPLATE_ACU, normalizeIsolationCode_ACU } from '../../shared/data-constants';
 import { DEFAULT_BUILTIN_PLOT_PRESETS_ACU, DEFAULT_CHAR_CARD_PROMPT_ACU, DEFAULT_CHAR_CARD_PROMPT_STRICT_JSON_ACU, DEFAULT_CHAR_CARD_PROMPT_SQL_STRICT_JSON_ACU, DEFAULT_MERGE_SUMMARY_PROMPT_ACU, DEFAULT_PLOT_SETTINGS_ACU, DEFAULT_TABLE_TEMPLATE_ACU, ORIGINAL_DEFAULT_TABLE_TEMPLATE_ACU, TABLE_TEMPLATE_ACU, _set_TABLE_TEMPLATE_ACU} from '../../shared/defaults-json.js';
-import { DEFAULT_AUTO_UPDATE_FREQUENCY_ACU, DEFAULT_AUTO_UPDATE_THRESHOLD_ACU, DEFAULT_AUTO_UPDATE_TOKEN_THRESHOLD_ACU, DEFAULT_CHECKPOINT_CUMULATIVE_OPERATION_RATIO_PERCENT_ACU, DEFAULT_CHECKPOINT_MAX_ENTRIES_AFTER_CHECKPOINT_ACU, DEFAULT_CHECKPOINT_MAX_OPERATION_COUNT_AFTER_CHECKPOINT_ACU, DEFAULT_CHECKPOINT_MAX_OPERATION_KB_AFTER_CHECKPOINT_ACU, DEFAULT_CHECKPOINT_SINGLE_OPERATION_RATIO_PERCENT_ACU, TABLE_TEMPLATE_DEFAULTS_REFRESH_VERSION_ACU, VECTOR_MEMORY_DEFAULTS_REFRESH_VERSION_ACU, buildDefaultPlotWorldbookConfig_ACU, buildDefaultContentOptimizationPromptGroup_ACU, defaultWorldbookConfig_ACU, defaultVectorMemoryConfig_ACU } from '../../shared/defaults';
+import { DEFAULT_AUTO_UPDATE_FREQUENCY_ACU, DEFAULT_AUTO_UPDATE_THRESHOLD_ACU, DEFAULT_AUTO_UPDATE_TOKEN_THRESHOLD_ACU, DEFAULT_CHECKPOINT_CUMULATIVE_OPERATION_RATIO_PERCENT_ACU, DEFAULT_CHECKPOINT_MAX_ENTRIES_AFTER_CHECKPOINT_ACU, DEFAULT_CHECKPOINT_MAX_OPERATION_COUNT_AFTER_CHECKPOINT_ACU, DEFAULT_CHECKPOINT_MAX_OPERATION_KB_AFTER_CHECKPOINT_ACU, DEFAULT_CHECKPOINT_SINGLE_OPERATION_RATIO_PERCENT_ACU, TABLE_TEMPLATE_DEFAULTS_REFRESH_VERSION_ACU, VECTOR_MEMORY_DEFAULTS_REFRESH_VERSION_ACU, buildDefaultAgentWorldbookControl_ACU, buildDefaultPlotWorldbookConfig_ACU, buildDefaultContentOptimizationPromptGroup_ACU, defaultWorldbookConfig_ACU, defaultVectorMemoryConfig_ACU } from '../../shared/defaults';
 import { addDataIsolationHistory_ACU, ensureProfileExists_ACU, normalizeDataIsolationHistory_ACU } from '../../data/repositories/isolation-repo';
 import { globalMeta_ACU, loadGlobalMeta_ACU, readProfileSettingsFromStorage_ACU, readProfileTemplateFromStorage_ACU, sanitizeSettingsForProfileSave_ACU, saveGlobalMeta_ACU, writeProfileSettingsToStorage_ACU, writeProfileTemplateToStorage_ACU } from '../../data/repositories/profile-repo';
 import { getCurrentTemplatePresetName_ACU, normalizeTemplatePresetSelectionValue_ACU } from '../../shared/template-preset-utils';
@@ -62,6 +62,38 @@ function applyGlobalPlotEnabledSetting_ACU(): boolean {
 
   settings_ACU.plotSettings.enabled = globalMeta_ACU.plotEnabledGlobal === true;
   return settings_ACU.plotSettings.enabled;
+}
+
+function cloneDefaultValue_ACU<T>(value: T): T {
+  return JSON.parse(JSON.stringify(value));
+}
+
+function hasNonEmptyPromptSegments_ACU(value: unknown): boolean {
+  return Array.isArray(value)
+    && value.some(segment => segment && typeof segment === 'object' && typeof (segment as any).content === 'string' && (segment as any).content.trim());
+}
+
+function ensureAgentWorldbookControlDefaults_ACU(): boolean {
+  if (!settings_ACU.plotSettings || typeof settings_ACU.plotSettings !== 'object' || Array.isArray(settings_ACU.plotSettings)) {
+    settings_ACU.plotSettings = JSON.parse(JSON.stringify(DEFAULT_PLOT_SETTINGS_ACU));
+  }
+  const defaults = buildDefaultAgentWorldbookControl_ACU();
+  const current = settings_ACU.plotSettings.agentWorldbookControl;
+  let changed = false;
+  if (!current || typeof current !== 'object' || Array.isArray(current)) {
+    settings_ACU.plotSettings.agentWorldbookControl = cloneDefaultValue_ACU(defaults);
+    return true;
+  }
+  const merged = deepMerge_ACU(cloneDefaultValue_ACU(defaults), current);
+  if (!hasNonEmptyPromptSegments_ACU((merged as any).agentDecisionPromptSegments)) {
+    (merged as any).agentDecisionPromptSegments = cloneDefaultValue_ACU(defaults.agentDecisionPromptSegments);
+  }
+  if (!hasNonEmptyPromptSegments_ACU((merged as any).agentSkillifyPromptSegments)) {
+    (merged as any).agentSkillifyPromptSegments = cloneDefaultValue_ACU(defaults.agentSkillifyPromptSegments);
+  }
+  changed = JSON.stringify(current) !== JSON.stringify(merged);
+  settings_ACU.plotSettings.agentWorldbookControl = merged;
+  return changed;
 }
 
 function ensureBuiltinPlotPresets_ACU(): boolean {
@@ -359,6 +391,9 @@ export   function loadSettings_ACU() {
           settings_ACU.dataIsolationEnabled = (activeCode !== '');
       }
 
+      if (ensureAgentWorldbookControlDefaults_ACU()) {
+          shouldPersistSettingsAfterLoad_ACU = true;
+      }
       // [兼容] 旧标签排除字段自动迁移为新规则组结构
       ensureTagRulesCompat_ACU(settings_ACU);
       if (ensureBuiltinPlotPresets_ACU()) {

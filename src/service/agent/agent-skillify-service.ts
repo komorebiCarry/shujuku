@@ -7,6 +7,11 @@ import {
   saveWorldbookEntrySkillMeta_ACU,
   type WorldbookSkillMeta_ACU,
 } from './agent-worldbook-skill-meta';
+import {
+  getDefaultAgentSkillifyPromptSegments_ACU,
+  normalizeAgentContextSettings_ACU,
+  renderAgentPromptSegments_ACU,
+} from './agent-prompt-template';
 
 export interface AgentSkillifyWorldbookEntrySummary_ACU {
   bookName: string;
@@ -134,28 +139,23 @@ export function shouldSkipSkillifyEntry_ACU(
 }
 
 export function buildWorldbookSkillifyPrompt_ACU(summary: AgentSkillifyWorldbookEntrySummary_ACU): Array<{ role: string; content: string }> {
-  return [
-    {
-      role: 'system',
-      content: [
-        '你是 SillyTavern 世界书条目的 Skill 元数据生成器。',
-        '根据条目名称、关键词和内容预览，生成用于 Agent 判断是否触发该条目的描述和触发时机。',
-        '只返回严格 JSON 对象，不要 Markdown，不要解释。',
-        'JSON 结构：{"description":"...","triggerWhen":"..."}',
-      ].join('\n'),
-    },
-    {
-      role: 'user',
-      content: [
-        `世界书: ${summary.bookName}`,
-        `条目 uid: ${summary.uid}`,
-        `条目名称/备注: ${summary.comment || '（空）'}`,
-        `关键词: ${summary.keys.join('、') || '（空）'}`,
-        '内容预览:',
-        summary.contentPreview || '（空）',
-      ].join('\n'),
-    },
-  ];
+  const control = (settings_ACU.plotSettings as any)?.agentWorldbookControl || {};
+  const placeholders = {
+    'agent.skillify.bookName': summary.bookName,
+    'agent.skillify.uid': summary.uid,
+    'agent.skillify.comment': summary.comment || '（空）',
+    'agent.skillify.keysText': summary.keys.join('、') || '（空）',
+    'agent.skillify.contentPreview': summary.contentPreview || '（空）',
+    'agent.skillify.existingSkillMetaJson': summary.existingSkillMeta || {},
+    'agent.skillify.outputSchemaJson': { description: '...', triggerWhen: '...' },
+  };
+  const messages = renderAgentPromptSegments_ACU(
+    control.agentSkillifyPromptSegments || getDefaultAgentSkillifyPromptSegments_ACU(),
+    placeholders,
+  );
+  return messages.length > 0
+    ? messages
+    : renderAgentPromptSegments_ACU(getDefaultAgentSkillifyPromptSegments_ACU(), placeholders);
 }
 
 function extractJsonObjectText_ACU(text: string): string | null {
@@ -241,7 +241,8 @@ export async function collectWorldbookSkillifyCandidates_ACU(
   bookNames: string[],
   options: AgentSkillifyOptions_ACU = {},
 ): Promise<AgentSkillifyWorldbookEntrySummary_ACU[]> {
-  const contentPreviewLimit = Math.max(200, options.contentPreviewLimit ?? 1200);
+  const contextSettings = normalizeAgentContextSettings_ACU((settings_ACU.plotSettings as any)?.agentWorldbookControl?.contextSettings);
+  const contentPreviewLimit = Math.max(200, options.contentPreviewLimit ?? contextSettings.skillifyContentPreviewLimit);
   const entriesMap = await getLorebookEntriesByNames_ACU(bookNames);
   const summaries: AgentSkillifyWorldbookEntrySummary_ACU[] = [];
 
@@ -255,7 +256,7 @@ export async function collectWorldbookSkillifyCandidates_ACU(
 
   const maxEntries = Number.isFinite(Number(options.maxEntries)) && Number(options.maxEntries) > 0
     ? Number(options.maxEntries)
-    : summaries.length;
+    : contextSettings.skillifyMaxEntries;
   return summaries.slice(0, maxEntries);
 }
 

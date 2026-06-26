@@ -5,6 +5,11 @@ import { normalizePlotTask_ACU } from '../plot/plot-logic';
 import { refreshPlotAgentWorldbookSnapshotFromWorldbooks_ACU } from './agent-worldbook-takeover';
 import { parseWorldbookSkillMetaFromComment_ACU } from './agent-worldbook-skill-meta';
 import {
+  getDefaultAgentDecisionPromptSegments_ACU,
+  normalizeAgentContextSettings_ACU,
+  renderAgentPromptSegments_ACU,
+} from './agent-prompt-template';
+import {
   collectWorldbookSkillifyCandidates_ACU,
   getWorldbookEntryKeywordsForSkillify_ACU,
   resolvePlotWorldbookSkillifyBookNames_ACU,
@@ -93,7 +98,9 @@ function parseAgentDecisionResponse_ACU(responseText: string): any | null {
   }
 }
 
-async function collectWorldbookSummariesFromSnapshot_ACU(): Promise<{ summaries: AgentWorldbookSummary_ACU[]; allowedKeys: Set<string> }> {
+async function collectWorldbookSummariesFromSnapshot_ACU(
+  contextSettings: ReturnType<typeof normalizeAgentContextSettings_ACU>,
+): Promise<{ summaries: AgentWorldbookSummary_ACU[]; allowedKeys: Set<string> }> {
   const snapshot = await refreshPlotAgentWorldbookSnapshotFromWorldbooks_ACU();
   const summaries: AgentWorldbookSummary_ACU[] = [];
   const allowedKeys = new Set<string>();
@@ -116,7 +123,7 @@ async function collectWorldbookSummariesFromSnapshot_ACU(): Promise<{ summaries:
         keys: getWorldbookEntryKeywordsForSkillify_ACU(entry),
         description: meta?.description || '',
         triggerWhen: meta?.triggerWhen || '',
-        contentPreview: clipText_ACU(entry.content, 1000),
+        contentPreview: clipText_ACU(entry.content, contextSettings.decisionWorldbookContentPreviewLimit),
       });
     }
   }
@@ -126,7 +133,10 @@ async function collectWorldbookSummariesFromSnapshot_ACU(): Promise<{ summaries:
   }
 
   const bookNames = await resolvePlotWorldbookSkillifyBookNames_ACU();
-  const candidates = await collectWorldbookSkillifyCandidates_ACU(bookNames);
+  const candidates = await collectWorldbookSkillifyCandidates_ACU(bookNames, {
+    contentPreviewLimit: contextSettings.decisionWorldbookContentPreviewLimit,
+    maxEntries: contextSettings.decisionWorldbookCandidateLimit,
+  });
   for (const candidate of candidates) {
     allowedKeys.add(refKey_ACU(candidate.bookName, candidate.uid));
     summaries.push({
@@ -193,6 +203,10 @@ function normalizeTaskPlan_ACU(rawPlan: unknown, enabledTasks: any[]): { plan: A
     const taskId = normalizeId_ACU((item as any)?.taskId);
     const sourceTask = tasksById.get(taskId);
     if (!sourceTask) continue;
+    if (sourceTask.agentControl?.selectable === false) {
+      plan.push({ taskId, run: false, effectiveStage: sourceTask.stage || 1, effectiveOrder: sourceTask.order || 0, mode: String((item as any)?.mode || '').trim(), reason: 'task_not_selectable' });
+      continue;
+    }
     const run = (item as any)?.run !== false;
     const effectiveStage = normalizePositiveInteger_ACU((item as any)?.effectiveStage, sourceTask.stage || 1);
     const effectiveOrder = normalizeNonNegativeInteger_ACU((item as any)?.effectiveOrder, sourceTask.order || 0);
@@ -217,6 +231,7 @@ function buildAgentDecisionPrompt_ACU(params: {
   sharedContext: Record<string, any>;
   enabledTasks: any[];
   worldbookSummaries: AgentWorldbookSummary_ACU[];
+  contextSettings: ReturnType<typeof normalizeAgentContextSettings_ACU>;
 }): Array<{ role: string; content: string }> {
   const taskSummaries = params.enabledTasks.map((task, index) => {
     const normalized = normalizePlotTask_ACU(task, { index, fallbackTask: task });
@@ -229,30 +244,33 @@ function buildAgentDecisionPrompt_ACU(params: {
       triggerWhen: normalized.triggerWhen || '',
       agentControl: normalized.agentControl || {},
     };
-  });
+  }).filter(task => task.agentControl?.selectable !== false);
 
-  return [
-    {
-      role: 'system',
-      content: [
-        '你是 SillyTavern 插件 SP·数据库的前置控制 Agent。',
-        '你必须基于用户输入、前文剧情、推进任务 Skill、世界书 Skill 元数据，决定本轮剧情推进任务和世界书绿灯条目。',
-        '只返回严格 JSON 对象，不要 Markdown，不要解释。',
-        'JSON 结构：{"taskPlan":[{"taskId":"...","run":true,"effectiveStage":1,"effectiveOrder":0,"mode":"sequential","reason":"..."}],"plotGreenlights":{"taskId":[{"bookName":"...","uid":1,"reason":"..."}]},"tableFillGreenlights":[{"bookName":"...","uid":1,"reason":"..."}],"finalGenerationGreenlights":[{"bookName":"...","uid":1,"reason":"..."}],"fallbackMode":false,"reason":"..."}',
-        'taskId 必须来自候选任务。世界书 bookName/uid 必须来自候选世界书。effectiveStage 必须为正整数，effectiveOrder 必须为非负整数。',
-      ].join('\n'),
+  const control = params.plotSettings?.agentWorldbookControl || {};
+  const placeholders = {
+    'agent.userMessage': params.userMessage || '',
+    'agent.previousPlot': clipText_ACU(params.sharedContext?.lastPlotContent, params.contextSettings.decisionPreviousPlotCharLimit),
+    'agent.recentContext': clipText_ACU(params.sharedContext?.seedContentForConditional, params.contextSettings.decisionRecentContextCharLimit),
+    'agent.tasksJson': taskSummaries,
+    'agent.worldbookEntriesJson': params.worldbookSummaries.slice(0, params.contextSettings.decisionWorldbookCandidateLimit),
+    'agent.maxEntriesPerChannelJson': control.maxEntriesPerChannel || {},
+    'agent.outputSchemaJson': {
+      taskPlan: [{ taskId: '...', run: true, effectiveStage: 1, effectiveOrder: 0, mode: 'sequential', reason: '...' }],
+      plotGreenlights: { taskId: [{ bookName: '...', uid: 1, reason: '...' }] },
+      tableFillGreenlights: [{ bookName: '...', uid: 1, reason: '...' }],
+      finalGenerationGreenlights: [{ bookName: '...', uid: 1, reason: '...' }],
+      fallbackMode: false,
+      reason: '...',
     },
-    {
-      role: 'user',
-      content: JSON.stringify({
-        userMessage: params.userMessage || '',
-        previousPlot: clipText_ACU(params.sharedContext?.lastPlotContent, 3000),
-        recentContext: clipText_ACU(params.sharedContext?.seedContentForConditional, 1500),
-        tasks: taskSummaries,
-        worldbookEntries: params.worldbookSummaries,
-      }),
-    },
-  ];
+  };
+  const messages = renderAgentPromptSegments_ACU(
+    control.agentDecisionPromptSegments || getDefaultAgentDecisionPromptSegments_ACU(),
+    placeholders,
+  );
+
+  return messages.length > 0
+    ? messages
+    : renderAgentPromptSegments_ACU(getDefaultAgentDecisionPromptSegments_ACU(), placeholders);
 }
 
 function normalizePlotGreenlights_ACU(raw: unknown, allowedKeys: Set<string>, enabledTaskIds: Set<string>): Record<string, AgentWorldbookRef_ACU[]> {
@@ -278,10 +296,11 @@ export async function runAgentDecisionForPlot_ACU(params: {
   try {
     if (!isAgentModeEnabled_ACU(params.plotSettings)) return emptyDecision_ACU(originalTasks, 'agent_mode_disabled');
 
-    const { summaries, allowedKeys } = await collectWorldbookSummariesFromSnapshot_ACU();
+    const control = params.plotSettings?.agentWorldbookControl || {};
+    const contextSettings = normalizeAgentContextSettings_ACU(control.contextSettings);
+    const { summaries, allowedKeys } = await collectWorldbookSummariesFromSnapshot_ACU(contextSettings);
     if (allowedKeys.size === 0) return emptyDecision_ACU(originalTasks, 'empty_worldbook_scope');
 
-    const control = params.plotSettings?.agentWorldbookControl || {};
     const presetName = String(control.agentApiPreset || '').trim();
     const messages = buildAgentDecisionPrompt_ACU({
       plotSettings: params.plotSettings,
@@ -289,6 +308,7 @@ export async function runAgentDecisionForPlot_ACU(params: {
       sharedContext: params.sharedContext,
       enabledTasks: originalTasks,
       worldbookSummaries: summaries,
+      contextSettings,
     });
     const rawResponse = await callAIWithPreset_ACU(messages, presetName);
     if (!rawResponse) return emptyDecision_ACU(originalTasks, 'empty_agent_response');
@@ -302,7 +322,11 @@ export async function runAgentDecisionForPlot_ACU(params: {
       ? { plan: [] as AgentTaskPlanItem_ACU[], effectiveTasks: originalTasks }
       : normalizedPlan;
 
-    const enabledTaskIds = new Set(originalTasks.map((task, index) => normalizePlotTask_ACU(task, { index, fallbackTask: task }).id).filter(Boolean));
+    const enabledTaskIds = new Set(originalTasks
+      .map((task, index) => normalizePlotTask_ACU(task, { index, fallbackTask: task }))
+      .filter(task => task.agentControl?.selectable !== false)
+      .map(task => task.id)
+      .filter(Boolean));
     const plotGreenlights = normalizePlotGreenlights_ACU(parsed.plotGreenlights, allowedKeys, enabledTaskIds);
     const tableFillGreenlights = normalizeWorldbookRefs_ACU(parsed.tableFillGreenlights, allowedKeys);
     const finalGenerationGreenlights = normalizeWorldbookRefs_ACU(parsed.finalGenerationGreenlights, allowedKeys);
