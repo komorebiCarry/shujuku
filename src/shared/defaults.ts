@@ -12,7 +12,7 @@
 
 export const DEFAULT_AGENT_CONTEXT_SETTINGS_ACU = {
   // Compatibility field name: now interpreted as recent AI layer count, not character count.
-  decisionRecentContextCharLimit: 3,
+  decisionRecentContextCharLimit: 2,
   // Deprecated compatibility field: kept so old settings normalize safely; Agent decisions use recent context layers for plot history.
   decisionPreviousPlotCharLimit: 1,
   // Deprecated compatibility field: kept so old settings normalize safely.

@@ -223,6 +223,18 @@ async function collectWorldbookSummariesFromSnapshot_ACU(
   return { summaries, allowedKeys };
 }
 
+function formatWorldbookPromptEntries_ACU(
+  summaries: AgentWorldbookSummary_ACU[],
+  limit: number,
+): Array<Pick<AgentWorldbookSummary_ACU, 'bookName' | 'uid' | 'description' | 'triggerWhen'>> {
+  return summaries.slice(0, limit).map(summary => ({
+    bookName: summary.bookName,
+    uid: summary.uid,
+    description: summary.description || '',
+    triggerWhen: summary.triggerWhen || '',
+  }));
+}
+
 
 function normalizeWorldbookRefs_ACU(value: unknown, allowedKeys: Set<string>): AgentWorldbookRef_ACU[] {
   if (!Array.isArray(value)) return [];
@@ -327,7 +339,7 @@ function buildAgentDecisionPrompt_ACU(params: {
     'agent.previousPlot': previousPlot,
     'agent.recentContext': recentContext,
     'agent.tasksJson': taskSummaries,
-    'agent.worldbookEntriesJson': params.worldbookSummaries.slice(0, params.contextSettings.decisionWorldbookCandidateLimit),
+    'agent.worldbookEntriesJson': formatWorldbookPromptEntries_ACU(params.worldbookSummaries, params.contextSettings.decisionWorldbookCandidateLimit),
     'agent.maxEntriesPerChannelJson': control.maxEntriesPerChannel || {},
     'agent.outputSchemaJson': {
       taskPlan: [{ taskId: '...', run: true, effectiveStage: 1, effectiveOrder: 0, mode: 'sequential', reason: '...' }],
