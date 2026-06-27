@@ -27,7 +27,9 @@ export interface PromptSegment_ACU {
 }
 
 export interface AgentContextSettings_ACU {
+  /** Compatibility field name. Runtime interprets it as recent AI layer count; 1 layer = 1 AI reply plus its preceding user input. */
   decisionRecentContextCharLimit: number;
+  /** Compatibility field name. Runtime interprets it as previous plot AI layer count; 1 layer = 1 AI reply plus its preceding user input. */
   decisionPreviousPlotCharLimit: number;
   /** @deprecated Compatibility-only. Agent decisions no longer inject worldbook entry content previews. */
   decisionWorldbookContentPreviewLimit: number;

@@ -75,9 +75,7 @@ describe('runAgentDecisionForPlot_ACU', () => {
     ]);
   });
 
-  it('renders editable decision prompt placeholders with clamped context limits and selectable task filtering', async () => {
-    const longPreviousPlot = '上'.repeat(250);
-    const longRecentContext = '近'.repeat(250);
+  it('renders decision context by AI layers with paired user turns and selectable task filtering', async () => {
     const longWorldbookContent = '书'.repeat(250);
     mockGetLorebookEntries.mockResolvedValueOnce([
       { uid: 12, comment: '陈默人物档案', keys: ['陈默'], content: longWorldbookContent, enabled: true },
@@ -106,7 +104,22 @@ describe('runAgentDecisionForPlot_ACU', () => {
         },
       },
       userMessage: '敲门',
-      sharedContext: { lastPlotContent: longPreviousPlot, seedContentForConditional: longRecentContext },
+      sharedContext: {
+        lastPlotContent: '旧剧情兜底不应使用',
+        seedContentForConditional: '旧最近上下文兜底不应使用',
+        recentContextMessages: [
+          { is_user: true, name: '用户', mes: '第一层用户输入' },
+          { is_user: false, name: '角色', mes: '第一层AI回复', qrf_plot: '第一层剧情规划' },
+          { is_user: true, name: '用户', mes: '第二层用户输入' },
+          { is_user: false, name: '角色', mes: '第二层AI回复', qrf_plot: '第二层剧情规划' },
+        ],
+        plotContextMessages: [
+          { is_user: true, name: '用户', mes: '第一层用户输入' },
+          { is_user: false, name: '角色', mes: '第一层AI回复', qrf_plot: '第一层剧情规划' },
+          { is_user: true, name: '用户', mes: '第二层用户输入' },
+          { is_user: false, name: '角色', mes: '第二层AI回复', qrf_plot: '第二层剧情规划' },
+        ],
+      },
       enabledTasks: [
         { id: 'selectable task', name: '可选任务', enabled: true, promptGroup: { messages: [] } },
         { id: 'blocked task', name: '不可选任务', enabled: true, agentControl: { selectable: false }, promptGroup: { messages: [] } },
@@ -117,14 +130,73 @@ describe('runAgentDecisionForPlot_ACU', () => {
     expect(result.effectiveTasks).toHaveLength(1);
     expect(result.effectiveTasks[0].id).toBe('selectable_task');
     const messages = mockCallAIWithPreset.mock.calls[0][0];
-    expect(messages[0].content).toContain(`${'上'.repeat(200)}\n...[已截断 50 字]`);
-    expect(messages[0].content).toContain(`${'近'.repeat(200)}\n...[已截断 50 字]`);
+    expect(messages[0].content).toContain('P=【上轮剧情 AI层 1】');
+    expect(messages[0].content).toContain('用户: 第二层用户输入');
+    expect(messages[0].content).toContain('剧情: 第二层剧情规划');
+    expect(messages[0].content).toContain('R=【最近上下文 AI层 1】');
+    expect(messages[0].content).toContain('角色: 第二层AI回复');
+    expect(messages[0].content).not.toContain('第一层用户输入');
+    expect(messages[0].content).not.toContain('第一层AI回复');
+    expect(messages[0].content).not.toContain('已截断');
+    expect(messages[0].content).not.toContain('旧最近上下文兜底不应使用');
     expect(messages[0].content).not.toContain('"contentPreview"');
     expect(messages[0].content).not.toContain(longWorldbookContent);
     expect(messages[0].content).not.toContain('书'.repeat(20));
     expect(messages[0].content).toContain('selectable_task');
     expect(messages[0].content).not.toContain('blocked_task');
   });
+
+  it('keeps previous plot scoped to the latest AI layer even when that layer has no plot data', async () => {
+    mockCallAIWithPreset.mockResolvedValue(JSON.stringify({
+      taskPlan: [{ taskId: 'selectable_task', run: true, effectiveStage: 1, effectiveOrder: 0 }],
+      plotGreenlights: {},
+      tableFillGreenlights: [],
+      finalGenerationGreenlights: [],
+      fallbackMode: false,
+      reason: 'ok',
+    }));
+
+    const result = await runAgentDecisionForPlot_ACU({
+      plotSettings: {
+        agentWorldbookControl: {
+          enabled: true,
+          mode: 'agent',
+          contextSettings: {
+            decisionPreviousPlotCharLimit: 1,
+            decisionRecentContextCharLimit: 1,
+          },
+          agentDecisionPromptSegments: [
+            { role: 'user', deletable: true, content: 'P={{agent.previousPlot}}\nR={{agent.recentContext}}' },
+          ],
+        },
+      },
+      userMessage: '继续',
+      sharedContext: {
+        plotContextMessages: [
+          { is_user: true, name: '用户', mes: '第一层用户输入' },
+          { is_user: false, name: '角色', mes: '第一层AI回复', qrf_plot: '第一层剧情规划' },
+          { is_user: true, name: '用户', mes: '第二层用户输入' },
+          { is_user: false, name: '角色', mes: '第二层AI回复' },
+        ],
+        recentContextMessages: [
+          { is_user: true, name: '用户', mes: '第一层用户输入' },
+          { is_user: false, name: '角色', mes: '第一层AI回复', qrf_plot: '第一层剧情规划' },
+          { is_user: true, name: '用户', mes: '第二层用户输入' },
+          { is_user: false, name: '角色', mes: '第二层AI回复' },
+        ],
+      },
+      enabledTasks: [{ id: 'selectable task', name: '可选任务', enabled: true, promptGroup: { messages: [] } }],
+    });
+
+    expect(result.active).toBe(true);
+    const messages = mockCallAIWithPreset.mock.calls[0][0];
+    expect(messages[0].content).toContain('P=【上轮剧情 AI层 1】');
+    expect(messages[0].content).toContain('用户: 第二层用户输入');
+    expect(messages[0].content).toContain('剧情: （该 AI 层无剧情规划数据）');
+    expect(messages[0].content).not.toContain('第一层剧情规划');
+    expect(messages[0].content).not.toContain('第一层用户输入');
+  });
+
 
   it('does not execute taskPlan items for tasks marked as not selectable', async () => {
     mockCallAIWithPreset.mockResolvedValue(JSON.stringify({

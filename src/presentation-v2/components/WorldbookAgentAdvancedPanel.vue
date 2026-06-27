@@ -140,8 +140,8 @@ const visibleContextFieldKeys: VisibleContextSettingKey_ACU[] = [
 ];
 
 const contextFieldSteps: Record<VisibleContextSettingKey_ACU, number> = {
-  decisionRecentContextCharLimit: 100,
-  decisionPreviousPlotCharLimit: 100,
+  decisionRecentContextCharLimit: 1,
+  decisionPreviousPlotCharLimit: 1,
   decisionWorldbookCandidateLimit: 1,
   skillifyMaxEntries: 1,
   plotWorldbookScanMessageLimit: 1,

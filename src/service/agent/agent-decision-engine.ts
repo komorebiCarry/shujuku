@@ -1,3 +1,4 @@
+import { getChatArray_ACU } from '../../data/gateways/chat-gateway';
 import { getLorebookEntries_ACU } from '../../data/gateways/worldbook-gateway';
 import { normalizeNonNegativeInteger_ACU, normalizePositiveInteger_ACU, logWarn_ACU } from '../../shared/utils';
 import { callAIWithPreset_ACU } from '../ai/api-call';
@@ -57,9 +58,98 @@ function refKey_ACU(bookName: string, uid: string | number): string {
   return `${bookName}\u0000${String(uid)}`;
 }
 
-function clipText_ACU(value: unknown, limit = 1200): string {
-  const text = String(value || '').trim();
-  return text.length > limit ? `${text.slice(0, limit)}\n...[已截断 ${text.length - limit} 字]` : text;
+type AgentContextMessage_ACU = Record<string, any>;
+
+function getMessageText_ACU(message: AgentContextMessage_ACU | null | undefined): string {
+  if (!message) return '';
+  return String(message.mes ?? message.message ?? message.content ?? '').trim();
+}
+
+function getMessageSpeaker_ACU(message: AgentContextMessage_ACU | null | undefined, fallback: string): string {
+  const name = String(message?.name || '').trim();
+  return name || fallback;
+}
+
+function getPlotTextFromMessage_ACU(message: AgentContextMessage_ACU | null | undefined): string {
+  if (!message) return '';
+  const directPlot = typeof message.qrf_plot === 'string' ? message.qrf_plot.trim() : '';
+  if (directPlot) return directPlot;
+  const taskPlots = message.qrf_plot_tasks;
+  if (!taskPlots || typeof taskPlots !== 'object' || Array.isArray(taskPlots)) return '';
+  return Object.entries(taskPlots)
+    .map(([taskId, content]) => {
+      const text = typeof content === 'string' ? content.trim() : '';
+      return text ? `【${taskId}】\n${text}` : '';
+    })
+    .filter(Boolean)
+    .join('\n\n');
+}
+
+function normalizeMessageArray_ACU(value: unknown): AgentContextMessage_ACU[] {
+  return Array.isArray(value) ? value.filter(item => item && typeof item === 'object') as AgentContextMessage_ACU[] : [];
+}
+
+function resolveAgentContextMessages_ACU(sharedContext: Record<string, any>, key: string): AgentContextMessage_ACU[] {
+  if (sharedContext && Object.prototype.hasOwnProperty.call(sharedContext, key)) {
+    return normalizeMessageArray_ACU(sharedContext[key]);
+  }
+  const fallbackMessages = normalizeMessageArray_ACU(sharedContext?.recentContextMessages);
+  if (fallbackMessages.length > 0) return fallbackMessages;
+  try {
+    return normalizeMessageArray_ACU(getChatArray_ACU());
+  } catch {
+    return [];
+  }
+}
+
+function collectRecentAiLayerPairs_ACU(
+  messages: AgentContextMessage_ACU[],
+  layerLimit: number,
+): Array<{ user?: AgentContextMessage_ACU; ai: AgentContextMessage_ACU }> {
+  const limit = normalizePositiveInteger_ACU(layerLimit, 1);
+  const pairs: Array<{ user?: AgentContextMessage_ACU; ai: AgentContextMessage_ACU }> = [];
+  for (let i = messages.length - 1; i >= 0 && pairs.length < limit; i--) {
+    const ai = messages[i];
+    if (!ai || ai.is_user || ai._qrf_from_planning) continue;
+    const previous = i > 0 && messages[i - 1]?.is_user ? messages[i - 1] : undefined;
+    pairs.unshift({ user: previous, ai });
+  }
+  return pairs;
+}
+
+function formatRecentContextByAiLayers_ACU(messages: AgentContextMessage_ACU[], layerLimit: number): string {
+  return collectRecentAiLayerPairs_ACU(messages, layerLimit)
+    .map((pair, index) => {
+      const lines = [`【最近上下文 AI层 ${index + 1}】`];
+      const userText = getMessageText_ACU(pair.user);
+      if (userText) lines.push(`${getMessageSpeaker_ACU(pair.user, '用户')}: ${userText}`);
+      const aiText = getMessageText_ACU(pair.ai);
+      if (aiText) lines.push(`${getMessageSpeaker_ACU(pair.ai, 'AI')}: ${aiText}`);
+      return lines.join('\n');
+    })
+    .filter(Boolean)
+    .join('\n\n');
+}
+
+function formatPreviousPlotByAiLayers_ACU(
+  messages: AgentContextMessage_ACU[],
+  layerLimit: number,
+  legacyPlotContent: unknown,
+): string {
+  const pairs = collectRecentAiLayerPairs_ACU(messages, layerLimit);
+  const formatted = pairs
+    .map((pair, index) => {
+      const lines = [`【上轮剧情 AI层 ${index + 1}】`];
+      const userText = getMessageText_ACU(pair.user);
+      if (userText) lines.push(`${getMessageSpeaker_ACU(pair.user, '用户')}: ${userText}`);
+      const plot = getPlotTextFromMessage_ACU(pair.ai);
+      lines.push(`剧情: ${plot || '（该 AI 层无剧情规划数据）'}`);
+      return lines.join('\n');
+    })
+    .filter(Boolean)
+    .join('\n\n');
+  if (formatted) return formatted;
+  return String(legacyPlotContent || '').trim();
 }
 
 function extractJsonObjectText_ACU(text: string): string | null {
@@ -241,10 +331,16 @@ function buildAgentDecisionPrompt_ACU(params: {
   }).filter(task => task.agentControl?.selectable !== false);
 
   const control = params.plotSettings?.agentWorldbookControl || {};
+  const recentContextMessages = resolveAgentContextMessages_ACU(params.sharedContext, 'recentContextMessages');
+  const plotContextMessages = resolveAgentContextMessages_ACU(params.sharedContext, 'plotContextMessages');
+  const recentContext = formatRecentContextByAiLayers_ACU(recentContextMessages, params.contextSettings.decisionRecentContextCharLimit)
+    || String(params.sharedContext?.seedContentForConditional || '').trim();
+  const previousPlot = formatPreviousPlotByAiLayers_ACU(plotContextMessages, params.contextSettings.decisionPreviousPlotCharLimit, params.sharedContext?.lastPlotContent);
+
   const placeholders = {
     'agent.userMessage': params.userMessage || '',
-    'agent.previousPlot': clipText_ACU(params.sharedContext?.lastPlotContent, params.contextSettings.decisionPreviousPlotCharLimit),
-    'agent.recentContext': clipText_ACU(params.sharedContext?.seedContentForConditional, params.contextSettings.decisionRecentContextCharLimit),
+    'agent.previousPlot': previousPlot,
+    'agent.recentContext': recentContext,
     'agent.tasksJson': taskSummaries,
     'agent.worldbookEntriesJson': params.worldbookSummaries.slice(0, params.contextSettings.decisionWorldbookCandidateLimit),
     'agent.maxEntriesPerChannelJson': control.maxEntriesPerChannel || {},

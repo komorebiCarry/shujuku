@@ -11,8 +11,10 @@
 
 
 export const DEFAULT_AGENT_CONTEXT_SETTINGS_ACU = {
-  decisionRecentContextCharLimit: 1500,
-  decisionPreviousPlotCharLimit: 3000,
+  // Compatibility field name: now interpreted as recent AI layer count, not character count.
+  decisionRecentContextCharLimit: 3,
+  // Compatibility field name: now interpreted as previous plot AI layer count, not character count.
+  decisionPreviousPlotCharLimit: 1,
   // Deprecated compatibility field: kept so old settings normalize safely.
   // Runtime Agent decisions no longer inject worldbook entry content previews.
   decisionWorldbookContentPreviewLimit: 1000,
@@ -25,8 +27,10 @@ export const DEFAULT_AGENT_CONTEXT_SETTINGS_ACU = {
 };
 
 export const AGENT_CONTEXT_SETTINGS_LIMITS_ACU = {
-  decisionRecentContextCharLimit: { min: 200, max: 12000 },
-  decisionPreviousPlotCharLimit: { min: 200, max: 20000 },
+  // Compatibility field name: layer count, 1 layer = 1 AI reply plus its preceding user input.
+  decisionRecentContextCharLimit: { min: 1, max: 20 },
+  // Compatibility field name: layer count, 1 layer = 1 AI reply plus its preceding user input.
+  decisionPreviousPlotCharLimit: { min: 1, max: 20 },
   // Deprecated compatibility field; do not use it to reintroduce content previews.
   decisionWorldbookContentPreviewLimit: { min: 200, max: 5000 },
   decisionWorldbookCandidateLimit: { min: 1, max: 300 },

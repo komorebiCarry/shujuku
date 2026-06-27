@@ -89,19 +89,19 @@ import { normalizeAgentContextSettings_ACU } from '../../agent/agent-prompt-temp
     const chat = getChatArray_ACU();
     const contextTurnCount = plotSettings.contextTurnCount ?? 1;
     let slicedContext: { role: string; content: string }[] = [];
+    let contextEndIndex = (chat?.length || 0) - 1;
+    if (contextEndIndex >= 0 && chat[contextEndIndex] && chat[contextEndIndex].is_user) {
+      if (String(chat[contextEndIndex].mes || '') === String(userMessage || '')) {
+        contextEndIndex -= 1;
+      }
+    }
+    const agentContextMessages = contextEndIndex >= 0 ? chat.slice(0, contextEndIndex + 1) : [];
 
     if (contextTurnCount > 0) {
       let aiCount = 0;
       const extracted: { role: string; content: string }[] = [];
 
-      let i = (chat?.length || 0) - 1;
-      if (i >= 0 && chat[i] && chat[i].is_user) {
-        if (String(chat[i].mes || '') === String(userMessage || '')) {
-          i -= 1;
-        }
-      }
-
-      for (; i >= 0 && aiCount < contextTurnCount; i--) {
+      for (let i = contextEndIndex; i >= 0 && aiCount < contextTurnCount; i--) {
         const msg = chat[i];
         if (!msg) continue;
         if (msg.is_user) continue;
@@ -287,6 +287,8 @@ import { normalizeAgentContextSettings_ACU } from '../../agent/agent-prompt-temp
       performReplacements,
       finalSystemDirectiveContent,
       seedContentForConditional,
+      recentContextMessages: Array.isArray(agentContextMessages) ? agentContextMessages : [],
+      plotContextMessages: Array.isArray(agentContextMessages) ? agentContextMessages : [],
       allTablesJson: currentJsonTableData_ACU,
     };
   }

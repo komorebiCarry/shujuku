@@ -103,12 +103,12 @@ export const plotCopy = {
       resetSuccess: "已恢复默认上下文参数。",
       fields: {
         decisionRecentContextCharLimit: {
-          label: "最近上下文截断",
-          hint: "进入 Agent 决策提示词的最近对话上下文最大字符数。",
+          label: "最近上下文层数",
+          hint: "进入 Agent 决策提示词的最近对话层数；1 层 = 1 条 AI 回复 + 其上方 1 条用户输入，不再按字符截断。",
         },
         decisionPreviousPlotCharLimit: {
-          label: "上轮剧情截断",
-          hint: "进入 Agent 决策提示词的上轮剧情文本最大字符数。",
+          label: "上轮剧情层数",
+          hint: "进入 Agent 决策提示词的历史剧情层数；按 AI 楼层计数，并绑定对应的上方用户输入，不再按字符截断。",
         },
         decisionWorldbookCandidateLimit: {
           label: "决策世界书候选数",
