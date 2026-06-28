@@ -13,7 +13,7 @@
 import { currentJsonTableData_ACU, pendingFinalGenerationGreenlights_ACU, settings_ACU } from './state-manager';
 import { logDebug_ACU } from '../../shared/utils';
 import { parseRandomTags_ACU, replaceRandomVariables_ACU, parseCalcTags_ACU, parseMaxTags_ACU, parseMinTags_ACU, replaceCalcVariables_ACU, replaceMaxVariables_ACU, replaceMinVariables_ACU, parseIfBlockRecursive_ACU, getLatestAIMessageContent_ACU, replaceDbSqlVariables } from './template-vars';
-import { getPlotFromHistory_ACU, getWorldbookContentForPlot_ACU, getAgentGreenlightWorldbookContentForPlot_ACU } from './plot-runtime';
+import { getPlotFromHistory_ACU, getWorldbookContentForPlot_ACU, getAgentGreenlightWorldbookEntriesForPlot_ACU } from './plot-runtime';
 
 // ═══ 上下文标签提取/过滤 ═══
 export {
@@ -83,6 +83,71 @@ export {
 
 // ═══ 保留在入口文件中的函数（依赖多个子模块） ═══
 
+  type AgentWorldbookPromptRole_ACU = 'system' | 'user' | 'assistant';
+
+  function normalizeAgentWorldbookDepth_ACU(value: any) {
+    const depth = typeof value === 'number' ? value : parseInt(String(value ?? ''), 10);
+    return Number.isFinite(depth) && depth > 0 ? Math.floor(depth) : 1;
+  }
+
+  function normalizeAgentWorldbookRole_ACU(value: any): AgentWorldbookPromptRole_ACU {
+    const role = String(value || '').trim().toLowerCase();
+    if (role === 'user' || role === 'assistant' || role === 'system') return role;
+    return 'system';
+  }
+
+  function formatAgentWorldbookEntryForPrompt_ACU(entry: any) {
+    const content = String(entry?.content || '').trim();
+    if (!content) return '';
+    const title = String(entry?.comment || entry?.normalizedComment || entry?.name || `Entry from ${entry?.bookName || 'worldbook'}`).trim();
+    return `# ${title || 'Worldbook Entry'}\n${content}`;
+  }
+
+  type AgentWorldbookInjectionItem_ACU = { order: number; content: string };
+
+  function injectAgentWorldbookEntriesIntoMessages_ACU(messages: any[], entries: any[]) {
+    const groups = new Map<number, Map<AgentWorldbookPromptRole_ACU, AgentWorldbookInjectionItem_ACU[]>>();
+    for (const entry of Array.isArray(entries) ? entries : []) {
+      const content = formatAgentWorldbookEntryForPrompt_ACU(entry);
+      if (!content) continue;
+      const depth = normalizeAgentWorldbookDepth_ACU(entry?.depth);
+      const role = normalizeAgentWorldbookRole_ACU(entry?.role);
+      const order = Number(entry?.order);
+      if (!groups.has(depth)) groups.set(depth, new Map());
+      const roleGroups = groups.get(depth)!;
+      if (!roleGroups.has(role)) roleGroups.set(role, []);
+      roleGroups.get(role)!.push({
+        order: Number.isFinite(order) ? order : 0,
+        content,
+      });
+    }
+
+    let injectedMessageCount = 0;
+    const roleOrder: AgentWorldbookPromptRole_ACU[] = ['system', 'user', 'assistant'];
+    // Depth 必须升序处理：浅层注入先占位，后续深层注入再基于增长后的
+    // messages.length 计算位置，才能保证所有注入消息在最终数组中仍保持
+    // SillyTavern 世界书 depth 的“距尾部 N 条消息前”语义。
+    const sortedDepths = Array.from(groups.keys()).sort((a, b) => a - b);
+    for (const depth of sortedDepths) {
+      const roleGroups = groups.get(depth)!;
+      const injectionMessages = roleOrder
+        .map(role => {
+          const content = (roleGroups.get(role) || [])
+            .sort((a, b) => a.order - b.order)
+            .map(item => item.content)
+            .join('\n\n')
+            .trim();
+          return content ? { role, content, injected: true } : null;
+        })
+        .filter(Boolean);
+      if (injectionMessages.length === 0) continue;
+      const insertIndex = Math.max(0, messages.length - depth);
+      messages.splice(insertIndex, 0, ...injectionMessages);
+      injectedMessageCount += injectionMessages.length;
+    }
+    return injectedMessageCount;
+  }
+
   function getTableDataForPrompt_ACU() {
     return currentJsonTableData_ACU || {};
   }
@@ -102,13 +167,13 @@ export {
     logDebug_ACU('[提示词模板] 开始处理酒馆提示词...');
     if (finalGenerationGreenlights.length > 0) {
       try {
-        const finalWorldbookContent = await getAgentGreenlightWorldbookContentForPlot_ACU(
+        const finalWorldbookEntries = await getAgentGreenlightWorldbookEntriesForPlot_ACU(
           settings_ACU?.plotSettings || {},
           finalGenerationGreenlights,
         );
-        if (typeof finalWorldbookContent === 'string' && finalWorldbookContent.trim()) {
-          data.messages.push({ role: 'system', content: finalWorldbookContent });
-          logDebug_ACU('[提示词模板] 运行时 Agent 正文世界书绿灯已注入，内容长度:', finalWorldbookContent.length);
+        const injectedMessageCount = injectAgentWorldbookEntriesIntoMessages_ACU(data.messages, finalWorldbookEntries);
+        if (injectedMessageCount > 0) {
+          logDebug_ACU('[提示词模板] 运行时 Agent 正文世界书绿灯已按 depth/order 注入，消息数:', injectedMessageCount);
         }
       } catch (e) {
         logDebug_ACU('[提示词模板] 运行时 Agent 正文世界书绿灯注入失败，已跳过本轮绿灯注入:', e);

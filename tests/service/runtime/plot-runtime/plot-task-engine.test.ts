@@ -534,6 +534,7 @@ describe('runPlotTasksRuntime_ACU', () => {
       enabledTaskCount: 0,
     });
     expect(mockCallApiWithPlotPreset).not.toHaveBeenCalled();
+    expect(mockSetPendingFinalGenerationGreenlights).toHaveBeenCalledWith([]);
   });
 
   it('成功执行时会按 stage 与 order 排序、暂存剧情并保存到最新消息', async () => {

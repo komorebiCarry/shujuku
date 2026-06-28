@@ -24,5 +24,6 @@ export {
 // 世界书内容获取
 export {
     getWorldbookContentForPlot_ACU,
+    getAgentGreenlightWorldbookEntriesForPlot_ACU,
     getAgentGreenlightWorldbookContentForPlot_ACU,
 } from './plot-task-engine';

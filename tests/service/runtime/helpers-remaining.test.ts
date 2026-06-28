@@ -22,7 +22,7 @@ const {
   mockGetLatestAIMessageContent,
   mockGetPlotFromHistory,
   mockGetWorldbookContentForPlot,
-  mockGetAgentGreenlightWorldbookContentForPlot,
+  mockGetAgentGreenlightWorldbookEntriesForPlot,
 } = vi.hoisted(() => {
   const mockPendingFinalGenerationGreenlightsRef = { value: [] as any[] };
   return {
@@ -45,7 +45,7 @@ const {
     mockGetLatestAIMessageContent: vi.fn(() => ''),
     mockGetPlotFromHistory: vi.fn(() => null),
     mockGetWorldbookContentForPlot: vi.fn(),
-    mockGetAgentGreenlightWorldbookContentForPlot: vi.fn(),
+    mockGetAgentGreenlightWorldbookEntriesForPlot: vi.fn(),
   };
 });
 
@@ -82,7 +82,7 @@ vi.mock('../../../src/service/runtime/plot-runtime', () => ({
   getPlotFromHistory_ACU: mockGetPlotFromHistory,
   runOptimizationLogic_ACU: vi.fn(),
   getWorldbookContentForPlot_ACU: mockGetWorldbookContentForPlot,
-  getAgentGreenlightWorldbookContentForPlot_ACU: mockGetAgentGreenlightWorldbookContentForPlot,
+  getAgentGreenlightWorldbookEntriesForPlot_ACU: mockGetAgentGreenlightWorldbookEntriesForPlot,
 }));
 
 vi.mock('../../../src/service/runtime/helpers-context-tags', () => ({
@@ -138,7 +138,7 @@ beforeEach(() => {
   mockSettings.promptTemplateSettings = { enabled: true, maxNestingDepth: 10, debugMode: false };
   mockPendingFinalGenerationGreenlightsRef.value = [];
   mockGetWorldbookContentForPlot.mockResolvedValue('');
-  mockGetAgentGreenlightWorldbookContentForPlot.mockResolvedValue('');
+  mockGetAgentGreenlightWorldbookEntriesForPlot.mockResolvedValue([]);
 });
 
 describe('handleChatCompletionReady_ACU', () => {
@@ -270,17 +270,125 @@ describe('handleChatCompletionReady_ACU', () => {
   it('内存正文绿灯存在时按运行时过滤注入正文世界书内容', async () => {
     const pendingGreenlights = [{ bookName: '角色A世界书', uid: 1, reason: '正文需要' }];
     mockPendingFinalGenerationGreenlightsRef.value = pendingGreenlights;
-    mockGetAgentGreenlightWorldbookContentForPlot.mockResolvedValue('正文世界书内容');
+    mockGetAgentGreenlightWorldbookEntriesForPlot.mockResolvedValue([
+      {
+        bookName: '角色A世界书',
+        uid: 1,
+        comment: '深度2条目',
+        content: '正文世界书内容',
+        depth: 2,
+        role: 'system',
+        order: 10,
+      },
+    ]);
 
-    const data = { messages: [{ role: 'user', content: '测试' }] };
+    const data = {
+      messages: [
+        { role: 'system', content: '系统提示' },
+        { role: 'assistant', content: '上一条回复' },
+        { role: 'user', content: '测试' },
+      ],
+    };
     await handleChatCompletionReady_ACU(data);
 
-    expect(mockGetAgentGreenlightWorldbookContentForPlot).toHaveBeenCalledWith(
+    expect(mockGetAgentGreenlightWorldbookEntriesForPlot).toHaveBeenCalledWith(
       {},
       pendingGreenlights,
     );
     expect(mockSetPendingFinalGenerationGreenlights).not.toHaveBeenCalled();
-    expect(data.messages).toContainEqual({ role: 'system', content: '正文世界书内容' });
+    expect(data.messages).toEqual([
+      { role: 'system', content: '系统提示' },
+      { role: 'system', content: '# 深度2条目\n正文世界书内容', injected: true },
+      { role: 'assistant', content: '上一条回复' },
+      { role: 'user', content: '测试' },
+    ]);
+  });
+
+  it('正文绿灯条目按 depth 分层注入且不会把内容追加到消息末尾', async () => {
+    mockPendingFinalGenerationGreenlightsRef.value = [{ bookName: '世界书', uid: 'a' }];
+    mockGetAgentGreenlightWorldbookEntriesForPlot.mockResolvedValue([
+      { comment: '深度1', content: '一层内容', depth: 1, role: 'system', order: 1 },
+      { comment: '深度3', content: '三层内容', depth: 3, role: 'system', order: 2 },
+    ]);
+
+    const data = {
+      messages: [
+        { role: 'system', content: '系统提示' },
+        { role: 'assistant', content: '较早回复' },
+        { role: 'user', content: '较早输入' },
+        { role: 'assistant', content: '上一条回复' },
+        { role: 'user', content: '当前输入' },
+      ],
+    };
+
+    await handleChatCompletionReady_ACU(data);
+
+    expect(data.messages.map(message => message.content)).toEqual([
+      '系统提示',
+      '较早回复',
+      '较早输入',
+      '# 深度3\n三层内容',
+      '上一条回复',
+      '# 深度1\n一层内容',
+      '当前输入',
+    ]);
+    const depth1Index = data.messages.findIndex(message => message.content === '# 深度1\n一层内容');
+    const depth3Index = data.messages.findIndex(message => message.content === '# 深度3\n三层内容');
+    expect(data.messages.length - depth1Index - 1).toBe(1);
+    expect(data.messages.length - depth3Index - 1).toBe(3);
+    expect(data.messages[data.messages.length - 1].content).toBe('当前输入');
+  });
+
+  it('正文绿灯条目 depth 缺失、为 0 或非法时不会追加到消息末尾', async () => {
+    mockPendingFinalGenerationGreenlightsRef.value = [{ bookName: '世界书', uid: 'fallback-depth' }];
+    mockGetAgentGreenlightWorldbookEntriesForPlot.mockResolvedValue([
+      { comment: '缺失depth', content: '缺失内容', role: 'system' },
+      { comment: '零depth', content: '零内容', depth: 0, role: 'system' },
+      { comment: '非法depth', content: '非法内容', depth: 'abc', role: 'system' },
+    ]);
+
+    const data = {
+      messages: [
+        { role: 'system', content: '系统提示' },
+        { role: 'assistant', content: '上一条回复' },
+        { role: 'user', content: '当前输入' },
+      ],
+    };
+
+    await handleChatCompletionReady_ACU(data);
+
+    expect(data.messages.map(message => message.content)).toEqual([
+      '系统提示',
+      '上一条回复',
+      '# 缺失depth\n缺失内容\n\n# 零depth\n零内容\n\n# 非法depth\n非法内容',
+      '当前输入',
+    ]);
+    expect(data.messages[data.messages.length - 1].content).toBe('当前输入');
+  });
+
+  it('同 depth 和 role 的正文绿灯条目按 order 升序合并', async () => {
+    mockPendingFinalGenerationGreenlightsRef.value = [{ bookName: '世界书', uid: 'ordered' }];
+    mockGetAgentGreenlightWorldbookEntriesForPlot.mockResolvedValue([
+      { comment: '后置', content: '第二段', depth: 1, role: 'system', order: 20 },
+      { comment: '前置', content: '第一段', depth: 1, role: 'system', order: 10 },
+    ]);
+
+    const data = {
+      messages: [
+        { role: 'system', content: '系统提示' },
+        { role: 'assistant', content: '上一条回复' },
+        { role: 'user', content: '当前输入' },
+      ],
+    };
+
+    await handleChatCompletionReady_ACU(data);
+
+    expect(data.messages.map(message => message.content)).toEqual([
+      '系统提示',
+      '上一条回复',
+      '# 前置\n第一段\n\n# 后置\n第二段',
+      '当前输入',
+    ]);
   });
 
   it('处理管线按正确顺序执行', async () => {

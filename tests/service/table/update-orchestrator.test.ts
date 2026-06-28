@@ -48,6 +48,7 @@ let mockCurrentJsonTableData: any = null;
 let mockIsAutoUpdating = false;
 let mockWasStopped = false;
 let mockCoreApisReady = true;
+let mockPendingFinalGenerationGreenlights: any[] = [];
 
 vi.mock('../../../src/service/runtime/state-manager', () => ({
   get settings_ACU() { return mockSettings; },
@@ -56,6 +57,7 @@ vi.mock('../../../src/service/runtime/state-manager', () => ({
   get isAutoUpdatingCard_ACU() { return mockIsAutoUpdating; },
   get wasStoppedByUser_ACU() { return mockWasStopped; },
   get coreApisAreReady_ACU() { return mockCoreApisReady; },
+  get pendingFinalGenerationGreenlights_ACU() { return mockPendingFinalGenerationGreenlights; },
   _set_isAutoUpdatingCard_ACU: vi.fn((v: any) => { mockIsAutoUpdating = v; }),
   _set_wasStoppedByUser_ACU: vi.fn(),
   _set_manualExtraHint_ACU: vi.fn(),
@@ -1513,6 +1515,7 @@ describe('collectGroupFillResponse_ACU', () => {
     mockCurrentJsonTableData = {
       sheet_0: { name: '全局表', content: [['row_id'], ['global']] },
     };
+    mockPendingFinalGenerationGreenlights = [];
   });
 
   const createJob = () => ({
@@ -1532,6 +1535,8 @@ describe('collectGroupFillResponse_ACU', () => {
 
   it('显式 baseSnapshot 传给 prepareAIInput_ACU，且 collect 阶段不触发 parse/save', async () => {
     const job = createJob();
+    const pendingGreenlights = [{ bookName: '角色A世界书', uid: 1, reason: '填表需要' }];
+    mockPendingFinalGenerationGreenlights = pendingGreenlights;
     mockPrepareAIInput.mockResolvedValue({ tableDataText: '模拟数据' });
     mockCallCustomOpenAI.mockResolvedValue('<tableEdit>insertRow(0,{"0":"x"})</tableEdit>');
 
@@ -1546,9 +1551,13 @@ describe('collectGroupFillResponse_ACU', () => {
       expect.objectContaining({
         tableData: job.baseSnapshot,
         excludeImportTaggedWorldbookEntries: false,
+        agentGreenlights: pendingGreenlights,
       })
     );
-    expect(mockPrepareAIInput.mock.calls[0][3]).not.toHaveProperty('agentGreenlights');
+    const prepareOptions = mockPrepareAIInput.mock.calls[0][3];
+    expect(prepareOptions).toHaveProperty('agentGreenlights');
+    expect(prepareOptions.agentGreenlights).toEqual(pendingGreenlights);
+    expect(prepareOptions.agentGreenlights).not.toBe(pendingGreenlights);
     expect(mockParseAndApplyTableEdits).not.toHaveBeenCalled();
     expect(mockSaveIndependentTable).not.toHaveBeenCalled();
     expect(mockRunTableUpdateApplyWithScopeLock).not.toHaveBeenCalled();

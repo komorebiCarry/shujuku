@@ -487,6 +487,8 @@ import { normalizeAgentContextSettings_ACU } from '../../agent/agent-prompt-temp
   export async function runPlotTasksRuntime_ACU(plotSettings: Record<string, any>, userMessage: string, runtimeOptions: any = {}) {
     const { inputForHash = userMessage, hasExistingUserMessage = false } = runtimeOptions;
 
+    _set_pendingFinalGenerationGreenlights_ACU([]);
+
     ensurePlotTasksCompat_ACU(plotSettings, { syncLegacy: true });
 
     let enabledTasks = getEnabledPlotTasks_ACU(plotSettings);
@@ -770,24 +772,24 @@ import { normalizeAgentContextSettings_ACU } from '../../agent/agent-prompt-temp
   }
 
   /**
-   * 获取 Agent 正文生成放行的世界书内容。
+   * 获取 Agent 正文生成放行的结构化世界书条目。
    *
    * 这个入口只服务 finalGenerationGreenlights：
    * - 不修改酒馆世界书条目状态；
    * - 不依赖关键词触发；
    * - 不混入未被 Agent 放行的普通世界书条目；
-   * - 内容顺序沿用剧情世界书 placeholder 排序规则（position/depth/order/originalIndex）。
+   * - 保留 position/depth/role/order，用于正文生成时按原世界书位置注入。
    */
-  export async function getAgentGreenlightWorldbookContentForPlot_ACU(apiSettings: Record<string, any>, agentGreenlights: AgentWorldbookRef_ACU[] = []) {
+  export async function getAgentGreenlightWorldbookEntriesForPlot_ACU(apiSettings: Record<string, any>, agentGreenlights: AgentWorldbookRef_ACU[] = []) {
     if (!apiSettings) {
       logWarn_ACU('[剧情推进] apiSettings 为空，无法获取 Agent 正文世界书绿灯');
-      return '';
+      return [];
     }
 
     const agentGreenlightKeySet = new Set((Array.isArray(agentGreenlights) ? agentGreenlights : [])
       .map(ref => `${String(ref?.bookName || '').trim()}\u0000${String(ref?.uid || '').trim()}`)
       .filter(key => !key.startsWith('\u0000') && !key.endsWith('\u0000')));
-    if (agentGreenlightKeySet.size === 0) return '';
+    if (agentGreenlightKeySet.size === 0) return [];
 
     try {
       let bookNames: string[] = [];
@@ -803,14 +805,14 @@ import { normalizeAgentContextSettings_ACU } from '../../agent/agent-prompt-temp
           if (charLorebooks.additional?.length) bookNames.push(...charLorebooks.additional);
         } catch (error) {
           logError_ACU('[剧情推进] 获取角色世界书失败，无法注入 Agent 正文世界书绿灯:', error);
-          return '';
+          return [];
         }
       }
 
       bookNames = [...new Set((Array.isArray(bookNames) ? bookNames : []).filter(Boolean))];
-      if (bookNames.length === 0) return '';
+      if (bookNames.length === 0) return [];
 
-      const finalEntries = await collectCombinedWorldbookEntriesByStrategy_ACU({
+      return await collectCombinedWorldbookEntriesByStrategy_ACU({
         logPrefix: '[剧情推进][Agent正文绿灯]',
         bookNames,
         baseScanText: '',
@@ -831,14 +833,23 @@ import { normalizeAgentContextSettings_ACU } from '../../agent/agent-prompt-temp
           logDebug_ACU('[剧情推进][Agent正文绿灯] Agent 放行条目启用数量:', entries.length);
         },
       });
-
-      const combinedContent = formatCombinedWorldbookEntries_ACU(finalEntries);
-      if (combinedContent) {
-        logDebug_ACU('[剧情推进][Agent正文绿灯] Agent 正文世界书绿灯内容已生成，长度:', combinedContent.length);
-      }
-      return combinedContent;
     } catch (error) {
       logError_ACU('[剧情推进] 处理 Agent 正文世界书绿灯时发生错误:', error);
-      return '';
+      return [];
     }
+  }
+
+  /**
+   * 获取 Agent 正文生成放行的世界书内容。
+   *
+   * 保留字符串入口用于既有调用方；正文生成位置敏感场景应优先使用
+   * getAgentGreenlightWorldbookEntriesForPlot_ACU 以保留 depth/order/role。
+   */
+  export async function getAgentGreenlightWorldbookContentForPlot_ACU(apiSettings: Record<string, any>, agentGreenlights: AgentWorldbookRef_ACU[] = []) {
+    const finalEntries = await getAgentGreenlightWorldbookEntriesForPlot_ACU(apiSettings, agentGreenlights);
+    const combinedContent = formatCombinedWorldbookEntries_ACU(finalEntries);
+    if (combinedContent) {
+      logDebug_ACU('[剧情推进][Agent正文绿灯] Agent 正文世界书绿灯内容已生成，长度:', combinedContent.length);
+    }
+    return combinedContent;
   }
