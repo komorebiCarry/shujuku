@@ -4,6 +4,7 @@ import type {
 } from '../../data/models/settings-model';
 import {
   createLorebookEntries_ACU,
+  deleteLorebookEntries_ACU,
   getLorebookEntries_ACU,
   isWorldbookEntryUpdateApiAvailable_ACU,
   setLorebookEntries_ACU,
@@ -48,6 +49,8 @@ export interface AgentWorldbookRestoreResult_ACU {
 
 
 export const AGENT_WORLDBOOK_SNAPSHOT_COMMENT_ACU = 'TavernDB-ACU-AgentWorldbookSnapshot';
+export const AGENT_FINAL_GENERATION_GREENLIGHT_COMMENT_ACU = 'TavernDB-ACU-AgentFinalGenerationGreenlights';
+
 
 interface AgentWorldbookSnapshotPayload_ACU {
   version: 1;
@@ -56,6 +59,14 @@ interface AgentWorldbookSnapshotPayload_ACU {
   selectionSignature: string;
   createdAt: number;
   books: Record<string, AgentWorldbookControlSnapshotEntry_ACU[]>;
+}
+
+interface AgentFinalGenerationGreenlightPayload_ACU {
+  version: 1;
+  characterKey: string;
+  selectionSignature: string;
+  createdAt: number;
+  greenlights: Array<{ bookName: string; uid: string | number; reason?: string }>;
 }
 
 function normalizeBookNamesForTakeover_ACU(bookNames: unknown): string[] {
@@ -100,6 +111,10 @@ function findAgentWorldbookSnapshotEntry_ACU(entries: Record<string, any>[]): Re
   return (entries || []).find(entry => String(entry?.comment || '').trim() === AGENT_WORLDBOOK_SNAPSHOT_COMMENT_ACU) || null;
 }
 
+function findAgentFinalGenerationGreenlightEntry_ACU(entries: Record<string, any>[]): Record<string, any> | null {
+  return (entries || []).find(entry => String(entry?.comment || '').trim() === AGENT_FINAL_GENERATION_GREENLIGHT_COMMENT_ACU) || null;
+}
+
 function buildCurrentCharacterKey_ACU(): string {
   const charData = getCurrentCharData_ACU('current') || {};
   const rawKeyParts = [charData?.data?.id, charData?.id, charData?.avatar, charData?.name]
@@ -129,10 +144,53 @@ function parseAgentWorldbookSnapshotPayload_ACU(entry: Record<string, any> | nul
   }
 }
 
+function normalizeFinalGenerationGreenlights_ACU(value: unknown): Array<{ bookName: string; uid: string | number; reason?: string }> {
+  if (!Array.isArray(value)) return [];
+  const seen = new Set<string>();
+  const greenlights: Array<{ bookName: string; uid: string | number; reason?: string }> = [];
+  for (const item of value) {
+    const bookName = String((item as any)?.bookName || '').trim();
+    const uid = (item as any)?.uid;
+    if (!bookName || !hasValidWorldbookUid_ACU(uid)) continue;
+    const key = `${bookName}\u0000${String(uid)}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    const reason = String((item as any)?.reason || '').trim();
+    greenlights.push({ bookName, uid, ...(reason ? { reason } : {}) });
+  }
+  return greenlights;
+}
+
+function parseAgentFinalGenerationGreenlightPayload_ACU(entry: Record<string, any> | null): AgentFinalGenerationGreenlightPayload_ACU | null {
+  if (!entry) return null;
+  try {
+    const raw = JSON.parse(String(entry?.content || '').trim()) as Record<string, unknown>;
+    if (raw.version !== 1) return null;
+    const characterKey = String(raw.characterKey || '').trim();
+    const selectionSignature = String(raw.selectionSignature || '').trim();
+    if (!characterKey || !selectionSignature) return null;
+    return { version: 1, characterKey, selectionSignature, createdAt: Number.isFinite(Number(raw.createdAt)) ? Number(raw.createdAt) : 0, greenlights: normalizeFinalGenerationGreenlights_ACU(raw.greenlights) };
+  } catch {
+    return null;
+  }
+}
+
 function buildAgentWorldbookSnapshotEntry_ACU(payload: AgentWorldbookSnapshotPayload_ACU, uid?: string | number): Record<string, any> {
   return {
     ...(uid !== undefined ? { uid } : {}),
     comment: AGENT_WORLDBOOK_SNAPSHOT_COMMENT_ACU,
+    content: JSON.stringify(payload),
+    enabled: false,
+    type: 'constant',
+    keys: [],
+    key: [],
+  };
+}
+
+function buildAgentFinalGenerationGreenlightEntry_ACU(payload: AgentFinalGenerationGreenlightPayload_ACU, uid?: string | number): Record<string, any> {
+  return {
+    ...(uid !== undefined ? { uid } : {}),
+    comment: AGENT_FINAL_GENERATION_GREENLIGHT_COMMENT_ACU,
     content: JSON.stringify(payload),
     enabled: false,
     type: 'constant',
@@ -162,6 +220,14 @@ function isSameSnapshotPayload_ACU(actual: AgentWorldbookSnapshotPayload_ACU | n
     && JSON.stringify(normalizeSnapshotBooks_ACU(actual.books)) === JSON.stringify(normalizeSnapshotBooks_ACU(expected.books));
 }
 
+function isSameFinalGenerationGreenlightPayload_ACU(actual: AgentFinalGenerationGreenlightPayload_ACU | null, expected: AgentFinalGenerationGreenlightPayload_ACU): boolean {
+  return !!actual
+    && actual.version === expected.version
+    && actual.characterKey === expected.characterKey
+    && actual.selectionSignature === expected.selectionSignature
+    && JSON.stringify(normalizeFinalGenerationGreenlights_ACU(actual.greenlights)) === JSON.stringify(normalizeFinalGenerationGreenlights_ACU(expected.greenlights));
+}
+
 async function writeWorldbookSnapshotPayload_ACU(bookName: string, payload: AgentWorldbookSnapshotPayload_ACU): Promise<void> {
   const entries = await getLorebookEntries_ACU(bookName);
   const existing = findAgentWorldbookSnapshotEntry_ACU(entries || []);
@@ -175,6 +241,48 @@ async function writeWorldbookSnapshotPayload_ACU(bookName: string, payload: Agen
   if (!isSameSnapshotPayload_ACU(updatedPayload, payload)) {
     throw new Error(`世界书「${bookName}」接管快照写入失败`);
   }
+}
+
+async function deleteInternalEntryByComment_ACU(bookName: string, comment: string): Promise<boolean> {
+  const entries = await getLorebookEntries_ACU(bookName);
+  const matched = (entries || []).filter(entry => String(entry?.comment || '').trim() === comment && hasValidWorldbookUid_ACU(entry?.uid));
+  if (matched.length === 0) return false;
+  await deleteLorebookEntries_ACU(bookName, matched.map(entry => entry.uid));
+  return true;
+}
+
+async function deleteInternalEntriesByComment_ACU(bookNames: string[], comment: string): Promise<number> {
+  let deleted = 0;
+  for (const bookName of normalizeBookNamesForTakeover_ACU(bookNames)) {
+    if (await deleteInternalEntryByComment_ACU(bookName, comment)) deleted += 1;
+  }
+  return deleted;
+}
+
+async function writeFinalGenerationGreenlightPayload_ACU(bookName: string, payload: AgentFinalGenerationGreenlightPayload_ACU): Promise<void> {
+  const entries = await getLorebookEntries_ACU(bookName);
+  const existing = findAgentFinalGenerationGreenlightEntry_ACU(entries || []);
+  if (existing && hasValidWorldbookUid_ACU(existing.uid)) {
+    await setLorebookEntries_ACU(bookName, [buildAgentFinalGenerationGreenlightEntry_ACU(payload, existing.uid)]);
+  } else {
+    await createLorebookEntries_ACU(bookName, [buildAgentFinalGenerationGreenlightEntry_ACU(payload)]);
+  }
+  const updatedEntries = await getLorebookEntries_ACU(bookName);
+  const updatedPayload = parseAgentFinalGenerationGreenlightPayload_ACU(findAgentFinalGenerationGreenlightEntry_ACU(updatedEntries || []));
+  if (!isSameFinalGenerationGreenlightPayload_ACU(updatedPayload, payload)) {
+    throw new Error(`世界书「${bookName}」正文绿灯状态写入失败`);
+  }
+}
+
+async function readFinalGenerationGreenlightPayloads_ACU(bookNames: string[], characterKey: string): Promise<AgentFinalGenerationGreenlightPayload_ACU[]> {
+  const payloads: AgentFinalGenerationGreenlightPayload_ACU[] = [];
+  for (const bookName of normalizeBookNamesForTakeover_ACU(bookNames)) {
+    const entries = await getLorebookEntries_ACU(bookName);
+    const payload = parseAgentFinalGenerationGreenlightPayload_ACU(findAgentFinalGenerationGreenlightEntry_ACU(entries || []));
+    if (!payload || payload.characterKey !== characterKey) continue;
+    payloads.push(payload);
+  }
+  return payloads;
 }
 
 async function writeWorldbookSnapshotPayloads_ACU(snapshot: AgentWorldbookControlSnapshot_ACU, bookNames: string[]): Promise<void> {
@@ -296,6 +404,44 @@ async function collectTakeoverCandidates_ACU(bookNames: string[]): Promise<{
   return { snapshotBooks, updates };
 }
 
+export async function writeFinalGenerationGreenlights_ACU(greenlights: unknown): Promise<boolean> {
+  const normalizedGreenlights = normalizeFinalGenerationGreenlights_ACU(greenlights);
+  const resolvedBookNames = await resolveTakeoverBookNames_ACU();
+  if (resolvedBookNames.length === 0 || normalizedGreenlights.length === 0) {
+    await clearFinalGenerationGreenlights_ACU();
+    return false;
+  }
+  const snapshot = await refreshPlotAgentWorldbookSnapshotFromWorldbooks_ACU();
+  if (!snapshot.active) {
+    await clearFinalGenerationGreenlights_ACU();
+    return false;
+  }
+  const payload: AgentFinalGenerationGreenlightPayload_ACU = {
+    version: 1,
+    characterKey: buildCurrentCharacterKey_ACU(),
+    selectionSignature: snapshot.selectionSignature,
+    createdAt: Date.now(),
+    greenlights: normalizedGreenlights,
+  };
+  await writeFinalGenerationGreenlightPayload_ACU(normalizeBookNamesForTakeover_ACU(resolvedBookNames)[0], payload);
+  return true;
+}
+
+export async function readFinalGenerationGreenlights_ACU(): Promise<Array<{ bookName: string; uid: string | number; reason?: string }>> {
+  const resolvedBookNames = await resolveTakeoverBookNames_ACU();
+  if (resolvedBookNames.length === 0) return [];
+  const snapshot = await refreshPlotAgentWorldbookSnapshotFromWorldbooks_ACU();
+  if (!snapshot.active) return [];
+  const payloads = await readFinalGenerationGreenlightPayloads_ACU(resolvedBookNames, buildCurrentCharacterKey_ACU());
+  const matched = payloads.find(payload => payload.selectionSignature === snapshot.selectionSignature);
+  return matched ? matched.greenlights : [];
+}
+
+export async function clearFinalGenerationGreenlights_ACU(): Promise<number> {
+  const resolvedBookNames = await resolveTakeoverBookNames_ACU();
+  return deleteInternalEntriesByComment_ACU(resolvedBookNames, AGENT_FINAL_GENERATION_GREENLIGHT_COMMENT_ACU);
+}
+
 export async function takeoverWorldbookGreenlights_ACU(): Promise<AgentWorldbookTakeoverResult_ACU> {
   const resolvedBookNames = await resolveTakeoverBookNames_ACU();
   const selectionSignature = buildWorldbookSelectionSignature_ACU(resolvedBookNames);
@@ -399,14 +545,17 @@ export async function restoreWorldbookGreenlights_ACU(): Promise<AgentWorldbookR
   const selectionSignature = buildWorldbookSelectionSignature_ACU(resolvedBookNames);
   const snapshot = await refreshPlotAgentWorldbookSnapshotFromWorldbooks_ACU();
 
+  if (!isWorldbookEntryUpdateApiAvailable_ACU()) {
+    return { updated: false, reason: 'worldbook_api_unavailable', bookNames: resolvedBookNames, selectionSignature, restored: 0, skipped: 0, failed: 0, updates: [] };
+  }
   if (!snapshot.active) {
-    return { updated: false, reason: 'no_active_snapshot', bookNames: resolvedBookNames, selectionSignature, restored: 0, skipped: 0, failed: 0, updates: [] };
+    const deletedFinalGreenlights = await deleteInternalEntriesByComment_ACU(resolvedBookNames, AGENT_FINAL_GENERATION_GREENLIGHT_COMMENT_ACU);
+    const deletedSnapshots = await deleteInternalEntriesByComment_ACU(resolvedBookNames, AGENT_WORLDBOOK_SNAPSHOT_COMMENT_ACU);
+    const cleaned = deletedFinalGreenlights + deletedSnapshots;
+    return { updated: cleaned > 0, reason: 'no_active_snapshot', bookNames: resolvedBookNames, selectionSignature, restored: 0, skipped: 0, failed: 0, updates: [] };
   }
   if (snapshot.selectionSignature !== selectionSignature) {
     return { updated: false, reason: 'selection_signature_mismatch', bookNames: resolvedBookNames, selectionSignature, restored: 0, skipped: 0, failed: 0, updates: [] };
-  }
-  if (!isWorldbookEntryUpdateApiAvailable_ACU()) {
-    return { updated: false, reason: 'worldbook_api_unavailable', bookNames: resolvedBookNames, selectionSignature, restored: 0, skipped: 0, failed: 0, updates: [] };
   }
 
   let restored = 0;
@@ -431,9 +580,9 @@ export async function restoreWorldbookGreenlights_ACU(): Promise<AgentWorldbookR
   }
 
   if (failed === 0) {
-    const inactiveSnapshot = buildInactiveSnapshot_ACU(selectionSignature);
-    await writeWorldbookSnapshotPayloads_ACU(inactiveSnapshot, resolvedBookNames);
-    setPlotAgentWorldbookSnapshot_ACU(inactiveSnapshot);
+    await deleteInternalEntriesByComment_ACU(resolvedBookNames, AGENT_FINAL_GENERATION_GREENLIGHT_COMMENT_ACU);
+    await deleteInternalEntriesByComment_ACU(resolvedBookNames, AGENT_WORLDBOOK_SNAPSHOT_COMMENT_ACU);
+    setPlotAgentWorldbookSnapshot_ACU(buildInactiveSnapshot_ACU(selectionSignature));
   }
 
   return {

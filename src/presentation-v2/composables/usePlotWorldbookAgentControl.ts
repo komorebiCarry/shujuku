@@ -9,7 +9,7 @@ import type {
   AgentWorldbookControlSnapshot_ACU,
   PromptSegment_ACU,
 } from '../../data/models/settings-model';
-import { settings_ACU } from '../../service/runtime/state-manager';
+import { settings_ACU, _set_pendingFinalGenerationGreenlights_ACU } from '../../service/runtime/state-manager';
 import { saveSettings_ACU } from '../../service/settings/settings-service';
 import {
   clonePromptSegments_ACU,
@@ -156,6 +156,47 @@ export function usePlotWorldbookAgentControl() {
     control.enabled = next !== 'disabled';
     saveSettings_ACU();
     await refresh();
+    if (next === 'agent') {
+      busy.value = 'takeover';
+      try {
+        const result = await takeoverWorldbookGreenlights_ACU();
+        await refresh();
+        if (result.updated) {
+          const text = result.failed > 0
+            ? plotCopy.agentControl.takeover.partial(result.disabled, result.failed)
+            : plotCopy.agentControl.takeover.success(result.disabled);
+          if (result.failed > 0) toast.warning(text, { muteable: false });
+          else toast.success(text, { muteable: false });
+        } else {
+          const message = plotCopy.agentControl.takeover.reasons[result.reason || ''] || plotCopy.agentControl.takeover.noop;
+          toast.warning(message, { muteable: false });
+        }
+      } catch (e: any) {
+        toast.error(`${plotCopy.agentControl.takeover.error}${e?.message ? `：${e.message}` : ''}`, { muteable: false });
+      } finally {
+        busy.value = null;
+      }
+      return;
+    }
+    if (next === 'disabled') {
+      _set_pendingFinalGenerationGreenlights_ACU([]);
+      busy.value = 'restore';
+      try {
+        const result = await restoreWorldbookGreenlights_ACU();
+        await refresh();
+        if (result.updated) {
+          toast.success(plotCopy.agentControl.restore.success(result.restored, result.skipped), { muteable: false });
+        } else {
+          const message = plotCopy.agentControl.restore.reasons[result.reason || ''] || plotCopy.agentControl.restore.noop;
+          toast.info(message, { muteable: false });
+        }
+      } catch (e: any) {
+        toast.error(`${plotCopy.agentControl.restore.error}${e?.message ? `：${e.message}` : ''}`, { muteable: false });
+      } finally {
+        busy.value = null;
+      }
+      return;
+    }
     toast.info(plotCopy.agentControl.modeChanged[next], { muteable: false });
   }
 

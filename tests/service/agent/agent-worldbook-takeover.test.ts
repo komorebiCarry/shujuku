@@ -35,6 +35,11 @@ vi.mock('../../../src/data/gateways/worldbook-gateway', () => ({
     creates.forEach((entry, index) => entries.push({ uid: `created-${entries.length + index + 1}`, ...entry }));
     mockEntriesByBook.set(bookName, entries);
   }),
+  deleteLorebookEntries_ACU: vi.fn(async (bookName: string, uids: any[]) => {
+    const uidSet = new Set((uids || []).map(uid => String(uid)));
+    const entries = mockEntriesByBook.get(bookName) || [];
+    mockEntriesByBook.set(bookName, entries.filter(entry => !uidSet.has(String(entry.uid))));
+  }),
   isWorldbookEntryUpdateApiAvailable_ACU: vi.fn(() => true),
 }));
 
@@ -62,15 +67,22 @@ vi.mock('../../../src/service/agent/agent-skillify-service', () => ({
 
 import { settings_ACU } from '../../../src/service/runtime/state-manager';
 import {
+  AGENT_FINAL_GENERATION_GREENLIGHT_COMMENT_ACU,
   AGENT_WORLDBOOK_SNAPSHOT_COMMENT_ACU,
   getPlotAgentWorldbookSnapshot_ACU,
+  readFinalGenerationGreenlights_ACU,
   refreshPlotAgentWorldbookSnapshotFromWorldbooks_ACU,
   restoreWorldbookGreenlights_ACU,
   takeoverWorldbookGreenlights_ACU,
+  writeFinalGenerationGreenlights_ACU,
 } from '../../../src/service/agent/agent-worldbook-takeover';
 
 function snapshotEntry(bookName = '角色A世界书'): any {
   return (mockEntriesByBook.get(bookName) || []).find(entry => entry.comment === AGENT_WORLDBOOK_SNAPSHOT_COMMENT_ACU);
+}
+
+function finalGenerationGreenlightEntry(bookName = '角色A世界书'): any {
+  return (mockEntriesByBook.get(bookName) || []).find(entry => entry.comment === AGENT_FINAL_GENERATION_GREENLIGHT_COMMENT_ACU);
 }
 
 beforeEach(() => {
@@ -130,7 +142,7 @@ describe('agent worldbook takeover snapshot persistence', () => {
     expect(getPlotAgentWorldbookSnapshot_ACU().active).toBe(false);
   });
 
-  it('恢复时从世界书内部读取当前角色卡快照并写回 inactive 状态', async () => {
+  it('恢复时从世界书内部读取当前角色卡快照并删除内部快照条目', async () => {
     await takeoverWorldbookGreenlights_ACU();
     (settings_ACU as any).plotSettings.agentWorldbookControlSnapshot = { active: false, selectionSignature: '', createdAt: 0, books: {} };
 
@@ -139,20 +151,61 @@ describe('agent worldbook takeover snapshot persistence', () => {
     expect(result.updated).toBe(true);
     expect(result.restored).toBe(1);
     expect(mockEntriesByBook.get('角色A世界书')?.find(entry => entry.uid === 1)?.enabled).toBe(true);
-    const payload = JSON.parse(snapshotEntry().content);
-    expect(payload.active).toBe(false);
+    expect(snapshotEntry()).toBeUndefined();
     expect(getPlotAgentWorldbookSnapshot_ACU().active).toBe(false);
   });
 
-  it('恢复后写入 inactive 快照失败时保留 active 镜像供用户重试', async () => {
+  it('正文绿灯状态写入后可按当前角色和世界书范围读取', async () => {
     await takeoverWorldbookGreenlights_ACU();
-    (settings_ACU as any).plotSettings.agentWorldbookControlSnapshot = { active: false, selectionSignature: '', createdAt: 0, books: {} };
-    mockSetLorebookEntriesShouldSkipSnapshot.value = true;
 
-    await expect(restoreWorldbookGreenlights_ACU()).rejects.toThrow('接管快照写入失败');
+    const written = await writeFinalGenerationGreenlights_ACU([{ bookName: '角色A世界书', uid: 1, reason: '正文需要' }]);
+    const readBack = await readFinalGenerationGreenlights_ACU();
+
+    expect(written).toBe(true);
+    expect(finalGenerationGreenlightEntry()).toBeTruthy();
+    expect(readBack).toEqual([{ bookName: '角色A世界书', uid: 1, reason: '正文需要' }]);
+  });
+
+  it('正文绿灯为空时删除旧托管状态条目', async () => {
+    await takeoverWorldbookGreenlights_ACU();
+    await writeFinalGenerationGreenlights_ACU([{ bookName: '角色A世界书', uid: 1, reason: '正文需要' }]);
+
+    const written = await writeFinalGenerationGreenlights_ACU([]);
+
+    expect(written).toBe(false);
+    expect(finalGenerationGreenlightEntry()).toBeUndefined();
+  });
+
+  it('没有 active 快照时恢复也会清理残留正文绿灯状态条目', async () => {
+    mockEntriesByBook.set('角色A世界书', [
+      { uid: 1, enabled: true, keys: ['钥匙A'], comment: '普通条目A', content: '内容A' },
+      { uid: 'final-state', enabled: false, type: 'constant', keys: [], comment: AGENT_FINAL_GENERATION_GREENLIGHT_COMMENT_ACU, content: JSON.stringify({ version: 1, characterKey: 'hash:char-a-data|char-a|a.png|角色A', selectionSignature: 'hash:{"scope":"agent-worldbook-takeover","books":["角色A世界书"]}', createdAt: 1, greenlights: [{ bookName: '角色A世界书', uid: 1 }] }) },
+      { uid: 'snapshot-state', enabled: false, type: 'constant', keys: [], comment: AGENT_WORLDBOOK_SNAPSHOT_COMMENT_ACU, content: JSON.stringify({ version: 1, characterKey: 'hash:char-a-data|char-a|a.png|角色A', active: false, selectionSignature: 'hash:{"scope":"agent-worldbook-takeover","books":["角色A世界书"]}', createdAt: 1, books: {} }) },
+    ]);
+
+    const result = await restoreWorldbookGreenlights_ACU();
+
+    expect(result.updated).toBe(true);
+    expect(result.reason).toBe('no_active_snapshot');
+    expect(finalGenerationGreenlightEntry()).toBeUndefined();
+    expect(snapshotEntry()).toBeUndefined();
+  });
+
+  it('正文绿灯状态创建静默失败时抛出写入失败', async () => {
+    await takeoverWorldbookGreenlights_ACU();
+    mockCreateLorebookEntriesShouldSkip.value = true;
+
+    await expect(writeFinalGenerationGreenlights_ACU([{ bookName: '角色A世界书', uid: 1, reason: '正文需要' }])).rejects.toThrow('正文绿灯状态写入失败');
+  });
+
+  it('恢复成功时同步删除正文绿灯状态条目', async () => {
+    await takeoverWorldbookGreenlights_ACU();
+    await writeFinalGenerationGreenlights_ACU([{ bookName: '角色A世界书', uid: 1, reason: '正文需要' }]);
+
+    await restoreWorldbookGreenlights_ACU();
 
     expect(mockEntriesByBook.get('角色A世界书')?.find(entry => entry.uid === 1)?.enabled).toBe(true);
-    expect(JSON.parse(snapshotEntry().content).active).toBe(true);
-    expect(getPlotAgentWorldbookSnapshot_ACU().active).toBe(true);
+    expect(snapshotEntry()).toBeUndefined();
+    expect(finalGenerationGreenlightEntry()).toBeUndefined();
   });
 });

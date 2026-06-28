@@ -82,6 +82,12 @@ describe('agent worldbook skillify candidate filtering', () => {
     expect(isWorldbookEntrySkillifyCandidate_ACU({ comment: 'TavernDB-ACU-AgentGreenlight-plot', keys: ['agent'] })).toBe(true);
   });
 
+  it('always excludes Agent final generation greenlight internal entries from Agent candidates', () => {
+    const entry = { comment: 'TavernDB-ACU-AgentFinalGenerationGreenlights', keys: ['异常关键词'], enabled: true, type: 'selective' };
+    expect(isDatabaseGeneratedWorldbookEntryForAgent_ACU(entry)).toBe(true);
+    expect(isWorldbookEntrySkillifyCandidate_ACU(entry)).toBe(false);
+  });
+
   it('keeps existing disabled, constant, and keyword checks intact', () => {
     expect(isWorldbookEntrySkillifyCandidate_ACU({ comment: '用户自定义地点', keys: ['酒馆'], enabled: false })).toBe(false);
     expect(isWorldbookEntrySkillifyCandidate_ACU({ comment: '用户自定义地点', keys: ['酒馆'], type: 'constant' })).toBe(false);

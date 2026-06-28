@@ -42,6 +42,9 @@ const {
   mockSavePlotToLatestMessage,
   mockHashUserInput,
   mockIsEntryBlocked,
+  mockRunAgentDecisionForPlot,
+  mockWriteFinalGenerationGreenlights,
+  mockClearFinalGenerationGreenlights,
 } = vi.hoisted(() => {
   const mockAbortControllerRef = { value: null as any };
   const mockCurrentJsonTableDataRef = {
@@ -109,6 +112,9 @@ const {
     mockSavePlotToLatestMessage: vi.fn(),
     mockHashUserInput: vi.fn((text: string) => `hash_${text}`),
     mockIsEntryBlocked: vi.fn((entry: any) => !!entry?.blocked),
+    mockRunAgentDecisionForPlot: vi.fn(),
+    mockWriteFinalGenerationGreenlights: vi.fn(),
+    mockClearFinalGenerationGreenlights: vi.fn(),
   };
 });
 
@@ -223,6 +229,15 @@ vi.mock('../../../../src/service/runtime/plot-runtime/plot-history-preset', () =
   savePlotToLatestMessage_ACU: mockSavePlotToLatestMessage,
 }));
 
+vi.mock('../../../../src/service/agent/agent-decision-engine', () => ({
+  runAgentDecisionForPlot_ACU: mockRunAgentDecisionForPlot,
+}));
+
+vi.mock('../../../../src/service/agent/agent-worldbook-takeover', () => ({
+  writeFinalGenerationGreenlights_ACU: mockWriteFinalGenerationGreenlights,
+  clearFinalGenerationGreenlights_ACU: mockClearFinalGenerationGreenlights,
+}));
+
 import {
   willPlotUseMainApiGenerateRaw_ACU,
   runPlotTasksRuntime_ACU,
@@ -301,6 +316,16 @@ beforeEach(() => {
   mockGetPlotFromHistory.mockReturnValue('上一轮剧情');
   mockSavePlotToLatestMessage.mockResolvedValue(undefined);
   mockCallApiWithPlotPreset.mockResolvedValue('任务输出');
+  mockRunAgentDecisionForPlot.mockImplementation(async ({ enabledTasks }: any) => ({
+    active: false,
+    taskPlan: [],
+    plotGreenlights: {},
+    tableFillGreenlights: [],
+    finalGenerationGreenlights: [],
+    effectiveTasks: enabledTasks,
+  }));
+  mockWriteFinalGenerationGreenlights.mockResolvedValue(true);
+  mockClearFinalGenerationGreenlights.mockResolvedValue(0);
 });
 
 describe('willPlotUseMainApiGenerateRaw_ACU', () => {
@@ -556,6 +581,35 @@ describe('runPlotTasksRuntime_ACU', () => {
       ]),
     }));
     expect(mockSavePlotToLatestMessage).toHaveBeenCalledWith(true);
+  });
+
+  it('Agent 正文绿灯托管写入失败时保留内存 pending 并继续执行剧情任务', async () => {
+    const finalGreenlights = [{ bookName: '剧情书', uid: 12, reason: '正文需要' }];
+    mockRunAgentDecisionForPlot.mockResolvedValueOnce({
+      active: true,
+      taskPlan: [],
+      plotGreenlights: {},
+      tableFillGreenlights: [],
+      finalGenerationGreenlights: finalGreenlights,
+      effectiveTasks: [
+        {
+          id: 'task-a',
+          name: '任务A',
+          stage: 1,
+          order: 1,
+          maxRetries: 1,
+          promptGroup: [{ role: 'user', content: 'stage-1-task-a' }],
+        },
+      ],
+    });
+    mockWriteFinalGenerationGreenlights.mockRejectedValueOnce(new Error('托管写入失败'));
+
+    const result = await runPlotTasksRuntime_ACU({ tasks: [{ id: 'task-a', name: '任务A', stage: 1, order: 1, maxRetries: 1, promptGroup: [{ role: 'user', content: 'stage-1-task-a' }] }] }, '当前输入');
+
+    expect(mockSetPendingFinalGenerationGreenlights).toHaveBeenCalledWith(finalGreenlights);
+    expect(mockWriteFinalGenerationGreenlights).toHaveBeenCalledWith(finalGreenlights);
+    expect(result.finalMessage).toBe('最终注入消息');
+    expect(result.successfulResults).toHaveLength(1);
   });
 
   it('某个 stage 失败时会阻断后续 stage', async () => {

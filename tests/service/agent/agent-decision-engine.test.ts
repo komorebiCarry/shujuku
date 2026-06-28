@@ -33,6 +33,7 @@ import { runAgentDecisionForPlot_ACU } from '../../../src/service/agent/agent-de
 describe('runAgentDecisionForPlot_ACU', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    const skillMetaBlock = '<!-- ACU_SKILL_META_START\n{"version":1,"description":"陈默人物 Skill 描述","triggerWhen":"陈默触发条件","updatedAt":1,"updatedBy":"agent-skillify"}\nACU_SKILL_META_END -->';
     mockRefreshPlotAgentWorldbookSnapshot.mockResolvedValue({
       active: true,
       selectionSignature: 'scope',
@@ -40,7 +41,7 @@ describe('runAgentDecisionForPlot_ACU', () => {
       books: { '剧情书': [{ uid: 12, previousEnabled: true }] },
     });
     mockGetLorebookEntries.mockResolvedValue([
-      { uid: 12, comment: '陈默人物档案', keys: ['陈默'], content: '陈默内容', enabled: true },
+      { uid: 12, comment: `陈默人物档案\n\n${skillMetaBlock}`, keys: ['陈默'], content: '陈默内容', enabled: true },
     ]);
   });
 
@@ -77,9 +78,8 @@ describe('runAgentDecisionForPlot_ACU', () => {
 
   it('renders decision context by AI layers with paired user turns and selectable task filtering', async () => {
     const longWorldbookContent = '书'.repeat(250);
-    const skillMetaBlock = '<!-- ACU_SKILL_META_START\n{"version":1,"description":"陈默人物 Skill 描述","triggerWhen":"陈默触发条件","updatedAt":1,"updatedBy":"agent-skillify"}\nACU_SKILL_META_END -->';
     mockGetLorebookEntries.mockResolvedValueOnce([
-      { uid: 12, comment: `陈默人物档案\n\n${skillMetaBlock}`, keys: ['陈默'], content: longWorldbookContent, enabled: true },
+      { uid: 12, comment: `陈默人物档案\n\n<!-- ACU_SKILL_META_START\n{"version":1,"description":"陈默人物 Skill 描述","triggerWhen":"陈默触发条件","updatedAt":1,"updatedBy":"agent-skillify"}\nACU_SKILL_META_END -->`, keys: ['陈默'], content: longWorldbookContent, enabled: true },
     ]);
     mockCallAIWithPreset.mockResolvedValue(JSON.stringify({
       taskPlan: [{ taskId: 'selectable_task', run: true, effectiveStage: 1, effectiveOrder: 0 }],
@@ -147,6 +147,41 @@ describe('runAgentDecisionForPlot_ACU', () => {
     expect(messages[0].content).not.toContain(longWorldbookContent);
     expect(messages[0].content).toContain('selectable_task');
     expect(messages[0].content).not.toContain('blocked_task');
+  });
+
+  it('does not trigger Agent decision when snapshot entries do not contain usable Skill metadata', async () => {
+    mockGetLorebookEntries.mockResolvedValueOnce([
+      { uid: 12, comment: '陈默人物档案', keys: ['陈默'], content: '陈默内容', enabled: true },
+    ]);
+
+    const result = await runAgentDecisionForPlot_ACU({
+      plotSettings: { agentWorldbookControl: { enabled: true, mode: 'agent' } },
+      userMessage: '敲门',
+      sharedContext: {},
+      enabledTasks: [{ id: 'task id', name: '默认任务', description: '需要判断的剧情任务', enabled: true, promptGroup: { messages: [] } }],
+    });
+
+    expect(result.active).toBe(false);
+    expect(result.fallbackReason).toBe('empty_worldbook_scope');
+    expect(mockCallAIWithPreset).not.toHaveBeenCalled();
+  });
+
+  it('does not trigger Agent decision when Skill metadata block has no description or triggerWhen', async () => {
+    const emptySkillMetaBlock = '<!-- ACU_SKILL_META_START\n{"version":1,"description":"","triggerWhen":"","updatedAt":1,"updatedBy":"agent-skillify"}\nACU_SKILL_META_END -->';
+    mockGetLorebookEntries.mockResolvedValueOnce([
+      { uid: 12, comment: `陈默人物档案\n\n${emptySkillMetaBlock}`, keys: ['陈默'], content: '陈默内容', enabled: true },
+    ]);
+
+    const result = await runAgentDecisionForPlot_ACU({
+      plotSettings: { agentWorldbookControl: { enabled: true, mode: 'agent' } },
+      userMessage: '敲门',
+      sharedContext: {},
+      enabledTasks: [{ id: 'task id', name: '默认任务', description: '需要判断的剧情任务', enabled: true, promptGroup: { messages: [] } }],
+    });
+
+    expect(result.active).toBe(false);
+    expect(result.fallbackReason).toBe('empty_worldbook_scope');
+    expect(mockCallAIWithPreset).not.toHaveBeenCalled();
   });
 
   it('uses user-layer plot records from recent context instead of independent plot context messages', async () => {
@@ -347,10 +382,11 @@ describe('runAgentDecisionForPlot_ACU', () => {
 
   it('clips greenlights by max tk budget after resolving entry indexes', async () => {
     mockRefreshPlotAgentWorldbookSnapshot.mockResolvedValueOnce({ active: true, selectionSignature: 'scope', createdAt: 1, books: { '剧情书': [{ uid: 1 }, { uid: 2 }, { uid: 3 }] } });
+    const skillMetaBlock = (description: string) => `<!-- ACU_SKILL_META_START\n${JSON.stringify({ version: 1, description, triggerWhen: '预算测试触发', updatedAt: 1, updatedBy: 'agent-skillify' })}\nACU_SKILL_META_END -->`;
     mockGetLorebookEntries.mockResolvedValueOnce([
-      { uid: 1, comment: '一号', keys: ['一'], content: 'A'.repeat(100), enabled: true },
-      { uid: 2, comment: '二号', keys: ['二'], content: 'B'.repeat(100), enabled: true },
-      { uid: 3, comment: '三号', keys: ['三'], content: 'C'.repeat(10), enabled: true },
+      { uid: 1, comment: `一号\n\n${skillMetaBlock('一号 Skill')}`, keys: ['一'], content: 'A'.repeat(100), enabled: true },
+      { uid: 2, comment: `二号\n\n${skillMetaBlock('二号 Skill')}`, keys: ['二'], content: 'B'.repeat(100), enabled: true },
+      { uid: 3, comment: `三号\n\n${skillMetaBlock('三号 Skill')}`, keys: ['三'], content: 'C'.repeat(10), enabled: true },
     ]);
     mockCallAIWithPreset.mockResolvedValue(JSON.stringify({
       taskPlan: [{ taskId: 'task_id', run: true, effectiveStage: 1, effectiveOrder: 0 }],

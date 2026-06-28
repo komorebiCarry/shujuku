@@ -10,10 +10,11 @@
  * 本文件保留 handleChatCompletionReady_ACU（依赖多个子模块，不适合放入任何单一子模块），
  * 并 re-export 所有子模块的公开 API。
  */
-import { currentJsonTableData_ACU, pendingFinalGenerationGreenlights_ACU, settings_ACU, _set_pendingFinalGenerationGreenlights_ACU } from './state-manager';
+import { currentJsonTableData_ACU, pendingFinalGenerationGreenlights_ACU, settings_ACU } from './state-manager';
 import { logDebug_ACU } from '../../shared/utils';
 import { parseRandomTags_ACU, replaceRandomVariables_ACU, parseCalcTags_ACU, parseMaxTags_ACU, parseMinTags_ACU, replaceCalcVariables_ACU, replaceMaxVariables_ACU, replaceMinVariables_ACU, parseIfBlockRecursive_ACU, getLatestAIMessageContent_ACU, replaceDbSqlVariables } from './template-vars';
 import { getPlotFromHistory_ACU, getWorldbookContentForPlot_ACU } from './plot-runtime';
+import { readFinalGenerationGreenlights_ACU } from '../agent/agent-worldbook-takeover';
 
 // ═══ 上下文标签提取/过滤 ═══
 export {
@@ -90,14 +91,20 @@ export {
   export async function handleChatCompletionReady_ACU(data: any) {
     logDebug_ACU('[提示词模板] handleChatCompletionReady_ACU 被调用');
     logDebug_ACU('[提示词模板] settings_ACU?.promptTemplateSettings:', settings_ACU?.promptTemplateSettings);
-    const finalGenerationGreenlights = Array.isArray(pendingFinalGenerationGreenlights_ACU) ? [...pendingFinalGenerationGreenlights_ACU] : [];
-    _set_pendingFinalGenerationGreenlights_ACU([]);
     if (!settings_ACU?.promptTemplateSettings?.enabled) {
       logDebug_ACU('[提示词模板] 功能未启用，跳过处理');
       return;
     }
     if (!data || !data.messages || !Array.isArray(data.messages)) {
       return;
+    }
+    let finalGenerationGreenlights = Array.isArray(pendingFinalGenerationGreenlights_ACU) ? [...pendingFinalGenerationGreenlights_ACU] : [];
+    if (finalGenerationGreenlights.length === 0) {
+      try {
+        finalGenerationGreenlights = await readFinalGenerationGreenlights_ACU();
+      } catch (e) {
+        logDebug_ACU('[提示词模板] Agent 正文世界书绿灯托管状态读取失败，已跳过托管绿灯注入:', e);
+      }
     }
     const startTime = Date.now();
     logDebug_ACU('[提示词模板] 开始处理酒馆提示词...');

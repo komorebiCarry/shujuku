@@ -65,11 +65,15 @@ const DATABASE_GENERATED_WORLDBOOK_COMMENT_PREFIXES_ACU = [
   '重要人物条目',
   '总结条目',
   '小总结条目',
-  'TavernDB-ACU-AgentWorldbookSnapshot',
 ];
 
 const AGENT_MANAGED_WORLDBOOK_COMMENT_PREFIXES_ACU = [
   'TavernDB-ACU-AgentGreenlight',
+];
+
+const AGENT_INTERNAL_WORLDBOOK_COMMENT_PREFIXES_ACU = [
+  'TavernDB-ACU-AgentWorldbookSnapshot',
+  'TavernDB-ACU-AgentFinalGenerationGreenlights',
 ];
 
 function normalizeGeneratedWorldbookComment_ACU(value: unknown): string {
@@ -79,15 +83,22 @@ function normalizeGeneratedWorldbookComment_ACU(value: unknown): string {
     .replace(/^外部导入-/, '');
 }
 
+function isAgentInternalWorldbookEntry_ACU(entry: Record<string, any>): boolean {
+  const normalizedComment = normalizeGeneratedWorldbookComment_ACU(entry?.comment || entry?.name);
+  return !!normalizedComment && AGENT_INTERNAL_WORLDBOOK_COMMENT_PREFIXES_ACU.some(prefix => normalizedComment.startsWith(prefix));
+}
+
 export function isDatabaseGeneratedWorldbookEntryForAgent_ACU(entry: Record<string, any>): boolean {
   const normalizedComment = normalizeGeneratedWorldbookComment_ACU(entry?.comment || entry?.name);
   if (!normalizedComment) return false;
+  if (AGENT_INTERNAL_WORLDBOOK_COMMENT_PREFIXES_ACU.some(prefix => normalizedComment.startsWith(prefix))) return true;
   if (AGENT_MANAGED_WORLDBOOK_COMMENT_PREFIXES_ACU.some(prefix => normalizedComment.startsWith(prefix))) return false;
   return DATABASE_GENERATED_WORLDBOOK_COMMENT_PREFIXES_ACU.some(prefix => normalizedComment.startsWith(prefix));
 }
 
 export function isWorldbookEntrySkillifyCandidate_ACU(entry: Record<string, any>): boolean {
   if (!entry || entry.enabled === false) return false;
+  if (isAgentInternalWorldbookEntry_ACU(entry)) return false;
   if (String(entry.type || '').toLowerCase() === 'constant') return false;
   if (isDatabaseGeneratedWorldbookEntryForAgent_ACU(entry)) return false;
   return getWorldbookEntryKeywordsForSkillify_ACU(entry).length > 0;

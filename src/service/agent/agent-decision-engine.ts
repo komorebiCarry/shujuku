@@ -187,6 +187,10 @@ function resolveWorldbookEntryTk_ACU(entry: Record<string, any>, meta: ReturnTyp
   return estimateTextTk_ACU(entry?.content || comment);
 }
 
+function hasUsableWorldbookSkillMeta_ACU(meta: ReturnType<typeof parseWorldbookSkillMetaFromComment_ACU>): boolean {
+  return !!meta && (!!String(meta.description || '').trim() || !!String(meta.triggerWhen || '').trim());
+}
+
 async function collectWorldbookSummariesFromSnapshot_ACU(
   contextSettings: ReturnType<typeof normalizeAgentContextSettings_ACU>,
 ): Promise<{ summaries: AgentWorldbookSummary_ACU[]; allowedKeys: Set<string> }> {
@@ -202,9 +206,10 @@ async function collectWorldbookSummariesFromSnapshot_ACU(
       if (uid === null || uid === undefined || String(uid).trim() === '') continue;
       const entry = (entries || []).find(item => String(item?.uid) === String(uid));
       if (!entry) continue;
-      allowedKeys.add(refKey_ACU(bookName, uid));
       const comment = String(entry.comment || entry.name || '');
       const meta = parseWorldbookSkillMetaFromComment_ACU(comment);
+      if (!hasUsableWorldbookSkillMeta_ACU(meta)) continue;
+      allowedKeys.add(refKey_ACU(bookName, uid));
       const index = summaries.length + 1;
       summaries.push({
         bookName,
@@ -226,6 +231,8 @@ async function collectWorldbookSummariesFromSnapshot_ACU(
   const bookNames = await resolvePlotWorldbookSkillifyBookNames_ACU();
   const candidates = await collectWorldbookSkillifyCandidates_ACU(bookNames, { maxEntries: contextSettings.decisionWorldbookCandidateLimit });
   for (const candidate of candidates) {
+    const meta = candidate.existingSkillMeta;
+    if (!hasUsableWorldbookSkillMeta_ACU(meta)) continue;
     allowedKeys.add(refKey_ACU(candidate.bookName, candidate.uid));
     const index = summaries.length + 1;
     summaries.push({
@@ -234,8 +241,8 @@ async function collectWorldbookSummariesFromSnapshot_ACU(
       index,
       comment: candidate.comment,
       keys: candidate.keys,
-      description: candidate.existingSkillMeta?.description || '',
-      triggerWhen: candidate.existingSkillMeta?.triggerWhen || '',
+      description: meta?.description || '',
+      triggerWhen: meta?.triggerWhen || '',
       tk: candidate.tk,
     });
   }

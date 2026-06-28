@@ -21,6 +21,8 @@ const {
   mockParseIfBlockRecursive,
   mockGetLatestAIMessageContent,
   mockGetPlotFromHistory,
+  mockGetWorldbookContentForPlot,
+  mockReadFinalGenerationGreenlights,
 } = vi.hoisted(() => {
   const mockPendingFinalGenerationGreenlightsRef = { value: [] as any[] };
   return {
@@ -42,6 +44,8 @@ const {
     mockParseIfBlockRecursive: vi.fn((s: string) => s),
     mockGetLatestAIMessageContent: vi.fn(() => ''),
     mockGetPlotFromHistory: vi.fn(() => null),
+    mockGetWorldbookContentForPlot: vi.fn(),
+    mockReadFinalGenerationGreenlights: vi.fn(async () => []),
   };
 });
 
@@ -77,7 +81,11 @@ vi.mock('../../../src/service/runtime/plot-runtime', () => ({
   loadPresetAndCleanCharacterData_ACU: vi.fn(),
   getPlotFromHistory_ACU: mockGetPlotFromHistory,
   runOptimizationLogic_ACU: vi.fn(),
-  getWorldbookContentForPlot_ACU: vi.fn(),
+  getWorldbookContentForPlot_ACU: mockGetWorldbookContentForPlot,
+}));
+
+vi.mock('../../../src/service/agent/agent-worldbook-takeover', () => ({
+  readFinalGenerationGreenlights_ACU: mockReadFinalGenerationGreenlights,
 }));
 
 vi.mock('../../../src/service/runtime/helpers-context-tags', () => ({
@@ -120,8 +128,20 @@ import { handleChatCompletionReady_ACU } from '../../../src/service/runtime/help
 
 beforeEach(() => {
   vi.clearAllMocks();
+  mockParseRandomTags.mockImplementation((s: string) => s);
+  mockReplaceRandomVariables.mockImplementation((s: string) => s);
+  mockParseCalcTags.mockImplementation((s: string) => s);
+  mockParseMaxTags.mockImplementation((s: string) => s);
+  mockParseMinTags.mockImplementation((s: string) => s);
+  mockReplaceCalcVariables.mockImplementation((s: string) => s);
+  mockReplaceMaxVariables.mockImplementation((s: string) => s);
+  mockReplaceMinVariables.mockImplementation((s: string) => s);
+  mockParseIfBlockRecursive.mockImplementation((s: string) => s);
+  mockGetPlotFromHistory.mockReturnValue(null);
   mockSettings.promptTemplateSettings = { enabled: true, maxNestingDepth: 10, debugMode: false };
   mockPendingFinalGenerationGreenlightsRef.value = [];
+  mockGetWorldbookContentForPlot.mockResolvedValue('');
+  mockReadFinalGenerationGreenlights.mockResolvedValue([]);
 });
 
 describe('handleChatCompletionReady_ACU', () => {
@@ -248,6 +268,25 @@ describe('handleChatCompletionReady_ACU', () => {
 
     await handleChatCompletionReady_ACU(data);
     expect(mockGetPlotFromHistory).toHaveBeenCalled();
+  });
+
+  it('内存正文绿灯为空时从托管状态读取并注入正文世界书内容', async () => {
+    const managedGreenlights = [{ bookName: '角色A世界书', uid: 1, reason: '正文需要' }];
+    mockReadFinalGenerationGreenlights.mockResolvedValue(managedGreenlights);
+    mockGetWorldbookContentForPlot.mockResolvedValue('正文世界书内容');
+
+    const data = { messages: [{ role: 'user', content: '测试' }] };
+    await handleChatCompletionReady_ACU(data);
+
+    expect(mockReadFinalGenerationGreenlights).toHaveBeenCalledTimes(1);
+    expect(mockGetWorldbookContentForPlot).toHaveBeenCalledWith(
+      {},
+      '',
+      '',
+      managedGreenlights,
+    );
+    expect(mockSetPendingFinalGenerationGreenlights).not.toHaveBeenCalled();
+    expect(data.messages).toContainEqual({ role: 'system', content: '正文世界书内容' });
   });
 
   it('处理管线按正确顺序执行', async () => {

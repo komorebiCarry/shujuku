@@ -21,6 +21,7 @@ import { getPlotFromHistory_ACU, savePlotToLatestMessage_ACU } from './plot-hist
 import { abortableDelay } from '../../../shared/abortable-delay';
 import { runAgentDecisionForPlot_ACU, type AgentDecisionResult_ACU, type AgentWorldbookRef_ACU } from '../../agent/agent-decision-engine';
 import { normalizeAgentContextSettings_ACU } from '../../agent/agent-prompt-template';
+import { clearFinalGenerationGreenlights_ACU, writeFinalGenerationGreenlights_ACU } from '../../agent/agent-worldbook-takeover';
 
   function checkPlotAbortRequested_ACU() {
     if (abortController_ACU && abortController_ACU.signal.aborted) {
@@ -514,7 +515,19 @@ import { normalizeAgentContextSettings_ACU } from '../../agent/agent-prompt-temp
       enabledTasks,
     });
     sharedContext.agentDecision = agentDecision;
-    _set_pendingFinalGenerationGreenlights_ACU(agentDecision.active === true ? (agentDecision.finalGenerationGreenlights || []) : []);
+    const finalGenerationGreenlights = agentDecision.active === true && Array.isArray(agentDecision.finalGenerationGreenlights)
+      ? agentDecision.finalGenerationGreenlights
+      : [];
+    _set_pendingFinalGenerationGreenlights_ACU(finalGenerationGreenlights);
+    try {
+      if (agentDecision.active === true && finalGenerationGreenlights.length > 0) {
+        await writeFinalGenerationGreenlights_ACU(finalGenerationGreenlights);
+      } else {
+        await clearFinalGenerationGreenlights_ACU();
+      }
+    } catch (error) {
+      logWarn_ACU('[剧情推进] Agent 正文世界书绿灯托管状态写入失败，本轮保留内存绿灯继续执行:', error);
+    }
     if (agentDecision.active === true) {
       enabledTasks = Array.isArray(agentDecision.effectiveTasks) ? agentDecision.effectiveTasks : [];
     }
