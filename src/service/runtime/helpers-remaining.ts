@@ -84,6 +84,7 @@ export {
 // ═══ 保留在入口文件中的函数（依赖多个子模块） ═══
 
   type AgentWorldbookPromptRole_ACU = 'system' | 'user' | 'assistant';
+  type AgentWorldbookPromptPosition_ACU = 'worldInfoBefore' | 'worldInfoAfter' | 'inChat';
 
   function normalizeAgentWorldbookDepth_ACU(value: any) {
     const depth = typeof value === 'number' ? value : parseInt(String(value ?? ''), 10);
@@ -96,6 +97,13 @@ export {
     return 'system';
   }
 
+  function normalizeAgentWorldbookPosition_ACU(value: any): AgentWorldbookPromptPosition_ACU {
+    const position = String(value || '').trim().toLowerCase();
+    if (position === 'before_char' || position === 'before_character' || position === 'before_character_definition' || position === '0') return 'worldInfoBefore';
+    if (position === 'after_char' || position === 'after_character' || position === 'after_character_definition' || position === '1') return 'worldInfoAfter';
+    return 'inChat';
+  }
+
   function formatAgentWorldbookEntryForPrompt_ACU(entry: any) {
     const content = String(entry?.content || '').trim();
     if (!content) return '';
@@ -106,24 +114,173 @@ export {
 
   type AgentWorldbookInjectionItem_ACU = { order: number; content: string };
 
-  function injectAgentWorldbookEntriesIntoMessages_ACU(messages: any[], entries: any[]) {
-    const groups = new Map<number, Map<AgentWorldbookPromptRole_ACU, AgentWorldbookInjectionItem_ACU[]>>();
+  function findAgentWorldbookPromptMessageIndex_ACU(messages: any[], identifier: 'worldInfoBefore' | 'worldInfoAfter') {
+    return (Array.isArray(messages) ? messages : []).findIndex((message: any) => {
+      if (!message || typeof message !== 'object') return false;
+      return message.identifier === identifier || message.id === identifier || message.name === identifier;
+    });
+  }
+
+  function appendAgentWorldbookContentToMessage_ACU(message: any, content: string) {
+    if (!message || typeof message !== 'object' || !content) return false;
+    if (typeof message.content === 'string') {
+      message.content = [message.content, content].filter(chunk => typeof chunk === 'string' && chunk.trim()).join('\n\n');
+      return true;
+    }
+    if (Array.isArray(message.content)) {
+      const textPart = message.content.find((part: any) => part && part.type === 'text' && typeof part.text === 'string');
+      if (textPart) {
+        textPart.text = [textPart.text, content].filter(chunk => typeof chunk === 'string' && chunk.trim()).join('\n\n');
+      } else {
+        message.content.unshift({ type: 'text', text: content });
+      }
+      return true;
+    }
+    message.content = content;
+    return true;
+  }
+
+  function escapeAgentWorldbookRegExp_ACU(value: string) {
+    return String(value || '').replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  }
+
+  function normalizeAgentWorldbookFilteredText_ACU(value: string) {
+    return String(value || '')
+      .replace(/[ \t]+\n/g, '\n')
+      .replace(/\n{3,}/g, '\n\n')
+      .trim();
+  }
+
+  function buildNativeWorldbookGreenlightRemovalCandidates_ACU(entry: any) {
+    const content = String(entry?.content || '').trim();
+    if (!content) return [];
+    const comment = String(entry?.comment || entry?.rawComment || entry?.name || '').trim();
+    const candidates: { text: string; requiresComment: boolean }[] = [];
+    const addCandidate = (text: string, requiresComment: boolean) => {
+      const normalized = String(text || '').trim();
+      if (!normalized) return;
+      if (candidates.some(candidate => candidate.text === normalized)) return;
+      candidates.push({ text: normalized, requiresComment });
+    };
+
+    if (comment) {
+      addCandidate(`# ${comment}\n${content}`, true);
+      addCandidate(`[ACU Agent Greenlight: ${comment}]\n${content}`, true);
+    }
+    addCandidate(content, false);
+
+    return candidates.sort((a, b) => b.text.length - a.text.length);
+  }
+
+  function isNativeWorldbookPromptMessage_ACU(message: any) {
+    if (!message || typeof message !== 'object') return false;
+    if (message.identifier === 'worldInfoBefore' || message.identifier === 'worldInfoAfter') return true;
+    if (message.id === 'worldInfoBefore' || message.id === 'worldInfoAfter') return true;
+    if (message.name === 'worldInfoBefore' || message.name === 'worldInfoAfter') return true;
+    return false;
+  }
+
+  function shouldFilterNativeWorldbookMessage_ACU(message: any) {
+    if (!message || typeof message !== 'object') return false;
+    if (message.injected === true) return false;
+    if (isNativeWorldbookPromptMessage_ACU(message)) return true;
+    return String(message.role || '').trim().toLowerCase() === 'system';
+  }
+
+  function removeNativeWorldbookGreenlightText_ACU(text: string, entries: any[], allowRawContentOnly: boolean) {
+    let result = String(text || '');
+    let removedCount = 0;
     for (const entry of Array.isArray(entries) ? entries : []) {
-      const content = formatAgentWorldbookEntryForPrompt_ACU(entry);
+      const comment = String(entry?.comment || entry?.rawComment || entry?.name || '').trim();
+      const candidates = buildNativeWorldbookGreenlightRemovalCandidates_ACU(entry);
+      for (const candidate of candidates) {
+        if (!allowRawContentOnly && !candidate.requiresComment) continue;
+        if (candidate.requiresComment && comment && !result.includes(comment)) continue;
+        const pattern = new RegExp(`(?:\\n{0,2})${escapeAgentWorldbookRegExp_ACU(candidate.text)}(?:\\n{0,2})`, 'g');
+        const before = result;
+        result = result.replace(pattern, '\n\n');
+        if (result !== before) removedCount++;
+      }
+    }
+    return {
+      text: removedCount > 0 ? normalizeAgentWorldbookFilteredText_ACU(result) : text,
+      removedCount,
+    };
+  }
+
+  function filterNativeWorldbookGreenlightsFromMessages_ACU(messages: any[], entries: any[]) {
+    if (!Array.isArray(messages) || !Array.isArray(entries) || entries.length === 0) return 0;
+    let totalRemoved = 0;
+    for (const message of messages) {
+      if (!shouldFilterNativeWorldbookMessage_ACU(message)) continue;
+      const allowRawContentOnly = isNativeWorldbookPromptMessage_ACU(message);
+      if (typeof message.content === 'string') {
+        const result = removeNativeWorldbookGreenlightText_ACU(message.content, entries, allowRawContentOnly);
+        message.content = result.text;
+        totalRemoved += result.removedCount;
+      } else if (Array.isArray(message.content)) {
+        for (const part of message.content) {
+          if (!part || part.type !== 'text' || typeof part.text !== 'string') continue;
+          const result = removeNativeWorldbookGreenlightText_ACU(part.text, entries, allowRawContentOnly);
+          part.text = result.text;
+          totalRemoved += result.removedCount;
+        }
+      }
+    }
+    return totalRemoved;
+  }
+
+  function buildAgentWorldbookInjectionItems_ACU(entries: any[]) {
+    return (Array.isArray(entries) ? entries : [])
+      .map(entry => {
+        const content = formatAgentWorldbookEntryForPrompt_ACU(entry);
+        if (!content) return null;
+        const order = Number(entry?.order);
+        return {
+          entry,
+          content,
+          order: Number.isFinite(order) ? order : 0,
+          position: normalizeAgentWorldbookPosition_ACU(entry?.position),
+        };
+      })
+      .filter(Boolean) as { entry: any; content: string; order: number; position: AgentWorldbookPromptPosition_ACU }[];
+  }
+
+  function injectAgentWorldbookEntriesIntoMessages_ACU(messages: any[], entries: any[]) {
+    const items = buildAgentWorldbookInjectionItems_ACU(entries);
+    const positionedGroups = {
+      worldInfoBefore: items.filter(item => item.position === 'worldInfoBefore').sort((a, b) => a.order - b.order),
+      worldInfoAfter: items.filter(item => item.position === 'worldInfoAfter').sort((a, b) => a.order - b.order),
+      inChat: items.filter(item => item.position === 'inChat'),
+    };
+
+    let injectedMessageCount = 0;
+    for (const identifier of ['worldInfoBefore', 'worldInfoAfter'] as const) {
+      const content = positionedGroups[identifier].map(item => item.content).join('\n\n').trim();
       if (!content) continue;
-      const depth = normalizeAgentWorldbookDepth_ACU(entry?.depth);
-      const role = normalizeAgentWorldbookRole_ACU(entry?.role);
-      const order = Number(entry?.order);
+      const targetIndex = findAgentWorldbookPromptMessageIndex_ACU(messages, identifier);
+      if (targetIndex >= 0 && appendAgentWorldbookContentToMessage_ACU(messages[targetIndex], content)) {
+        injectedMessageCount++;
+      } else {
+        logDebug_ACU(`[提示词模板] 未找到 ${identifier} 消息，Agent 正文世界书绿灯降级为 system injected message。`);
+        messages.splice(identifier === 'worldInfoBefore' ? 0 : Math.min(messages.length, 1), 0, { role: 'system', content, injected: true });
+        injectedMessageCount++;
+      }
+    }
+
+    const groups = new Map<number, Map<AgentWorldbookPromptRole_ACU, AgentWorldbookInjectionItem_ACU[]>>();
+    for (const item of positionedGroups.inChat) {
+      const depth = normalizeAgentWorldbookDepth_ACU(item.entry?.depth);
+      const role = normalizeAgentWorldbookRole_ACU(item.entry?.role);
       if (!groups.has(depth)) groups.set(depth, new Map());
       const roleGroups = groups.get(depth)!;
       if (!roleGroups.has(role)) roleGroups.set(role, []);
       roleGroups.get(role)!.push({
-        order: Number.isFinite(order) ? order : 0,
-        content,
+        order: item.order,
+        content: item.content,
       });
     }
 
-    let injectedMessageCount = 0;
     let totalInsertedMessages = 0;
     const roleOrder: AgentWorldbookPromptRole_ACU[] = ['system', 'user', 'assistant'];
     // 对齐 SillyTavern openai.js 的 populationInjectionPrompts：该 hook 阶段的
@@ -175,9 +332,13 @@ export {
           settings_ACU?.plotSettings || {},
           finalGenerationGreenlights,
         );
+        const filteredNativeCount = filterNativeWorldbookGreenlightsFromMessages_ACU(data.messages, finalWorldbookEntries);
+        if (filteredNativeCount > 0) {
+          logDebug_ACU('[提示词模板] 已过滤酒馆原生正文世界书绿灯片段，数量:', filteredNativeCount);
+        }
         const injectedMessageCount = injectAgentWorldbookEntriesIntoMessages_ACU(data.messages, finalWorldbookEntries);
         if (injectedMessageCount > 0) {
-          logDebug_ACU('[提示词模板] 运行时 Agent 正文世界书绿灯已按 depth/order 注入，消息数:', injectedMessageCount);
+          logDebug_ACU('[提示词模板] 运行时 Agent 正文世界书绿灯已按 position/depth/order 注入，消息数:', injectedMessageCount);
         }
       } catch (e) {
         logDebug_ACU('[提示词模板] 运行时 Agent 正文世界书绿灯注入失败，已跳过本轮绿灯注入:', e);

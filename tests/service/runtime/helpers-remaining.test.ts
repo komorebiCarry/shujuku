@@ -391,6 +391,181 @@ describe('handleChatCompletionReady_ACU', () => {
     ]);
   });
 
+  it('正文绿灯按 worldInfoBefore/worldInfoAfter 标识合并到 SillyTavern 原生世界书位置', async () => {
+    mockPendingFinalGenerationGreenlightsRef.value = [{ bookName: '世界书', uid: 'positioned' }];
+    mockGetAgentGreenlightWorldbookEntriesForPlot.mockResolvedValue([
+      { comment: '后置第二', content: 'after-2', position: 'after_character_definition', order: 20 },
+      { comment: '前置', content: 'before-1', position: 'before_character_definition', order: 10 },
+      { comment: '后置第一', content: 'after-1', position: 'after_character_definition', order: 10 },
+    ]);
+
+    const data = {
+      messages: [
+        { role: 'system', identifier: 'worldInfoBefore', content: '原生前置世界书' },
+        { role: 'system', identifier: 'main', content: '主系统提示' },
+        { role: 'system', identifier: 'worldInfoAfter', content: '原生后置世界书' },
+        { role: 'user', content: '当前输入' },
+      ],
+    };
+
+    await handleChatCompletionReady_ACU(data);
+
+    expect(data.messages).toEqual([
+      {
+        role: 'system',
+        identifier: 'worldInfoBefore',
+        content: '原生前置世界书\n\n[ACU Agent Greenlight: 前置]\nbefore-1',
+      },
+      { role: 'system', identifier: 'main', content: '主系统提示' },
+      {
+        role: 'system',
+        identifier: 'worldInfoAfter',
+        content: '原生后置世界书\n\n[ACU Agent Greenlight: 后置第一]\nafter-1\n\n[ACU Agent Greenlight: 后置第二]\nafter-2',
+      },
+      { role: 'user', content: '当前输入' },
+    ]);
+  });
+
+  it('正文绿灯 before/after 找不到原生标识时降级为 system injected message', async () => {
+    mockPendingFinalGenerationGreenlightsRef.value = [{ bookName: '世界书', uid: 'fallback-position' }];
+    mockGetAgentGreenlightWorldbookEntriesForPlot.mockResolvedValue([
+      { comment: '前置降级', content: 'before-fallback', position: 'before_character_definition', order: 1 },
+      { comment: '后置降级', content: 'after-fallback', position: 'after_character_definition', order: 2 },
+    ]);
+
+    const data = {
+      messages: [
+        { role: 'system', content: '系统提示' },
+        { role: 'user', content: '当前输入' },
+      ],
+    };
+
+    await handleChatCompletionReady_ACU(data);
+
+    expect(data.messages).toEqual([
+      { role: 'system', content: '[ACU Agent Greenlight: 前置降级]\nbefore-fallback', injected: true },
+      { role: 'system', content: '[ACU Agent Greenlight: 后置降级]\nafter-fallback', injected: true },
+      { role: 'system', content: '系统提示' },
+      { role: 'user', content: '当前输入' },
+    ]);
+    expect(mockLogDebug).toHaveBeenCalledWith(expect.stringContaining('未找到 worldInfoBefore 消息，Agent 正文世界书绿灯降级为 system injected message。'));
+    expect(mockLogDebug).toHaveBeenCalledWith(expect.stringContaining('未找到 worldInfoAfter 消息，Agent 正文世界书绿灯降级为 system injected message。'));
+  });
+
+  it('正文绿灯注入前会过滤 system 消息中酒馆原生触发的同条世界书内容', async () => {
+    mockPendingFinalGenerationGreenlightsRef.value = [{ bookName: '世界书', uid: 'native-filter' }];
+    mockGetAgentGreenlightWorldbookEntriesForPlot.mockResolvedValue([
+      { comment: '原生绿灯', content: '需要由 Agent 接管的正文世界书', position: 'at_depth_as_system', depth: 1, role: 'system', order: 1 },
+    ]);
+
+    const data = {
+      messages: [
+        { role: 'system', content: '系统提示\n\n# 原生绿灯\n需要由 Agent 接管的正文世界书\n\n其他系统提示' },
+        { role: 'user', content: '当前输入' },
+      ],
+    };
+
+    await handleChatCompletionReady_ACU(data);
+
+    expect(data.messages).toEqual([
+      { role: 'system', content: '系统提示\n\n其他系统提示' },
+      { role: 'system', content: '[ACU Agent Greenlight: 原生绿灯]\n需要由 Agent 接管的正文世界书', injected: true },
+      { role: 'user', content: '当前输入' },
+    ]);
+    expect(mockLogDebug).toHaveBeenCalledWith('[提示词模板] 已过滤酒馆原生正文世界书绿灯片段，数量:', 1);
+  });
+
+  it('正文绿灯过滤不会删除普通用户消息中的相同文本', async () => {
+    mockPendingFinalGenerationGreenlightsRef.value = [{ bookName: '世界书', uid: 'user-safe' }];
+    mockGetAgentGreenlightWorldbookEntriesForPlot.mockResolvedValue([
+      { comment: '用户提到的绿灯', content: '用户正文里的相同句子', position: 'at_depth_as_system', depth: 1, role: 'system', order: 1 },
+    ]);
+
+    const data = {
+      messages: [
+        { role: 'system', content: '系统提示' },
+        { role: 'user', content: '用户正文里的相同句子' },
+      ],
+    };
+
+    await handleChatCompletionReady_ACU(data);
+
+    expect(data.messages).toEqual([
+      { role: 'system', content: '系统提示' },
+      { role: 'system', content: '[ACU Agent Greenlight: 用户提到的绿灯]\n用户正文里的相同句子', injected: true },
+      { role: 'user', content: '用户正文里的相同句子' },
+    ]);
+  });
+
+
+  it('正文绿灯过滤不会删除普通 system 消息中的裸相同文本', async () => {
+    mockPendingFinalGenerationGreenlightsRef.value = [{ bookName: '世界书', uid: 'system-raw-safe' }];
+    mockGetAgentGreenlightWorldbookEntriesForPlot.mockResolvedValue([
+      { comment: '普通系统提示同文', content: '这段系统提示恰好与世界书相同', position: 'at_depth_as_system', depth: 1, role: 'system', order: 1 },
+    ]);
+
+    const data = {
+      messages: [
+        { role: 'system', content: '系统前缀\n\n这段系统提示恰好与世界书相同\n\n系统后缀' },
+        { role: 'user', content: '当前输入' },
+      ],
+    };
+
+    await handleChatCompletionReady_ACU(data);
+
+    expect(data.messages).toEqual([
+      { role: 'system', content: '系统前缀\n\n这段系统提示恰好与世界书相同\n\n系统后缀' },
+      { role: 'system', content: '[ACU Agent Greenlight: 普通系统提示同文]\n这段系统提示恰好与世界书相同', injected: true },
+      { role: 'user', content: '当前输入' },
+    ]);
+    expect(mockLogDebug).not.toHaveBeenCalledWith('[提示词模板] 已过滤酒馆原生正文世界书绿灯片段，数量:', expect.any(Number));
+  });
+
+  it('正文绿灯过滤会删除 worldInfo 标识消息中的裸相同文本', async () => {
+    mockPendingFinalGenerationGreenlightsRef.value = [{ bookName: '世界书', uid: 'worldinfo-raw-filter' }];
+    mockGetAgentGreenlightWorldbookEntriesForPlot.mockResolvedValue([
+      { comment: '原生裸内容', content: '原生 worldInfo 只保留正文内容', position: 'at_depth_as_system', depth: 1, role: 'system', order: 1 },
+    ]);
+
+    const data = {
+      messages: [
+        { role: 'system', identifier: 'worldInfoBefore', content: '原生 worldInfo 只保留正文内容' },
+        { role: 'user', content: '当前输入' },
+      ],
+    };
+
+    await handleChatCompletionReady_ACU(data);
+
+    expect(data.messages).toEqual([
+      { role: 'system', identifier: 'worldInfoBefore', content: '' },
+      { role: 'system', content: '[ACU Agent Greenlight: 原生裸内容]\n原生 worldInfo 只保留正文内容', injected: true },
+      { role: 'user', content: '当前输入' },
+    ]);
+    expect(mockLogDebug).toHaveBeenCalledWith('[提示词模板] 已过滤酒馆原生正文世界书绿灯片段，数量:', 1);
+  });
+
+  it('正文绿灯过滤不会删除已经由插件注入的 Agent 消息', async () => {
+    mockPendingFinalGenerationGreenlightsRef.value = [{ bookName: '世界书', uid: 'injected-safe' }];
+    mockGetAgentGreenlightWorldbookEntriesForPlot.mockResolvedValue([
+      { comment: '已注入', content: '已注入内容', position: 'at_depth_as_system', depth: 1, role: 'system', order: 1 },
+    ]);
+
+    const data = {
+      messages: [
+        { role: 'system', content: '[ACU Agent Greenlight: 已注入]\n已注入内容', injected: true },
+        { role: 'user', content: '当前输入' },
+      ],
+    };
+
+    await handleChatCompletionReady_ACU(data);
+
+    expect(data.messages).toEqual([
+      { role: 'system', content: '[ACU Agent Greenlight: 已注入]\n已注入内容', injected: true },
+      { role: 'system', content: '[ACU Agent Greenlight: 已注入]\n已注入内容', injected: true },
+      { role: 'user', content: '当前输入' },
+    ]);
+  });
+
   it('处理管线按正确顺序执行', async () => {
     const callOrder: string[] = [];
     mockParseRandomTags.mockImplementation((s: string) => { callOrder.push('parseRandom'); return s; });

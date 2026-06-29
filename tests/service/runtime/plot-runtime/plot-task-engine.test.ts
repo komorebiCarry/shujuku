@@ -35,6 +35,7 @@ const {
   mockGetPlotPlaceholderTagNames,
   mockBuildPlotTagMapFromText,
   mockReplacePlotTagPlaceholders,
+  mockBuildTaskWorldbookTriggerText,
   mockAggregatePlotTaskTags,
   mockBuildPlotSaveContentFromTaskResults,
   mockBuildFinalPlotInjectionMessage,
@@ -104,6 +105,7 @@ const {
     mockGetPlotPlaceholderTagNames: vi.fn(),
     mockBuildPlotTagMapFromText: vi.fn(),
     mockReplacePlotTagPlaceholders: vi.fn(),
+    mockBuildTaskWorldbookTriggerText: vi.fn(),
     mockAggregatePlotTaskTags: vi.fn(),
     mockBuildPlotSaveContentFromTaskResults: vi.fn(),
     mockBuildFinalPlotInjectionMessage: vi.fn(),
@@ -216,6 +218,7 @@ vi.mock('../../../../src/service/runtime/plot-runtime/plot-tag-utils', () => ({
   getPlotPlaceholderTagNames_ACU: mockGetPlotPlaceholderTagNames,
   buildPlotTagMapFromText_ACU: mockBuildPlotTagMapFromText,
   replacePlotTagPlaceholders_ACU: mockReplacePlotTagPlaceholders,
+  buildTaskWorldbookTriggerText_ACU: mockBuildTaskWorldbookTriggerText,
   sortPlotTaskResults_ACU: vi.fn(),
   aggregatePlotTaskTags_ACU: mockAggregatePlotTaskTags,
   buildPlotSaveContentFromTaskResults_ACU: mockBuildPlotSaveContentFromTaskResults,
@@ -307,6 +310,7 @@ beforeEach(() => {
   mockGetPlotPlaceholderTagNames.mockReturnValue([]);
   mockBuildPlotTagMapFromText.mockReturnValue(new Map());
   mockReplacePlotTagPlaceholders.mockImplementation((text: string) => text);
+  mockBuildTaskWorldbookTriggerText.mockReturnValue('');
   mockAggregatePlotTaskTags.mockImplementation((results: any[]) => ({ aggregated: new Map(results.map((result: any) => [result.taskId, result.taskName])), injectOnlyTagNames: new Set<string>() }));
   mockBuildPlotSaveContentFromTaskResults.mockReturnValue('保存的剧情内容');
   mockBuildFinalPlotInjectionMessage.mockReturnValue('最终注入消息');
@@ -403,7 +407,7 @@ describe('getWorldbookContentForPlot_ACU', () => {
   });
 
 
-  it('Agent 绿灯条目会优先绕过 includeEntry 过滤，确保正文生成能注入 AI 反馈的全部绿灯条目', async () => {
+  it('旧数组参数存在 Agent 绿灯时保持 agent-controlled 兼容语义', async () => {
     await getWorldbookContentForPlot_ACU(
       { plotWorldbookConfig: { source: 'manual', manualSelection: ['书A'] } },
       '当前输入',
@@ -425,6 +429,46 @@ describe('getWorldbookContentForPlot_ACU', () => {
     expect(options.formatEntry(greenlightEntry)).not.toContain('#');
     expect(options.formatEntry(normalEntry)).toBe('# 普通条目\n普通正文');
     expect(options.includeEntry({ bookName: '书A', uid: 8, normalizedComment: 'TavernDB-ACU-OutlineTable-1', blocked: true })).toBe(false);
+  });
+
+  it('normal 模式即使传入绿灯也保持普通世界书选择语义', async () => {
+    await getWorldbookContentForPlot_ACU(
+      {
+        plotWorldbookConfig: {
+          source: 'manual',
+          manualSelection: ['书A'],
+          enabledEntries: { 书A: [1] },
+        },
+      },
+      '当前输入',
+      '',
+      { agentMode: 'normal', agentGreenlights: [{ bookName: '书A', uid: 7, reason: '不应接管' }] },
+    );
+
+    const options = mockBuildCombinedWorldbookContentByStrategy.mock.calls[0][0];
+    expect(options.isSelected({ bookName: '书A', uid: 1, normalizedComment: '普通条目' })).toBe(true);
+    expect(options.isSelected({ bookName: '书A', uid: 2, normalizedComment: '普通条目' })).toBe(false);
+    expect(options.isSelected({ bookName: '书A', uid: 999, normalizedComment: 'TavernDB-ACU-自动生成条目' })).toBe(true);
+  });
+
+  it('agent-controlled 模式即使绿灯为空也不会回退普通关键词世界书', async () => {
+    await getWorldbookContentForPlot_ACU(
+      {
+        plotWorldbookConfig: {
+          source: 'manual',
+          manualSelection: ['书A'],
+          enabledEntries: { 书A: [1] },
+        },
+      },
+      '当前输入',
+      '',
+      { agentMode: 'agent-controlled', agentGreenlights: [] },
+    );
+
+    const options = mockBuildCombinedWorldbookContentByStrategy.mock.calls[0][0];
+    expect(options.isSelected({ bookName: '书A', uid: 1, normalizedComment: '普通条目' })).toBe(false);
+    expect(options.isSelected({ bookName: '书A', uid: 999, normalizedComment: 'TavernDB-ACU-自动生成条目' })).toBe(false);
+    expect(options.forceIncludeEntry({ bookName: '书A', uid: 1, normalizedComment: '普通条目' })).toBe(false);
   });
 
 
@@ -628,6 +672,79 @@ describe('runPlotTasksRuntime_ACU', () => {
     expect(mockSetPendingFinalGenerationGreenlights).toHaveBeenCalledWith(finalGreenlights);
     expect(result.finalMessage).toBe('最终注入消息');
     expect(result.successfulResults).toHaveLength(1);
+  });
+
+  it('Agent active 但任务没有 description/triggerWhen 时，任务级世界书回退普通来源', async () => {
+    mockRunAgentDecisionForPlot.mockResolvedValueOnce({
+      active: true,
+      taskPlan: [],
+      plotGreenlights: {
+        'task-no-skill': [{ bookName: '剧情书', uid: 7, reason: '不应接管无 skill 任务' }],
+      },
+      finalGenerationGreenlights: [],
+      effectiveTasks: [
+        {
+          id: 'task-no-skill',
+          name: '无 Skill 任务',
+          stage: 1,
+          order: 1,
+          maxRetries: 1,
+          promptGroup: [{ role: 'user', content: '无 skill 任务' }],
+        },
+      ],
+    });
+
+    await runPlotTasksRuntime_ACU({
+      plotWorldbookConfig: {
+        source: 'manual',
+        manualSelection: ['剧情书'],
+      },
+      tasks: [{ id: 'task-no-skill', name: '无 Skill 任务', stage: 1, order: 1, maxRetries: 1, promptGroup: [{ role: 'user', content: '无 skill 任务' }] }],
+    }, '当前输入');
+
+    expect(mockCallApiWithPlotPreset).toHaveBeenCalledTimes(1);
+    expect(mockBuildCombinedWorldbookContentByStrategy).toHaveBeenCalledTimes(1);
+    const options = mockBuildCombinedWorldbookContentByStrategy.mock.calls[0][0];
+    expect(options.isSelected({ bookName: '剧情书', uid: 7, normalizedComment: '普通条目' })).toBe(true);
+    expect(options.isSelected({ bookName: '剧情书', uid: 999, normalizedComment: 'TavernDB-ACU-自动生成条目' })).toBe(true);
+  });
+
+  it('Agent active 且任务有 description/triggerWhen 时，任务级世界书由 Agent 控制', async () => {
+    mockRunAgentDecisionForPlot.mockResolvedValueOnce({
+      active: true,
+      taskPlan: [],
+      plotGreenlights: {
+        'task-skill': [{ bookName: '剧情书', uid: 7, reason: '任务需要' }],
+      },
+      finalGenerationGreenlights: [],
+      effectiveTasks: [
+        {
+          id: 'task-skill',
+          name: 'Skill 任务',
+          description: '推进冲突',
+          triggerWhen: '',
+          stage: 1,
+          order: 1,
+          maxRetries: 1,
+          promptGroup: [{ role: 'user', content: 'skill 任务' }],
+        },
+      ],
+    });
+
+    await runPlotTasksRuntime_ACU({
+      plotWorldbookConfig: {
+        source: 'manual',
+        manualSelection: ['剧情书'],
+      },
+      tasks: [{ id: 'task-skill', name: 'Skill 任务', description: '推进冲突', stage: 1, order: 1, maxRetries: 1, promptGroup: [{ role: 'user', content: 'skill 任务' }] }],
+    }, '当前输入');
+
+    expect(mockCallApiWithPlotPreset).toHaveBeenCalledTimes(1);
+    expect(mockBuildCombinedWorldbookContentByStrategy).toHaveBeenCalledTimes(1);
+    const options = mockBuildCombinedWorldbookContentByStrategy.mock.calls[0][0];
+    expect(options.isSelected({ bookName: '剧情书', uid: 7, normalizedComment: '普通条目' })).toBe(true);
+    expect(options.isSelected({ bookName: '剧情书', uid: 8, normalizedComment: '普通条目' })).toBe(false);
+    expect(options.isSelected({ bookName: '剧情书', uid: 999, normalizedComment: 'TavernDB-ACU-自动生成条目' })).toBe(false);
   });
 
   it('某个 stage 失败时会阻断后续 stage', async () => {

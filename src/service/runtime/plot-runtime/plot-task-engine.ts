@@ -22,6 +22,29 @@ import { abortableDelay } from '../../../shared/abortable-delay';
 import { runAgentDecisionForPlot_ACU, type AgentDecisionResult_ACU, type AgentWorldbookRef_ACU } from '../../agent/agent-decision-engine';
 import { normalizeAgentContextSettings_ACU } from '../../agent/agent-prompt-template';
 
+  type PlotWorldbookAgentMode_ACU = 'normal' | 'agent-controlled';
+
+  type PlotWorldbookContentOptions_ACU = AgentWorldbookRef_ACU[] | {
+    agentGreenlights?: AgentWorldbookRef_ACU[];
+    agentMode?: PlotWorldbookAgentMode_ACU;
+  };
+
+  function hasPlotTaskAgentSkill_ACU(task: Record<string, any> | null | undefined): boolean {
+    return !!String(task?.description || '').trim() || !!String(task?.triggerWhen || '').trim();
+  }
+
+  function shouldUseAgentWorldbookForPlotTask_ACU(task: Record<string, any>, agentDecision: AgentDecisionResult_ACU | null | undefined): boolean {
+    return agentDecision?.active === true && task?.agentControl?.selectable !== false && hasPlotTaskAgentSkill_ACU(task);
+  }
+
+  function normalizePlotWorldbookContentOptions_ACU(options: PlotWorldbookContentOptions_ACU = []) {
+    if (Array.isArray(options)) {
+      return { agentGreenlights: options, agentMode: (options.length > 0 ? 'agent-controlled' : 'normal') as PlotWorldbookAgentMode_ACU };
+    }
+    const agentMode = options?.agentMode === 'agent-controlled' ? 'agent-controlled' : 'normal';
+    return { agentGreenlights: Array.isArray(options?.agentGreenlights) ? options.agentGreenlights : [], agentMode };
+  }
+
   function checkPlotAbortRequested_ACU() {
     if (abortController_ACU && abortController_ACU.signal.aborted) {
       throw new Error('TaskAbortedByUser');
@@ -349,8 +372,14 @@ import { normalizeAgentContextSettings_ACU } from '../../agent/agent-prompt-temp
       } else {
         logDebug_ACU(`[剧情推进] [任务:${taskLabel}] 无 {{tag}} 注入内容，世界书仅基于本轮上下文触发`);
       }
-      const taskAgentGreenlights = sharedContext.agentDecision?.plotGreenlights?.[String(normalizedTask.id || '').trim()] || [];
-      taskWorldbookContent = await getWorldbookContentForPlot_ACU(sharedContext.plotSettings, sharedContext.userMessage, worldbookTriggerText, taskAgentGreenlights);
+      const usesAgentWorldbook = shouldUseAgentWorldbookForPlotTask_ACU(normalizedTask, sharedContext.agentDecision);
+      const taskAgentGreenlights = usesAgentWorldbook
+        ? (sharedContext.agentDecision?.plotGreenlights?.[String(normalizedTask.id || '').trim()] || [])
+        : [];
+      taskWorldbookContent = await getWorldbookContentForPlot_ACU(sharedContext.plotSettings, sharedContext.userMessage, worldbookTriggerText, {
+        agentMode: usesAgentWorldbook ? 'agent-controlled' : 'normal',
+        agentGreenlights: taskAgentGreenlights,
+      });
       if (taskWorldbookContent) {
         // 对任务级世界书内容执行与共享管线相同的后处理
         taskWorldbookContent = await tryRenderPlotTemplateWithEjs_ACU(taskWorldbookContent);
@@ -655,7 +684,7 @@ import { normalizeAgentContextSettings_ACU } from '../../agent/agent-prompt-temp
   // ═══ 世界书内容获取 ═══
 
   /** 获取剧情推进功能的世界书内容（默认开启，无需检查 worldbookEnabled） */
-  export async function getWorldbookContentForPlot_ACU(apiSettings: Record<string, any>, userMessage: string, extraBaseText: string = '', agentGreenlights: AgentWorldbookRef_ACU[] = []) {
+  export async function getWorldbookContentForPlot_ACU(apiSettings: Record<string, any>, userMessage: string, extraBaseText: string = '', options: PlotWorldbookContentOptions_ACU = []) {
     if (!apiSettings) {
       logWarn_ACU('[剧情推进] apiSettings 为空，无法获取世界书');
       return '';
@@ -706,10 +735,11 @@ import { normalizeAgentContextSettings_ACU } from '../../agent/agent-prompt-temp
       const historyAndUserText = `${recentMessages.map((message: any) => message.mes || '').join('\n')}\n${userMessage || ''}`;
       const enabledMap = plotCfg?.enabledEntries;
       const hasAnySelection = enabledMap && typeof enabledMap === 'object' && Object.keys(enabledMap).length > 0;
-      const agentGreenlightKeySet = new Set((Array.isArray(agentGreenlights) ? agentGreenlights : [])
+      const worldbookOptions = normalizePlotWorldbookContentOptions_ACU(options);
+      const agentGreenlightKeySet = new Set(worldbookOptions.agentGreenlights
         .map(ref => `${String(ref?.bookName || '').trim()}\u0000${String(ref?.uid || '').trim()}`)
         .filter(key => !key.startsWith('\u0000') && !key.endsWith('\u0000')));
-      const hasAgentGreenlights = agentGreenlightKeySet.size > 0;
+      const isAgentControlledWorldbook = worldbookOptions.agentMode === 'agent-controlled';
 
       return await buildCombinedWorldbookContentByStrategy_ACU({
         logPrefix: '[剧情推进]',
@@ -751,7 +781,7 @@ import { normalizeAgentContextSettings_ACU } from '../../agent/agent-prompt-temp
             normalizedComment.startsWith('小总结条目') ||
             normalizedComment.startsWith('重要人物条目');
           const isAgentGreenlight = agentGreenlightKeySet.has(`${String(entry.bookName || '').trim()}\u0000${String(entry.uid || '').trim()}`);
-          if (hasAgentGreenlights) {
+          if (isAgentControlledWorldbook) {
             return isAgentGreenlight;
           }
           if (!hasAnySelection) return true;
