@@ -13,7 +13,8 @@
 import { currentJsonTableData_ACU, pendingFinalGenerationGreenlights_ACU, settings_ACU } from './state-manager';
 import { logDebug_ACU } from '../../shared/utils';
 import { parseRandomTags_ACU, replaceRandomVariables_ACU, parseCalcTags_ACU, parseMaxTags_ACU, parseMinTags_ACU, replaceCalcVariables_ACU, replaceMaxVariables_ACU, replaceMinVariables_ACU, parseIfBlockRecursive_ACU, getLatestAIMessageContent_ACU, replaceDbSqlVariables } from './template-vars';
-import { getPlotFromHistory_ACU, getWorldbookContentForPlot_ACU, getAgentGreenlightWorldbookEntriesForPlot_ACU } from './plot-runtime';
+import { getPlotFromHistory_ACU, getWorldbookContentForPlot_ACU, getAgentControlledWorldbookEntriesForFinalPrompt_ACU, getAgentGreenlightWorldbookEntriesForPlot_ACU } from './plot-runtime';
+import { isWorldbookTakeoverActive_ACU } from '../agent/agent-worldbook-takeover';
 
 // ═══ 上下文标签提取/过滤 ═══
 export {
@@ -263,7 +264,7 @@ export {
         injectedMessageCount++;
       } else {
         logDebug_ACU(`[提示词模板] 未找到 ${identifier} 消息，Agent 正文世界书绿灯降级为 system injected message。`);
-        messages.splice(identifier === 'worldInfoBefore' ? 0 : Math.min(messages.length, 1), 0, { role: 'system', content, injected: true });
+        messages.push({ role: 'system', content, injected: true });
         injectedMessageCount++;
       }
     }
@@ -293,7 +294,7 @@ export {
       const injectionMessages = roleOrder
         .map(role => {
           const content = (roleGroups.get(role) || [])
-            .sort((a, b) => a.order - b.order)
+            .sort((a, b) => b.order - a.order)
             .map(item => item.content)
             .join('\n\n')
             .trim();
@@ -324,21 +325,27 @@ export {
       return;
     }
     const finalGenerationGreenlights = Array.isArray(pendingFinalGenerationGreenlights_ACU) ? [...pendingFinalGenerationGreenlights_ACU] : [];
+    const shouldHandleAgentWorldbookFinalPrompt = isWorldbookTakeoverActive_ACU() || finalGenerationGreenlights.length > 0;
     const startTime = Date.now();
     logDebug_ACU('[提示词模板] 开始处理酒馆提示词...');
-    if (finalGenerationGreenlights.length > 0) {
+    if (shouldHandleAgentWorldbookFinalPrompt) {
       try {
-        const finalWorldbookEntries = await getAgentGreenlightWorldbookEntriesForPlot_ACU(
+        const allAgentSkillWorldbookEntries = await getAgentControlledWorldbookEntriesForFinalPrompt_ACU(
           settings_ACU?.plotSettings || {},
-          finalGenerationGreenlights,
         );
-        const filteredNativeCount = filterNativeWorldbookGreenlightsFromMessages_ACU(data.messages, finalWorldbookEntries);
+        const filteredNativeCount = filterNativeWorldbookGreenlightsFromMessages_ACU(data.messages, allAgentSkillWorldbookEntries);
         if (filteredNativeCount > 0) {
           logDebug_ACU('[提示词模板] 已过滤酒馆原生正文世界书绿灯片段，数量:', filteredNativeCount);
         }
-        const injectedMessageCount = injectAgentWorldbookEntriesIntoMessages_ACU(data.messages, finalWorldbookEntries);
-        if (injectedMessageCount > 0) {
-          logDebug_ACU('[提示词模板] 运行时 Agent 正文世界书绿灯已按 position/depth/order 注入，消息数:', injectedMessageCount);
+        if (finalGenerationGreenlights.length > 0) {
+          const finalWorldbookEntries = await getAgentGreenlightWorldbookEntriesForPlot_ACU(
+            settings_ACU?.plotSettings || {},
+            finalGenerationGreenlights,
+          );
+          const injectedMessageCount = injectAgentWorldbookEntriesIntoMessages_ACU(data.messages, finalWorldbookEntries);
+          if (injectedMessageCount > 0) {
+            logDebug_ACU('[提示词模板] 运行时 Agent 正文世界书绿灯已按 position/depth/order 注入，消息数:', injectedMessageCount);
+          }
         }
       } catch (e) {
         logDebug_ACU('[提示词模板] 运行时 Agent 正文世界书绿灯注入失败，已跳过本轮绿灯注入:', e);

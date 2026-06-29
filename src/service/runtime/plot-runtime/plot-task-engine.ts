@@ -21,6 +21,7 @@ import { getPlotFromHistory_ACU, savePlotToLatestMessage_ACU } from './plot-hist
 import { abortableDelay } from '../../../shared/abortable-delay';
 import { runAgentDecisionForPlot_ACU, type AgentDecisionResult_ACU, type AgentWorldbookRef_ACU } from '../../agent/agent-decision-engine';
 import { normalizeAgentContextSettings_ACU } from '../../agent/agent-prompt-template';
+import { getWorldbookEntryKeywordsForSkillify_ACU, isDatabaseGeneratedWorldbookEntryForAgent_ACU } from '../../agent/agent-skillify-service';
 
   type PlotWorldbookAgentMode_ACU = 'normal' | 'agent-controlled';
 
@@ -31,6 +32,13 @@ import { normalizeAgentContextSettings_ACU } from '../../agent/agent-prompt-temp
 
   function hasPlotTaskAgentSkill_ACU(task: Record<string, any> | null | undefined): boolean {
     return !!String(task?.description || '').trim() || !!String(task?.triggerWhen || '').trim();
+  }
+
+  function isAgentControlledFinalPromptWorldbookEntry_ACU(entry: Record<string, any>): boolean {
+    if (!entry) return false;
+    if (String(entry.type || '').toLowerCase() === 'constant') return false;
+    if (isDatabaseGeneratedWorldbookEntryForAgent_ACU(entry)) return false;
+    return getWorldbookEntryKeywordsForSkillify_ACU(entry).length > 0;
   }
 
   function shouldUseAgentWorldbookForPlotTask_ACU(task: Record<string, any>, agentDecision: AgentDecisionResult_ACU | null | undefined): boolean {
@@ -807,6 +815,66 @@ import { normalizeAgentContextSettings_ACU } from '../../agent/agent-prompt-temp
     }
   }
 
+  async function resolveAgentFinalPromptWorldbookNames_ACU(apiSettings: Record<string, any>): Promise<string[]> {
+    let bookNames: string[] = [];
+    const plotCfg = (apiSettings && apiSettings.plotWorldbookConfig) ? apiSettings.plotWorldbookConfig : null;
+    const worldbookSource = plotCfg?.source || apiSettings.worldbookSource || 'character';
+
+    if (worldbookSource === 'manual') {
+      bookNames = plotCfg?.manualSelection || apiSettings.selectedWorldbooks || [];
+    } else {
+      const charLorebooks = await getCharLorebooks_ACU({ type: 'all' });
+      if (charLorebooks.primary) bookNames.push(charLorebooks.primary);
+      if (charLorebooks.additional?.length) bookNames.push(...charLorebooks.additional);
+    }
+
+    return [...new Set((Array.isArray(bookNames) ? bookNames : []).filter(Boolean))];
+  }
+
+  /**
+   * 获取 Agent 正文生成接管范围内的所有结构化世界书 skill 条目。
+   *
+   * 这个入口服务最终正文 hook 的原生世界书残留过滤：
+   * - 返回 Agent 控制范围内所有可 skillify 的世界书条目；
+   * - 不依赖本轮 finalGenerationGreenlights allowlist；
+   * - 不依赖关键词触发，避免漏掉“未放行但被 SillyTavern 原生触发”的条目；
+   * - 保留 content/comment/position/depth/role/order，供过滤阶段构造删除候选。
+   */
+  export async function getAgentControlledWorldbookEntriesForFinalPrompt_ACU(apiSettings: Record<string, any>) {
+    if (!apiSettings) {
+      logWarn_ACU('[剧情推进] apiSettings 为空，无法获取 Agent 控制范围正文世界书条目');
+      return [];
+    }
+
+    try {
+      let bookNames: string[] = [];
+      try {
+        bookNames = await resolveAgentFinalPromptWorldbookNames_ACU(apiSettings);
+      } catch (error) {
+        logError_ACU('[剧情推进] 获取角色世界书失败，无法收集 Agent 控制范围正文世界书条目:', error);
+        return [];
+      }
+
+      if (bookNames.length === 0) return [];
+
+      return await collectCombinedWorldbookEntriesByStrategy_ACU({
+        logPrefix: '[剧情推进][Agent正文绿灯过滤目录]',
+        bookNames,
+        baseScanText: '',
+        includeConstantEntriesInBaseScan: false,
+        includeEntry: (entry: any) => isAgentControlledFinalPromptWorldbookEntry_ACU(entry),
+        isSelected: () => true,
+        forceIncludeEntry: () => true,
+        onEntriesFiltered: (entries: any[]) => {
+          logDebug_ACU('[剧情推进][Agent正文绿灯过滤目录] Agent 控制范围 skill 条目候选数量:', entries.length);
+        },
+      });
+    } catch (error) {
+      logError_ACU('[剧情推进] 处理 Agent 控制范围正文世界书条目时发生错误:', error);
+      return [];
+    }
+  }
+
   /**
    * 获取 Agent 正文生成放行的结构化世界书条目。
    *
@@ -829,23 +897,13 @@ import { normalizeAgentContextSettings_ACU } from '../../agent/agent-prompt-temp
 
     try {
       let bookNames: string[] = [];
-      const plotCfg = (apiSettings && apiSettings.plotWorldbookConfig) ? apiSettings.plotWorldbookConfig : null;
-      const worldbookSource = plotCfg?.source || apiSettings.worldbookSource || 'character';
-
-      if (worldbookSource === 'manual') {
-        bookNames = plotCfg?.manualSelection || apiSettings.selectedWorldbooks || [];
-      } else {
-        try {
-          const charLorebooks = await getCharLorebooks_ACU({ type: 'all' });
-          if (charLorebooks.primary) bookNames.push(charLorebooks.primary);
-          if (charLorebooks.additional?.length) bookNames.push(...charLorebooks.additional);
-        } catch (error) {
-          logError_ACU('[剧情推进] 获取角色世界书失败，无法注入 Agent 正文世界书绿灯:', error);
-          return [];
-        }
+      try {
+        bookNames = await resolveAgentFinalPromptWorldbookNames_ACU(apiSettings);
+      } catch (error) {
+        logError_ACU('[剧情推进] 获取角色世界书失败，无法注入 Agent 正文世界书绿灯:', error);
+        return [];
       }
 
-      bookNames = [...new Set((Array.isArray(bookNames) ? bookNames : []).filter(Boolean))];
       if (bookNames.length === 0) return [];
 
       return await collectCombinedWorldbookEntriesByStrategy_ACU({
