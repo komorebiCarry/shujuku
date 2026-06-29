@@ -21,6 +21,12 @@ export interface AgentWorldbookTakeoverEntryUpdate_ACU {
   uid: string | number;
 }
 
+export interface AgentWorldbookFinalGreenlightRef_ACU {
+  bookName: string;
+  uid: string | number;
+  reason?: string;
+}
+
 export interface AgentWorldbookTakeoverResult_ACU {
   updated: boolean;
   reason?: string;
@@ -72,6 +78,81 @@ async function deleteInternalEntriesByComment_ACU(bookNames: string[], comment: 
     if (await deleteInternalEntryByComment_ACU(bookName, comment)) deleted += 1;
   }
   return deleted;
+}
+
+function normalizeAgentWorldbookRefs_ACU(greenlights: unknown): AgentWorldbookFinalGreenlightRef_ACU[] {
+  if (!Array.isArray(greenlights)) return [];
+  const normalized: AgentWorldbookFinalGreenlightRef_ACU[] = [];
+  const seen = new Set<string>();
+
+  for (const ref of greenlights) {
+    if (!ref || typeof ref !== 'object') continue;
+    const bookName = String((ref as any).bookName || '').trim();
+    const uid = (ref as any).uid;
+    if (!bookName || !hasValidWorldbookUid_ACU(uid)) continue;
+    const key = `${bookName}\u0000${String(uid).trim()}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    const reason = String((ref as any).reason || '').trim();
+    normalized.push(reason ? { bookName, uid, reason } : { bookName, uid });
+  }
+
+  return normalized;
+}
+
+function buildSnapshotUidSetByBook_ACU(snapshot: AgentWorldbookControlSnapshot_ACU): Map<string, Set<string>> {
+  const uidSetByBook = new Map<string, Set<string>>();
+  if (snapshot.active !== true) return uidSetByBook;
+
+  for (const [bookName, entries] of Object.entries(snapshot.books || {})) {
+    const normalizedBookName = String(bookName || '').trim();
+    if (!normalizedBookName || !Array.isArray(entries)) continue;
+    const uidSet = new Set<string>();
+    for (const entry of entries) {
+      if (!hasValidWorldbookUid_ACU(entry?.uid)) continue;
+      uidSet.add(String(entry.uid));
+    }
+    if (uidSet.size > 0) uidSetByBook.set(normalizedBookName, uidSet);
+  }
+
+  return uidSetByBook;
+}
+
+function buildAllowedFinalGreenlightKeySet_ACU(greenlights: AgentWorldbookFinalGreenlightRef_ACU[], snapshotUidSetByBook: Map<string, Set<string>>): Set<string> {
+  const allowed = new Set<string>();
+  for (const ref of greenlights) {
+    const bookName = String(ref.bookName || '').trim();
+    const uid = String(ref.uid).trim();
+    if (!snapshotUidSetByBook.get(bookName)?.has(uid)) continue;
+    allowed.add(`${bookName}\u0000${uid}`);
+  }
+  return allowed;
+}
+
+function isFinalGenerationBlueLightEntry_ACU(entry: Record<string, any>): boolean {
+  return entry?.enabled !== false
+    && String(entry?.type || '').trim().toLowerCase() === 'constant'
+    && Array.isArray(entry?.keys)
+    && entry.keys.length === 0;
+}
+
+function buildFinalGreenlightKey_ACU(bookName: string, uid: unknown): string {
+  return `${String(bookName || '').trim()}\u0000${String(uid ?? '').trim()}`;
+}
+
+async function patchSnapshotEntries_ACU(snapshotUidSetByBook: Map<string, Set<string>>, buildPatch: (bookName: string, entry: Record<string, any>) => Record<string, any> | null): Promise<number> {
+  let patched = 0;
+  for (const [bookName, uidSet] of snapshotUidSetByBook.entries()) {
+    const entries = await getLorebookEntries_ACU(bookName);
+    const patches = (entries || [])
+      .filter(entry => uidSet.has(String(entry?.uid)))
+      .map(entry => buildPatch(bookName, entry))
+      .filter(Boolean) as Record<string, any>[];
+    if (patches.length === 0) continue;
+    await setLorebookEntries_ACU(bookName, patches);
+    patched += patches.length;
+  }
+  return patched;
 }
 
 export function buildWorldbookSelectionSignature_ACU(bookNames: string[]): string {
@@ -245,18 +326,58 @@ async function restoreSnapshotEntries_ACU(snapshot: AgentWorldbookControlSnapsho
 }
 
 export async function writeFinalGenerationGreenlights_ACU(greenlights: unknown): Promise<boolean> {
-  void greenlights;
-  await clearFinalGenerationGreenlights_ACU();
-  return false;
+  const snapshot = getPlotAgentWorldbookSnapshot_ACU();
+  const snapshotUidSetByBook = buildSnapshotUidSetByBook_ACU(snapshot);
+  if (snapshotUidSetByBook.size === 0) return false;
+
+  const normalizedGreenlights = normalizeAgentWorldbookRefs_ACU(greenlights);
+  const allowedKeySet = buildAllowedFinalGreenlightKeySet_ACU(normalizedGreenlights, snapshotUidSetByBook);
+
+  const patched = await patchSnapshotEntries_ACU(snapshotUidSetByBook, (bookName, entry) => {
+    if (!hasValidWorldbookUid_ACU(entry?.uid)) return null;
+    const isAllowed = allowedKeySet.has(buildFinalGreenlightKey_ACU(bookName, entry.uid));
+    if (isAllowed) {
+      if (entry.enabled !== false && String(entry.type || '').toLowerCase() === 'constant' && Array.isArray(entry.keys) && entry.keys.length === 0) {
+        return null;
+      }
+      return { uid: entry.uid, enabled: true, type: 'constant', keys: [] };
+    }
+    if (entry.enabled === false) return null;
+    return { uid: entry.uid, enabled: false };
+  });
+
+  return patched > 0;
 }
 
-export async function readFinalGenerationGreenlights_ACU(): Promise<Array<{ bookName: string; uid: string | number; reason?: string }>> {
-  return [];
+export async function readFinalGenerationGreenlights_ACU(): Promise<AgentWorldbookFinalGreenlightRef_ACU[]> {
+  const snapshot = getPlotAgentWorldbookSnapshot_ACU();
+  const snapshotUidSetByBook = buildSnapshotUidSetByBook_ACU(snapshot);
+  const greenlights: AgentWorldbookFinalGreenlightRef_ACU[] = [];
+  const seen = new Set<string>();
+
+  for (const [bookName, uidSet] of snapshotUidSetByBook.entries()) {
+    const entries = await getLorebookEntries_ACU(bookName);
+    for (const entry of entries || []) {
+      if (!hasValidWorldbookUid_ACU(entry?.uid) || !uidSet.has(String(entry.uid)) || !isFinalGenerationBlueLightEntry_ACU(entry)) continue;
+      const key = buildFinalGreenlightKey_ACU(bookName, entry.uid);
+      if (seen.has(key)) continue;
+      seen.add(key);
+      greenlights.push({ bookName, uid: entry.uid });
+    }
+  }
+
+  return greenlights;
 }
 
 export async function clearFinalGenerationGreenlights_ACU(): Promise<number> {
+  const snapshotUidSetByBook = buildSnapshotUidSetByBook_ACU(getPlotAgentWorldbookSnapshot_ACU());
+  const patched = await patchSnapshotEntries_ACU(snapshotUidSetByBook, (_bookName, entry) => {
+    if (!isFinalGenerationBlueLightEntry_ACU(entry)) return null;
+    return { uid: entry.uid, enabled: false };
+  });
   const resolvedBookNames = await resolveTakeoverBookNames_ACU();
-  return deleteInternalEntriesByComment_ACU(resolvedBookNames, AGENT_FINAL_GENERATION_GREENLIGHT_COMMENT_ACU);
+  const deletedLegacyEntries = await deleteInternalEntriesByComment_ACU(resolvedBookNames, AGENT_FINAL_GENERATION_GREENLIGHT_COMMENT_ACU);
+  return patched + deletedLegacyEntries;
 }
 
 export async function takeoverWorldbookGreenlights_ACU(): Promise<AgentWorldbookTakeoverResult_ACU> {

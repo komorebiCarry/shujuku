@@ -13,7 +13,7 @@
 import { currentJsonTableData_ACU, pendingFinalGenerationGreenlights_ACU, settings_ACU } from './state-manager';
 import { logDebug_ACU } from '../../shared/utils';
 import { parseRandomTags_ACU, replaceRandomVariables_ACU, parseCalcTags_ACU, parseMaxTags_ACU, parseMinTags_ACU, replaceCalcVariables_ACU, replaceMaxVariables_ACU, replaceMinVariables_ACU, parseIfBlockRecursive_ACU, getLatestAIMessageContent_ACU, replaceDbSqlVariables } from './template-vars';
-import { getPlotFromHistory_ACU, getWorldbookContentForPlot_ACU, getAgentControlledWorldbookEntriesForFinalPrompt_ACU, getAgentGreenlightWorldbookEntriesForPlot_ACU } from './plot-runtime';
+import { getPlotFromHistory_ACU, getWorldbookContentForPlot_ACU, getAgentControlledWorldbookEntriesForFinalPrompt_ACU } from './plot-runtime';
 import { isWorldbookTakeoverActive_ACU } from '../agent/agent-worldbook-takeover';
 
 // ═══ 上下文标签提取/过滤 ═══
@@ -231,6 +231,25 @@ export {
     return totalRemoved;
   }
 
+  function buildAgentWorldbookRefKeySet_ACU(refs: any[]) {
+    const keySet = new Set<string>();
+    for (const ref of Array.isArray(refs) ? refs : []) {
+      const bookName = String(ref?.bookName || '').trim();
+      const uid = ref?.uid;
+      if (!bookName || uid === null || uid === undefined || String(uid).trim() === '') continue;
+      keySet.add(`${bookName}\u0000${String(uid).trim()}`);
+    }
+    return keySet;
+  }
+
+  function isAgentWorldbookEntryAllowed_ACU(entry: any, allowedKeySet: Set<string>) {
+    if (allowedKeySet.size === 0) return false;
+    const bookName = String(entry?.bookName || '').trim();
+    const uid = entry?.uid;
+    if (!bookName || uid === null || uid === undefined || String(uid).trim() === '') return false;
+    return allowedKeySet.has(`${bookName}\u0000${String(uid).trim()}`);
+  }
+
   function buildAgentWorldbookInjectionItems_ACU(entries: any[]) {
     return (Array.isArray(entries) ? entries : [])
       .map(entry => {
@@ -333,22 +352,15 @@ export {
         const allAgentSkillWorldbookEntries = await getAgentControlledWorldbookEntriesForFinalPrompt_ACU(
           settings_ACU?.plotSettings || {},
         );
-        const filteredNativeCount = filterNativeWorldbookGreenlightsFromMessages_ACU(data.messages, allAgentSkillWorldbookEntries);
+        const allowedFinalGreenlightKeySet = buildAgentWorldbookRefKeySet_ACU(finalGenerationGreenlights);
+        const entriesToFilter = (Array.isArray(allAgentSkillWorldbookEntries) ? allAgentSkillWorldbookEntries : [])
+          .filter(entry => !isAgentWorldbookEntryAllowed_ACU(entry, allowedFinalGreenlightKeySet));
+        const filteredNativeCount = filterNativeWorldbookGreenlightsFromMessages_ACU(data.messages, entriesToFilter);
         if (filteredNativeCount > 0) {
           logDebug_ACU('[提示词模板] 已过滤酒馆原生正文世界书绿灯片段，数量:', filteredNativeCount);
         }
-        if (finalGenerationGreenlights.length > 0) {
-          const finalWorldbookEntries = await getAgentGreenlightWorldbookEntriesForPlot_ACU(
-            settings_ACU?.plotSettings || {},
-            finalGenerationGreenlights,
-          );
-          const injectedMessageCount = injectAgentWorldbookEntriesIntoMessages_ACU(data.messages, finalWorldbookEntries);
-          if (injectedMessageCount > 0) {
-            logDebug_ACU('[提示词模板] 运行时 Agent 正文世界书绿灯已按 position/depth/order 注入，消息数:', injectedMessageCount);
-          }
-        }
       } catch (e) {
-        logDebug_ACU('[提示词模板] 运行时 Agent 正文世界书绿灯注入失败，已跳过本轮绿灯注入:', e);
+        logDebug_ACU('[提示词模板] 运行时 Agent 正文世界书绿灯过滤失败，已跳过本轮过滤:', e);
       }
     }
     const lastPlotContent = getPlotFromHistory_ACU();

@@ -45,6 +45,7 @@ const {
   mockIsEntryBlocked,
   mockRunAgentDecisionForPlot,
   mockClearFinalGenerationGreenlights,
+  mockWriteFinalGenerationGreenlights,
 } = vi.hoisted(() => {
   const mockAbortControllerRef = { value: null as any };
   const mockCurrentJsonTableDataRef = {
@@ -115,6 +116,7 @@ const {
     mockIsEntryBlocked: vi.fn((entry: any) => !!entry?.blocked),
     mockRunAgentDecisionForPlot: vi.fn(),
     mockClearFinalGenerationGreenlights: vi.fn(),
+    mockWriteFinalGenerationGreenlights: vi.fn(),
   };
 });
 
@@ -236,6 +238,7 @@ vi.mock('../../../../src/service/agent/agent-decision-engine', () => ({
 
 vi.mock('../../../../src/service/agent/agent-worldbook-takeover', () => ({
   clearFinalGenerationGreenlights_ACU: mockClearFinalGenerationGreenlights,
+  writeFinalGenerationGreenlights_ACU: mockWriteFinalGenerationGreenlights,
 }));
 
 import {
@@ -325,6 +328,7 @@ beforeEach(() => {
     effectiveTasks: enabledTasks,
   }));
   mockClearFinalGenerationGreenlights.mockResolvedValue(0);
+  mockWriteFinalGenerationGreenlights.mockResolvedValue(true);
 });
 
 describe('willPlotUseMainApiGenerateRaw_ACU', () => {
@@ -648,7 +652,7 @@ describe('runPlotTasksRuntime_ACU', () => {
     expect(mockSavePlotToLatestMessage).toHaveBeenCalledWith(true);
   });
 
-  it('Agent 正文绿灯只写入内存 pending 并继续执行剧情任务', async () => {
+  it('Agent 正文绿灯会写入真实世界书蓝灯并继续执行剧情任务', async () => {
     const finalGreenlights = [{ bookName: '剧情书', uid: 12, reason: '正文需要' }];
     mockRunAgentDecisionForPlot.mockResolvedValueOnce({
       active: true,
@@ -669,7 +673,9 @@ describe('runPlotTasksRuntime_ACU', () => {
 
     const result = await runPlotTasksRuntime_ACU({ tasks: [{ id: 'task-a', name: '任务A', stage: 1, order: 1, maxRetries: 1, promptGroup: [{ role: 'user', content: 'stage-1-task-a' }] }] }, '当前输入');
 
+    expect(mockClearFinalGenerationGreenlights).toHaveBeenCalled();
     expect(mockSetPendingFinalGenerationGreenlights).toHaveBeenCalledWith(finalGreenlights);
+    expect(mockWriteFinalGenerationGreenlights).toHaveBeenCalledWith(finalGreenlights);
     expect(result.finalMessage).toBe('最终注入消息');
     expect(result.successfulResults).toHaveLength(1);
   });

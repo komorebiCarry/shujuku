@@ -22,6 +22,7 @@ import { abortableDelay } from '../../../shared/abortable-delay';
 import { runAgentDecisionForPlot_ACU, type AgentDecisionResult_ACU, type AgentWorldbookRef_ACU } from '../../agent/agent-decision-engine';
 import { normalizeAgentContextSettings_ACU } from '../../agent/agent-prompt-template';
 import { getWorldbookEntryKeywordsForSkillify_ACU, isDatabaseGeneratedWorldbookEntryForAgent_ACU } from '../../agent/agent-skillify-service';
+import { clearFinalGenerationGreenlights_ACU, writeFinalGenerationGreenlights_ACU } from '../../agent/agent-worldbook-takeover';
 
   type PlotWorldbookAgentMode_ACU = 'normal' | 'agent-controlled';
 
@@ -525,6 +526,7 @@ import { getWorldbookEntryKeywordsForSkillify_ACU, isDatabaseGeneratedWorldbookE
     const { inputForHash = userMessage, hasExistingUserMessage = false } = runtimeOptions;
 
     _set_pendingFinalGenerationGreenlights_ACU([]);
+    await clearFinalGenerationGreenlights_ACU();
 
     ensurePlotTasksCompat_ACU(plotSettings, { syncLegacy: true });
 
@@ -557,6 +559,9 @@ import { getWorldbookEntryKeywordsForSkillify_ACU, isDatabaseGeneratedWorldbookE
       ? agentDecision.finalGenerationGreenlights
       : [];
     _set_pendingFinalGenerationGreenlights_ACU(finalGenerationGreenlights);
+    if (agentDecision.active === true) {
+      await writeFinalGenerationGreenlights_ACU(finalGenerationGreenlights);
+    }
     if (agentDecision.active === true) {
       enabledTasks = Array.isArray(agentDecision.effectiveTasks) ? agentDecision.effectiveTasks : [];
     }
