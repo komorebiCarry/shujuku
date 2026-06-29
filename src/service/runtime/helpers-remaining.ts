@@ -99,7 +99,9 @@ export {
   function formatAgentWorldbookEntryForPrompt_ACU(entry: any) {
     const content = String(entry?.content || '').trim();
     if (!content) return '';
-    return content;
+    const comment = String(entry?.comment || '').trim();
+    const marker = comment ? `[ACU Agent Greenlight: ${comment}]` : '[ACU Agent Greenlight]';
+    return `${marker}\n${content}`;
   }
 
   type AgentWorldbookInjectionItem_ACU = { order: number; content: string };

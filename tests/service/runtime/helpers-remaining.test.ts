@@ -299,7 +299,7 @@ describe('handleChatCompletionReady_ACU', () => {
     expect(data.messages).toEqual([
       { role: 'system', content: '系统提示' },
       { role: 'assistant', content: '上一条回复' },
-      { role: 'system', content: '正文世界书内容', injected: true },
+      { role: 'system', content: '[ACU Agent Greenlight: 深度2条目]\n正文世界书内容', injected: true },
       { role: 'user', content: '测试' },
     ]);
   });
@@ -325,15 +325,15 @@ describe('handleChatCompletionReady_ACU', () => {
 
     expect(data.messages.map(message => message.content)).toEqual([
       '系统提示',
-      '一层内容',
+      '[ACU Agent Greenlight: 深度1]\n一层内容',
       '较早回复',
       '较早输入',
-      '三层内容',
+      '[ACU Agent Greenlight: 深度3]\n三层内容',
       '上一条回复',
       '当前输入',
     ]);
-    const depth1Index = data.messages.findIndex(message => message.content === '一层内容');
-    const depth3Index = data.messages.findIndex(message => message.content === '三层内容');
+    const depth1Index = data.messages.findIndex(message => message.content === '[ACU Agent Greenlight: 深度1]\n一层内容');
+    const depth3Index = data.messages.findIndex(message => message.content === '[ACU Agent Greenlight: 深度3]\n三层内容');
     expect(depth1Index).toBe(1);
     expect(depth3Index).toBe(4);
     expect(data.messages[data.messages.length - 1].content).toBe('当前输入');
@@ -359,11 +359,11 @@ describe('handleChatCompletionReady_ACU', () => {
 
     expect(data.messages.map(message => message.content)).toEqual([
       '系统提示',
-      '缺失内容\n\n零内容\n\n非法内容',
+      '[ACU Agent Greenlight: 缺失depth]\n缺失内容\n\n[ACU Agent Greenlight: 零depth]\n零内容\n\n[ACU Agent Greenlight: 非法depth]\n非法内容',
       '上一条回复',
       '当前输入',
     ]);
-    expect(data.messages[1].content).toBe('缺失内容\n\n零内容\n\n非法内容');
+    expect(data.messages[1].content).toBe('[ACU Agent Greenlight: 缺失depth]\n缺失内容\n\n[ACU Agent Greenlight: 零depth]\n零内容\n\n[ACU Agent Greenlight: 非法depth]\n非法内容');
   });
 
   it('同 depth 和 role 的正文绿灯条目按 order 升序合并', async () => {
@@ -385,7 +385,7 @@ describe('handleChatCompletionReady_ACU', () => {
 
     expect(data.messages.map(message => message.content)).toEqual([
       '系统提示',
-      '第一段\n\n第二段',
+      '[ACU Agent Greenlight: 前置]\n第一段\n\n[ACU Agent Greenlight: 后置]\n第二段',
       '上一条回复',
       '当前输入',
     ]);
