@@ -46,6 +46,7 @@ const {
   mockRunAgentDecisionForPlot,
   mockClearFinalGenerationGreenlights,
   mockWriteFinalGenerationGreenlights,
+  mockResolveAgentWorldbookFilterAvailability,
 } = vi.hoisted(() => {
   const mockAbortControllerRef = { value: null as any };
   const mockCurrentJsonTableDataRef = {
@@ -117,6 +118,7 @@ const {
     mockRunAgentDecisionForPlot: vi.fn(),
     mockClearFinalGenerationGreenlights: vi.fn(),
     mockWriteFinalGenerationGreenlights: vi.fn(),
+    mockResolveAgentWorldbookFilterAvailability: vi.fn(),
   };
 });
 
@@ -241,6 +243,10 @@ vi.mock('../../../../src/service/agent/agent-worldbook-takeover', () => ({
   writeFinalGenerationGreenlights_ACU: mockWriteFinalGenerationGreenlights,
 }));
 
+vi.mock('../../../../src/service/agent/agent-worldbook-skill-meta', () => ({
+  resolveAgentWorldbookFilterAvailability_ACU: mockResolveAgentWorldbookFilterAvailability,
+}));
+
 import {
   willPlotUseMainApiGenerateRaw_ACU,
   runPlotTasksRuntime_ACU,
@@ -329,6 +335,16 @@ beforeEach(() => {
   }));
   mockClearFinalGenerationGreenlights.mockResolvedValue(0);
   mockWriteFinalGenerationGreenlights.mockResolvedValue(true);
+  mockResolveAgentWorldbookFilterAvailability.mockResolvedValue({
+    available: false,
+    reason: 'not_agent_mode',
+    configuredMode: 'disabled',
+    control: null,
+    configSource: 'default',
+    skillCount: 0,
+    bookNames: [],
+    skillMetas: [],
+  });
 });
 
 describe('willPlotUseMainApiGenerateRaw_ACU', () => {
@@ -654,6 +670,18 @@ describe('runPlotTasksRuntime_ACU', () => {
 
   it('Agent 正文绿灯会写入真实世界书蓝灯并继续执行剧情任务', async () => {
     const finalGreenlights = [{ bookName: '剧情书', uid: 12, reason: '正文需要' }];
+    mockResolveAgentWorldbookFilterAvailability.mockResolvedValueOnce({
+      available: true,
+      reason: 'available',
+      configuredMode: 'agent',
+      control: { mode: 'agent', agentPlotExecutionMode: 'sequential' },
+      configSource: 'worldbook',
+      skillCount: 1,
+      bookNames: ['剧情书'],
+      skillMetas: [{ bookName: '剧情书', uid: 12, skillMeta: { description: '正文需要', triggerWhen: '正文生成' } }],
+      configBookName: '剧情书',
+      writableBookName: '剧情书',
+    });
     mockRunAgentDecisionForPlot.mockResolvedValueOnce({
       active: true,
       taskPlan: [],
@@ -681,6 +709,18 @@ describe('runPlotTasksRuntime_ACU', () => {
   });
 
   it('Agent active 但任务没有 description/triggerWhen 时，任务级世界书回退普通来源', async () => {
+    mockResolveAgentWorldbookFilterAvailability.mockResolvedValueOnce({
+      available: true,
+      reason: 'available',
+      configuredMode: 'agent',
+      control: { mode: 'agent', agentPlotExecutionMode: 'sequential' },
+      configSource: 'worldbook',
+      skillCount: 1,
+      bookNames: ['剧情书'],
+      skillMetas: [{ bookName: '剧情书', uid: 7, skillMeta: { description: '任务需要', triggerWhen: '任务执行' } }],
+      configBookName: '剧情书',
+      writableBookName: '剧情书',
+    });
     mockRunAgentDecisionForPlot.mockResolvedValueOnce({
       active: true,
       taskPlan: [],
@@ -716,6 +756,18 @@ describe('runPlotTasksRuntime_ACU', () => {
   });
 
   it('Agent active 且任务有 description/triggerWhen 时，任务级世界书由 Agent 控制', async () => {
+    mockResolveAgentWorldbookFilterAvailability.mockResolvedValueOnce({
+      available: true,
+      reason: 'available',
+      configuredMode: 'agent',
+      control: { mode: 'agent', agentPlotExecutionMode: 'sequential' },
+      configSource: 'worldbook',
+      skillCount: 1,
+      bookNames: ['剧情书'],
+      skillMetas: [{ bookName: '剧情书', uid: 7, skillMeta: { description: '任务需要', triggerWhen: '任务执行' } }],
+      configBookName: '剧情书',
+      writableBookName: '剧情书',
+    });
     mockRunAgentDecisionForPlot.mockResolvedValueOnce({
       active: true,
       taskPlan: [],
@@ -755,6 +807,18 @@ describe('runPlotTasksRuntime_ACU', () => {
 
   it('并发模式下 Agent 不改写剧情任务，任务级世界书按 normal 模式处理，剧情成功后才写正文蓝灯', async () => {
     const finalGreenlights = [{ bookName: '剧情书', uid: 12, reason: '正文需要' }];
+    mockResolveAgentWorldbookFilterAvailability.mockResolvedValueOnce({
+      available: true,
+      reason: 'available',
+      configuredMode: 'agent',
+      control: { mode: 'agent', agentPlotExecutionMode: 'concurrent' },
+      configSource: 'worldbook',
+      skillCount: 1,
+      bookNames: ['剧情书'],
+      skillMetas: [{ bookName: '剧情书', uid: 7, skillMeta: { description: '任务需要', triggerWhen: '任务执行' } }],
+      configBookName: '剧情书',
+      writableBookName: '剧情书',
+    });
     mockRunAgentDecisionForPlot.mockResolvedValueOnce({
       active: true,
       taskPlan: [{ taskId: 'agent-only', run: false, effectiveStage: 9, effectiveOrder: 9 }],

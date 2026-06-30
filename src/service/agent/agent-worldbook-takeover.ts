@@ -18,6 +18,7 @@ import {
 import {
   resolveAgentWorldbookFilterAvailability_ACU,
   type WorldbookSkillMetaReadResult_ACU,
+  stripWorldbookSkillMetaBlock_ACU,
 } from './agent-worldbook-skill-meta';
 import {
   deleteAgentWorldbookStateEntry_ACU,
@@ -214,6 +215,10 @@ function stripTakeoverMetaBlock_ACU(comment: unknown): string {
     .trim();
 }
 
+function normalizeTakeoverComparableComment_ACU(comment: unknown): string {
+  return stripWorldbookSkillMetaBlock_ACU(stripTakeoverMetaBlock_ACU(comment));
+}
+
 function parseTakeoverMetaFromComment_ACU(comment: unknown): AgentWorldbookTakeoverMeta_ACU | null {
   const text = normalizeCommentText_ACU(comment);
   const pattern = new RegExp(AGENT_TAKEOVER_META_PATTERN_ACU.source, 'g');
@@ -354,7 +359,7 @@ async function resolveTakeoverBookNames_ACU(): Promise<string[]> {
 function buildSnapshotEntry_ACU(entry: Record<string, any>): AgentWorldbookControlSnapshotEntry_ACU | null {
   if (!hasValidWorldbookUid_ACU(entry?.uid)) return null;
   const previousType = entry?.type === undefined || entry?.type === null ? undefined : String(entry.type);
-  const comment = stripTakeoverMetaBlock_ACU(entry?.comment);
+  const comment = normalizeTakeoverComparableComment_ACU(entry?.comment);
   return {
     uid: entry.uid,
     previousEnabled: entry.enabled !== false,
@@ -454,7 +459,8 @@ async function restoreSnapshotEntries_ACU(snapshot: AgentWorldbookControlSnapsho
         }
         const currentComment = typeof currentEntry.comment === 'string' ? currentEntry.comment : '';
         const strippedComment = stripTakeoverMetaBlock_ACU(currentComment);
-        if (snapshotEntry.commentHash && hashUserInput_ACU(strippedComment) !== snapshotEntry.commentHash) {
+        const comparableComment = normalizeTakeoverComparableComment_ACU(currentComment);
+        if (snapshotEntry.commentHash && hashUserInput_ACU(comparableComment) !== snapshotEntry.commentHash) {
           logWarn_ACU(
             `[Agent世界书] 跳过恢复世界书条目：${normalizedBookName}#${snapshotEntry.uid} comment 已变化，避免覆盖用户修改。`,
           );

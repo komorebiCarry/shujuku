@@ -49,6 +49,7 @@ function createSettings() {
         agentPlotExecutionMode: 'sequential',
         agentApiPreset: '',
         agentSkillApiPreset: '',
+        maxSkillifyConcurrency: 3,
         contextSettings: { agentAiMaxRetries: 2 },
         agentDecisionPromptSegments: [],
         agentSkillifyPromptSegments: [],
@@ -197,6 +198,37 @@ describe('usePlotWorldbookAgentControl', () => {
       expect.stringContaining('boom'),
       { muteable: false },
     );
+  });
+
+  it('skillifyAll 调用时传入当前 Skill 化并发数', async () => {
+    mockSkillify.mockImplementation(async (options: any) => {
+      options.onProgress?.({ phase: 'collecting' });
+      options.onProgress?.({ phase: 'complete', current: 1, total: 1, updated: 1, skipped: 0, failed: 0 });
+      return { totalCandidates: 1, updated: 1, skipped: 0, failed: 0 };
+    });
+    const c = await getComposable();
+
+    const result = await c.skillifyAll();
+
+    expect(result).toBe(true);
+    expect(mockSkillify).toHaveBeenCalledWith(expect.objectContaining({
+      maxConcurrency: 3,
+      maxAiRetries: 2,
+      overwriteManual: false,
+    }));
+  });
+
+  it('setMaxSkillifyConcurrency 保存夹紧后的并发数', async () => {
+    const c = await getComposable();
+
+    await expect(c.setMaxSkillifyConcurrency(9)).resolves.toBe(true);
+
+    expect(mockWriteControl).toHaveBeenCalledWith({ maxSkillifyConcurrency: 5 });
+    expect(c.maxSkillifyConcurrency.value).toBe(5);
+
+    mockWriteControl.mockClear();
+    await expect(c.setMaxSkillifyConcurrency('not-a-number')).resolves.toBe(false);
+    expect(mockWriteControl).not.toHaveBeenCalled();
   });
 
   it('skillifyAll 成功后不再自动触发物理接管', async () => {

@@ -76,7 +76,7 @@ export const plotCopy = {
       button: "一键 Skill 化",
       confirm: {
         title: "一键生成 Skill 元数据",
-        message: "将调用配置的 Agent Skill API，为当前世界书范围内可处理条目生成描述与触发时机。用户手动编辑的 Skill 元数据不会被覆盖。",
+        message: "将调用配置的 Agent Skill API，为当前世界书范围内可处理条目生成描述与触发时机。已有 Skill 元数据的条目会自动跳过，无论这些数据来自 AI 生成还是用户手动编辑。",
         confirmLabel: "开始生成",
         cancelLabel: "取消",
       },
@@ -101,7 +101,15 @@ export const plotCopy = {
     advanced: {
       button: "Agent 高级设置",
       title: "Agent 世界书高级设置",
-      description: "编辑 Agent 决策、Skill 化提示词模板，并控制上下文层数与候选数量上限。",
+      description: "编辑 Agent 决策、Skill 化提示词模板，并控制上下文层数、候选数量上限与 Skill 化调用并发。",
+    },
+    skillifySettings: {
+      title: "Skill 化执行参数",
+      description: "控制一键 Skill 化的执行行为。并发数越高，请求压力越大；别把 API 当成无限吞吐的黑洞。",
+      maxConcurrency: {
+        label: "Skill 化 API 并发数",
+        hint: "一键 Skill 化同时调用 Agent Skill API 的条目数量。默认 3，范围 1-5。",
+      },
     },
     executionMode: {
       label: "Agent 与剧情推进执行方式",

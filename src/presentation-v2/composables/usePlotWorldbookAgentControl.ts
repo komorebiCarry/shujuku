@@ -51,6 +51,8 @@ export type AgentPromptKind_ACU = 'decision' | 'skillify';
 export type AgentContextSettingKey_ACU = keyof AgentContextSettings_ACU;
 export type AgentPlotExecutionModeSetting_ACU = AgentPlotExecutionMode_ACU;
 
+const MAX_SKILLIFY_CONCURRENCY_LIMIT_ACU = { min: 1, max: 5 };
+
 function getPromptFallback_ACU(kind: AgentPromptKind_ACU): PromptSegment_ACU[] {
   return kind === 'decision' ? getDefaultAgentDecisionPromptSegments_ACU() : getDefaultAgentSkillifyPromptSegments_ACU();
 }
@@ -80,6 +82,13 @@ function normalizeContextPatch_ACU(
     ...(current as unknown as Record<string, number>),
     [key]: Math.trunc(raw),
   });
+}
+
+function normalizeMaxSkillifyConcurrency_ACU(value: unknown): number | null {
+  const raw = Number(value);
+  if (!Number.isFinite(raw)) return null;
+  const truncated = Math.trunc(raw);
+  return Math.max(MAX_SKILLIFY_CONCURRENCY_LIMIT_ACU.min, Math.min(MAX_SKILLIFY_CONCURRENCY_LIMIT_ACU.max, truncated));
 }
 
 function movePromptSegment_ACU(segments: PromptSegment_ACU[], index: number, delta: -1 | 1): PromptSegment_ACU[] {
@@ -143,6 +152,7 @@ export function usePlotWorldbookAgentControl() {
   const agentPlotExecutionMode = ref<AgentPlotExecutionMode_ACU>('concurrent');
   const agentApiPreset = ref('');
   const agentSkillApiPreset = ref('');
+  const maxSkillifyConcurrency = ref(3);
   const snapshot = ref<AgentWorldbookControlSnapshot_ACU>(getPlotAgentWorldbookSnapshot_ACU());
   const busy = ref<AgentWorldbookBusyAction>(null);
   const configSource = ref<AgentWorldbookConfigSource_ACU>('default');
@@ -168,6 +178,7 @@ export function usePlotWorldbookAgentControl() {
     agentPlotExecutionMode.value = control.agentPlotExecutionMode;
     agentApiPreset.value = normalizeAgentApiPreset_ACU(control.agentApiPreset);
     agentSkillApiPreset.value = normalizeAgentApiPreset_ACU(control.agentSkillApiPreset);
+    maxSkillifyConcurrency.value = normalizeMaxSkillifyConcurrency_ACU(control.maxSkillifyConcurrency) ?? 3;
     contextSettings.value = cloneContextSettings_ACU(normalizeAgentContextSettings_ACU(control.contextSettings));
     agentDecisionPromptSegments.value = clonePromptSegments_ACU(readPromptSegments_ACU(control as unknown as Record<string, any>, 'decision'));
     agentSkillifyPromptSegments.value = clonePromptSegments_ACU(readPromptSegments_ACU(control as unknown as Record<string, any>, 'skillify'));
@@ -220,6 +231,12 @@ export function usePlotWorldbookAgentControl() {
 
   async function setAgentSkillApiPreset(next: string): Promise<void> {
     await writeControlPatch({ agentSkillApiPreset: normalizeAgentApiPreset_ACU(next) });
+  }
+
+  async function setMaxSkillifyConcurrency(value: unknown): Promise<boolean> {
+    const next = normalizeMaxSkillifyConcurrency_ACU(value);
+    if (next === null) return false;
+    return Boolean(await writeControlPatch({ maxSkillifyConcurrency: next }));
   }
 
   async function setContextSetting(key: AgentContextSettingKey_ACU, value: unknown): Promise<boolean> {
@@ -350,6 +367,7 @@ export function usePlotWorldbookAgentControl() {
         presetName: agentSkillApiPreset.value,
         overwriteManual: false,
         maxAiRetries: contextSettings.value.agentAiMaxRetries,
+        maxConcurrency: maxSkillifyConcurrency.value,
         onProgress: notifyProgress,
       });
       if (result.totalCandidates === 0) {
@@ -424,6 +442,7 @@ export function usePlotWorldbookAgentControl() {
     agentPlotExecutionMode,
     agentApiPreset,
     agentSkillApiPreset,
+    maxSkillifyConcurrency,
     snapshot,
     busy,
     configSource,
@@ -432,6 +451,7 @@ export function usePlotWorldbookAgentControl() {
     configStatusText,
     contextSettings,
     contextSettingsLimits: AGENT_CONTEXT_SETTINGS_LIMITS_ACU,
+    maxSkillifyConcurrencyLimits: MAX_SKILLIFY_CONCURRENCY_LIMIT_ACU,
     agentDecisionPromptSegments,
     agentSkillifyPromptSegments,
     isAgentMode,
@@ -442,6 +462,7 @@ export function usePlotWorldbookAgentControl() {
     setAgentPlotExecutionMode,
     setAgentApiPreset,
     setAgentSkillApiPreset,
+    setMaxSkillifyConcurrency,
     setContextSetting,
     resetContextSettings,
     setPromptSegments,

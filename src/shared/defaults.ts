@@ -106,7 +106,7 @@ export function buildDefaultAgentWorldbookControl_ACU() {
     managedEntryPrefix: 'TavernDB-ACU-AgentGreenlight',
     finalInjectionMode: 'prompt_template' as const,
     restoreOnDisable: true,
-    maxSkillifyConcurrency: 2,
+    maxSkillifyConcurrency: 3,
     contextSettings: JSON.parse(JSON.stringify(DEFAULT_AGENT_CONTEXT_SETTINGS_ACU)),
     contextSettingsConfigured: false,
     agentDecisionPromptSegments: buildDefaultAgentDecisionPromptSegments_ACU(),

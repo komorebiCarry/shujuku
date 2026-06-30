@@ -172,11 +172,14 @@ function isAgentModeEnabled_ACU(control: AgentWorldbookControl_ACU | null): bool
 function resolveResolvedAgentWorldbookControl_ACU(params: {
   agentWorldbookControl?: AgentWorldbookControl_ACU | null;
   sharedContext?: Record<string, any>;
+  plotSettings?: Record<string, any>;
 }): AgentWorldbookControl_ACU | null {
   const direct = params.agentWorldbookControl;
   if (direct && typeof direct === 'object') return direct;
   const fromContext = params.sharedContext?.agentWorldbookControl;
-  return fromContext && typeof fromContext === 'object' ? fromContext as AgentWorldbookControl_ACU : null;
+  if (fromContext && typeof fromContext === 'object') return fromContext as AgentWorldbookControl_ACU;
+  const fromPlotSettings = params.plotSettings?.agentWorldbookControl;
+  return fromPlotSettings && typeof fromPlotSettings === 'object' ? fromPlotSettings as AgentWorldbookControl_ACU : null;
 }
 
 function parseAgentDecisionResponse_ACU(responseText: string): any | null {

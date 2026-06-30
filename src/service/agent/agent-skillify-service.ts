@@ -203,8 +203,8 @@ export function shouldSkipSkillifyEntry_ACU(
   const existing = summary.existingSkillMeta;
   if (!existing) return null;
   const hasExistingText = !!(existing.description || existing.triggerWhen);
-  if (existing.updatedBy === 'manual' && hasExistingText && options.overwriteManual !== true) {
-    return '已存在用户手动编辑的 Skill 元数据';
+  if (hasExistingText && options.overwriteManual !== true) {
+    return existing.updatedBy === 'manual' ? '已存在用户手动编辑的 Skill 元数据' : '已存在 Skill 元数据';
   }
   return null;
 }
@@ -385,7 +385,7 @@ export async function skillifyWorldbookEntries_ACU(
 
   const configuredConcurrency = Number.isFinite(Number(options.maxConcurrency)) && Number(options.maxConcurrency) > 0
     ? Number(options.maxConcurrency)
-    : (Number(control.maxSkillifyConcurrency) || 1);
+    : (Number(control.maxSkillifyConcurrency) || buildDefaultAgentWorldbookControl_ACU().maxSkillifyConcurrency);
   const concurrency = Math.max(1, Math.min(configuredConcurrency, 5));
   const progressState = { current: 0, total: candidates.length, updated: 0, skipped: 0, failed: 0 };
   options.onProgress?.({ phase: 'processing', ...progressState });

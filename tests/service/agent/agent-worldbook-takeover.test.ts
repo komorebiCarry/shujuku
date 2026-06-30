@@ -58,6 +58,11 @@ vi.mock('../../../src/service/agent/agent-worldbook-skill-meta', () => ({
       ? { available: false, reason: 'empty_scope', bookNames, skillMetas: [] }
       : { available: true, reason: 'available', bookNames, skillMetas: bookNames.flatMap((bookName: string) => (mockEntriesByBook.get(bookName) || []).filter(entry => entry?.uid !== undefined).map(entry => ({ bookName, uid: entry.uid, skillMeta: {} }))) };
   }),
+  stripWorldbookSkillMetaBlock_ACU: vi.fn((comment: unknown) => String(comment || '')
+    .replace(/<!--\s*ACU_SKILL_META_START[\s\S]*?ACU_SKILL_META_END\s*-->/g, '\n')
+    .replace(/\n{3,}/g, '\n\n')
+    .trim()
+  ),
 }));
 
 vi.mock('../../../src/service/agent/agent-worldbook-config-meta', () => ({
@@ -88,6 +93,8 @@ function snapshotEntry(bookName = '角色A世界书'): any {
 function finalGenerationGreenlightEntry(bookName = '角色A世界书'): any {
   return (mockEntriesByBook.get(bookName) || []).find(entry => entry.comment === AGENT_FINAL_GENERATION_GREENLIGHT_COMMENT_ACU);
 }
+
+const skillMetaBlock_ACU = '<!-- ACU_SKILL_META_START\n{"version":1,"description":"描述","triggerWhen":"触发","tk":12,"updatedAt":1,"updatedBy":"agent-skillify"}\nACU_SKILL_META_END -->';
 
 beforeEach(() => {
   vi.clearAllMocks();
@@ -418,6 +425,35 @@ describe('agent worldbook takeover native trigger suppression', () => {
     expect(result.skipped).toBe(0);
     expect(result.failed).toBe(0);
     expect(mockDeleteAgentWorldbookState).not.toHaveBeenCalled();
+  });
+
+  it('恢复 state snapshot 时忽略 Skill 元数据块变化但保留该元数据，避免一键 Skill 化后清除并初始化误跳过', async () => {
+    mockEntriesByBook.set('角色A世界书', [
+      { uid: 1, enabled: false, keys: ['新钥匙'], comment: `普通条目A\n\n${skillMetaBlock_ACU}`, content: '内容A' },
+    ]);
+    const selectionSignature = buildWorldbookSelectionSignature_ACU(['角色A世界书']);
+    mockStateSnapshot.current = {
+      active: true,
+      selectionSignature,
+      createdAt: 1,
+      books: {
+        '角色A世界书': [
+          { uid: 1, previousEnabled: true, previousKeys: ['钥匙A'], commentHash: 'hash:普通条目A' },
+        ],
+      },
+    };
+
+    const result = await restoreWorldbookGreenlights_ACU({ cleanupStateEntry: true });
+
+    expect(result.reason).toBe('native_worldbook_trigger_restored');
+    expect(result.restored).toBe(1);
+    expect(result.skipped).toBe(0);
+    expect(mockDeleteAgentWorldbookState).toHaveBeenCalledTimes(1);
+    expect(mockEntriesByBook.get('角色A世界书')?.find(entry => entry.uid === 1)).toMatchObject({
+      enabled: true,
+      keys: ['钥匙A'],
+      comment: `普通条目A\n\n${skillMetaBlock_ACU}`,
+    });
   });
 
   it('恢复时如果 comment 已变化则跳过该条目，避免误恢复用户已改写的世界书条目', async () => {

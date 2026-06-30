@@ -59,6 +59,31 @@
       <section class="acu-agent-advanced__section">
         <header class="acu-agent-advanced__section-head">
           <div>
+            <h4>{{ plotCopy.agentControl.skillifySettings.title }}</h4>
+            <p>{{ plotCopy.agentControl.skillifySettings.description }}</p>
+          </div>
+        </header>
+        <div class="acu-agent-advanced__grid">
+          <AcuFormRow
+            :label="plotCopy.agentControl.skillifySettings.maxConcurrency.label"
+            :hint="plotCopy.agentControl.skillifySettings.maxConcurrency.hint"
+          >
+            <AcuInput
+              type="number"
+              size="sm"
+              :model-value="agentControl.maxSkillifyConcurrency.value"
+              :min="agentControl.maxSkillifyConcurrencyLimits.min"
+              :max="agentControl.maxSkillifyConcurrencyLimits.max"
+              :step="1"
+              @change="onMaxSkillifyConcurrencyChange"
+            />
+          </AcuFormRow>
+        </div>
+      </section>
+
+      <section class="acu-agent-advanced__section">
+        <header class="acu-agent-advanced__section-head">
+          <div>
             <h4>{{ plotCopy.agentControl.prompts.title }}</h4>
             <p>{{ plotCopy.agentControl.prompts.description }}</p>
           </div>
@@ -192,6 +217,10 @@ async function onContextChange(key: AgentContextSettingKey_ACU, value: string | 
 async function resetContextSettings(): Promise<void> {
   await agentControl.resetContextSettings();
   emit('changed');
+}
+
+async function onMaxSkillifyConcurrencyChange(value: string | number): Promise<void> {
+  if (await agentControl.setMaxSkillifyConcurrency(value)) emit('changed');
 }
 
 async function resetPrompt(kind: AgentPromptKind_ACU): Promise<void> {
