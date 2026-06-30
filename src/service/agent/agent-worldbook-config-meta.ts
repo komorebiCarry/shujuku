@@ -1,6 +1,7 @@
 import type {
   AgentWorldbookCardConfigMeta_ACU,
   AgentWorldbookControl_ACU,
+  AgentWorldbookStateIdentity_ACU,
   AgentWorldbookControlMode_ACU,
   AgentWorldbookControlSnapshot_ACU,
   AgentWorldbookControlSnapshotEntry_ACU,
@@ -30,6 +31,21 @@ import {
 export const AGENT_WORLDBOOK_CONFIG_COMMENT_ACU = 'TavernDB-ACU-AgentWorldbookConfig';
 
 export type AgentWorldbookConfigSource_ACU = 'worldbook' | 'legacy_settings' | 'default';
+
+interface ParsedAgentWorldbookStateMeta_ACU {
+  control: Partial<AgentWorldbookControl_ACU>;
+  snapshot: AgentWorldbookControlSnapshot_ACU;
+  identity?: AgentWorldbookStateIdentity_ACU;
+  updatedAt: number;
+  legacy: boolean;
+}
+
+interface AgentWorldbookStateEntryCandidate_ACU {
+  entry: any;
+  meta: ParsedAgentWorldbookStateMeta_ACU;
+  score: number;
+  legacyCommentMatch: boolean;
+}
 
 export interface AgentWorldbookControlReadResult_ACU {
   control: AgentWorldbookControl_ACU;
@@ -144,6 +160,10 @@ function hasValidWorldbookUid_ACU(uid: unknown): uid is string | number {
   return uid !== null && uid !== undefined && String(uid).trim() !== '';
 }
 
+function isSameWorldbookUid_ACU(left: unknown, right: unknown): boolean {
+  return hasValidWorldbookUid_ACU(left) && hasValidWorldbookUid_ACU(right) && String(left) === String(right);
+}
+
 function normalizeSnapshotEntry_ACU(value: unknown): AgentWorldbookControlSnapshotEntry_ACU | null {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
   const source = value as Record<string, unknown>;
@@ -183,17 +203,40 @@ function normalizeAgentWorldbookSnapshotForCardState_ACU(value: unknown): AgentW
   };
 }
 
-function buildAgentWorldbookStateMeta_ACU(control: AgentWorldbookControl_ACU, snapshot: AgentWorldbookControlSnapshot_ACU): AgentWorldbookStateMeta_ACU {
+function normalizeAgentWorldbookStateIdentity_ACU(value: unknown): AgentWorldbookStateIdentity_ACU | undefined {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return undefined;
+  const source = value as Record<string, unknown>;
+  const marker = typeof source.marker === 'string' && source.marker.trim()
+    ? source.marker.trim()
+    : '';
+  if (marker !== AGENT_WORLDBOOK_CONFIG_COMMENT_ACU) return undefined;
+  const stateEntryUid = hasValidWorldbookUid_ACU(source.stateEntryUid) ? source.stateEntryUid : undefined;
+  const hostBookName = typeof source.hostBookName === 'string' && source.hostBookName.trim()
+    ? source.hostBookName.trim()
+    : undefined;
+  return { marker, ...(stateEntryUid !== undefined ? { stateEntryUid } : {}), ...(hostBookName ? { hostBookName } : {}) };
+}
+
+function buildAgentWorldbookStateIdentity_ACU(hostBookName: string, stateEntryUid?: string | number): AgentWorldbookStateIdentity_ACU {
+  return {
+    marker: AGENT_WORLDBOOK_CONFIG_COMMENT_ACU,
+    ...(hasValidWorldbookUid_ACU(stateEntryUid) ? { stateEntryUid } : {}),
+    ...(hostBookName.trim() ? { hostBookName: hostBookName.trim() } : {}),
+  };
+}
+
+function buildAgentWorldbookStateMeta_ACU(control: AgentWorldbookControl_ACU, snapshot: AgentWorldbookControlSnapshot_ACU, identity?: AgentWorldbookStateIdentity_ACU): AgentWorldbookStateMeta_ACU {
   return {
     version: 2,
     kind: 'agent_worldbook_state',
     updatedAt: Date.now(),
+    ...(identity ? { identity } : {}),
     control,
     snapshot,
   };
 }
 
-function parseAgentWorldbookStateMeta_ACU(value: unknown): { control: Partial<AgentWorldbookControl_ACU>; snapshot: AgentWorldbookControlSnapshot_ACU; updatedAt: number } | null {
+function parseAgentWorldbookStateMeta_ACU(value: unknown): ParsedAgentWorldbookStateMeta_ACU | null {
   const text = typeof value === 'string' ? value.trim() : '';
   if (!text) return null;
   try {
@@ -201,8 +244,10 @@ function parseAgentWorldbookStateMeta_ACU(value: unknown): { control: Partial<Ag
     if (raw.version === 2 && raw.kind === 'agent_worldbook_state') {
       return {
         updatedAt: Number.isFinite(Number(raw.updatedAt)) ? Number(raw.updatedAt) : 0,
+        identity: normalizeAgentWorldbookStateIdentity_ACU(raw.identity),
         control: normalizeControlPatch_ACU(raw.control) as Partial<AgentWorldbookControl_ACU>,
         snapshot: normalizeAgentWorldbookSnapshotForCardState_ACU(raw.snapshot),
+        legacy: false,
       };
     }
     if (raw.version !== 1 || raw.kind !== 'agent_worldbook_config') return null;
@@ -216,6 +261,7 @@ function parseAgentWorldbookStateMeta_ACU(value: unknown): { control: Partial<Ag
       updatedAt: legacyMeta.updatedAt,
       control: legacyMeta.control,
       snapshot: cloneDefaultAgentSnapshot_ACU(),
+      legacy: true,
     };
   } catch {
     return null;
@@ -227,11 +273,60 @@ function findAgentConfigEntries_ACU(entries: any[]): any[] {
     .filter(entry => String(entry?.comment || '').trim() === AGENT_WORLDBOOK_CONFIG_COMMENT_ACU);
 }
 
-function buildConfigEntryPayload_ACU(control: AgentWorldbookControl_ACU, snapshot: AgentWorldbookControlSnapshot_ACU, existing?: Record<string, any>): Record<string, any> {
+function buildAgentStateEntryCandidates_ACU(entries: any[], hostBookName: string): AgentWorldbookStateEntryCandidate_ACU[] {
+  const result: AgentWorldbookStateEntryCandidate_ACU[] = [];
+  for (const entry of Array.isArray(entries) ? entries : []) {
+    const meta = parseAgentWorldbookStateMeta_ACU(entry?.content);
+    const legacyCommentMatch = String(entry?.comment || '').trim() === AGENT_WORLDBOOK_CONFIG_COMMENT_ACU;
+    if (!meta && !legacyCommentMatch) continue;
+    if (!meta) continue;
+
+    let score = 10;
+    if (!meta.legacy) score += 20;
+    if (legacyCommentMatch) score += 5;
+    if (meta.identity?.hostBookName && meta.identity.hostBookName === hostBookName) score += 30;
+    if (isSameWorldbookUid_ACU(meta.identity?.stateEntryUid, entry?.uid)) score += 50;
+    if (meta.identity && !isSameWorldbookUid_ACU(meta.identity.stateEntryUid, entry?.uid) && hasValidWorldbookUid_ACU(meta.identity.stateEntryUid)) score -= 40;
+    result.push({ entry, meta, score, legacyCommentMatch });
+  }
+  return result.sort((left, right) => right.score - left.score || Number(right.meta.updatedAt || 0) - Number(left.meta.updatedAt || 0));
+}
+
+function findAgentStateEntry_ACU(entries: any[], hostBookName: string): {
+  entry: any | null;
+  meta: ParsedAgentWorldbookStateMeta_ACU | null;
+  duplicateCount: number;
+} {
+  const candidates = buildAgentStateEntryCandidates_ACU(entries, hostBookName);
+  const selected = candidates[0];
+  return {
+    entry: selected?.entry || null,
+    meta: selected?.meta || null,
+    duplicateCount: Math.max(0, candidates.length - (selected ? 1 : 0)),
+  };
+}
+
+function findCreatedAgentStateEntry_ACU(entries: any[], hostBookName: string, createdAfter: number): any | null {
+  const candidates = buildAgentStateEntryCandidates_ACU(entries, hostBookName)
+    .filter(candidate => candidate.entry?.uid !== null && candidate.entry?.uid !== undefined);
+  return candidates.find(candidate => Number(candidate.meta.updatedAt || 0) >= createdAfter)?.entry
+    || candidates[0]?.entry
+    || null;
+}
+
+function buildConfigEntryPayload_ACU(
+  control: AgentWorldbookControl_ACU,
+  snapshot: AgentWorldbookControlSnapshot_ACU,
+  hostBookName: string,
+  existing?: Record<string, any>,
+  stateEntryUid?: string | number,
+): Record<string, any> {
+  const resolvedUid = hasValidWorldbookUid_ACU(stateEntryUid) ? stateEntryUid : existing?.uid;
+  const identity = buildAgentWorldbookStateIdentity_ACU(hostBookName, resolvedUid);
   return {
     ...(existing || {}),
-    comment: AGENT_WORLDBOOK_CONFIG_COMMENT_ACU,
-    content: JSON.stringify(buildAgentWorldbookStateMeta_ACU(control, snapshot), null, 2),
+    comment: typeof existing?.comment === 'string' && existing.comment.trim() ? existing.comment : AGENT_WORLDBOOK_CONFIG_COMMENT_ACU,
+    content: JSON.stringify(buildAgentWorldbookStateMeta_ACU(control, snapshot, identity), null, 2),
     keys: Array.isArray(existing?.keys) ? existing.keys : [],
     enabled: false,
     type: 'keyword',
@@ -308,19 +403,15 @@ async function readWorldbookConfigEntry_ACU(bookName: string): Promise<{
   snapshot: AgentWorldbookControlSnapshot_ACU | null;
 }> {
   const entries = await getLorebookEntries_ACU(bookName);
-  const configEntries = findAgentConfigEntries_ACU(entries);
-  for (const entry of configEntries) {
-    const meta = parseAgentWorldbookStateMeta_ACU(entry?.content);
-    if (!meta) continue;
-    return {
-      bookName,
-      entry,
-      duplicateCount: Math.max(0, configEntries.length - 1),
-      control: normalizeAgentWorldbookControlForCardConfig_ACU(meta.control),
-      snapshot: normalizeAgentWorldbookSnapshotForCardState_ACU(meta.snapshot),
-    };
-  }
-  return { bookName, entry: null, duplicateCount: Math.max(0, configEntries.length - 1), control: null, snapshot: null };
+  const result = findAgentStateEntry_ACU(entries, bookName);
+  if (!result.entry || !result.meta) return { bookName, entry: null, duplicateCount: result.duplicateCount, control: null, snapshot: null };
+  return {
+    bookName,
+    entry: result.entry,
+    duplicateCount: result.duplicateCount,
+    control: normalizeAgentWorldbookControlForCardConfig_ACU(result.meta.control),
+    snapshot: normalizeAgentWorldbookSnapshotForCardState_ACU(result.meta.snapshot),
+  };
 }
 
 export async function readAgentWorldbookStateFromWorldbooks_ACU(): Promise<AgentWorldbookStateReadResult_ACU> {
@@ -404,15 +495,27 @@ export async function writeAgentWorldbookStateToWorldbook_ACU(patch: {
   }
 
   const entries = await getLorebookEntries_ACU(hostBookName);
-  const existing = findAgentConfigEntries_ACU(entries)[0];
-  const nextEntry = buildConfigEntryPayload_ACU(nextControl, nextSnapshot, existing);
+  const currentEntryUid = current.bookName === hostBookName ? current.entryUid : undefined;
+  const existingByUid = hasValidWorldbookUid_ACU(currentEntryUid)
+    ? entries.find(entry => isSameWorldbookUid_ACU(entry?.uid, currentEntryUid))
+    : undefined;
+  const existing = existingByUid || findAgentStateEntry_ACU(entries, hostBookName).entry;
+  const nextEntry = buildConfigEntryPayload_ACU(nextControl, nextSnapshot, hostBookName, existing || undefined, existing?.uid);
   if (existing?.uid !== null && existing?.uid !== undefined) {
     await setLorebookEntries_ACU(hostBookName, [{ ...nextEntry, uid: existing.uid }]);
     return { updated: true, bookName: hostBookName, entryUid: existing.uid, control: nextControl, snapshot: nextSnapshot };
   }
 
+  const createdAfter = Date.now();
   await createLorebookEntries_ACU(hostBookName, [nextEntry]);
-  return { updated: true, bookName: hostBookName, control: nextControl, snapshot: nextSnapshot };
+  const refreshedEntries = await getLorebookEntries_ACU(hostBookName);
+  const created = findCreatedAgentStateEntry_ACU(refreshedEntries, hostBookName, createdAfter);
+  if (created?.uid !== null && created?.uid !== undefined) {
+    const backfilledEntry = buildConfigEntryPayload_ACU(nextControl, nextSnapshot, hostBookName, created, created.uid);
+    await setLorebookEntries_ACU(hostBookName, [{ ...backfilledEntry, uid: created.uid }]);
+    return { updated: true, bookName: hostBookName, entryUid: created.uid, control: nextControl, snapshot: nextSnapshot };
+  }
+  return { updated: true, bookName: hostBookName, reason: 'state_entry_uid_unresolved', control: nextControl, snapshot: nextSnapshot };
 }
 
 export async function writeAgentWorldbookControlToWorldbook_ACU(
@@ -439,7 +542,17 @@ export async function deleteAgentWorldbookStateEntry_ACU(bookName?: string): Pro
   let deleted = 0;
   for (const targetBookName of scanBookNames) {
     const entries = await getLorebookEntries_ACU(targetBookName);
-    const matched = findAgentConfigEntries_ACU(entries).filter(entry => entry?.uid !== null && entry?.uid !== undefined);
+    const candidates = buildAgentStateEntryCandidates_ACU(entries, targetBookName)
+      .map(candidate => candidate.entry)
+      .filter(entry => entry?.uid !== null && entry?.uid !== undefined);
+    const legacyCommentMatches = findAgentConfigEntries_ACU(entries)
+      .filter(entry => entry?.uid !== null && entry?.uid !== undefined);
+    const matchedByUid = new Map<string, any>();
+    for (const entry of [...candidates, ...legacyCommentMatches]) {
+      if (!hasValidWorldbookUid_ACU(entry?.uid)) continue;
+      matchedByUid.set(String(entry.uid), entry);
+    }
+    const matched = Array.from(matchedByUid.values());
     if (matched.length === 0) continue;
     await deleteLorebookEntries_ACU(targetBookName, matched.map(entry => entry.uid));
     deleted += matched.length;

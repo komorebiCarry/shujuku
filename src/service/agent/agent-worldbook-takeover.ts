@@ -590,7 +590,9 @@ export async function takeoverWorldbookGreenlights_ACU(): Promise<AgentWorldbook
   const { disabled, failed } = totalCandidates > 0 && stateWriteFailed === 0
     ? await disableTakeoverCandidates_ACU(snapshotBooks)
     : { disabled: 0, failed: 0 };
-  setPlotAgentWorldbookSnapshot_ACU(snapshot);
+  setPlotAgentWorldbookSnapshot_ACU(stateWriteFailed > 0
+    ? buildInactiveSnapshot_ACU(selectionSignature)
+    : snapshot);
   const totalFailed = failed + stateWriteFailed;
 
   return {
@@ -629,7 +631,7 @@ export async function restoreWorldbookGreenlights_ACU(options: {
   const restoreResult = shouldRestoreSnapshot
     ? await restoreSnapshotEntries_ACU(snapshot)
     : { restored: 0, skipped: 0, failed: 0 };
-  const canDeleteStateEntry = options.cleanupStateEntry === true && shouldRestoreSnapshot && restoreResult.skipped === 0 && restoreResult.failed === 0;
+  const canDeleteStateEntry = shouldRestoreSnapshot && restoreResult.skipped === 0 && restoreResult.failed === 0;
   const canClearLegacySnapshot = shouldUseLegacySnapshot && restoreResult.skipped === 0 && restoreResult.failed === 0;
   const deletedFinalGreenlights = await deleteInternalEntriesByComment_ACU(resolvedBookNames, AGENT_FINAL_GENERATION_GREENLIGHT_COMMENT_ACU);
   const deletedSnapshots = await deleteInternalEntriesByComment_ACU(resolvedBookNames, AGENT_WORLDBOOK_SNAPSHOT_COMMENT_ACU);

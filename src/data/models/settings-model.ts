@@ -86,11 +86,19 @@ export interface AgentWorldbookCardConfigMeta_ACU {
   control: Partial<AgentWorldbookControl_ACU>;
 }
 
+/** 世界书内 Agent 状态条目的稳定身份信息；comment/name 只用于展示，不作为主识别锚点。 */
+export interface AgentWorldbookStateIdentity_ACU {
+  stateEntryUid?: string | number;
+  hostBookName?: string;
+  marker: string;
+}
+
 /** 世界书内存储的单卡 Agent 状态元数据；统一保存 Agent 配置与接管快照。 */
 export interface AgentWorldbookStateMeta_ACU {
   version: 2;
   kind: 'agent_worldbook_state';
   updatedAt: number;
+  identity?: AgentWorldbookStateIdentity_ACU;
   control: Partial<AgentWorldbookControl_ACU>;
   snapshot: AgentWorldbookControlSnapshot_ACU;
 }

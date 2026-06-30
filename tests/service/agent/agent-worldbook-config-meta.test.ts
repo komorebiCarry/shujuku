@@ -36,8 +36,8 @@ import {
   writeAgentWorldbookStateToWorldbook_ACU,
 } from '../../../src/service/agent/agent-worldbook-config-meta';
 
-function configEntry(content: unknown, uid: any = 'cfg'): any {
-  return { uid, comment: AGENT_WORLDBOOK_CONFIG_COMMENT_ACU, enabled: false, keys: [], content: JSON.stringify(content) };
+function configEntry(content: unknown, uid: any = 'cfg', comment = AGENT_WORLDBOOK_CONFIG_COMMENT_ACU): any {
+  return { uid, comment, enabled: false, keys: [], content: JSON.stringify(content) };
 }
 
 describe('agent worldbook config/state meta', () => {
@@ -99,6 +99,50 @@ describe('agent worldbook config/state meta', () => {
     });
   });
 
+  it('reads version 2 state by content identity when comment was renamed', async () => {
+    mockEntriesByBook.set('主世界书', [configEntry({
+      version: 2,
+      kind: 'agent_worldbook_state',
+      updatedAt: 2,
+      identity: {
+        marker: AGENT_WORLDBOOK_CONFIG_COMMENT_ACU,
+        hostBookName: '主世界书',
+        stateEntryUid: 'cfg-renamed',
+      },
+      control: { mode: 'agent', agentApiPreset: 'renamed-preset' },
+      snapshot: { active: false, selectionSignature: '', createdAt: 0, books: {} },
+    }, 'cfg-renamed', '用户改过的备注')]);
+
+    const result = await readAgentWorldbookStateFromWorldbooks_ACU();
+
+    expect(result.source).toBe('worldbook');
+    expect(result.entryUid).toBe('cfg-renamed');
+    expect(result.control.mode).toBe('agent');
+    expect(result.control.agentApiPreset).toBe('renamed-preset');
+  });
+
+  it('writes renamed state entry by uid without creating a duplicate or overwriting user comment', async () => {
+    mockEntriesByBook.set('主世界书', [configEntry({
+      version: 2,
+      kind: 'agent_worldbook_state',
+      updatedAt: 2,
+      identity: { marker: AGENT_WORLDBOOK_CONFIG_COMMENT_ACU, hostBookName: '主世界书', stateEntryUid: 'cfg-renamed' },
+      control: { mode: 'agent', agentApiPreset: 'old' },
+      snapshot: { active: false, selectionSignature: '', createdAt: 0, books: {} },
+    }, 'cfg-renamed', '用户改过的备注')]);
+
+    const result = await writeAgentWorldbookControlToWorldbook_ACU({ agentApiPreset: 'new' } as any);
+    const entries = mockEntriesByBook.get('主世界书') || [];
+    const state = JSON.parse(entries[0].content);
+
+    expect(result.entryUid).toBe('cfg-renamed');
+    expect(mockCreated).not.toHaveBeenCalled();
+    expect(entries).toHaveLength(1);
+    expect(entries[0].comment).toBe('用户改过的备注');
+    expect(state.identity).toMatchObject({ marker: AGENT_WORLDBOOK_CONFIG_COMMENT_ACU, hostBookName: '主世界书', stateEntryUid: 'cfg-renamed' });
+    expect(state.control.agentApiPreset).toBe('new');
+  });
+
   it('writes control without losing existing snapshot', async () => {
     mockEntriesByBook.set('主世界书', [configEntry({
       version: 2,
@@ -150,7 +194,31 @@ describe('agent worldbook config/state meta', () => {
     expect(result.updated).toBe(true);
     expect(mockCreated).toHaveBeenCalledTimes(1);
     const created = (mockEntriesByBook.get('主世界书') || []).find(entry => entry.comment === AGENT_WORLDBOOK_CONFIG_COMMENT_ACU);
-    expect(JSON.parse(created.content)).toMatchObject({ version: 2, kind: 'agent_worldbook_state', control: { mode: 'agent' }, snapshot: { active: true, selectionSignature: 'sig-4' } });
+    expect(result.entryUid).toBe('new-0');
+    expect(JSON.parse(created.content)).toMatchObject({
+      version: 2,
+      kind: 'agent_worldbook_state',
+      identity: {
+        marker: AGENT_WORLDBOOK_CONFIG_COMMENT_ACU,
+        hostBookName: '主世界书',
+        stateEntryUid: 'new-0',
+      },
+      control: { mode: 'agent' },
+      snapshot: { active: true, selectionSignature: 'sig-4' },
+    });
+  });
+
+  it('deletes parseable state entries even when comment was renamed', async () => {
+    mockEntriesByBook.set('主世界书', [
+      configEntry({ version: 2, kind: 'agent_worldbook_state', updatedAt: 1, identity: { marker: AGENT_WORLDBOOK_CONFIG_COMMENT_ACU, hostBookName: '主世界书', stateEntryUid: 'cfg-1' }, control: {}, snapshot: {} }, 'cfg-1', '用户改过的备注'),
+      { uid: 'normal', comment: '普通条目' },
+    ]);
+
+    const deleted = await deleteAgentWorldbookStateEntry_ACU('主世界书');
+
+    expect(deleted).toBe(1);
+    expect(mockDeleted).toHaveBeenCalledWith('主世界书', ['cfg-1']);
+    expect(mockEntriesByBook.get('主世界书')).toEqual([{ uid: 'normal', comment: '普通条目' }]);
   });
 
   it('deletes all exact state entries in the target book only', async () => {
