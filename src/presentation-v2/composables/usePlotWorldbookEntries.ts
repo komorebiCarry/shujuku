@@ -1,7 +1,7 @@
 /**
  * usePlotWorldbookEntries — 剧情推进世界书条目级启用/禁用
  *
- * 从 service 层加载条目列表，过滤掉数据库生成条目和屏蔽词条目，
+ * 从 service 层加载条目列表，过滤掉数据库生成条目和原本关闭的条目，
  * 暴露 reactive 分组列表 + selectAll / deselectAll / toggleEntry，
  * 持久化到 plotWorldbookConfig.enabledEntries。
  */
@@ -39,12 +39,6 @@ export interface WorldbookEntryGroup {
 
 export type EntryLoadStatus = 'idle' | 'loading' | 'success' | 'error';
 
-const BLOCKED_KEYWORDS = [
-  '规则', '思维链', 'cot', 'MVU', 'mvu', '变量', '状态',
-  'Status', 'Rule', 'rule', '检定', '判断', '叙事', '文风',
-  'InitVar', '格式',
-];
-
 function isDbGenerated(comment: string): boolean {
   const normalized = comment
     .replace(/^ACU-\[[^\]]+\]-/, '')
@@ -57,14 +51,10 @@ function isDbGenerated(comment: string): boolean {
   return false;
 }
 
-function isBlocked(comment: string): boolean {
-  return BLOCKED_KEYWORDS.some(kw => comment.includes(kw));
-}
-
 function isEntryVisibleForUI(_bookName: string, entry: any): boolean {
+  if (entry?.enabled === false) return false;
   const comment = String(entry?.comment || entry?.name || '');
   if (isDbGenerated(comment)) return false;
-  if (isBlocked(comment)) return false;
   return true;
 }
 
@@ -113,12 +103,19 @@ export function usePlotWorldbookEntries() {
 
       for (const bookName of unique) {
         const bookEntries = Array.isArray(entriesMap[bookName]) ? entriesMap[bookName] : [];
+        const visibleBookEntries = bookEntries.filter((entry: any) => isEntryVisibleForUI(bookName, entry));
+        const visibleUidSet = new Set(visibleBookEntries.map((entry: any) => String(entry?.uid)));
 
         if (typeof cfg.enabledEntries[bookName] === 'undefined') {
-          cfg.enabledEntries[bookName] = bookEntries
-            .filter((entry: any) => isEntryVisibleForUI(bookName, entry))
-            .map((e: any) => e.uid);
+          cfg.enabledEntries[bookName] = visibleBookEntries.map((e: any) => e.uid);
           settingsChanged = true;
+        } else if (Array.isArray(cfg.enabledEntries[bookName])) {
+          const cleanedEnabledEntries = cfg.enabledEntries[bookName]
+            .filter((uid: any) => visibleUidSet.has(String(uid)));
+          if (cleanedEnabledEntries.length !== cfg.enabledEntries[bookName].length) {
+            cfg.enabledEntries[bookName] = cleanedEnabledEntries;
+            settingsChanged = true;
+          }
         }
 
         const enabledList: number[] = Array.isArray(cfg.enabledEntries[bookName])
@@ -126,8 +123,7 @@ export function usePlotWorldbookEntries() {
           : [];
 
         const visible: WorldbookEntryItem[] = [];
-        for (const entry of bookEntries) {
-          if (!isEntryVisibleForUI(bookName, entry)) continue;
+        for (const entry of visibleBookEntries) {
           const comment = String(entry?.comment || entry?.name || '');
           visible.push({
             uid: entry.uid,

@@ -181,6 +181,33 @@ describe('agent worldbook config/state meta', () => {
     expect(state.control.agentApiPreset).toBe('keep-me');
     expect(state.control.mode).toBe('agent');
     expect(state.snapshot).toMatchObject({ active: true, selectionSignature: 'sig-3', books: { '剧情书': [{ uid: 3, previousEnabled: true }] } });
+    expect(JSON.parse((mockEntriesByBook.get('主世界书') || [])[0].content).snapshot.books['剧情书']).toEqual([
+      { uid: 3, previousEnabled: true, previousKeys: [] },
+    ]);
+  });
+
+  it('overwrites an existing empty state snapshot with the active takeover snapshot content', async () => {
+    mockEntriesByBook.set('主世界书', [configEntry({
+      version: 2,
+      kind: 'agent_worldbook_state',
+      updatedAt: 2,
+      control: { mode: 'agent', agentApiPreset: 'keep-me' },
+      snapshot: { active: false, selectionSignature: '', createdAt: 0, books: {} },
+    }, 'cfg-1')]);
+
+    const activeSnapshot = {
+      active: true,
+      selectionSignature: 'sig-active',
+      createdAt: 999,
+      books: { '娇妻沦为仇敌性奴': [{ uid: 52, previousEnabled: true, previousKeys: ['钥匙52'], previousType: 'selective', commentHash: 'hash:旧备注' }] },
+    };
+
+    const result = await writeAgentWorldbookStateToWorldbook_ACU({ snapshot: activeSnapshot });
+    const state = JSON.parse((mockEntriesByBook.get('主世界书') || [])[0].content);
+
+    expect(result.updated).toBe(true);
+    expect(result.snapshot).toEqual(activeSnapshot);
+    expect(state.snapshot).toEqual(activeSnapshot);
   });
 
   it('creates version 2 state entry when no config entry exists', async () => {
@@ -188,7 +215,7 @@ describe('agent worldbook config/state meta', () => {
 
     const result = await writeAgentWorldbookStateToWorldbook_ACU({
       control: { mode: 'agent' } as any,
-      snapshot: { active: true, selectionSignature: 'sig-4', createdAt: 1, books: {} },
+      snapshot: { active: true, selectionSignature: 'sig-4', createdAt: 1, books: { '剧情书': [{ uid: 4, previousEnabled: true, previousKeys: ['K4'] }] } },
     });
 
     expect(result.updated).toBe(true);
@@ -204,7 +231,7 @@ describe('agent worldbook config/state meta', () => {
         stateEntryUid: 'new-0',
       },
       control: { mode: 'agent' },
-      snapshot: { active: true, selectionSignature: 'sig-4' },
+      snapshot: { active: true, selectionSignature: 'sig-4', books: { '剧情书': [{ uid: 4, previousEnabled: true, previousKeys: ['K4'] }] } },
     });
   });
 

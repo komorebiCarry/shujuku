@@ -349,6 +349,32 @@ describe('agent worldbook takeover native trigger suppression', () => {
     });
   });
 
+  it('原本就是 constant 且 keys 为空的受控条目不会被误认为 Agent 正文蓝灯并被 clear 关闭', async () => {
+    const selectionSignature = buildWorldbookSelectionSignature_ACU(['角色A世界书']);
+    mockEntriesByBook.set('角色A世界书', [
+      { uid: 1, enabled: true, keys: [], type: 'constant', comment: '用户原生常驻条目', content: '内容A' },
+    ]);
+    mockStateSnapshot.current = {
+      active: true,
+      selectionSignature,
+      createdAt: 1,
+      books: {
+        '角色A世界书': [
+          { uid: 1, previousEnabled: true, previousKeys: [], previousType: 'constant', commentHash: 'hash:用户原生常驻条目' },
+        ],
+      },
+    };
+
+    const cleared = await clearFinalGenerationGreenlights_ACU();
+
+    expect(cleared).toBe(0);
+    expect(mockEntriesByBook.get('角色A世界书')?.find(entry => entry.uid === 1)).toMatchObject({
+      enabled: true,
+      type: 'constant',
+      keys: [],
+    });
+  });
+
   it('没有 active snapshot 时正文绿灯写入返回 false 且不修改真实条目', async () => {
     const written = await writeFinalGenerationGreenlights_ACU([{ bookName: '角色A世界书', uid: 1, reason: '正文需要' }]);
 
@@ -508,7 +534,85 @@ describe('agent worldbook takeover native trigger suppression', () => {
     });
   });
 
-  it('恢复时如果 comment 已变化则跳过该条目，避免误恢复用户已改写的世界书条目', async () => {
+  it('恢复 state snapshot 时兼容旧 commentHash 口径包含 Skill 元数据块的条目', async () => {
+    const selectionSignature = buildWorldbookSelectionSignature_ACU(['角色A世界书']);
+    const takeoverMetaBlock = `<!-- ACU_AGENT_WORLDBOOK_TAKEOVER_META_START\n${JSON.stringify({
+      version: 1,
+      kind: 'agent_worldbook_takeover',
+      selectionSignature,
+      createdAt: 1,
+      previousEnabled: true,
+      previousKeys: ['钥匙A'],
+      commentHash: `hash:普通条目A\n\n${skillMetaBlock_ACU}`,
+    })}\nACU_AGENT_WORLDBOOK_TAKEOVER_META_END -->`;
+    mockEntriesByBook.set('角色A世界书', [
+      { uid: 1, enabled: false, keys: ['新钥匙'], comment: `普通条目A\n\n${skillMetaBlock_ACU}\n\n${takeoverMetaBlock}`, content: '内容A' },
+    ]);
+    mockStateSnapshot.current = {
+      active: true,
+      selectionSignature,
+      createdAt: 1,
+      books: {
+        '角色A世界书': [
+          { uid: 1, previousEnabled: true, previousKeys: ['钥匙A'], commentHash: `hash:普通条目A\n\n${skillMetaBlock_ACU}` },
+        ],
+      },
+    };
+
+    const result = await restoreWorldbookGreenlights_ACU({ cleanupStateEntry: true });
+
+    expect(result.reason).toBe('native_worldbook_trigger_restored');
+    expect(result.restored).toBe(1);
+    expect(result.skipped).toBe(0);
+    expect(mockDeleteAgentWorldbookState).toHaveBeenCalledTimes(1);
+    expect(mockEntriesByBook.get('角色A世界书')?.find(entry => entry.uid === 1)).toMatchObject({
+      enabled: true,
+      keys: ['钥匙A'],
+      comment: `普通条目A\n\n${skillMetaBlock_ACU}`,
+    });
+  });
+
+  it('恢复 state snapshot 时旧 commentHash 口径包含 Skill 元数据且 comment 已变化仍按 uid 恢复', async () => {
+    const selectionSignature = buildWorldbookSelectionSignature_ACU(['角色A世界书']);
+    const takeoverMetaBlock = `<!-- ACU_AGENT_WORLDBOOK_TAKEOVER_META_START\n${JSON.stringify({
+      version: 1,
+      kind: 'agent_worldbook_takeover',
+      selectionSignature,
+      createdAt: 1,
+      previousEnabled: true,
+      previousKeys: ['钥匙A'],
+      commentHash: `hash:普通条目A\n\n${skillMetaBlock_ACU}`,
+    })}\nACU_AGENT_WORLDBOOK_TAKEOVER_META_END -->`;
+    mockEntriesByBook.set('角色A世界书', [
+      { uid: 1, enabled: false, keys: ['新钥匙'], comment: `用户已改名\n\n${skillMetaBlock_ACU}\n\n${takeoverMetaBlock}`, content: '内容A' },
+    ]);
+    mockStateSnapshot.current = {
+      active: true,
+      selectionSignature,
+      createdAt: 1,
+      books: {
+        '角色A世界书': [
+          { uid: 1, previousEnabled: true, previousKeys: ['钥匙A'], commentHash: `hash:普通条目A\n\n${skillMetaBlock_ACU}` },
+        ],
+      },
+    };
+
+    const result = await restoreWorldbookGreenlights_ACU({ cleanupStateEntry: true });
+
+    expect(result.updated).toBe(true);
+    expect(result.reason).toBe('native_worldbook_trigger_restored');
+    expect(result.restored).toBe(1);
+    expect(result.skipped).toBe(0);
+    expect(mockDeleteAgentWorldbookState).toHaveBeenCalledTimes(1);
+    expect(mockStateSnapshot.current.active).toBe(false);
+    expect(mockEntriesByBook.get('角色A世界书')?.find(entry => entry.uid === 1)).toMatchObject({
+      enabled: true,
+      keys: ['钥匙A'],
+      comment: `用户已改名\n\n${skillMetaBlock_ACU}`,
+    });
+  });
+
+  it('恢复时如果 comment 已变化仍按 uid 恢复接管字段并保留当前 comment', async () => {
     mockEntriesByBook.set('角色A世界书', [
       { uid: 1, enabled: false, keys: ['新钥匙'], comment: '用户已改名', content: '内容A' },
     ]);
@@ -525,19 +629,19 @@ describe('agent worldbook takeover native trigger suppression', () => {
 
     const result = await restoreWorldbookGreenlights_ACU();
 
-    expect(result.updated).toBe(false);
-    expect(result.reason).toBe('native_worldbook_trigger_restore_skipped');
-    expect(result.restored).toBe(0);
-    expect(result.skipped).toBe(1);
+    expect(result.updated).toBe(true);
+    expect(result.reason).toBe('native_worldbook_trigger_restored');
+    expect(result.restored).toBe(1);
+    expect(result.skipped).toBe(0);
     expect(result.failed).toBe(0);
     expect(mockEntriesByBook.get('角色A世界书')?.find(entry => entry.uid === 1)).toMatchObject({
-      enabled: false,
-      keys: ['新钥匙'],
+      enabled: true,
+      keys: ['钥匙A'],
       comment: '用户已改名',
     });
   });
 
-  it('恢复 state snapshot 时如果 comment 已变化则保留 state 条目，避免丢失手动恢复依据', async () => {
+  it('恢复 state snapshot 时如果 comment 已变化仍恢复并删除 state 条目', async () => {
     mockEntriesByBook.set('角色A世界书', [
       { uid: 1, enabled: false, keys: ['新钥匙'], comment: '用户已改名', content: '内容A' },
     ]);
@@ -554,13 +658,18 @@ describe('agent worldbook takeover native trigger suppression', () => {
 
     const result = await restoreWorldbookGreenlights_ACU();
 
-    expect(result.updated).toBe(false);
-    expect(result.reason).toBe('native_worldbook_trigger_restore_skipped');
-    expect(result.restored).toBe(0);
-    expect(result.skipped).toBe(1);
+    expect(result.updated).toBe(true);
+    expect(result.reason).toBe('native_worldbook_trigger_restored');
+    expect(result.restored).toBe(1);
+    expect(result.skipped).toBe(0);
     expect(result.failed).toBe(0);
-    expect(mockDeleteAgentWorldbookState).not.toHaveBeenCalled();
-    expect(mockStateSnapshot.current.active).toBe(true);
+    expect(mockDeleteAgentWorldbookState).toHaveBeenCalledTimes(1);
+    expect(mockStateSnapshot.current.active).toBe(false);
+    expect(mockEntriesByBook.get('角色A世界书')?.find(entry => entry.uid === 1)).toMatchObject({
+      enabled: true,
+      keys: ['钥匙A'],
+      comment: '用户已改名',
+    });
   });
 
   it('没有 active snapshot 或遗留内部条目时恢复返回空操作结果', async () => {
