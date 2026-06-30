@@ -9,6 +9,7 @@ import type {
   PromptSegment_ACU,
 } from '../../data/models/settings-model';
 import { settings_ACU, _set_pendingFinalGenerationGreenlights_ACU } from '../../service/runtime/state-manager';
+import { saveSettings_ACU } from '../../service/settings/settings-service';
 import {
   clonePromptSegments_ACU,
   getDefaultAgentDecisionPromptSegments_ACU,
@@ -20,7 +21,6 @@ import {
   getPlotAgentWorldbookSnapshot_ACU,
   refreshPlotAgentWorldbookSnapshotFromWorldbooks_ACU,
   restoreWorldbookGreenlights_ACU,
-  takeoverWorldbookGreenlights_ACU,
 } from '../../service/agent/agent-worldbook-takeover';
 import {
   skillifyCurrentPlotWorldbookSelection_ACU,
@@ -40,7 +40,7 @@ import { plotCopy } from '../copy/plot-copy';
 import { useDialogStore } from '../stores/dialog-store';
 import { useToastStore } from '../stores/toast-store';
 
-export type AgentWorldbookBusyAction = 'takeover' | 'restore' | 'skillify' | 'clearSkillMeta' | null;
+export type AgentWorldbookBusyAction = 'restore' | 'skillify' | 'clearSkillMeta' | null;
 
 interface AgentApiPresetOption {
   value: string;
@@ -117,6 +117,25 @@ function normalizeAgentApiPreset_ACU(value: unknown): string {
   return getAgentApiPresetOptions_ACU().some(option => option.value === name) ? name : '';
 }
 
+function disableLegacyAgentWorldbookControl_ACU(options: { clearSnapshot?: boolean } = {}): void {
+  const plotSettings = settings_ACU.plotSettings as Record<string, any> | undefined;
+  if (!plotSettings || typeof plotSettings !== 'object') return;
+  let changed = false;
+  const legacyControl = plotSettings.agentWorldbookControl;
+  if (legacyControl && typeof legacyControl === 'object' && !Array.isArray(legacyControl)) {
+    if (legacyControl.mode !== 'disabled' || legacyControl.enabled !== false) {
+      legacyControl.mode = 'disabled';
+      legacyControl.enabled = false;
+      changed = true;
+    }
+  }
+  if (options.clearSnapshot === true && Object.prototype.hasOwnProperty.call(plotSettings, 'agentWorldbookControlSnapshot')) {
+    delete plotSettings.agentWorldbookControlSnapshot;
+    changed = true;
+  }
+  if (changed) saveSettings_ACU();
+}
+
 export function usePlotWorldbookAgentControl() {
   const toast = useToastStore();
   const dialog = useDialogStore();
@@ -179,40 +198,13 @@ export function usePlotWorldbookAgentControl() {
     const saved = await writeControlPatch({ mode: next, enabled: next !== 'disabled' });
     if (!saved) return;
     if (next === 'agent') {
-      busy.value = 'takeover';
-      try {
-        const result = await takeoverWorldbookGreenlights_ACU();
-        await refresh();
-        if (result.updated) {
-          toast.success(plotCopy.agentControl.takeover.success(), { muteable: false });
-        } else {
-          const message = plotCopy.agentControl.takeover.reasons[result.reason || ''] || plotCopy.agentControl.takeover.noop;
-          toast.warning(message, { muteable: false });
-        }
-      } catch (e: any) {
-        toast.error(`${plotCopy.agentControl.takeover.error}${e?.message ? `：${e.message}` : ''}`, { muteable: false });
-      } finally {
-        busy.value = null;
-      }
+      toast.info(plotCopy.agentControl.modeChanged.agent, { muteable: false });
       return;
     }
     if (next === 'disabled') {
       _set_pendingFinalGenerationGreenlights_ACU([]);
-      busy.value = 'restore';
-      try {
-        const result = await restoreWorldbookGreenlights_ACU();
-        await refresh();
-        if (result.updated) {
-          toast.success(plotCopy.agentControl.restore.success(), { muteable: false });
-        } else {
-          const message = plotCopy.agentControl.restore.reasons[result.reason || ''] || plotCopy.agentControl.restore.noop;
-          toast.info(message, { muteable: false });
-        }
-      } catch (e: any) {
-        toast.error(`${plotCopy.agentControl.restore.error}${e?.message ? `：${e.message}` : ''}`, { muteable: false });
-      } finally {
-        busy.value = null;
-      }
+      disableLegacyAgentWorldbookControl_ACU();
+      toast.info(plotCopy.agentControl.modeChanged.disabled, { muteable: false });
       return;
     }
     toast.info(plotCopy.agentControl.modeChanged[next], { muteable: false });
@@ -291,47 +283,29 @@ export function usePlotWorldbookAgentControl() {
     await setPromptSegments(kind, movePromptSegment_ACU(current, index, delta));
   }
 
-  async function takeover(): Promise<boolean> {
-    await refresh();
-    if (!isAgentMode.value) {
-      toast.warning(plotCopy.agentControl.takeover.modeRequired, { muteable: false });
-      return false;
-    }
-    const confirmed = await dialog.confirm({ ...plotCopy.agentControl.takeover.confirm, confirmVariant: 'danger' });
-    if (!confirmed) return false;
-    busy.value = 'takeover';
-    try {
-      const result = await takeoverWorldbookGreenlights_ACU();
-      await refresh();
-      if (result.updated) {
-        toast.success(plotCopy.agentControl.takeover.success(), { muteable: false });
-        return true;
-      }
-      const message = plotCopy.agentControl.takeover.reasons[result.reason || ''] || plotCopy.agentControl.takeover.noop;
-      toast.warning(message, { muteable: false });
-      return false;
-    } catch (e: any) {
-      toast.error(`${plotCopy.agentControl.takeover.error}${e?.message ? `：${e.message}` : ''}`, { muteable: false });
-      return false;
-    } finally {
-      busy.value = null;
-    }
-  }
-
   async function restore(): Promise<boolean> {
     const confirmed = await dialog.confirm(plotCopy.agentControl.restore.confirm);
     if (!confirmed) return false;
     busy.value = 'restore';
     try {
-      const result = await restoreWorldbookGreenlights_ACU();
+      _set_pendingFinalGenerationGreenlights_ACU([]);
+      const saved = await writeControlPatch({ mode: 'disabled', enabled: false });
+      disableLegacyAgentWorldbookControl_ACU();
+      if (!saved) return false;
+      const result = await restoreWorldbookGreenlights_ACU({ cleanupStateEntry: true });
+      disableLegacyAgentWorldbookControl_ACU({ clearSnapshot: result.updated && result.skipped === 0 && result.failed === 0 });
       await refresh();
+      const message = plotCopy.agentControl.restore.reasons[result.reason || ''] || plotCopy.agentControl.restore.noop;
+      if (result.skipped > 0 || result.failed > 0) {
+        toast.warning(message, { muteable: false });
+        return false;
+      }
       if (result.updated) {
         toast.success(plotCopy.agentControl.restore.success(), { muteable: false });
         return true;
       }
-      const message = plotCopy.agentControl.restore.reasons[result.reason || ''] || plotCopy.agentControl.restore.noop;
-      toast.warning(message, { muteable: false });
-      return false;
+      toast.info(message, { muteable: false });
+      return true;
     } catch (e: any) {
       toast.error(`${plotCopy.agentControl.restore.error}${e?.message ? `：${e.message}` : ''}`, { muteable: false });
       return false;
@@ -393,17 +367,7 @@ export function usePlotWorldbookAgentControl() {
         else toast.success(text, { muteable: false });
       }
 
-      let takeoverUpdated = false;
-      if (mode.value === 'agent') {
-        const takeoverResult = await takeoverWorldbookGreenlights_ACU();
-        await refresh();
-        takeoverUpdated = takeoverResult.updated;
-        if (!takeoverResult.updated) {
-          const message = plotCopy.agentControl.takeover.reasons[takeoverResult.reason || ''] || plotCopy.agentControl.takeover.noop;
-          toast.info(message, { muteable: false });
-        }
-      }
-      return result.updated > 0 || takeoverUpdated;
+      return result.updated > 0;
     } catch (e: any) {
       const errorText = `${plotCopy.agentControl.skillify.error}${e?.message ? `：${e.message}` : ''}`;
       if (!progressToastId || !toast.update(progressToastId, 'error', errorText, { muteable: false })) {
@@ -478,7 +442,6 @@ export function usePlotWorldbookAgentControl() {
     setAgentPlotExecutionMode,
     setAgentApiPreset,
     setAgentSkillApiPreset,
-    takeover,
     setContextSetting,
     resetContextSettings,
     setPromptSegments,

@@ -48,9 +48,6 @@
         <AcuButton size="sm" @click="advancedOpen = true">
           {{ plotCopy.agentControl.advanced.button }}
         </AcuButton>
-        <AcuButton size="sm" variant="danger" :loading="agentControl.busy.value === 'takeover'" :disabled="agentControl.busy.value !== null || !agentControl.isAgentMode.value" @click="runTakeover">
-          {{ plotCopy.agentControl.takeover.button }}
-        </AcuButton>
         <AcuButton size="sm" :loading="agentControl.busy.value === 'restore'" :disabled="agentControl.busy.value !== null" @click="runRestore">
           {{ plotCopy.agentControl.restore.button }}
         </AcuButton>
@@ -104,9 +101,6 @@ function onModeChange(value: string): void {
   agentControl.setMode(value as AgentWorldbookControlMode_ACU);
 }
 
-async function runTakeover(): Promise<void> {
-  if (await agentControl.takeover()) emit('changed');
-}
 async function runRestore(): Promise<void> {
   if (await agentControl.restore()) emit('changed');
 }

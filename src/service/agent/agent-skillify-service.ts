@@ -129,6 +129,7 @@ const AGENT_MANAGED_WORLDBOOK_COMMENT_PREFIXES_ACU = [
 ];
 
 const AGENT_INTERNAL_WORLDBOOK_COMMENT_PREFIXES_ACU = [
+  'TavernDB-ACU-AgentWorldbookConfig',
   'TavernDB-ACU-AgentWorldbookSnapshot',
   'TavernDB-ACU-AgentFinalGenerationGreenlights',
 ];

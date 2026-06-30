@@ -19,6 +19,11 @@ import {
   resolveAgentWorldbookFilterAvailability_ACU,
   type WorldbookSkillMetaReadResult_ACU,
 } from './agent-worldbook-skill-meta';
+import {
+  deleteAgentWorldbookStateEntry_ACU,
+  readAgentWorldbookStateFromWorldbooks_ACU,
+  writeAgentWorldbookStateToWorldbook_ACU,
+} from './agent-worldbook-config-meta';
 
 export interface AgentWorldbookTakeoverEntryUpdate_ACU {
   bookName: string;
@@ -283,6 +288,18 @@ export function setPlotAgentWorldbookSnapshot_ACU(snapshot: AgentWorldbookContro
 export async function refreshPlotAgentWorldbookSnapshotFromWorldbooks_ACU(): Promise<AgentWorldbookControlSnapshot_ACU> {
   const resolvedBookNames = await resolveTakeoverBookNames_ACU();
   const selectionSignature = buildWorldbookSelectionSignature_ACU(resolvedBookNames);
+
+  const snapshot = await readPlotAgentWorldbookSnapshotFromStateOrLegacy_ACU(resolvedBookNames, selectionSignature);
+  setPlotAgentWorldbookSnapshot_ACU(snapshot);
+  return snapshot;
+}
+
+async function readPlotAgentWorldbookSnapshotFromStateOrLegacy_ACU(resolvedBookNames: string[], selectionSignature: string): Promise<AgentWorldbookControlSnapshot_ACU> {
+  const state = await readAgentWorldbookStateFromWorldbooks_ACU();
+  if (state.snapshot.active === true && state.snapshot.selectionSignature === selectionSignature) {
+    return state.snapshot;
+  }
+
   const snapshotBooks: Record<string, AgentWorldbookControlSnapshotEntry_ACU[]> = {};
   let createdAt = 0;
   for (const bookName of resolvedBookNames) {
@@ -303,11 +320,27 @@ export async function refreshPlotAgentWorldbookSnapshotFromWorldbooks_ACU(): Pro
     }
     if (bookSnapshot.length > 0) snapshotBooks[bookName] = bookSnapshot;
   }
-  const snapshot = Object.keys(snapshotBooks).length > 0
-    ? { active: true, selectionSignature, createdAt: createdAt || Date.now(), books: snapshotBooks }
+
+  if (Object.keys(snapshotBooks).length > 0) {
+    const migratedSnapshot = { active: true, selectionSignature, createdAt: createdAt || Date.now(), books: snapshotBooks };
+    try {
+      await writeAgentWorldbookStateToWorldbook_ACU({ snapshot: migratedSnapshot });
+    } catch (error) {
+      logWarn_ACU('[Agent世界书] 迁移旧接管快照到独立状态条目失败。', error);
+    }
+    return migratedSnapshot;
+  }
+
+  const legacySnapshot = getLegacyPlotAgentWorldbookSnapshot_ACU();
+  const snapshot = legacySnapshot.active === true && legacySnapshot.selectionSignature === selectionSignature
+    ? legacySnapshot
     : buildInactiveSnapshot_ACU(selectionSignature);
-  setPlotAgentWorldbookSnapshot_ACU(snapshot);
   return snapshot;
+}
+
+async function readPlotAgentWorldbookStateSnapshotOnly_ACU(selectionSignature: string): Promise<AgentWorldbookControlSnapshot_ACU> {
+  const state = await readAgentWorldbookStateFromWorldbooks_ACU();
+  return state.snapshot.active === true && state.snapshot.selectionSignature === selectionSignature ? state.snapshot : buildInactiveSnapshot_ACU(selectionSignature);
 }
 
 export function isWorldbookTakeoverActive_ACU(): boolean {
@@ -358,22 +391,18 @@ async function collectTakeoverCandidates_ACU(bookNames: string[], allowedUidSetB
 
 async function disableTakeoverCandidates_ACU(
   snapshotBooks: Record<string, AgentWorldbookControlSnapshotEntry_ACU[]>,
-  selectionSignature: string,
-  createdAt: number,
 ): Promise<{ disabled: number; failed: number }> {
   const updatesByBook = new Map<string, Set<string>>();
-  const snapshotEntryByBookAndUid = new Map<string, Map<string, AgentWorldbookControlSnapshotEntry_ACU>>();
   for (const [bookName, snapshotEntries] of Object.entries(snapshotBooks || {})) {
     if (!bookName) continue;
-    const uidMap = new Map<string, AgentWorldbookControlSnapshotEntry_ACU>();
+    const uidSet = new Set<string>();
     for (const snapshotEntry of Array.isArray(snapshotEntries) ? snapshotEntries : []) {
       if (!hasValidWorldbookUid_ACU(snapshotEntry?.uid)) continue;
-      uidMap.set(String(snapshotEntry.uid), snapshotEntry);
+      uidSet.add(String(snapshotEntry.uid));
     }
-    if (uidMap.size === 0) continue;
+    if (uidSet.size === 0) continue;
     if (!updatesByBook.has(bookName)) updatesByBook.set(bookName, new Set());
-    for (const uid of uidMap.keys()) updatesByBook.get(bookName)!.add(uid);
-    snapshotEntryByBookAndUid.set(bookName, uidMap);
+    for (const uid of uidSet.keys()) updatesByBook.get(bookName)!.add(uid);
   }
 
   let disabled = 0;
@@ -383,12 +412,7 @@ async function disableTakeoverCandidates_ACU(
       const entries = await getLorebookEntries_ACU(bookName);
       const patchEntries = (entries || [])
         .filter(entry => uidSet.has(String(entry?.uid)))
-        .map(entry => {
-          const snapshotEntry = snapshotEntryByBookAndUid.get(bookName)?.get(String(entry?.uid));
-          if (!snapshotEntry) return null;
-          return { uid: entry.uid, enabled: false, comment: buildTakeoverMetaComment_ACU(entry?.comment, selectionSignature, createdAt, snapshotEntry) };
-        })
-        .filter(Boolean) as Record<string, any>[];
+        .map(entry => ({ uid: entry.uid, enabled: false }));
       if (patchEntries.length === 0) continue;
       await setLorebookEntries_ACU(bookName, patchEntries);
       disabled += patchEntries.length;
@@ -545,54 +569,82 @@ export async function takeoverWorldbookGreenlights_ACU(): Promise<AgentWorldbook
   const snapshot = totalCandidates > 0
     ? buildActiveSnapshot_ACU(selectionSignature, snapshotBooks)
     : (shouldKeepExistingActiveSnapshot ? existingSnapshot : buildInactiveSnapshot_ACU(selectionSignature));
-  const { disabled, failed } = totalCandidates > 0
-    ? await disableTakeoverCandidates_ACU(snapshotBooks, selectionSignature, snapshot.createdAt)
+
+  let stateWriteFailed = 0;
+  if (snapshot.active === true) {
+    try {
+      const stateWriteResult = await writeAgentWorldbookStateToWorldbook_ACU({ snapshot });
+      if (!stateWriteResult.updated) stateWriteFailed = totalCandidates;
+    } catch (error) {
+      logWarn_ACU('[Agent世界书] 写入独立接管快照失败，已阻止本次物理禁用以避免无法恢复。', error);
+      stateWriteFailed = totalCandidates;
+    }
+  }
+
+  const { disabled, failed } = totalCandidates > 0 && stateWriteFailed === 0
+    ? await disableTakeoverCandidates_ACU(snapshotBooks)
     : { disabled: 0, failed: 0 };
   setPlotAgentWorldbookSnapshot_ACU(snapshot);
+  const totalFailed = failed + stateWriteFailed;
 
   return {
-    updated: disabled > 0 || failed > 0,
-    reason: totalCandidates > 0
-      ? 'native_worldbook_trigger_disabled'
-      : (shouldKeepExistingActiveSnapshot ? 'native_worldbook_trigger_already_disabled' : 'empty_candidates'),
+    updated: disabled > 0 || totalFailed > 0,
+    reason: stateWriteFailed > 0
+      ? 'snapshot_state_write_failed'
+      : (totalCandidates > 0
+        ? 'native_worldbook_trigger_disabled'
+        : (shouldKeepExistingActiveSnapshot
+          ? 'native_worldbook_trigger_already_disabled'
+          : 'empty_candidates')),
     bookNames: resolvedBookNames,
     selectionSignature,
     totalCandidates,
     disabled,
-    failed,
+    failed: totalFailed,
     snapshot,
     updates,
   };
 }
 
-export async function restoreWorldbookGreenlights_ACU(): Promise<AgentWorldbookRestoreResult_ACU> {
+export async function restoreWorldbookGreenlights_ACU(options: {
+  cleanupStateEntry?: boolean;
+} = {}): Promise<AgentWorldbookRestoreResult_ACU> {
   const resolvedBookNames = await resolveTakeoverBookNames_ACU();
   const selectionSignature = buildWorldbookSelectionSignature_ACU(resolvedBookNames);
-  const worldbookSnapshot = await refreshPlotAgentWorldbookSnapshotFromWorldbooks_ACU();
+  const stateSnapshot = await readPlotAgentWorldbookStateSnapshotOnly_ACU(selectionSignature);
+  const worldbookSnapshot = stateSnapshot.active === true ? stateSnapshot : await readPlotAgentWorldbookSnapshotFromStateOrLegacy_ACU(resolvedBookNames, selectionSignature);
   const legacySnapshot = getLegacyPlotAgentWorldbookSnapshot_ACU();
-  const shouldUseWorldbookSnapshot = worldbookSnapshot.active === true && worldbookSnapshot.selectionSignature === selectionSignature;
+  const shouldUseWorldbookSnapshot = stateSnapshot.active === true && stateSnapshot.selectionSignature === selectionSignature;
   const shouldUseLegacySnapshot = !shouldUseWorldbookSnapshot && legacySnapshot.active === true && legacySnapshot.selectionSignature === selectionSignature;
   const snapshot = shouldUseWorldbookSnapshot
-    ? worldbookSnapshot
+    ? stateSnapshot
     : (shouldUseLegacySnapshot ? legacySnapshot : worldbookSnapshot);
   const shouldRestoreSnapshot = snapshot.active === true && snapshot.selectionSignature === selectionSignature;
   const restoreResult = shouldRestoreSnapshot
     ? await restoreSnapshotEntries_ACU(snapshot)
     : { restored: 0, skipped: 0, failed: 0 };
+  const canDeleteStateEntry = options.cleanupStateEntry === true && shouldRestoreSnapshot && restoreResult.skipped === 0 && restoreResult.failed === 0;
+  const canClearLegacySnapshot = shouldUseLegacySnapshot && restoreResult.skipped === 0 && restoreResult.failed === 0;
   const deletedFinalGreenlights = await deleteInternalEntriesByComment_ACU(resolvedBookNames, AGENT_FINAL_GENERATION_GREENLIGHT_COMMENT_ACU);
   const deletedSnapshots = await deleteInternalEntriesByComment_ACU(resolvedBookNames, AGENT_WORLDBOOK_SNAPSHOT_COMMENT_ACU);
-  const legacySnapshotCleared = shouldUseLegacySnapshot && clearLegacyPlotAgentWorldbookSnapshot_ACU() ? 1 : 0;
-  const cleaned = deletedFinalGreenlights + deletedSnapshots + legacySnapshotCleared;
+  const deletedStateEntries = canDeleteStateEntry ? await deleteAgentWorldbookStateEntry_ACU() : 0;
+  const legacySnapshotCleared = canClearLegacySnapshot && clearLegacyPlotAgentWorldbookSnapshot_ACU() ? 1 : 0;
+  const cleaned = deletedFinalGreenlights + deletedSnapshots + deletedStateEntries + legacySnapshotCleared;
   const changed = restoreResult.restored + restoreResult.failed + cleaned;
-  setPlotAgentWorldbookSnapshot_ACU(buildInactiveSnapshot_ACU(selectionSignature));
+  const shouldKeepSnapshotCache = shouldRestoreSnapshot && (restoreResult.skipped > 0 || restoreResult.failed > 0);
+  setPlotAgentWorldbookSnapshot_ACU(shouldKeepSnapshotCache
+    ? snapshot
+    : buildInactiveSnapshot_ACU(selectionSignature));
 
   return {
     updated: changed > 0,
     reason: restoreResult.restored > 0
       ? 'native_worldbook_trigger_restored'
+      : (restoreResult.failed > 0
+        ? 'native_worldbook_trigger_restore_failed'
       : (restoreResult.skipped > 0
         ? 'native_worldbook_trigger_restore_skipped'
-        : (cleaned > 0 ? 'legacy_artifacts_cleaned' : 'no_active_snapshot')),
+        : (cleaned > 0 ? 'legacy_artifacts_cleaned' : 'no_active_snapshot'))),
     bookNames: resolvedBookNames,
     selectionSignature,
     restored: restoreResult.restored,

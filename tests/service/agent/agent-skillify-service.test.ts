@@ -106,6 +106,12 @@ describe('agent worldbook skillify candidate filtering', () => {
     expect(isWorldbookEntrySkillifyCandidate_ACU(entry)).toBe(false);
   });
 
+  it('always excludes Agent worldbook config/state internal entries from Agent candidates', () => {
+    const entry = { comment: 'TavernDB-ACU-AgentWorldbookConfig', keys: ['异常关键词'], enabled: true, type: 'selective' };
+    expect(isDatabaseGeneratedWorldbookEntryForAgent_ACU(entry)).toBe(true);
+    expect(isWorldbookEntrySkillifyCandidate_ACU(entry)).toBe(false);
+  });
+
   it('keeps disabled and constant checks while allowing entries without keywords', () => {
     expect(isWorldbookEntrySkillifyCandidate_ACU({ comment: '用户自定义地点', keys: ['酒馆'], enabled: false })).toBe(false);
     expect(isWorldbookEntrySkillifyCandidate_ACU({ comment: '用户自定义地点', keys: ['酒馆'], type: 'constant' })).toBe(false);
