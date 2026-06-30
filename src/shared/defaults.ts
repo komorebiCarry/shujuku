@@ -24,6 +24,7 @@ export const DEFAULT_AGENT_CONTEXT_SETTINGS_ACU = {
   skillifyContentPreviewLimit: 1200,
   skillifyMaxEntries: 100,
   plotWorldbookScanMessageLimit: 3,
+  agentAiMaxRetries: 2,
   greenlightMinTkBudget: 20000,
   greenlightMaxTkBudget: 80000,
 };
@@ -40,6 +41,7 @@ export const AGENT_CONTEXT_SETTINGS_LIMITS_ACU = {
   skillifyContentPreviewLimit: { min: 200, max: 5000 },
   skillifyMaxEntries: { min: 1, max: 300 },
   plotWorldbookScanMessageLimit: { min: 1, max: 20 },
+  agentAiMaxRetries: { min: 1, max: 10 },
   greenlightMinTkBudget: { min: 0, max: 200000 },
   greenlightMaxTkBudget: { min: 1, max: 200000 },
 };
@@ -96,6 +98,7 @@ export function buildDefaultAgentWorldbookControl_ACU() {
   return {
     enabled: false,
     mode: 'disabled' as const,
+    agentPlotExecutionMode: 'sequential' as const,
     scopeMode: 'follow_worldbook_page_selection' as const,
     agentApiPreset: '',
     agentSkillApiPreset: '',

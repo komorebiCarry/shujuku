@@ -374,6 +374,35 @@ describe('runAgentDecisionForPlot_ACU', () => {
     expect(result.taskPlan).toEqual([]);
   });
 
+  it('retries empty Agent AI decision responses according to agentAiMaxRetries', async () => {
+    mockCallAIWithPreset
+      .mockResolvedValueOnce('')
+      .mockResolvedValueOnce(JSON.stringify({
+        taskPlan: [{ taskId: 'task_id', run: true, effectiveStage: 1, effectiveOrder: 0 }],
+        plotGreenlights: {},
+        finalGenerationGreenlights: [],
+        fallbackMode: false,
+        reason: 'ok',
+      }));
+
+    const result = await runAgentDecisionForPlot_ACU({
+      plotSettings: {
+        agentWorldbookControl: {
+          enabled: true,
+          mode: 'agent',
+          contextSettings: { agentAiMaxRetries: 2 },
+        },
+      },
+      userMessage: '敲门',
+      sharedContext: {},
+      enabledTasks: [{ id: 'task id', name: '默认任务', description: '需要判断的剧情任务', enabled: true, promptGroup: { messages: [] } }],
+    });
+
+    expect(mockCallAIWithPreset).toHaveBeenCalledTimes(2);
+    expect(result.active).toBe(true);
+    expect(result.effectiveTasks[0].id).toBe('task_id');
+  });
+
   it('clips greenlights by max tk budget after resolving entry indexes', async () => {
     mockRefreshPlotAgentWorldbookSnapshot.mockResolvedValueOnce({ active: true, selectionSignature: 'scope', createdAt: 1, books: { '剧情书': [{ uid: 1 }, { uid: 2 }, { uid: 3 }] } });
     const skillMetaBlock = (description: string) => `<!-- ACU_SKILL_META_START\n${JSON.stringify({ version: 1, description, triggerWhen: '预算测试触发', updatedAt: 1, updatedBy: 'agent-skillify' })}\nACU_SKILL_META_END -->`;

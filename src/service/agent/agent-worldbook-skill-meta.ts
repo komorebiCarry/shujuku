@@ -13,6 +13,14 @@ export interface WorldbookSkillMetaSaveResult_ACU {
   entry?: Record<string, any>;
 }
 
+export interface WorldbookSkillMetaReadResult_ACU {
+  bookName: string;
+  uid: string | number;
+  comment: string;
+  label: string;
+  skillMeta: WorldbookSkillMeta_ACU;
+}
+
 function normalizeCommentText_ACU(comment: unknown): string {
   return typeof comment === 'string' ? comment : '';
 }
@@ -139,4 +147,51 @@ export async function deleteWorldbookEntrySkillMeta_ACU(
 
   await setLorebookEntries_ACU(bookName, [{ uid: entry.uid, comment: nextComment }]);
   return { updated: true, entry: { ...entry, comment: nextComment } };
+}
+
+function buildWorldbookSkillMetaReadResult_ACU(
+  bookName: string,
+  entry: Record<string, any>,
+): WorldbookSkillMetaReadResult_ACU | null {
+  const uid = entry?.uid;
+  if (uid === null || uid === undefined || String(uid).trim() === '') return null;
+  const comment = normalizeCommentText_ACU(entry?.comment || entry?.name);
+  const skillMeta = parseWorldbookSkillMetaFromComment_ACU(comment);
+  if (!skillMeta) return null;
+  return {
+    bookName,
+    uid,
+    comment,
+    label: stripWorldbookSkillMetaBlock_ACU(comment).trim() || `条目 ${uid}`,
+    skillMeta,
+  };
+}
+
+export async function getWorldbookEntrySkillMeta_ACU(
+  bookName: string,
+  uid: string | number,
+): Promise<WorldbookSkillMetaReadResult_ACU | null> {
+  const targetError = validateWorldbookSkillMetaTarget_ACU(bookName, uid);
+  if (targetError) return null;
+  const entries = await getLorebookEntries_ACU(bookName);
+  const entry = findWorldbookEntryByUid_ACU(entries, uid);
+  if (!entry) return null;
+  return buildWorldbookSkillMetaReadResult_ACU(bookName, entry);
+}
+
+export async function listWorldbookSkillMetas_ACU(
+  bookNames: string[] = [],
+): Promise<WorldbookSkillMetaReadResult_ACU[]> {
+  const uniqueBookNames = [...new Set((Array.isArray(bookNames) ? bookNames : [])
+    .map(name => String(name || '').trim())
+    .filter(Boolean))];
+  const results: WorldbookSkillMetaReadResult_ACU[] = [];
+  for (const bookName of uniqueBookNames) {
+    const entries = await getLorebookEntries_ACU(bookName);
+    for (const entry of Array.isArray(entries) ? entries : []) {
+      const item = buildWorldbookSkillMetaReadResult_ACU(bookName, entry);
+      if (item) results.push(item);
+    }
+  }
+  return results;
 }

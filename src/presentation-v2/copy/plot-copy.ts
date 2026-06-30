@@ -90,6 +90,14 @@ export const plotCopy = {
       title: "Agent 世界书高级设置",
       description: "编辑 Agent 决策、Skill 化提示词模板，并控制上下文层数与候选数量上限。",
     },
+    executionMode: {
+      label: "Agent 与剧情推进执行方式",
+      hint: "串行模式保持 Agent 接管剧情任务与剧情世界书绿灯；并发模式下 Agent 不决定哪些剧情任务生效，剧情任务也按非 Agent 模式读取世界书，只保留正文绿灯判断。",
+      options: {
+        sequential: "串行接管",
+        concurrent: "并发旁路",
+      },
+    },
     contextSettings: {
       title: "上下文参数",
       description: "这些参数会影响 Agent 决策、世界书 Skill 化和剧情世界书扫描。输入会被硬上限夹紧，别指望把模型窗口当垃圾桶无限塞。",
@@ -111,6 +119,10 @@ export const plotCopy = {
         plotWorldbookScanMessageLimit: {
           label: "剧情世界书扫描消息数",
           hint: "剧情推进读取世界书内容时回看的聊天消息数量；未显式保存旧配置时仍回退原 contextTurnCount。",
+        },
+        agentAiMaxRetries: {
+          label: "Agent AI 最大尝试次数",
+          hint: "Agent 决策与一键 Skill 化的公共 AI 调用尝试次数。设置过高会放大请求量，不会让烂提示词自动变聪明。",
         },
         greenlightMinTkBudget: {
           label: "绿灯最小 TK 预算",

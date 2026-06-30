@@ -8,7 +8,7 @@ import {
   setLorebookEntries_ACU,
 } from '../../data/gateways/worldbook-gateway';
 import { persistTavernSettings_ACU } from '../../data/storage/tavern-storage';
-import { hashUserInput_ACU } from '../../shared/utils';
+import { hashUserInput_ACU, logWarn_ACU } from '../../shared/utils';
 import { settings_ACU } from '../runtime/state-manager';
 import {
   getWorldbookEntryKeywordsForSkillify_ACU,
@@ -293,16 +293,24 @@ async function restoreSnapshotEntries_ACU(snapshot: AgentWorldbookControlSnapsho
       const patches: any[] = [];
       for (const snapshotEntry of entriesToRestore) {
         if (!hasValidWorldbookUid_ACU(snapshotEntry?.uid)) {
+          logWarn_ACU(
+            `[Agent世界书] 跳过恢复世界书条目：${normalizedBookName} 中存在无效 uid。`,
+            snapshotEntry?.uid,
+          );
           skipped += 1;
           continue;
         }
         const currentEntry = currentByUid.get(String(snapshotEntry.uid));
         if (!currentEntry) {
+          logWarn_ACU(`[Agent世界书] 跳过恢复世界书条目：${normalizedBookName}#${snapshotEntry.uid} 当前条目不存在。`);
           skipped += 1;
           continue;
         }
         const currentComment = typeof currentEntry.comment === 'string' ? currentEntry.comment : '';
         if (snapshotEntry.commentHash && hashUserInput_ACU(currentComment) !== snapshotEntry.commentHash) {
+          logWarn_ACU(
+            `[Agent世界书] 跳过恢复世界书条目：${normalizedBookName}#${snapshotEntry.uid} comment 已变化，避免覆盖用户修改。`,
+          );
           skipped += 1;
           continue;
         }
@@ -318,6 +326,7 @@ async function restoreSnapshotEntries_ACU(snapshot: AgentWorldbookControlSnapsho
         restored += patches.length;
       }
     } catch (error) {
+      logWarn_ACU(`[Agent世界书] 恢复世界书条目失败：${normalizedBookName}`, error);
       failed += entriesToRestore.length;
     }
   }

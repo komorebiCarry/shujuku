@@ -753,6 +753,41 @@ describe('runPlotTasksRuntime_ACU', () => {
     expect(options.isSelected({ bookName: '剧情书', uid: 999, normalizedComment: 'TavernDB-ACU-自动生成条目' })).toBe(false);
   });
 
+  it('并发模式下 Agent 不改写剧情任务，任务级世界书按 normal 模式处理，剧情成功后才写正文蓝灯', async () => {
+    const finalGreenlights = [{ bookName: '剧情书', uid: 12, reason: '正文需要' }];
+    mockRunAgentDecisionForPlot.mockResolvedValueOnce({
+      active: true,
+      taskPlan: [{ taskId: 'agent-only', run: false, effectiveStage: 9, effectiveOrder: 9 }],
+      plotGreenlights: {
+        'task-skill': [{ bookName: '剧情书', uid: 7, reason: '并发时不应控制剧情任务世界书' }],
+      },
+      finalGenerationGreenlights: finalGreenlights,
+      effectiveTasks: [],
+    });
+
+    const result = await runPlotTasksRuntime_ACU({
+      agentWorldbookControl: { agentPlotExecutionMode: 'concurrent' },
+      plotWorldbookConfig: {
+        source: 'manual',
+        manualSelection: ['剧情书'],
+        enabledEntries: { 剧情书: [1] },
+      },
+      tasks: [{ id: 'task-skill', name: 'Skill 任务', description: '推进冲突', stage: 1, order: 1, maxRetries: 1, promptGroup: [{ role: 'user', content: 'skill 任务' }] }],
+    }, '当前输入');
+
+    expect(mockRunAgentDecisionForPlot).toHaveBeenCalledWith(expect.objectContaining({
+      requireTaskPlan: false,
+    }));
+    expect(mockCallApiWithPlotPreset).toHaveBeenCalledTimes(1);
+    expect(result.successfulResults).toHaveLength(1);
+    const options = mockBuildCombinedWorldbookContentByStrategy.mock.calls[0][0];
+    expect(options.isSelected({ bookName: '剧情书', uid: 1, normalizedComment: '普通条目' })).toBe(true);
+    expect(options.isSelected({ bookName: '剧情书', uid: 7, normalizedComment: '普通条目' })).toBe(false);
+    expect(options.isSelected({ bookName: '剧情书', uid: 999, normalizedComment: 'TavernDB-ACU-自动生成条目' })).toBe(true);
+    expect(mockSetPendingFinalGenerationGreenlights).toHaveBeenLastCalledWith(finalGreenlights);
+    expect(mockWriteFinalGenerationGreenlights).toHaveBeenCalledWith(finalGreenlights);
+  });
+
   it('某个 stage 失败时会阻断后续 stage', async () => {
     const plotSettings = {
       tasks: [

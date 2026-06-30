@@ -22,6 +22,10 @@ import { cancelContentOptimization_ACU } from '../../../service/optimization/con
 import { reoptimizeMessage_ACU } from '../../components/optimization-ui';
 import { refreshMergedDataAndNotifyWithUI_ACU } from '../../components/pipeline-ui-helpers';
 import { showToastr_ACU } from '../../theme/toast';
+import {
+    getWorldbookEntrySkillMeta_ACU,
+    listWorldbookSkillMetas_ACU,
+} from '../../../service/agent/agent-worldbook-skill-meta';
 import type { ApiGroupContext } from './callback-api';
 
 declare const SillyTavern: any;
@@ -110,6 +114,34 @@ export function createWorldbookAiApi(_ctx: ApiGroupContext): Record<string, Func
             } catch (e) {
                 logError_ACU('setZeroTkOccupyMode failed:', e);
                 return false;
+            }
+        },
+
+        // 读取指定世界书条目的 Skill 元数据。Skill 存在世界书 comment block 中，外部插件不需要解析内部格式。
+        getWorldbookEntrySkillMeta: async function(bookName: any, uid: any) {
+            try {
+                const normalizedBookName = String(bookName || '').trim();
+                if (!normalizedBookName || uid === null || uid === undefined || uid === '') return null;
+                return await getWorldbookEntrySkillMeta_ACU(normalizedBookName, uid);
+            } catch (e) {
+                logError_ACU('getWorldbookEntrySkillMeta failed:', e);
+                return null;
+            }
+        },
+
+        // 批量列出世界书中已保存的 Skill 元数据，便于用户分享世界书后由插件读取。
+        listWorldbookSkillMetas: async function(bookNames: any = []) {
+            try {
+                const names = Array.isArray(bookNames)
+                    ? bookNames
+                    : String(bookNames || '')
+                        .split(/[,，\n]/)
+                        .map(name => name.trim())
+                        .filter(Boolean);
+                return await listWorldbookSkillMetas_ACU(names);
+            } catch (e) {
+                logError_ACU('listWorldbookSkillMetas failed:', e);
+                return [];
             }
         },
 

@@ -43,11 +43,29 @@ export interface AgentSkillifyRunResult_ACU {
   results: AgentSkillifyEntryResult_ACU[];
 }
 
+export type AgentSkillifyProgressPhase_ACU = 'collecting' | 'processing' | 'retry' | 'saving' | 'entry_done' | 'complete' | 'error';
+
+export interface AgentSkillifyProgressEvent_ACU {
+  phase: AgentSkillifyProgressPhase_ACU;
+  current: number;
+  total: number;
+  updated: number;
+  skipped: number;
+  failed: number;
+  bookName?: string;
+  uid?: string | number;
+  attempt?: number;
+  maxAttempts?: number;
+  message?: string;
+}
+
 export interface AgentSkillifyOptions_ACU {
   presetName?: string;
   overwriteManual?: boolean;
   maxEntries?: number;
   maxConcurrency?: number;
+  maxAiRetries?: number;
+  onProgress?: (event: AgentSkillifyProgressEvent_ACU) => void;
 }
 
 function normalizeStringArray_ACU(value: unknown): string[] {
@@ -101,7 +119,7 @@ export function isWorldbookEntrySkillifyCandidate_ACU(entry: Record<string, any>
   if (isAgentInternalWorldbookEntry_ACU(entry)) return false;
   if (String(entry.type || '').toLowerCase() === 'constant') return false;
   if (isDatabaseGeneratedWorldbookEntryForAgent_ACU(entry)) return false;
-  return getWorldbookEntryKeywordsForSkillify_ACU(entry).length > 0;
+  return true;
 }
 
 export async function resolvePlotWorldbookSkillifyBookNames_ACU(): Promise<string[]> {
@@ -197,9 +215,18 @@ export function parseAgentSkillifyResponse_ACU(responseText: string, fallbackTk 
   }
 }
 
+function resolveAgentAiMaxAttempts_ACU(options: AgentSkillifyOptions_ACU = {}): number {
+  const contextSettings = normalizeAgentContextSettings_ACU((settings_ACU.plotSettings as any)?.agentWorldbookControl?.contextSettings);
+  const raw = Number.isFinite(Number(options.maxAiRetries)) && Number(options.maxAiRetries) > 0
+    ? Number(options.maxAiRetries)
+    : contextSettings.agentAiMaxRetries;
+  return Math.max(1, Math.min(10, Math.trunc(raw)));
+}
+
 async function skillifySingleEntry_ACU(
   summary: AgentSkillifyWorldbookEntrySummary_ACU,
   options: AgentSkillifyOptions_ACU,
+  progressState?: { current: number; total: number; updated: number; skipped: number; failed: number },
 ): Promise<AgentSkillifyEntryResult_ACU> {
   const skipReason = shouldSkipSkillifyEntry_ACU(summary, options);
   if (skipReason) {
@@ -207,16 +234,39 @@ async function skillifySingleEntry_ACU(
   }
 
   const presetName = options.presetName ?? (settings_ACU.plotSettings as any)?.agentWorldbookControl?.agentSkillApiPreset ?? '';
-  const response = await callAIWithPreset_ACU(buildWorldbookSkillifyPrompt_ACU(summary), presetName);
-  if (!response) {
-    return { status: 'failed', bookName: summary.bookName, uid: summary.uid, reason: 'AI 未返回内容' };
+  const messages = buildWorldbookSkillifyPrompt_ACU(summary);
+  const maxAttempts = resolveAgentAiMaxAttempts_ACU(options);
+  let lastReason = 'AI 未返回内容';
+  let meta: Pick<WorldbookSkillMeta_ACU, 'description' | 'triggerWhen' | 'tk'> | null = null;
+  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+    const response = await callAIWithPreset_ACU(messages, presetName);
+    if (!response) {
+      lastReason = 'AI 未返回内容';
+    } else {
+      meta = parseAgentSkillifyResponse_ACU(response, summary.tk);
+      if (meta) break;
+      lastReason = 'AI 返回不是有效 Skill JSON';
+    }
+    if (attempt < maxAttempts) {
+      options.onProgress?.({
+        phase: 'retry',
+        current: progressState?.current ?? 0,
+        total: progressState?.total ?? 0,
+        updated: progressState?.updated ?? 0,
+        skipped: progressState?.skipped ?? 0,
+        failed: progressState?.failed ?? 0,
+        bookName: summary.bookName,
+        uid: summary.uid,
+        attempt,
+        maxAttempts,
+        message: lastReason,
+      });
+    }
   }
 
-  const meta = parseAgentSkillifyResponse_ACU(response, summary.tk);
-  if (!meta) {
-    return { status: 'failed', bookName: summary.bookName, uid: summary.uid, reason: 'AI 返回不是有效 Skill JSON' };
-  }
+  if (!meta) return { status: 'failed', bookName: summary.bookName, uid: summary.uid, reason: lastReason };
 
+  options.onProgress?.({ phase: 'saving', current: progressState?.current ?? 0, total: progressState?.total ?? 0, updated: progressState?.updated ?? 0, skipped: progressState?.skipped ?? 0, failed: progressState?.failed ?? 0, bookName: summary.bookName, uid: summary.uid, maxAttempts });
   const saveResult = await saveWorldbookEntrySkillMeta_ACU(summary.bookName, summary.uid, meta, 'agent-skillify');
   if (!saveResult.updated && saveResult.reason && saveResult.reason !== '世界书 Skill 元数据未变化') {
     return { status: 'failed', bookName: summary.bookName, uid: summary.uid, reason: saveResult.reason, meta };
@@ -228,7 +278,7 @@ async function skillifySingleEntry_ACU(
 async function runWithConcurrency_ACU<T, R>(
   items: T[],
   concurrency: number,
-  worker: (item: T) => Promise<R>,
+  worker: (item: T, index: number) => Promise<R>,
 ): Promise<R[]> {
   const results: R[] = [];
   let cursor = 0;
@@ -236,7 +286,7 @@ async function runWithConcurrency_ACU<T, R>(
   await Promise.all(Array.from({ length: workerCount }, async () => {
     while (cursor < items.length) {
       const index = cursor++;
-      results[index] = await worker(items[index]);
+      results[index] = await worker(items[index], index);
     }
   }));
   return results;
@@ -279,15 +329,38 @@ export async function skillifyWorldbookEntries_ACU(
   bookNames: string[],
   options: AgentSkillifyOptions_ACU = {},
 ): Promise<AgentSkillifyRunResult_ACU> {
+  options.onProgress?.({ phase: 'collecting', current: 0, total: 0, updated: 0, skipped: 0, failed: 0 });
   const candidates = await collectWorldbookSkillifyCandidates_ACU(bookNames, options);
-  if (candidates.length === 0) return summarizeRunResults_ACU([]);
+  if (candidates.length === 0) {
+    const empty = summarizeRunResults_ACU([]);
+    options.onProgress?.({ phase: 'complete', current: 0, total: 0, updated: 0, skipped: 0, failed: 0 });
+    return empty;
+  }
 
   const configuredConcurrency = Number.isFinite(Number(options.maxConcurrency)) && Number(options.maxConcurrency) > 0
     ? Number(options.maxConcurrency)
     : (Number((settings_ACU.plotSettings as any)?.agentWorldbookControl?.maxSkillifyConcurrency) || 1);
   const concurrency = Math.max(1, Math.min(configuredConcurrency, 5));
-  const results = await runWithConcurrency_ACU(candidates, concurrency, summary => skillifySingleEntry_ACU(summary, options));
-  return summarizeRunResults_ACU(results);
+  const progressState = { current: 0, total: candidates.length, updated: 0, skipped: 0, failed: 0 };
+  options.onProgress?.({ phase: 'processing', ...progressState });
+  const results = await runWithConcurrency_ACU(candidates, concurrency, async (summary, index) => {
+    const result = await skillifySingleEntry_ACU(summary, options, progressState);
+    progressState.current += 1;
+    if (result.status === 'updated') progressState.updated += 1;
+    else if (result.status === 'skipped') progressState.skipped += 1;
+    else if (result.status === 'failed') progressState.failed += 1;
+    options.onProgress?.({
+      phase: 'entry_done',
+      ...progressState,
+      bookName: summary.bookName,
+      uid: summary.uid,
+      message: result.reason || `条目 ${index + 1} 已处理`,
+    });
+    return result;
+  });
+  const summary = summarizeRunResults_ACU(results);
+  options.onProgress?.({ phase: 'complete', current: summary.totalCandidates, total: summary.totalCandidates, updated: summary.updated, skipped: summary.skipped, failed: summary.failed });
+  return summary;
 }
 
 export async function skillifyCurrentPlotWorldbookSelection_ACU(

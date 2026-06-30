@@ -61,7 +61,32 @@ function isBlocked(comment: string): boolean {
   return BLOCKED_KEYWORDS.some(kw => comment.includes(kw));
 }
 
-function isEntryVisibleForUI(entry: any): boolean {
+function isEntryInActiveAgentWorldbookSnapshot_ACU(bookName: string, uid: unknown): boolean {
+  const normalizedBookName = String(bookName || '').trim();
+  const normalizedUid = String(uid ?? '').trim();
+  if (!normalizedBookName || !normalizedUid) return false;
+
+  const snapshot = (settings_ACU.plotSettings as any)?.agentWorldbookControlSnapshot;
+  if (!snapshot || snapshot.active !== true || !snapshot.books || typeof snapshot.books !== 'object') return false;
+  const snapshotEntries = snapshot.books[normalizedBookName];
+  if (!Array.isArray(snapshotEntries)) return false;
+  return snapshotEntries.some((item: any) => String(item?.uid ?? '').trim() === normalizedUid);
+}
+
+function hasFinalGenerationBlueLightShape_ACU(entry: any): boolean {
+  return !!entry && entry.enabled !== false
+    && String(entry.type || '').toLowerCase() === 'constant'
+    && Array.isArray(entry.keys)
+    && entry.keys.length === 0;
+}
+
+function isFinalGenerationBlueLightEntryForUI_ACU(bookName: string, entry: any): boolean {
+  return hasFinalGenerationBlueLightShape_ACU(entry)
+    && isEntryInActiveAgentWorldbookSnapshot_ACU(bookName, entry?.uid);
+}
+
+function isEntryVisibleForUI(bookName: string, entry: any): boolean {
+  if (isFinalGenerationBlueLightEntryForUI_ACU(bookName, entry)) return false;
   const comment = String(entry?.comment || entry?.name || '');
   if (isDbGenerated(comment)) return false;
   if (isBlocked(comment)) return false;
@@ -116,7 +141,7 @@ export function usePlotWorldbookEntries() {
 
         if (typeof cfg.enabledEntries[bookName] === 'undefined') {
           cfg.enabledEntries[bookName] = bookEntries
-            .filter(isEntryVisibleForUI)
+            .filter((entry: any) => isEntryVisibleForUI(bookName, entry))
             .map((e: any) => e.uid);
           settingsChanged = true;
         }
@@ -127,7 +152,7 @@ export function usePlotWorldbookEntries() {
 
         const visible: WorldbookEntryItem[] = [];
         for (const entry of bookEntries) {
-          if (!isEntryVisibleForUI(entry)) continue;
+          if (!isEntryVisibleForUI(bookName, entry)) continue;
           const comment = String(entry?.comment || entry?.name || '');
           visible.push({
             uid: entry.uid,

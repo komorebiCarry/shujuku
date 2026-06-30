@@ -536,25 +536,37 @@ export async function runAgentDecisionForPlot_ACU(params: {
 
     const control = params.plotSettings?.agentWorldbookControl || {};
     const contextSettings = normalizeAgentContextSettings_ACU(control.contextSettings);
+    const maxAiAttempts = Math.max(1, Math.min(10, Math.trunc(Number(contextSettings.agentAiMaxRetries) || 1)));
     const { summaries, allowedKeys } = await collectWorldbookSummariesFromSnapshot_ACU(contextSettings);
     if (allowedKeys.size === 0) return emptyDecision_ACU(originalTasks, 'empty_worldbook_scope');
     const agentDecidableTasks = originalTasks.filter(task => shouldSendPlotTaskToAgent_ACU(normalizePlotTask_ACU(task, { fallbackTask: task })));
     const userOrderedTasks = originalTasks.filter(task => !shouldSendPlotTaskToAgent_ACU(normalizePlotTask_ACU(task, { fallbackTask: task })) && task?.agentControl?.selectable !== false);
 
     const presetName = String(control.agentApiPreset || '').trim();
-    const messages = buildAgentDecisionPrompt_ACU({
-      plotSettings: params.plotSettings,
-      userMessage: params.userMessage,
-      sharedContext: params.sharedContext,
-      enabledTasks: agentDecidableTasks,
-      worldbookSummaries: summaries,
-      contextSettings,
-    });
-    const rawResponse = await callAIWithPreset_ACU(messages, presetName);
+    let rawResponse = '';
+    let parsed: ReturnType<typeof parseAgentDecisionResponse_ACU> = null;
+    let lastFailureReason = 'empty_agent_response';
+    for (let attempt = 1; attempt <= maxAiAttempts; attempt++) {
+      const messages = buildAgentDecisionPrompt_ACU({
+        plotSettings: params.plotSettings,
+        userMessage: params.userMessage,
+        sharedContext: params.sharedContext,
+        enabledTasks: agentDecidableTasks,
+        worldbookSummaries: summaries,
+        contextSettings,
+      });
+      rawResponse = await callAIWithPreset_ACU(messages, presetName);
+      if (!rawResponse) {
+        lastFailureReason = 'empty_agent_response';
+        continue;
+      }
+      parsed = parseAgentDecisionResponse_ACU(rawResponse);
+      if (parsed && parsed.fallbackMode !== true) break;
+      lastFailureReason = parsed?.reason || 'invalid_agent_response';
+      parsed = null;
+    }
     if (!rawResponse) return emptyDecision_ACU(originalTasks, 'empty_agent_response');
-
-    const parsed = parseAgentDecisionResponse_ACU(rawResponse);
-    if (!parsed || parsed.fallbackMode === true) return emptyDecision_ACU(originalTasks, parsed?.reason || 'invalid_agent_response');
+    if (!parsed) return emptyDecision_ACU(originalTasks, lastFailureReason);
 
     const normalizedPlan = params.requireTaskPlan === false
       ? { plan: [] as AgentTaskPlanItem_ACU[], effectiveTasks: originalTasks }

@@ -381,12 +381,13 @@ import { clearFinalGenerationGreenlights_ACU, writeFinalGenerationGreenlights_AC
       } else {
         logDebug_ACU(`[剧情推进] [任务:${taskLabel}] 无 {{tag}} 注入内容，世界书仅基于本轮上下文触发`);
       }
-      const usesAgentWorldbook = shouldUseAgentWorldbookForPlotTask_ACU(normalizedTask, sharedContext.agentDecision);
+      const forceNormalWorldbook = sharedContext.forceNormalWorldbook === true;
+      const usesAgentWorldbook = !forceNormalWorldbook && shouldUseAgentWorldbookForPlotTask_ACU(normalizedTask, sharedContext.agentDecision);
       const taskAgentGreenlights = usesAgentWorldbook
         ? (sharedContext.agentDecision?.plotGreenlights?.[String(normalizedTask.id || '').trim()] || [])
         : [];
       taskWorldbookContent = await getWorldbookContentForPlot_ACU(sharedContext.plotSettings, sharedContext.userMessage, worldbookTriggerText, {
-        agentMode: usesAgentWorldbook ? 'agent-controlled' : 'normal',
+        agentMode: usesAgentWorldbook && !forceNormalWorldbook ? 'agent-controlled' : 'normal',
         agentGreenlights: taskAgentGreenlights,
       });
       if (taskWorldbookContent) {
@@ -548,22 +549,42 @@ import { clearFinalGenerationGreenlights_ACU, writeFinalGenerationGreenlights_AC
     });
     checkPlotAbortRequested_ACU();
 
-    const agentDecision: AgentDecisionResult_ACU = await runAgentDecisionForPlot_ACU({
-      plotSettings,
-      userMessage,
-      sharedContext,
-      enabledTasks,
-    });
-    sharedContext.agentDecision = agentDecision;
-    const finalGenerationGreenlights = agentDecision.active === true && Array.isArray(agentDecision.finalGenerationGreenlights)
-      ? agentDecision.finalGenerationGreenlights
-      : [];
-    _set_pendingFinalGenerationGreenlights_ACU(finalGenerationGreenlights);
-    if (agentDecision.active === true) {
-      await writeFinalGenerationGreenlights_ACU(finalGenerationGreenlights);
+    const agentExecutionMode = plotSettings?.agentWorldbookControl?.agentPlotExecutionMode === 'concurrent'
+      ? 'concurrent'
+      : 'sequential';
+    let agentDecisionPromise: Promise<AgentDecisionResult_ACU> | null = null;
+
+    async function applyAgentFinalGreenlights_ACU(agentDecision: AgentDecisionResult_ACU): Promise<void> {
+      const finalGenerationGreenlights = agentDecision.active === true && Array.isArray(agentDecision.finalGenerationGreenlights)
+        ? agentDecision.finalGenerationGreenlights
+        : [];
+      _set_pendingFinalGenerationGreenlights_ACU(finalGenerationGreenlights);
+      if (agentDecision.active === true) {
+        await writeFinalGenerationGreenlights_ACU(finalGenerationGreenlights);
+      }
     }
-    if (agentDecision.active === true) {
-      enabledTasks = Array.isArray(agentDecision.effectiveTasks) ? agentDecision.effectiveTasks : [];
+
+    if (agentExecutionMode === 'concurrent') {
+      sharedContext.forceNormalWorldbook = true;
+      agentDecisionPromise = runAgentDecisionForPlot_ACU({
+        plotSettings,
+        userMessage,
+        sharedContext,
+        enabledTasks,
+        requireTaskPlan: false,
+      });
+    } else {
+      const agentDecision: AgentDecisionResult_ACU = await runAgentDecisionForPlot_ACU({
+        plotSettings,
+        userMessage,
+        sharedContext,
+        enabledTasks,
+      });
+      sharedContext.agentDecision = agentDecision;
+      await applyAgentFinalGreenlights_ACU(agentDecision);
+      if (agentDecision.active === true) {
+        enabledTasks = Array.isArray(agentDecision.effectiveTasks) ? agentDecision.effectiveTasks : [];
+      }
     }
 
     if (!enabledTasks.length) {
@@ -638,6 +659,9 @@ import { clearFinalGenerationGreenlights_ACU, writeFinalGenerationGreenlights_AC
           );
         });
         const failedTaskNames = stageFailedResults.map((result: any) => result.taskName || result.taskId || '未命名任务').join('、');
+        if (agentDecisionPromise) {
+          await agentDecisionPromise;
+        }
         return {
           finalMessage: null as string | null,
           successfulResults,
@@ -657,6 +681,9 @@ import { clearFinalGenerationGreenlights_ACU, writeFinalGenerationGreenlights_AC
     }
 
     if (!successfulResults.length) {
+      if (agentDecisionPromise) {
+        await agentDecisionPromise;
+      }
       return {
         finalMessage: null as string | null,
         successfulResults,
@@ -664,6 +691,12 @@ import { clearFinalGenerationGreenlights_ACU, writeFinalGenerationGreenlights_AC
         aggregatedTags: new Map(),
         enabledTaskCount: enabledTasks.length,
       };
+    }
+
+    if (agentDecisionPromise) {
+      const agentDecision = await agentDecisionPromise;
+      checkPlotAbortRequested_ACU();
+      await applyAgentFinalGreenlights_ACU(agentDecision);
     }
 
     const saveContent = buildPlotSaveContentFromTaskResults_ACU(successfulResults);

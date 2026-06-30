@@ -36,6 +36,7 @@ vi.mock('../../../src/data/storage/tavern-storage', () => ({
 
 vi.mock('../../../src/shared/utils', () => ({
   hashUserInput_ACU: mockHashUserInput,
+  logWarn_ACU: vi.fn(),
 }));
 
 vi.mock('../../../src/service/runtime/state-manager', () => ({

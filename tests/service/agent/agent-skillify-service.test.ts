@@ -88,10 +88,10 @@ describe('agent worldbook skillify candidate filtering', () => {
     expect(isWorldbookEntrySkillifyCandidate_ACU(entry)).toBe(false);
   });
 
-  it('keeps existing disabled, constant, and keyword checks intact', () => {
+  it('keeps disabled and constant checks while allowing entries without keywords', () => {
     expect(isWorldbookEntrySkillifyCandidate_ACU({ comment: '用户自定义地点', keys: ['酒馆'], enabled: false })).toBe(false);
     expect(isWorldbookEntrySkillifyCandidate_ACU({ comment: '用户自定义地点', keys: ['酒馆'], type: 'constant' })).toBe(false);
-    expect(isWorldbookEntrySkillifyCandidate_ACU({ comment: '用户自定义地点', keys: [] })).toBe(false);
+    expect(isWorldbookEntrySkillifyCandidate_ACU({ comment: '用户自定义地点', keys: [] })).toBe(true);
   });
 
   it('excludes Agent worldbook snapshot internal entries from collect candidates', async () => {
@@ -244,6 +244,24 @@ describe('agent worldbook skillify candidate filtering', () => {
       triggerWhen: '新触发',
       tk: 64,
     }, 'agent-skillify');
+    expect(result).toMatchObject({ totalCandidates: 1, updated: 1, skipped: 0, failed: 0 });
+  });
+
+  it('retries AI skillify responses according to maxAiRetries before saving', async () => {
+    mockGetLorebookEntriesByNames.mockResolvedValueOnce({
+      '剧情书': [{ uid: 'retry', comment: '地点Retry', content: 'R'.repeat(20), enabled: true, keys: [] }],
+    });
+    mockCallAIWithPreset
+      .mockResolvedValueOnce('')
+      .mockResolvedValueOnce('{"description":"新描述","triggerWhen":"新触发","tk":9}');
+    mockSaveWorldbookEntrySkillMeta.mockResolvedValueOnce({ updated: true });
+    const progress = vi.fn();
+
+    const result = await skillifyWorldbookEntries_ACU(['剧情书'], { maxAiRetries: 2, onProgress: progress });
+
+    expect(mockCallAIWithPreset).toHaveBeenCalledTimes(2);
+    expect(mockSaveWorldbookEntrySkillMeta).toHaveBeenCalledWith('剧情书', 'retry', { description: '新描述', triggerWhen: '新触发', tk: 9 }, 'agent-skillify');
+    expect(progress).toHaveBeenCalledWith(expect.objectContaining({ phase: 'retry', attempt: 1, maxAttempts: 2, uid: 'retry' }));
     expect(result).toMatchObject({ totalCandidates: 1, updated: 1, skipped: 0, failed: 0 });
   });
 

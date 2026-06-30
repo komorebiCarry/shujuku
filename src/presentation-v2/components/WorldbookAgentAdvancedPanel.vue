@@ -13,6 +13,22 @@
       <section class="acu-agent-advanced__section">
         <header class="acu-agent-advanced__section-head">
           <div>
+            <h4>{{ plotCopy.agentControl.executionMode.label }}</h4>
+            <p>{{ plotCopy.agentControl.executionMode.hint }}</p>
+          </div>
+        </header>
+        <AcuSegmentedControl
+          :model-value="agentControl.agentPlotExecutionMode.value"
+          :options="executionModeOptions"
+          size="sm"
+          aria-label="Agent 与剧情推进执行方式"
+          @update:model-value="onExecutionModeChange"
+        />
+      </section>
+
+      <section class="acu-agent-advanced__section">
+        <header class="acu-agent-advanced__section-head">
+          <div>
             <h4>{{ plotCopy.agentControl.contextSettings.title }}</h4>
             <p>{{ plotCopy.agentControl.contextSettings.description }}</p>
           </div>
@@ -93,7 +109,7 @@
 
 <script setup lang="ts">
 import type { AgentContextSettings_ACU, PromptSegment_ACU } from '../../data/models/settings-model';
-import type { AgentContextSettingKey_ACU, AgentPromptKind_ACU } from '../composables/usePlotWorldbookAgentControl';
+import type { AgentContextSettingKey_ACU, AgentPlotExecutionModeSetting_ACU, AgentPromptKind_ACU } from '../composables/usePlotWorldbookAgentControl';
 import { usePlotWorldbookAgentControl } from '../composables/usePlotWorldbookAgentControl';
 import { plotCopy } from '../copy/plot-copy';
 import AcuButton from './_lib/AcuButton.vue';
@@ -102,6 +118,7 @@ import AcuFormRow from './_lib/AcuFormRow.vue';
 import AcuInput from './_lib/AcuInput.vue';
 import AcuMessage from './_lib/AcuMessage.vue';
 import AcuPromptSegments from './_lib/AcuPromptSegments.vue';
+import AcuSegmentedControl, { type AcuSegmentedOption } from './_lib/AcuSegmentedControl.vue';
 import type { PromptSegment } from './_lib/AcuPromptSegments.vue';
 import type { AcuSelectOption } from './_lib/AcuSelect.vue';
 
@@ -122,6 +139,11 @@ const AGENT_ROLE_OPTIONS: AcuSelectOption[] = [
   { value: 'assistant', label: 'ASSISTANT' },
 ];
 
+const executionModeOptions: AcuSegmentedOption[] = [
+  { value: 'sequential', label: plotCopy.agentControl.executionMode.options.sequential },
+  { value: 'concurrent', label: plotCopy.agentControl.executionMode.options.concurrent },
+];
+
 type ContextFieldMeta = {
   key: AgentContextSettingKey_ACU;
   step: number;
@@ -136,6 +158,7 @@ const visibleContextFieldKeys: VisibleContextSettingKey_ACU[] = [
   'decisionWorldbookCandidateLimit',
   'skillifyMaxEntries',
   'plotWorldbookScanMessageLimit',
+  'agentAiMaxRetries',
   'greenlightMinTkBudget',
   'greenlightMaxTkBudget',
 ];
@@ -145,6 +168,7 @@ const contextFieldSteps: Record<VisibleContextSettingKey_ACU, number> = {
   decisionWorldbookCandidateLimit: 1,
   skillifyMaxEntries: 1,
   plotWorldbookScanMessageLimit: 1,
+  agentAiMaxRetries: 1,
   greenlightMinTkBudget: 100,
   greenlightMaxTkBudget: 100,
 };
@@ -155,6 +179,11 @@ const contextFields: ContextFieldMeta[] = visibleContextFieldKeys.map((key) => (
   copy: plotCopy.agentControl.contextSettings.fields[key],
   limits: agentControl.contextSettingsLimits[key],
 }));
+
+async function onExecutionModeChange(value: string): Promise<void> {
+  await agentControl.setAgentPlotExecutionMode(value as AgentPlotExecutionModeSetting_ACU);
+  emit('changed');
+}
 
 async function onContextChange(key: AgentContextSettingKey_ACU, value: string | number): Promise<void> {
   if (await agentControl.setContextSetting(key, value)) emit('changed');

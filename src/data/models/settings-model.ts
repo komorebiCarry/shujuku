@@ -14,6 +14,7 @@ export interface WorldbookConfig_ACU {
 }
 
 export type AgentWorldbookControlMode_ACU = 'disabled' | 'passive' | 'agent';
+export type AgentPlotExecutionMode_ACU = 'sequential' | 'concurrent';
 export type AgentSkillMetadataPolicy_ACU = 'comment_block' | 'content_block' | 'settings_map';
 export type WorldbookSkillMetaUpdatedBy_ACU = 'manual' | 'agent-skillify';
 
@@ -38,6 +39,7 @@ export interface AgentContextSettings_ACU {
   skillifyContentPreviewLimit: number;
   skillifyMaxEntries: number;
   plotWorldbookScanMessageLimit: number;
+  agentAiMaxRetries: number;
   greenlightMinTkBudget: number;
   greenlightMaxTkBudget: number;
 }
@@ -56,6 +58,7 @@ export interface WorldbookSkillMeta_ACU {
 export interface AgentWorldbookControl_ACU {
   enabled: boolean;
   mode: AgentWorldbookControlMode_ACU;
+  agentPlotExecutionMode: AgentPlotExecutionMode_ACU;
   scopeMode: 'follow_worldbook_page_selection';
   agentApiPreset: string;
   agentSkillApiPreset: string;
