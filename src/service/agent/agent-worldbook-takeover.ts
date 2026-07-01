@@ -157,10 +157,9 @@ function buildAllowedFinalGreenlightKeySet_ACU(greenlights: AgentWorldbookFinalG
 }
 
 function isFinalGenerationBlueLightEntry_ACU(entry: Record<string, any>): boolean {
+  // SillyTavern constant worldbook entries are blue lights whenever enabled; keys do not affect triggering.
   return entry?.enabled !== false
-    && String(entry?.type || '').trim().toLowerCase() === 'constant'
-    && Array.isArray(entry?.keys)
-    && entry.keys.length === 0;
+    && String(entry?.type || '').trim().toLowerCase() === 'constant';
 }
 
 function buildFinalGreenlightKey_ACU(bookName: string, uid: unknown): string {
@@ -217,6 +216,16 @@ function stripTakeoverMetaBlock_ACU(comment: unknown): string {
 
 function normalizeTakeoverComparableComment_ACU(comment: unknown): string {
   return stripWorldbookSkillMetaBlock_ACU(stripTakeoverMetaBlock_ACU(comment));
+}
+
+function doesTakeoverSnapshotCommentHashMatch_ACU(snapshotCommentHash: string | undefined, currentComment: string): boolean {
+  if (!snapshotCommentHash) return true;
+  const strippedComment = stripTakeoverMetaBlock_ACU(currentComment);
+  const comparableComment = stripWorldbookSkillMetaBlock_ACU(strippedComment);
+
+  return hashUserInput_ACU(comparableComment) === snapshotCommentHash
+    // Legacy snapshots created before Skill metadata was excluded from the comparable comment stored hashes that kept Skill metadata.
+    || hashUserInput_ACU(strippedComment) === snapshotCommentHash;
 }
 
 function parseTakeoverMetaFromComment_ACU(comment: unknown): AgentWorldbookTakeoverMeta_ACU | null {
@@ -459,6 +468,14 @@ async function restoreSnapshotEntries_ACU(snapshot: AgentWorldbookControlSnapsho
         }
         const currentComment = typeof currentEntry.comment === 'string' ? currentEntry.comment : '';
         const strippedComment = stripTakeoverMetaBlock_ACU(currentComment);
+        if (!doesTakeoverSnapshotCommentHashMatch_ACU(snapshotEntry.commentHash, currentComment)) {
+          logWarn_ACU(
+            `[Agent世界书] 跳过恢复世界书条目：${normalizedBookName}#${snapshotEntry.uid} comment 已变化，避免覆盖用户修改。`,
+          );
+          if (strippedComment !== currentComment) patches.push({ uid: snapshotEntry.uid, comment: strippedComment });
+          skipped += 1;
+          continue;
+        }
         patches.push({
           uid: snapshotEntry.uid,
           comment: strippedComment,
@@ -493,9 +510,7 @@ export async function writeFinalGenerationGreenlights_ACU(greenlights: unknown):
     if (!hasValidWorldbookUid_ACU(entry?.uid)) return null;
     const isAllowed = allowedKeySet.has(buildFinalGreenlightKey_ACU(bookName, entry.uid));
     if (isAllowed) {
-      if (entry.enabled !== false && String(entry.type || '').toLowerCase() === 'constant' && Array.isArray(entry.keys) && entry.keys.length === 0) {
-        return null;
-      }
+      if (isFinalGenerationBlueLightEntry_ACU(entry)) return null;
       return { uid: entry.uid, enabled: true, type: 'constant', keys: [] };
     }
     if (entry.enabled === false) return null;
@@ -528,18 +543,8 @@ export async function readFinalGenerationGreenlights_ACU(): Promise<AgentWorldbo
 export async function clearFinalGenerationGreenlights_ACU(): Promise<number> {
   const snapshot = await refreshPlotAgentWorldbookSnapshotFromWorldbooks_ACU();
   const snapshotUidSetByBook = buildSnapshotUidSetByBook_ACU(snapshot);
-  const originalConstantEmptyKeySet = new Set<string>();
-  for (const [bookName, snapshotEntries] of Object.entries(snapshot.books || {})) {
-    for (const snapshotEntry of Array.isArray(snapshotEntries) ? snapshotEntries : []) {
-      if (!hasValidWorldbookUid_ACU(snapshotEntry?.uid)) continue;
-      const previousType = String(snapshotEntry.previousType || '').trim().toLowerCase();
-      const previousKeys = Array.isArray(snapshotEntry.previousKeys) ? snapshotEntry.previousKeys : [];
-      if (previousType === 'constant' && previousKeys.length === 0) originalConstantEmptyKeySet.add(buildFinalGreenlightKey_ACU(bookName, snapshotEntry.uid));
-    }
-  }
-  const patched = await patchSnapshotEntries_ACU(snapshotUidSetByBook, (bookName, entry) => {
+  const patched = await patchSnapshotEntries_ACU(snapshotUidSetByBook, (_bookName, entry) => {
     if (!isFinalGenerationBlueLightEntry_ACU(entry)) return null;
-    if (originalConstantEmptyKeySet.has(buildFinalGreenlightKey_ACU(bookName, entry.uid))) return null;
     return { uid: entry.uid, enabled: false };
   });
   const resolvedBookNames = await resolveTakeoverBookNames_ACU();

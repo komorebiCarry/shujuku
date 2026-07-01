@@ -1,7 +1,7 @@
 /**
  * usePlotWorldbookEntries — 剧情推进世界书条目级启用/禁用
  *
- * 从 service 层加载条目列表，过滤掉数据库生成条目和原本关闭的条目，
+ * 从 service 层加载条目列表，过滤掉数据库生成条目和屏蔽词条目，
  * 暴露 reactive 分组列表 + selectAll / deselectAll / toggleEntry，
  * 持久化到 plotWorldbookConfig.enabledEntries。
  */
@@ -39,6 +39,12 @@ export interface WorldbookEntryGroup {
 
 export type EntryLoadStatus = 'idle' | 'loading' | 'success' | 'error';
 
+const BLOCKED_KEYWORDS = [
+  '规则', '思维链', 'cot', 'MVU', 'mvu', '变量', '状态',
+  'Status', 'Rule', 'rule', '检定', '判断', '叙事', '文风',
+  'InitVar', '格式',
+];
+
 function isDbGenerated(comment: string): boolean {
   const normalized = comment
     .replace(/^ACU-\[[^\]]+\]-/, '')
@@ -51,10 +57,19 @@ function isDbGenerated(comment: string): boolean {
   return false;
 }
 
+function isBlocked(comment: string): boolean {
+  return BLOCKED_KEYWORDS.some(kw => comment.includes(kw));
+}
+
+function isConstantWorldbookEntry_ACU(entry: any): boolean {
+  return String(entry?.type || '').trim().toLowerCase() === 'constant';
+}
+
 function isEntryVisibleForUI(_bookName: string, entry: any): boolean {
-  if (entry?.enabled === false) return false;
+  if (isConstantWorldbookEntry_ACU(entry)) return false;
   const comment = String(entry?.comment || entry?.name || '');
   if (isDbGenerated(comment)) return false;
+  if (isBlocked(comment)) return false;
   return true;
 }
 

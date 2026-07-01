@@ -76,7 +76,7 @@ describe('usePlotWorldbookEntries', () => {
     expect(uids).not.toContain(5);
   });
 
-  it('loadEntries 不再按 constant 类型隐藏用户条目，仍过滤 ACU 内部条目', async () => {
+  it('loadEntries 隐藏所有 constant 条目且不写入默认 enabledEntries', async () => {
     settings = createSettings();
     settings.plotSettings.agentWorldbookControlSnapshot = {
       active: true,
@@ -90,50 +90,45 @@ describe('usePlotWorldbookEntries', () => {
       'MyBook': [
         { uid: 1, comment: '普通条目', name: '普通条目', enabled: true, type: 'selective', keys: ['普通'] },
         { uid: 7, comment: 'legacy snapshot 命中的常驻空关键词条目', name: 'legacy snapshot 命中的常驻空关键词条目', enabled: true, type: 'constant', keys: [] },
-        { uid: 8, comment: '用户常量条目', name: '用户常量条目', enabled: true, type: 'CONSTANT', keys: ['常驻关键词'] },
-        { uid: 9, comment: '带空格常驻条目', name: '带空格常驻条目', enabled: true, type: ' constant ', keys: ['常驻关键词'] },
-        { uid: 10, comment: 'TavernDB-ACU-AgentFinalGenerationGreenlights', name: 'TavernDB-ACU-AgentFinalGenerationGreenlights', enabled: false, type: 'constant', keys: [] },
+        { uid: 8, comment: '大写常量条目', name: '大写常量条目', enabled: true, type: 'CONSTANT', keys: ['常量'] },
+        { uid: 9, comment: '带空格常量条目', name: '带空格常量条目', enabled: true, type: ' constant ', keys: ['常量'] },
       ],
     });
 
     const c = await getComposable(settings);
     await c.loadEntries(['MyBook']);
 
-    expect(c.groups.value[0].entries.map(e => e.uid)).toEqual([1, 7, 8, 9]);
-    expect(settings.plotSettings.plotWorldbookConfig.enabledEntries.MyBook).toEqual([1, 7, 8, 9]);
+    expect(c.groups.value[0].entries.map(e => e.uid)).toEqual([1]);
+    expect(settings.plotSettings.plotWorldbookConfig.enabledEntries.MyBook).toEqual([1]);
   });
 
-  it('loadEntries 清理历史 enabledEntries 中已隐藏的内部条目但保留用户 constant 条目', async () => {
+  it('loadEntries 清理历史 enabledEntries 中已隐藏的 constant 条目', async () => {
     settings = createSettings();
-    settings.plotSettings.plotWorldbookConfig.enabledEntries = { MyBook: [1, 7, 8, 9] };
+    settings.plotSettings.plotWorldbookConfig.enabledEntries = { MyBook: [1, 7, 8] };
     mockGetEntries.mockResolvedValue({
       'MyBook': [
         { uid: 1, comment: '普通条目', name: '普通条目', enabled: true, type: 'selective', keys: ['普通'] },
-        { uid: 7, comment: '历史保留常驻条目', name: '历史保留常驻条目', enabled: true, type: 'constant', keys: [] },
-        { uid: 8, comment: '历史保留大写常驻条目', name: '历史保留大写常驻条目', enabled: true, type: 'CONSTANT', keys: ['常驻关键词'] },
-        { uid: 9, comment: 'TavernDB-ACU-AgentWorldbookSnapshot', name: 'TavernDB-ACU-AgentWorldbookSnapshot', enabled: false, type: 'constant', keys: [] },
+        { uid: 7, comment: '历史残留常量条目', name: '历史残留常量条目', enabled: true, type: 'constant', keys: [] },
+        { uid: 8, comment: '历史残留大写常量条目', name: '历史残留大写常量条目', enabled: true, type: 'CONSTANT', keys: ['常量'] },
       ],
     });
 
     const c = await getComposable(settings);
     await c.loadEntries(['MyBook']);
 
-    expect(c.groups.value[0].entries.map(e => e.uid)).toEqual([1, 7, 8]);
+    expect(c.groups.value[0].entries.map(e => e.uid)).toEqual([1]);
     expect(c.groups.value[0].entries.map(e => ({ uid: e.uid, checked: e.checked }))).toEqual([
       { uid: 1, checked: true },
-      { uid: 7, checked: true },
-      { uid: 8, checked: true },
     ]);
-    expect(settings.plotSettings.plotWorldbookConfig.enabledEntries.MyBook).toEqual([1, 7, 8]);
+    expect(settings.plotSettings.plotWorldbookConfig.enabledEntries.MyBook).toEqual([1]);
     expect(mockSaveSettings).toHaveBeenCalled();
   });
 
-  it('loadEntries 不再过滤屏蔽词条目，允许进入 Agent Skill 化控制', async () => {
+  it('loadEntries 过滤屏蔽词条目', async () => {
     mockGetEntries.mockResolvedValue({
       'B': [
         makeEntry(10, '角色规则'),
         makeEntry(11, '思维链说明'),
-        makeEntry(13, '状态判断记录'),
         makeEntry(12, '正常条目'),
       ],
     });
@@ -142,23 +137,7 @@ describe('usePlotWorldbookEntries', () => {
     await c.loadEntries(['B']);
 
     const uids = c.groups.value[0].entries.map(e => e.uid);
-    expect(uids).toEqual([10, 11, 13, 12]);
-    expect(settings.plotSettings.plotWorldbookConfig.enabledEntries.B).toEqual([10, 11, 13, 12]);
-  });
-
-  it('loadEntries 隐藏原本关闭的条目并清理历史 enabledEntries', async () => {
-    settings = createSettings();
-    settings.plotSettings.plotWorldbookConfig.enabledEntries = { D: [1, 2, 3] };
-    mockGetEntries.mockResolvedValue({
-      'D': [makeEntry(1, '启用条目'), makeEntry(2, '关闭条目', false), makeEntry(3, '另一个启用条目')],
-    });
-
-    const c = await getComposable(settings);
-    await c.loadEntries(['D']);
-
-    expect(c.groups.value[0].entries.map(e => e.uid)).toEqual([1, 3]);
-    expect(settings.plotSettings.plotWorldbookConfig.enabledEntries.D).toEqual([1, 3]);
-    expect(mockSaveSettings).toHaveBeenCalled();
+    expect(uids).toEqual([12]);
   });
 
   it('首次加载默认启用所有可见条目', async () => {
@@ -223,19 +202,19 @@ describe('usePlotWorldbookEntries', () => {
     expect(c.groups.value[0].entries.find(e => e.uid === 2)?.checked).toBe(true);
   });
 
-  it('selectAll 只启用已显示的条目，原本关闭的条目不参与控制', async () => {
+  it('selectAll 启用所有非 disabled 条目', async () => {
     mockGetEntries.mockResolvedValue({
-      'W': [makeEntry(1, 'ok'), makeEntry(2, '原本关闭', false), makeEntry(3, 'ok2')],
+      'W': [makeEntry(1, 'ok'), makeEntry(2, 'disabled', false), makeEntry(3, 'ok2')],
     });
 
     const c = await getComposable();
-    settings.plotSettings.plotWorldbookConfig.enabledEntries = { W: [2] };
+    settings.plotSettings.plotWorldbookConfig.enabledEntries = { W: [] };
     await c.loadEntries(['W']);
     mockSaveSettings.mockClear();
 
-    expect(c.groups.value[0].entries.map(e => e.uid)).toEqual([1, 3]);
     c.selectAll();
     expect(settings.plotSettings.plotWorldbookConfig.enabledEntries['W']).toEqual([1, 3]);
+    expect(c.groups.value[0].entries.find(e => e.uid === 2)?.checked).toBe(false);
     expect(mockSaveSettings).toHaveBeenCalled();
   });
 
