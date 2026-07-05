@@ -6,7 +6,7 @@
 
 import { isAutoUpdatingCard_ACU, pendingFinalGenerationGreenlights_ACU, wasStoppedByUser_ACU, _set_isAutoUpdatingCard_ACU, _set_manualExtraHint_ACU, _set_wasStoppedByUser_ACU } from '../runtime/state-manager';
 import { callCustomOpenAI_ACU } from '../ai/prompt-builder';
-import { getChatArray_ACU } from '../chat/chat-service';
+import { ensureV2BoundaryCheckpointForRetainedBuffer_ACU, getChatArray_ACU } from '../chat/chat-service';
 import { coreApisAreReady_ACU, currentJsonTableData_ACU, getCurrentIsolationKey_ACU, settings_ACU, _set_currentJsonTableData_ACU } from '../runtime/state-manager';
 import { checkAutoMergeTrigger_ACU, prepareAutoMergeBatches_ACU, executeAutoMergeBatch_ACU, finalizeAutoMerge_ACU } from '../summary/merge-logic';
 import { ensureStableRowIdsForSheetContent_ACU, getChatSheetGuideDataForIsolationKey_ACU, getEffectiveSeedRowsForSheet_ACU, shouldUseInitialSeedRows_ACU } from '../template/chat-scope';
@@ -108,6 +108,7 @@ export interface ManualUpdateResult {
     /** 是否触发了自动合并 */
     autoMergeTriggered?: boolean;
     autoMergeSuccess?: boolean;
+    checkpointWarning?: string;
 }
 
 export interface GroupFillJob_ACU {
@@ -2244,9 +2245,12 @@ export async function orchestrateManualUpdate_ACU(
 
         _set_isAutoUpdatingCard_ACU(true);
         const maxConcurrentGroups = Math.max(1, Number(settings_ACU.maxConcurrentGroups) || 1);
+        const totalChunks = Math.max(1, Math.ceil(groupKeys.length / maxConcurrentGroups));
         const failedGroups: Array<{ key: string; error?: string }> = [];
+        logDebug_ACU(`[Manual Update] 分组计划：选中 ${targetKeys.length} 张表，生成 ${groupKeys.length} 个组，最大并发组数 ${maxConcurrentGroups}。`);
 
         for (let start = 0; start < groupKeys.length; start += maxConcurrentGroups) {
+            const chunkIndex = Math.floor(start / maxConcurrentGroups) + 1;
             const chunkKeys = groupKeys.slice(start, start + maxConcurrentGroups);
             const groupedChunk: GroupedRuntimeUpdateGroup_ACU[] = chunkKeys.map((gKey): GroupedRuntimeUpdateGroup_ACU => {
                 const group = updateGroups[gKey];
@@ -2268,6 +2272,11 @@ export async function orchestrateManualUpdate_ACU(
                     sheetKeys: group.sheetKeys,
                     requestOptions: effectiveRequestOptions,
                 };
+            });
+            logDebug_ACU(`[Manual Update] 并发处理第 ${chunkIndex}/${totalChunks} 批，当前 ${groupedChunk.length} 组：${groupedChunk.map(group => `${group.key}(${group.sheetKeys.join(',')})`).join('; ')}`);
+            options.onProgress?.({
+                phase: 'preparing',
+                message: `并发处理第 ${chunkIndex}/${totalChunks} 批，当前 ${groupedChunk.length} 组。`,
             });
             const chunkResult = await processGroupedRuntimeChunk_ACU(groupedChunk, 'manual_independent', {
                 onProgress: options.onProgress,
@@ -2315,6 +2324,24 @@ export async function orchestrateManualUpdate_ACU(
             return { success: false, error: firstFailure.error || '手动更新失败或被终止。' };
         }
 
+        if (wasStoppedByUser_ACU) {
+            return { success: false, error: '手动更新已终止。' };
+        }
+
+        let checkpointWarning: string | undefined;
+        try {
+            await loadAllChatMessages_ACU();
+            const boundaryCheckpoint = await ensureV2BoundaryCheckpointForRetainedBuffer_ACU({ reason: 'manual_refill', save: true });
+            if (!boundaryCheckpoint.success) {
+                checkpointWarning = boundaryCheckpoint.error || '边界 checkpoint 建立失败。';
+                logWarn_ACU(`[Manual Update] 手动填表完成，但边界 checkpoint 建立失败: ${checkpointWarning}`);
+            }
+        } catch (error: any) {
+            checkpointWarning = error?.message || String(error || '边界 checkpoint 建立异常。');
+            logWarn_ACU(`[Manual Update] 手动填表完成，但边界 checkpoint 建立异常: ${checkpointWarning}`);
+            logError_ACU('[Manual Update] 边界 checkpoint 建立异常详情:', error);
+        }
+
         // 手动更新完成后检测自动合并总结
         let autoMergeTriggered = false;
         let autoMergeSuccess = false;
@@ -2338,7 +2365,7 @@ export async function orchestrateManualUpdate_ACU(
             logWarn_ACU('自动合并总结检测失败:', e);
         }
 
-        return { success: true, autoMergeTriggered, autoMergeSuccess };
+        return { success: true, autoMergeTriggered, autoMergeSuccess, checkpointWarning };
     } finally {
         _set_manualExtraHint_ACU('');
         _set_isAutoUpdatingCard_ACU(false);

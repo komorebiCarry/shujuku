@@ -222,6 +222,18 @@ describe('sanitizeJsonPipeline_ACU', () => {
     expect(result.layersApplied).toContain('removeTrailingCommas');
     expect(JSON.parse(result.result)).toEqual({ a: 1 });
   });
+  it('字符串值中的 URL 不会被清洗截断', () => {
+    const input = '{"0":"https://example.com/a//b?x=1#hash"}';
+    const result = sanitizeJsonPipeline_ACU(input);
+    expect(result.success).toBe(true);
+    expect(JSON.parse(result.result)).toEqual({ '0': 'https://example.com/a//b?x=1#hash' });
+  });
+  it('字符串值中的注释标记不会被清洗删除', () => {
+    const input = '{"0":"包含 /* 不是注释 */ 与 // 文本"}';
+    const result = sanitizeJsonPipeline_ACU(input);
+    expect(result.success).toBe(true);
+    expect(JSON.parse(result.result)).toEqual({ '0': '包含 /* 不是注释 */ 与 // 文本' });
+  });
   it('非字符串输入返回失败', () => {
     const result = sanitizeJsonPipeline_ACU(123 as any);
     expect(result.success).toBe(false);
@@ -259,6 +271,9 @@ describe('splitTopLevelSegments_ACU', () => {
   });
   it('字符串内的逗号不拆分', () => {
     expect(splitTopLevelSegments_ACU('"a,b","c"')).toEqual(['"a,b"', '"c"']);
+  });
+  it('字符串内 URL 的冒号和双斜杠不影响顶层分段', () => {
+    expect(splitTopLevelSegments_ACU('"url":"https://example.com/a//b","note":"ok"')).toEqual(['"url":"https://example.com/a//b"', '"note":"ok"']);
   });
 });
 
@@ -376,6 +391,11 @@ describe('coerceLooseRowObject_ACU', () => {
     expect(result.success).toBe(true);
     expect(result.result?.['0']).toBe('first');
     expect(result.result?.['1']).toBe('second');
+  });
+  it('松散对象中的 URL 和注释标记作为字符串值保留', () => {
+    const result = coerceLooseRowObject_ACU('{0:"https://example.com/a//b",1:"含 /* 文本 */"}');
+    expect(result.success).toBe(true);
+    expect(result.result).toEqual({ '0': 'https://example.com/a//b', '1': '含 /* 文本 */' });
   });
 });
 

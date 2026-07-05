@@ -320,7 +320,7 @@ export async function handleManualUpdate_ACU() {
 
         // UI：根据返回值显示 toast
         if (result.success) {
-            showToastr_ACU('success', '手动更新完成！');
+            showToastr_ACU(result.checkpointWarning ? 'warning' : 'success', result.checkpointWarning ? `手动更新完成，但边界 checkpoint 建立失败：${result.checkpointWarning}` : '手动更新完成！');
             updateStatusDisplay();
             notifyTableUpdate();
 

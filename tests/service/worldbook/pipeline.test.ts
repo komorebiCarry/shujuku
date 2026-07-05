@@ -582,6 +582,31 @@ describe('deleteAllGeneratedEntries_ACU', () => {
     expect(mockGwDeleteLorebookEntries).toHaveBeenCalledWith('test-lorebook', [1]);
   });
 
+  it('隔离模式下不删除当前隔离前缀内的外部导入条目', async () => {
+    mockSettings.dataIsolationEnabled = true;
+    mockSettings.dataIsolationCode = 'test';
+    mockGetIsolationPrefix.mockReturnValue('ACU-[test]-');
+    mockGwGetLorebookEntries.mockResolvedValue([
+      { uid: 1, comment: 'ACU-[test]-外部导入-TavernDB-ACU-ReadableDataTable' },
+      { uid: 2, comment: 'ACU-[test]-外部导入-TavernDB-ACU-WrapperStart' },
+      { uid: 3, comment: 'ACU-[test]-TavernDB-ACU-ReadableDataTable' },
+      { uid: 4, comment: 'ACU-[other]-TavernDB-ACU-ReadableDataTable' },
+    ]);
+    await deleteAllGeneratedEntries_ACU();
+    expect(mockGwDeleteLorebookEntries).toHaveBeenCalledWith('test-lorebook', [3]);
+  });
+
+  it('使用稳定导入前缀保护非默认前缀的已知自定义条目', async () => {
+    mockGetImportStablePrefix.mockReturnValue('Imported-');
+    mockSettings.knownCustomEntryNames = ['Imported-TavernDB-ACU-CustomExport-表A'];
+    mockGwGetLorebookEntries.mockResolvedValue([
+      { uid: 1, comment: 'Imported-TavernDB-ACU-CustomExport-表A' },
+      { uid: 2, comment: 'TavernDB-ACU-ReadableDataTable' },
+    ]);
+    await deleteAllGeneratedEntries_ACU();
+    expect(mockGwDeleteLorebookEntries).toHaveBeenCalledWith('test-lorebook', [2]);
+  });
+
   it('无 lorebook 时直接返回', async () => {
     mockGetInjectionTargetLorebook.mockResolvedValue(null);
     await deleteAllGeneratedEntries_ACU();
@@ -843,7 +868,7 @@ describe('getCombinedWorldbookContent_ACU', () => {
     expect(result).not.toContain('内部');
   });
 
-  it('Agent 绿灯进入普通合成链路时只输出条目 content，不附加标题或 ACU 标记', async () => {
+  it('Agent 绿灯进入普通合成链路时只让绿灯条目 content-only，未接管普通条目仍按正常逻辑读取', async () => {
     mockGetCurrentWorldbookConfig.mockReturnValue({
       source: 'manual',
       manualSelection: ['书A'],
@@ -852,16 +877,18 @@ describe('getCombinedWorldbookContent_ACU', () => {
     mockGwGetLorebookEntries.mockResolvedValue([
       { uid: 1, comment: 'TavernDB-ACU-AgentGreenlight-元数据', content: '绿灯正文内容', enabled: false, type: 'keyword', key: ['不会触发'], keys: [] },
       { uid: 2, comment: '普通条目', content: '普通内容', enabled: true, type: 'constant', key: [], keys: [] },
+      { uid: 3, comment: '关键词条目', content: '关键词内容', enabled: true, type: 'selective', key: ['扫描文本'], keys: [] },
     ]);
 
     const result = await getCombinedWorldbookContent_ACU('扫描文本', {
       agentGreenlights: [{ bookName: '书A', uid: 1, reason: '正文需要' }],
     });
 
-    expect(result).toBe('绿灯正文内容');
+    expect(result).toContain('绿灯正文内容');
+    expect(result).toContain('# 普通条目\n普通内容');
+    expect(result).toContain('# 关键词条目\n关键词内容');
     expect(result).not.toContain('TavernDB-ACU-AgentGreenlight');
-    expect(result).not.toContain('#');
-    expect(result).not.toContain('普通内容');
+    expect(result).not.toContain('# TavernDB-ACU-AgentGreenlight');
   });
 
   it('异常时返回空字符串', async () => {

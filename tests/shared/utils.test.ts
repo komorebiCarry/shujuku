@@ -9,7 +9,7 @@ vi.mock('../../src/shared/defaults-json.js', () => ({
   TABLE_TEMPLATE_ACU: JSON.stringify({
     sheet_0: {
       name: '测试表',
-      content: [['row_id', '列A'], ['1', '值A']],
+      content: [['row_id', '列A'], ['1', 'https://example.com/a//b?x=1#hash'], ['2', '包含 /* 不是注释 */ 与 // 文本']],
     },
   }),
 }));
@@ -24,6 +24,9 @@ vi.mock('../../src/shared/constants', () => ({
 // mock json-helpers
 vi.mock('../../src/shared/json-helpers', () => ({
   safeJsonParse_ACU: (str: string, fallback: any = null) => {
+    try { return JSON.parse(str); } catch { return fallback; }
+  },
+  safeJsonParseWithJsoncComments_ACU: (str: string, fallback: any = null) => {
     try { return JSON.parse(str); } catch { return fallback; }
   },
 }));
@@ -683,13 +686,22 @@ describe('parseTableTemplateJson_ACU', () => {
     expect(result).not.toBeNull();
     expect(result).toHaveProperty('sheet_0');
     expect(result.sheet_0.name).toBe('测试表');
-    expect(result.sheet_0.content).toEqual([['row_id', '列A'], ['1', '值A']]);
+    expect(result.sheet_0.content).toEqual([
+      ['row_id', '列A'],
+      ['1', 'https://example.com/a//b?x=1#hash'],
+      ['2', '包含 /* 不是注释 */ 与 // 文本'],
+    ]);
   });
   it('stripSeedRows=true 时种子行被移除，只保留表头', () => {
     const result = parseTableTemplateJson_ACU({ stripSeedRows: true });
     expect(result).not.toBeNull();
     expect(result.sheet_0.content.length).toBe(1); // 只有表头行
     expect(result.sheet_0.content[0]).toEqual(['row_id', '列A']);
+  });
+  it('字符串值中的 URL 和注释标记不会被模板解析截断', () => {
+    const result = parseTableTemplateJson_ACU({ stripSeedRows: false });
+    expect(result.sheet_0.content[1][1]).toBe('https://example.com/a//b?x=1#hash');
+    expect(result.sheet_0.content[2][1]).toBe('包含 /* 不是注释 */ 与 // 文本');
   });
   it('解析结果是对象类型', () => {
     const result = parseTableTemplateJson_ACU();

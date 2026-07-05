@@ -4,7 +4,7 @@
  */
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
-const { mockSettings, mockCurrentJsonTableData, mockGetChatArray, mockSaveChatToHost, mockSetChatMessages, mockEmitMessageUpdated, mockGetCurrentIsolationKey, mockGetLastOptimizationBase, mockSetLastOptimizationBase, mockSanitizeSheet, mockPersistTablesToChatMessage, mockRunTableUpdateCommit } = vi.hoisted(() => ({
+const { mockSettings, mockCurrentJsonTableData, mockGetChatArray, mockSaveChatToHost, mockSetChatMessages, mockEmitMessageUpdated, mockGetCurrentIsolationKey, mockGetLastOptimizationBase, mockSetLastOptimizationBase, mockSanitizeSheet, mockPersistTablesToChatMessage, mockRunTableUpdateCommit, mockRunTableWriteTransaction, mockLoadTableStateFromFramesV2, mockCollectScheduleSummaryFromFramesV2 } = vi.hoisted(() => ({
   mockSettings: {
     retainRecentLayers: 3,
     dataIsolationEnabled: false,
@@ -24,6 +24,9 @@ const { mockSettings, mockCurrentJsonTableData, mockGetChatArray, mockSaveChatTo
   mockSanitizeSheet: vi.fn((sheet: any) => sheet),
   mockPersistTablesToChatMessage: vi.fn(),
   mockRunTableUpdateCommit: vi.fn(),
+  mockRunTableWriteTransaction: vi.fn(),
+  mockLoadTableStateFromFramesV2: vi.fn(),
+  mockCollectScheduleSummaryFromFramesV2: vi.fn(() => null),
 }));
 
 vi.mock('../../../src/data/gateways/chat-gateway', () => ({
@@ -68,10 +71,20 @@ vi.mock('../../../src/service/table/table-update-commit', () => ({
   runTableUpdateCommit_ACU: mockRunTableUpdateCommit,
 }));
 
+vi.mock('../../../src/service/table/table-write-transaction', () => ({
+  runTableWriteTransaction_ACU: mockRunTableWriteTransaction,
+}));
+
+vi.mock('../../../src/service/table/storage-frame-v2-replay', () => ({
+  loadTableStateFromFramesV2_ACU: mockLoadTableStateFromFramesV2,
+  collectScheduleSummaryFromFramesV2_ACU: mockCollectScheduleSummaryFromFramesV2,
+}));
+
 import {
   replaceChatMessage_ACU,
   getOriginalContent_ACU,
   purgeOldLayerData_ACU,
+  ensureV2BoundaryCheckpointForRetainedBuffer_ACU,
   deleteLocalDataInChatCore_ACU,
   overrideLatestLayerWithTemplateCore_ACU,
   saveCurrentDataForTable_ACU,
@@ -95,6 +108,11 @@ beforeEach(() => {
       saved: true,
     };
   });
+  mockRunTableWriteTransaction.mockImplementation(async (_options: any, task: any) => task());
+  mockLoadTableStateFromFramesV2.mockResolvedValue({
+    sheet_0: { name: '物品表', content: [['row_id', '物品名'], ['1', '剑']] },
+  });
+  mockCollectScheduleSummaryFromFramesV2.mockReturnValue(null);
 });
 
 // ═══ replaceChatMessage_ACU ═══
@@ -191,7 +209,8 @@ describe('purgeOldLayerData_ACU', () => {
     expect(chat[0].TavernDB_ACU_Data).toBeUndefined();
     expect(chat[1].TavernDB_ACU_Data).toBeUndefined();
     expect(chat[2].TavernDB_ACU_Data).toBeUndefined();
-    expect(chat[3].TavernDB_ACU_Data).toBeDefined();
+    expect(chat[12].TavernDB_ACU_Data).toBeUndefined();
+    expect(chat[13].TavernDB_ACU_Data).toBeDefined();
     expect(chat[24].TavernDB_ACU_Data).toBeDefined();
     expect(mockSaveChatToHost).toHaveBeenCalled();
   });
@@ -210,10 +229,11 @@ describe('purgeOldLayerData_ACU', () => {
     expect(chat[0].TavernDB_ACU_InternalSheetGuide).toEqual({ sheet_0: { name: '指导表' } });
     expect(chat[0].TavernDB_ACU_Data).toBeUndefined();
     expect(chat[1].TavernDB_ACU_Data).toBeUndefined();
-    expect(chat[2].TavernDB_ACU_Data).toBeDefined();
+    expect(chat[11].TavernDB_ACU_Data).toBeUndefined();
+    expect(chat[12].TavernDB_ACU_Data).toBeDefined();
   });
 
-  it('实际保留层的前20层缓冲区没有 checkpoint 时，在缓冲区最后一层补写 V2 checkpoint', async () => {
+  it('实际保留层的前10层缓冲区没有 checkpoint 时，在缓冲区第一条可写 AI 楼层补写 V2 checkpoint', async () => {
     mockSettings.retainRecentLayers = 2;
     const chat = Array.from({ length: 25 }, (_, index) => ({
       is_user: false,
@@ -242,17 +262,17 @@ describe('purgeOldLayerData_ACU', () => {
     await purgeOldLayerData_ACU();
 
     expect(chat[0].TavernDB_ACU_IsolatedData).toBeUndefined();
-    expect(chat[22].TavernDB_ACU_IsolatedData[''].storageFrame.checkpoint).toEqual(expect.objectContaining({
+    expect(chat[13].TavernDB_ACU_IsolatedData[''].storageFrame.checkpoint).toEqual(expect.objectContaining({
       kind: 'full',
       reason: 'compaction',
     }));
-    expect(chat[22].TavernDB_ACU_IsolatedData[''].storageFrame.checkpoint.data.sheet_0.content[1][1]).toBe('剑');
+    expect(chat[13].TavernDB_ACU_IsolatedData[''].storageFrame.checkpoint.data.sheet_0.content[1][1]).toBe('剑');
   });
 
   it('checkpoint 缓冲区没有可写 AI 楼层时不退回有效保留区补写，并中止清理', async () => {
     mockSettings.retainRecentLayers = 2;
     const chat = Array.from({ length: 25 }, (_, index) => ({
-      is_user: index >= 3 && index <= 22,
+      is_user: index >= 13 && index <= 22,
       TavernDB_ACU_IsolatedData: {
         '': {
           storageFrame: {
@@ -278,6 +298,7 @@ describe('purgeOldLayerData_ACU', () => {
     await purgeOldLayerData_ACU();
 
     expect(chat[0].TavernDB_ACU_IsolatedData).toBeDefined();
+    expect(chat[13].TavernDB_ACU_IsolatedData[''].storageFrame.checkpoint).toBeUndefined();
     expect(chat[23].TavernDB_ACU_IsolatedData[''].storageFrame.checkpoint).toBeUndefined();
     expect(chat[24].TavernDB_ACU_IsolatedData[''].storageFrame.checkpoint).toBeUndefined();
     expect(mockSaveChatToHost).not.toHaveBeenCalled();
@@ -301,6 +322,101 @@ describe('purgeOldLayerData_ACU', () => {
     expect(mockSaveChatToHost).not.toHaveBeenCalled();
   });
 });
+
+// ═══ ensureV2BoundaryCheckpointForRetainedBuffer_ACU ═══
+describe('ensureV2BoundaryCheckpointForRetainedBuffer_ACU', () => {
+  it('手动入口在 10 层缓冲区第一条可写 AI 楼层写入 full boundary checkpoint，且不删除旧楼层数据', async () => {
+    mockSettings.retainRecentLayers = 2;
+    const chat = Array.from({ length: 25 }, (_, index) => ({
+      is_user: false,
+      TavernDB_ACU_IsolatedData: {
+        '': {
+          storageFrame: {
+            version: 2,
+            ...(index === 0
+              ? {
+                  checkpoint: {
+                    kind: 'full',
+                    createdAt: 1,
+                    reason: 'init',
+                    data: { sheet_0: { name: '物品表', content: [['row_id', '物品名'], ['1', '剑']] } },
+                  },
+                }
+              : {}),
+            logEntries: [],
+          },
+          _acu_storage_version: 2,
+        },
+      },
+    }));
+    mockGetChatArray.mockReturnValue(chat);
+
+    const result = await ensureV2BoundaryCheckpointForRetainedBuffer_ACU({ reason: 'manual_refill', save: true });
+
+    expect(result).toEqual(expect.objectContaining({ success: true, changed: true, anchorIndex: 13 }));
+    expect(mockRunTableWriteTransaction).toHaveBeenCalledWith(expect.objectContaining({
+      source: 'system_cleanup',
+      reason: 'manual_refill_boundary_checkpoint',
+      maintenanceMode: 'exclusive',
+      writeSet: [{ kind: 'all' }],
+    }), expect.any(Function));
+    expect(chat[0].TavernDB_ACU_IsolatedData).toBeDefined();
+    expect(chat[13].TavernDB_ACU_IsolatedData[''].storageFrame.checkpoint).toEqual(expect.objectContaining({
+      kind: 'full',
+      reason: 'compaction',
+    }));
+    expect(chat[13].TavernDB_ACU_IsolatedData[''].storageFrame.checkpoint.data.sheet_0.content[1][1]).toBe('剑');
+    expect(mockSaveChatToHost).toHaveBeenCalledTimes(1);
+  });
+
+  it('已有 retained buffer full checkpoint 时跳过写入并不保存', async () => {
+    mockSettings.retainRecentLayers = 2;
+    const chat = Array.from({ length: 25 }, (_, index) => ({
+      is_user: false,
+      TavernDB_ACU_IsolatedData: {
+        '': {
+          storageFrame: {
+            version: 2,
+            checkpoint: index === 13
+              ? { kind: 'full', createdAt: 2, reason: 'existing', data: { sheet_0: { name: '已有', content: [['row_id']] } } }
+              : undefined,
+            logEntries: [],
+          },
+          _acu_storage_version: 2,
+        },
+      },
+    }));
+    mockGetChatArray.mockReturnValue(chat);
+
+    const result = await ensureV2BoundaryCheckpointForRetainedBuffer_ACU({ reason: 'manual_refill', save: true });
+
+    expect(result).toEqual(expect.objectContaining({ success: true, changed: false, anchorIndex: 13 }));
+    expect(mockLoadTableStateFromFramesV2).not.toHaveBeenCalled();
+    expect(mockSaveChatToHost).not.toHaveBeenCalled();
+  });
+
+  it('缓冲区没有可写 AI 楼层且待清理范围存在 V2 frame 时安全失败，不保存也不删除', async () => {
+    mockSettings.retainRecentLayers = 2;
+    const chat = Array.from({ length: 25 }, (_, index) => ({
+      is_user: index >= 13 && index <= 22,
+      TavernDB_ACU_IsolatedData: {
+        '': {
+          storageFrame: { version: 2, logEntries: [] },
+          _acu_storage_version: 2,
+        },
+      },
+    }));
+    mockGetChatArray.mockReturnValue(chat);
+
+    const result = await ensureV2BoundaryCheckpointForRetainedBuffer_ACU({ reason: 'manual_refill', save: true });
+
+    expect(result.success).toBe(false);
+    expect(result.error).toContain('找不到可写入 checkpoint 的 AI 楼层');
+    expect(chat[0].TavernDB_ACU_IsolatedData).toBeDefined();
+    expect(mockSaveChatToHost).not.toHaveBeenCalled();
+  });
+});
+
 
 // ═══ deleteLocalDataInChatCore_ACU ═══
 describe('deleteLocalDataInChatCore_ACU', () => {

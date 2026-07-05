@@ -11,6 +11,7 @@ import { applyTemplateScopeForCurrentChat_ACU, loadSettings_ACU, saveSettings_AC
 import { getSortedSheetKeys_ACU } from '../template/chat-scope';
 import { loadAllChatMessages_ACU } from './pipeline';
 import { cleanChatName_ACU, getChatFirstLayerMessage_ACU, logDebug_ACU, logError_ACU, logWarn_ACU } from '../../shared/utils';
+import { getImportStablePrefix_ACU } from '../../shared/constants';
 
 import { purgeSheetKeysFromMessage_ACU } from '../../data/repositories/chat-message-data-repo';
 import { runTableWriteTransaction_ACU } from '../table/table-write-transaction';
@@ -187,6 +188,7 @@ import { runTableWriteTransaction_ACU } from '../table/table-write-transaction';
                  }
              });
         }
+        const importPrefix = getImportStablePrefix_ACU();
 
         const uidsToDelete = allEntries
             .filter(entry => {
@@ -196,9 +198,9 @@ import { runTableWriteTransaction_ACU } from '../table/table-write-transaction';
                 // 说明：切回脚本/读不到聊天表格数据时，可能会触发 deleteAllGeneratedEntries_ACU 清理旧条目；
                 // 但外部导入条目应被视为第三方条目，只允许用户手动清理/删除。
                 if (settings_ACU.dataIsolationEnabled) {
-                    if (isolationPrefix && entry.comment.startsWith(isolationPrefix + '外部导入-')) return false;
+                    if (isolationPrefix && entry.comment.startsWith(isolationPrefix + importPrefix)) return false;
                 } else {
-                    if (entry.comment.startsWith('外部导入-')) return false;
+                    if (entry.comment.startsWith(importPrefix)) return false;
                 }
                 
                 if (settings_ACU.dataIsolationEnabled) {

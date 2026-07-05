@@ -49,7 +49,9 @@ describe('cleanupWorldbookEntriesAfterDataDeletion_ACU', () => {
     ]);
     const count = await cleanupWorldbookEntriesAfterDataDeletion_ACU();
     expect(count).toBe(5);
-    expect(mockDeleteEntries).toHaveBeenCalledTimes(2); // Wrapper 一次 + PersonsHeader/Memory 一次
+    expect(mockDeleteEntries).toHaveBeenCalledTimes(2);
+    expect(mockDeleteEntries).toHaveBeenNthCalledWith(1, 'primary-lorebook', [1, 2]);
+    expect(mockDeleteEntries).toHaveBeenNthCalledWith(2, 'primary-lorebook', [3, 4, 5]);
   });
 
   it('无匹配条目时返回 0', async () => {
@@ -102,7 +104,7 @@ describe('cleanupWorldbookEntriesAfterDataDeletion_ACU', () => {
     expect(count).toBe(1);
   });
 
-  it('也删除外部导入的 Wrapper 条目', async () => {
+  it('不删除外部导入的 Wrapper、PersonsHeader、Memory 条目', async () => {
     mockGetTargetLorebook.mockResolvedValue('primary-lorebook');
     mockGetEntries.mockResolvedValue([
       { uid: 1, comment: '外部导入-TavernDB-ACU-WrapperStart' },
@@ -112,6 +114,26 @@ describe('cleanupWorldbookEntriesAfterDataDeletion_ACU', () => {
       { uid: 5, comment: '外部导入-TavernDB-ACU-MemoryEnd' },
     ]);
     const count = await cleanupWorldbookEntriesAfterDataDeletion_ACU();
-    expect(count).toBe(5);
+    expect(count).toBe(0);
+    expect(mockDeleteEntries).not.toHaveBeenCalled();
+  });
+
+  it('隔离前缀下只删除当前隔离的普通条目，不删除外部导入条目', async () => {
+    mockGetIsoPrefix.mockReturnValue('ACU-[test]-');
+    mockGetTargetLorebook.mockResolvedValue('primary-lorebook');
+    mockGetEntries.mockResolvedValue([
+      { uid: 1, comment: 'ACU-[test]-TavernDB-ACU-WrapperStart' },
+      { uid: 2, comment: 'ACU-[test]-TavernDB-ACU-WrapperEnd' },
+      { uid: 3, comment: 'ACU-[test]-外部导入-TavernDB-ACU-WrapperStart' },
+      { uid: 4, comment: '外部导入-TavernDB-ACU-WrapperStart' },
+      { uid: 5, comment: 'ACU-[test]-TavernDB-ACU-PersonsHeader' },
+      { uid: 6, comment: 'ACU-[test]-外部导入-TavernDB-ACU-MemoryStart' },
+      { uid: 7, comment: 'ACU-[other]-TavernDB-ACU-MemoryEnd' },
+    ]);
+    const count = await cleanupWorldbookEntriesAfterDataDeletion_ACU();
+    expect(count).toBe(3);
+    expect(mockDeleteEntries).toHaveBeenCalledTimes(2);
+    expect(mockDeleteEntries).toHaveBeenNthCalledWith(1, 'primary-lorebook', [1, 2]);
+    expect(mockDeleteEntries).toHaveBeenNthCalledWith(2, 'primary-lorebook', [5]);
   });
 });

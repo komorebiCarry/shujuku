@@ -238,6 +238,11 @@ vi.mock('../../../../src/service/agent/agent-decision-engine', () => ({
   runAgentDecisionForPlot_ACU: mockRunAgentDecisionForPlot,
 }));
 
+vi.mock('../../../../src/service/agent/agent-skillify-service', () => ({
+  getWorldbookEntryKeywordsForSkillify_ACU: vi.fn((entry: any) => [...(entry?.keys || []), ...(entry?.key || [])]),
+  isDatabaseGeneratedWorldbookEntryForAgent_ACU: vi.fn((entry: any) => String(entry?.comment || entry?.name || '').startsWith('TavernDB-ACU-')),
+}));
+
 vi.mock('../../../../src/service/agent/agent-worldbook-takeover', () => ({
   clearFinalGenerationGreenlights_ACU: mockClearFinalGenerationGreenlights,
   writeFinalGenerationGreenlights_ACU: mockWriteFinalGenerationGreenlights,
@@ -245,6 +250,7 @@ vi.mock('../../../../src/service/agent/agent-worldbook-takeover', () => ({
 
 vi.mock('../../../../src/service/agent/agent-worldbook-skill-meta', () => ({
   resolveAgentWorldbookFilterAvailability_ACU: mockResolveAgentWorldbookFilterAvailability,
+  hasUsableWorldbookSkillMeta_ACU: vi.fn((comment: unknown) => String(comment || '').includes('ACU_SKILL_META_START')),
 }));
 
 import {
@@ -438,12 +444,14 @@ describe('getWorldbookContentForPlot_ACU', () => {
     const options = mockBuildCombinedWorldbookContentByStrategy.mock.calls[0][0];
     const greenlightEntry = { bookName: '书A', uid: 7, comment: 'TavernDB-ACU-AgentGreenlight-元数据', content: '剧情推进绿灯正文', normalizedComment: 'TavernDB-ACU-OutlineTable-1', blocked: true, rawComment: '被屏蔽绿灯' };
     const normalEntry = { bookName: '书A', uid: 8, comment: '普通条目', content: '普通正文', normalizedComment: '普通条目', blocked: false };
+    const controlledEntry = { bookName: '书A', uid: 10, comment: '受控条目\n<!-- ACU_SKILL_META_START\n{"version":1,"description":"受控","triggerWhen":"触发","tk":1}\nACU_SKILL_META_END -->', content: '受控正文', normalizedComment: '受控条目', blocked: false };
     const dbGeneratedEntry = { bookName: '书A', uid: 9, comment: 'TavernDB-ACU-自动生成条目', content: '未被 Agent 放行的自动生成正文', normalizedComment: 'TavernDB-ACU-自动生成条目', enabled: true, blocked: false };
     expect(options.includeEntry(greenlightEntry)).toBe(true);
     expect(options.forceIncludeEntry(greenlightEntry)).toBe(true);
     expect(options.isSelected(greenlightEntry)).toBe(true);
-    expect(options.isSelected(normalEntry)).toBe(false);
-    expect(options.isSelected(dbGeneratedEntry)).toBe(false);
+    expect(options.isSelected(normalEntry)).toBe(true);
+    expect(options.isSelected(controlledEntry)).toBe(false);
+    expect(options.isSelected(dbGeneratedEntry)).toBe(true);
     expect(options.formatEntry(greenlightEntry)).toBe('剧情推进绿灯正文');
     expect(options.formatEntry(greenlightEntry)).not.toContain('TavernDB-ACU-AgentGreenlight');
     expect(options.formatEntry(greenlightEntry)).not.toContain('#');
@@ -471,7 +479,7 @@ describe('getWorldbookContentForPlot_ACU', () => {
     expect(options.isSelected({ bookName: '书A', uid: 999, normalizedComment: 'TavernDB-ACU-自动生成条目' })).toBe(true);
   });
 
-  it('agent-controlled 模式即使绿灯为空也不会回退普通关键词世界书', async () => {
+  it('agent-controlled 模式绿灯为空时仍读取未接管普通条目，但排除受 Agent 控制条目', async () => {
     await getWorldbookContentForPlot_ACU(
       {
         plotWorldbookConfig: {
@@ -486,8 +494,11 @@ describe('getWorldbookContentForPlot_ACU', () => {
     );
 
     const options = mockBuildCombinedWorldbookContentByStrategy.mock.calls[0][0];
-    expect(options.isSelected({ bookName: '书A', uid: 1, normalizedComment: '普通条目' })).toBe(false);
-    expect(options.isSelected({ bookName: '书A', uid: 999, normalizedComment: 'TavernDB-ACU-自动生成条目' })).toBe(false);
+    const controlledEntry = { bookName: '书A', uid: 3, comment: '受控条目\n<!-- ACU_SKILL_META_START\n{"version":1,"description":"受控","triggerWhen":"触发","tk":1}\nACU_SKILL_META_END -->', normalizedComment: '受控条目' };
+    expect(options.isSelected({ bookName: '书A', uid: 1, normalizedComment: '普通条目' })).toBe(true);
+    expect(options.isSelected({ bookName: '书A', uid: 2, normalizedComment: '普通条目' })).toBe(false);
+    expect(options.isSelected(controlledEntry)).toBe(false);
+    expect(options.isSelected({ bookName: '书A', uid: 999, normalizedComment: 'TavernDB-ACU-自动生成条目' })).toBe(true);
     expect(options.forceIncludeEntry({ bookName: '书A', uid: 1, normalizedComment: '普通条目' })).toBe(false);
   });
 
@@ -755,7 +766,7 @@ describe('runPlotTasksRuntime_ACU', () => {
     expect(options.isSelected({ bookName: '剧情书', uid: 999, normalizedComment: 'TavernDB-ACU-自动生成条目' })).toBe(true);
   });
 
-  it('Agent active 且任务有 description/triggerWhen 时，任务级世界书由 Agent 控制', async () => {
+  it('Agent active 且任务有 description/triggerWhen 时，任务级世界书只由 Agent 控制 Skill meta 条目', async () => {
     mockResolveAgentWorldbookFilterAvailability.mockResolvedValueOnce({
       available: true,
       reason: 'available',
@@ -801,8 +812,9 @@ describe('runPlotTasksRuntime_ACU', () => {
     expect(mockBuildCombinedWorldbookContentByStrategy).toHaveBeenCalledTimes(1);
     const options = mockBuildCombinedWorldbookContentByStrategy.mock.calls[0][0];
     expect(options.isSelected({ bookName: '剧情书', uid: 7, normalizedComment: '普通条目' })).toBe(true);
-    expect(options.isSelected({ bookName: '剧情书', uid: 8, normalizedComment: '普通条目' })).toBe(false);
-    expect(options.isSelected({ bookName: '剧情书', uid: 999, normalizedComment: 'TavernDB-ACU-自动生成条目' })).toBe(false);
+    expect(options.isSelected({ bookName: '剧情书', uid: 8, normalizedComment: '普通条目' })).toBe(true);
+    expect(options.isSelected({ bookName: '剧情书', uid: 8, comment: '受控条目\n<!-- ACU_SKILL_META_START\n{"version":1,"description":"受控","triggerWhen":"触发","tk":1}\nACU_SKILL_META_END-->', normalizedComment: '受控条目' })).toBe(false);
+    expect(options.isSelected({ bookName: '剧情书', uid: 999, normalizedComment: 'TavernDB-ACU-自动生成条目' })).toBe(true);
   });
 
   it('并发模式下 skillMetas 为空仍运行 Agent 决策，剧情成功后写正文蓝灯', async () => {

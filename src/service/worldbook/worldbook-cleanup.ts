@@ -6,6 +6,16 @@
 import { getLorebookEntries_ACU, deleteLorebookEntries_ACU, isWorldbookApiAvailable_ACU } from './worldbook-service';
 import { getInjectionTargetLorebook_ACU, getIsolationPrefix_ACU } from './injection-engine';
 import { logDebug_ACU, logError_ACU } from '../../shared/utils';
+import { getImportStablePrefix_ACU } from '../../shared/constants';
+
+function isImportProtectedComment_ACU(comment: unknown, isolationPrefix: string): boolean {
+    const importPrefix = getImportStablePrefix_ACU();
+    const rawComment = String(comment || '');
+    const normalized = isolationPrefix && rawComment.startsWith(isolationPrefix)
+        ? rawComment.slice(isolationPrefix.length)
+        : rawComment;
+    return normalized.startsWith(importPrefix);
+}
 
 /**
  * 删除聊天数据后清理世界书中的 Wrapper、PersonsHeader、Memory 条目
@@ -22,16 +32,12 @@ export async function cleanupWorldbookEntriesAfterDataDeletion_ACU(): Promise<nu
             const isoPrefix = getIsolationPrefix_ACU();
             const WRAPPER_START_COMMENT = isoPrefix + 'TavernDB-ACU-WrapperStart';
             const WRAPPER_END_COMMENT = isoPrefix + 'TavernDB-ACU-WrapperEnd';
-            const WRAPPER_START_IMPORT_COMMENT = isoPrefix + '外部导入-TavernDB-ACU-WrapperStart';
-            const WRAPPER_END_IMPORT_COMMENT = isoPrefix + '外部导入-TavernDB-ACU-WrapperEnd';
 
             const allEntries = await getLorebookEntries_ACU(primaryLorebookName);
             const wrapperUidsToDelete = allEntries
                 .filter(e =>
-                    e.comment === WRAPPER_START_COMMENT ||
-                    e.comment === WRAPPER_END_COMMENT ||
-                    e.comment === WRAPPER_START_IMPORT_COMMENT ||
-                    e.comment === WRAPPER_END_IMPORT_COMMENT,
+                    !isImportProtectedComment_ACU(e.comment, isoPrefix) &&
+                    (e.comment === WRAPPER_START_COMMENT || e.comment === WRAPPER_END_COMMENT),
                 )
                 .map(e => e.uid);
 
@@ -53,19 +59,14 @@ export async function cleanupWorldbookEntriesAfterDataDeletion_ACU(): Promise<nu
             const PERSONS_HEADER_COMMENT = isoPrefix2 + 'TavernDB-ACU-PersonsHeader';
             const MEMORY_START_COMMENT = isoPrefix2 + 'TavernDB-ACU-MemoryStart';
             const MEMORY_END_COMMENT = isoPrefix2 + 'TavernDB-ACU-MemoryEnd';
-            const PERSONS_HEADER_IMPORT_COMMENT = isoPrefix2 + '外部导入-TavernDB-ACU-PersonsHeader';
-            const MEMORY_START_IMPORT_COMMENT = isoPrefix2 + '外部导入-TavernDB-ACU-MemoryStart';
-            const MEMORY_END_IMPORT_COMMENT = isoPrefix2 + '外部导入-TavernDB-ACU-MemoryEnd';
 
             const allEntries2 = await getLorebookEntries_ACU(primaryLorebookName2);
             const headerUidsToDelete = allEntries2
                 .filter(e =>
-                    e.comment === PERSONS_HEADER_COMMENT ||
+                    !isImportProtectedComment_ACU(e.comment, isoPrefix2) &&
+                    (e.comment === PERSONS_HEADER_COMMENT ||
                     e.comment === MEMORY_START_COMMENT ||
-                    e.comment === MEMORY_END_COMMENT ||
-                    e.comment === PERSONS_HEADER_IMPORT_COMMENT ||
-                    e.comment === MEMORY_START_IMPORT_COMMENT ||
-                    e.comment === MEMORY_END_IMPORT_COMMENT,
+                    e.comment === MEMORY_END_COMMENT),
                 )
                 .map(e => e.uid);
 

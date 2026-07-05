@@ -23,7 +23,7 @@ import { runAgentDecisionForPlot_ACU, type AgentDecisionResult_ACU, type AgentWo
 import { normalizeAgentContextSettings_ACU } from '../../agent/agent-prompt-template';
 import { getWorldbookEntryKeywordsForSkillify_ACU, isDatabaseGeneratedWorldbookEntryForAgent_ACU } from '../../agent/agent-skillify-service';
 import { clearFinalGenerationGreenlights_ACU, writeFinalGenerationGreenlights_ACU } from '../../agent/agent-worldbook-takeover';
-import { resolveAgentWorldbookFilterAvailability_ACU } from '../../agent/agent-worldbook-skill-meta';
+import { hasUsableWorldbookSkillMeta_ACU, resolveAgentWorldbookFilterAvailability_ACU } from '../../agent/agent-worldbook-skill-meta';
 
   type PlotWorldbookAgentMode_ACU = 'normal' | 'agent-controlled';
 
@@ -41,6 +41,11 @@ import { resolveAgentWorldbookFilterAvailability_ACU } from '../../agent/agent-w
     if (String(entry.type || '').toLowerCase() === 'constant') return false;
     if (isDatabaseGeneratedWorldbookEntryForAgent_ACU(entry)) return false;
     return getWorldbookEntryKeywordsForSkillify_ACU(entry).length > 0;
+  }
+
+  function isAgentControlledWorldbookEntryForPlot_ACU(entry: Record<string, any>): boolean {
+    if (!entry || isDatabaseGeneratedWorldbookEntryForAgent_ACU(entry)) return false;
+    return hasUsableWorldbookSkillMeta_ACU(entry?.comment || entry?.rawComment || entry?.name);
   }
 
   function shouldUseAgentWorldbookForPlotTask_ACU(task: Record<string, any>, agentDecision: AgentDecisionResult_ACU | null | undefined): boolean {
@@ -839,9 +844,8 @@ import { resolveAgentWorldbookFilterAvailability_ACU } from '../../agent/agent-w
             normalizedComment.startsWith('小总结条目') ||
             normalizedComment.startsWith('重要人物条目');
           const isAgentGreenlight = agentGreenlightKeySet.has(`${String(entry.bookName || '').trim()}\u0000${String(entry.uid || '').trim()}`);
-          if (isAgentControlledWorldbook) {
-            return isAgentGreenlight;
-          }
+          if (isAgentGreenlight) return true;
+          if (isAgentControlledWorldbook && isAgentControlledWorldbookEntryForPlot_ACU(entry)) return false;
           if (!hasAnySelection) return true;
           if (isDbGenerated) return true;
           const list = enabledMap?.[entry.bookName];

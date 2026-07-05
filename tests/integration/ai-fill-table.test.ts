@@ -42,6 +42,27 @@ vi.mock('../../src/shared/utils', () => ({
 vi.mock('../../src/shared/json-helpers', () => ({
   safeJsonParse_ACU: (json: string, fallback: any) => { try { return JSON.parse(json); } catch { return fallback; } },
   safeJsonStringify_ACU: (obj: any, fallback: string) => { try { return JSON.stringify(obj); } catch { return fallback; } },
+  stripJsonCommentsPreservingStrings_ACU: (input: string) => {
+    if (typeof input !== 'string' || !input) return input;
+    let result = '';
+    let inString = false;
+    let escapeNext = false;
+    for (let i = 0; i < input.length; i++) {
+      const char = input[i];
+      const nextChar = input[i + 1] || '';
+      if (escapeNext) { result += char; escapeNext = false; continue; }
+      if (inString) {
+        result += char;
+        if (char === '\\') escapeNext = true;
+        else if (char === '"') inString = false;
+        continue;
+      }
+      if (char === '"') { inString = true; result += char; continue; }
+      if (char === '/' && nextChar === '/') break;
+      result += char;
+    }
+    return result;
+  },
 }));
 
 vi.mock('../../src/service/table/storage-mode', () => ({

@@ -422,11 +422,13 @@ export function useManualUpdate(): ManualUpdateState {
         restoreAutoUpdateSettings();
       }
       finishToast(
-        result.success ? 'success' : (abortRequested || result.error?.includes('终止') ? 'warning' : 'error'),
+        result.success ? (result.checkpointWarning ? 'warning' : 'success') : (abortRequested || result.error?.includes('终止') ? 'warning' : 'error'),
         result.success
-          ? (result.autoMergeTriggered
+          ? `${result.autoMergeTriggered
               ? `手动填表完成;自动合并总结${result.autoMergeSuccess ? '已完成' : '未完成'}。`
-              : '手动填表完成。')
+              : '手动填表完成。'}${result.checkpointWarning
+                ? ` 但边界 checkpoint 建立失败：${result.checkpointWarning}`
+                : ''}`
           : (abortRequested ? '手动填表任务已由用户终止。' : (result.error || '手动填表失败。')),
       );
     } catch (error: any) {

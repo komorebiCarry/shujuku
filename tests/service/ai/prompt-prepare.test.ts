@@ -70,6 +70,7 @@ vi.mock('../../../src/service/table/table-storage-strategy', () => ({
 }));
 
 import { formatTableForSqliteMode, prepareAIInput_ACU } from '../../../src/service/ai/prompt-builder/prompt-prepare';
+import { getCombinedWorldbookContent_ACU } from '../../../src/service/worldbook/pipeline';
 
 describe('formatTableForSqliteMode', () => {
   beforeEach(() => {
@@ -385,5 +386,31 @@ describe('prepareAIInput_ACU — 显式 tableData 模式', () => {
     expect(mockAttachSeedRows).not.toHaveBeenCalled();
     expect(explicitTableData.sheet_0.seedRows).toBeUndefined();
     expect(mockCurrentJsonTableData.sheet_0.seedRows).toBeUndefined();
+  });
+
+  it('传入 Agent 绿灯时只透传给世界书读取，不在填表入口把绿灯当作全局白名单', async () => {
+    const explicitTableData = {
+      sheet_0: {
+        uid: 'sheet_0',
+        name: '显式表',
+        content: [['row_id', 'name'], ['1', '显式值']],
+        updateConfig: {},
+      },
+    };
+    const messages = [
+      { is_user: true, mes: '用户触发普通关键词' },
+      { is_user: false, mes: '角色回应' },
+    ];
+    const agentGreenlights = [{ bookName: '书A', uid: 7, reason: '正文需要' }];
+
+    await prepareAIInput_ACU(messages, 'standard', null, {
+      tableData: explicitTableData,
+      agentGreenlights,
+    });
+
+    expect(getCombinedWorldbookContent_ACU).toHaveBeenCalledWith(
+      expect.stringContaining('用户: 用户触发普通关键词'),
+      expect.objectContaining({ agentGreenlights }),
+    );
   });
 });

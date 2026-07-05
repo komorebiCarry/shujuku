@@ -472,6 +472,7 @@ export   async function deleteAllGeneratedEntries_ACU(targetLorebook: string | n
                  }
              });
         }
+        const importPrefix = getImportStablePrefix_ACU();
 
         const uidsToDelete = allEntries
             .filter(entry => {
@@ -481,9 +482,9 @@ export   async function deleteAllGeneratedEntries_ACU(targetLorebook: string | n
                 // 说明：切回脚本/读不到聊天表格数据时，可能会触发 deleteAllGeneratedEntries_ACU 清理旧条目；
                 // 但外部导入条目应被视为第三方条目，只允许用户手动清理/删除。
                 if (settings_ACU.dataIsolationEnabled) {
-                    if (isolationPrefix && entry.comment.startsWith(isolationPrefix + '外部导入-')) return false;
+                    if (isolationPrefix && entry.comment.startsWith(isolationPrefix + importPrefix)) return false;
                 } else {
-                    if (entry.comment.startsWith('外部导入-')) return false;
+                    if (entry.comment.startsWith(importPrefix)) return false;
                 }
                 
                 if (settings_ACU.dataIsolationEnabled) {
@@ -935,7 +936,6 @@ export   async function getCombinedWorldbookContent_ACU(initialScanTextOverride 
     const agentGreenlightKeySet = new Set((Array.isArray(options?.agentGreenlights) ? options.agentGreenlights : [])
         .map((ref: any) => `${String(ref?.bookName || '').trim()}\u0000${String(ref?.uid || '').trim()}`)
         .filter((key: string) => !key.startsWith('\u0000') && !key.endsWith('\u0000')));
-    const hasAgentGreenlights = agentGreenlightKeySet.size > 0;
 
     if (!isWorldbookApiAvailable_ACU()) {
         logWarn_ACU('[ACU] Worldbook API not available, cannot get worldbook content.');
@@ -963,9 +963,11 @@ export   async function getCombinedWorldbookContent_ACU(initialScanTextOverride 
         return await buildCombinedWorldbookContentByStrategy_ACU({
             logPrefix: '[Worldbook]',
             bookNames,
-            formatEntry: hasAgentGreenlights
-                ? (entry: any) => String(entry?.content || '').trim()
-                : undefined,
+            formatEntry: (entry: any) => {
+                const isAgentGreenlight = agentGreenlightKeySet.has(`${String(entry.bookName || '').trim()}\u0000${String(entry.uid || '').trim()}`);
+                if (isAgentGreenlight) return String(entry?.content || '').trim();
+                return `# ${entry.comment || `Entry from ${entry.bookName}`}\n${entry.content}`;
+            },
             baseScanText: (typeof initialScanTextOverride === 'string' && initialScanTextOverride.trim()) ? initialScanTextOverride : '',
             fallbackScanText: allChatMessages_ACU.map(message => message.message).join('\n'),
             includeEntry: (entry: any) => {
@@ -981,7 +983,7 @@ export   async function getCombinedWorldbookContent_ACU(initialScanTextOverride 
             },
             isSelected: (entry: any) => {
                 const isAgentGreenlight = agentGreenlightKeySet.has(`${String(entry.bookName || '').trim()}\u0000${String(entry.uid || '').trim()}`);
-                if (hasAgentGreenlights) return isAgentGreenlight;
+                if (isAgentGreenlight) return true;
                 if (!hasAnySelection) return true;
                 const list = enabledEntriesMap?.[entry.bookName];
                 if (typeof list === 'undefined') return true;

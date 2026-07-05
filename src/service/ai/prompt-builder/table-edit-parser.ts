@@ -11,6 +11,7 @@ import { applySummaryIndexSequenceToTable_ACU, formatSummaryIndexCode_ACU, getSu
 import { sanitizeJsonPipeline_ACU, coerceLooseRowObject_ACU } from './json-sanitizer';
 import { isSqliteMode } from '../../table/storage-mode';
 import { extractStrictJsonTableFillResponse_ACU } from './strict-json-table-fill';
+import { stripJsonCommentsPreservingStrings_ACU } from '../../../shared/json-helpers';
 
   function normalizeAiResponseForTableEditParsing_ACU(text: string) {
     if (typeof text !== 'string') return '';
@@ -147,9 +148,7 @@ import { extractStrictJsonTableFillResponse_ACU } from './strict-json-table-fill
         if (trimmedLine === '') return;
 
         let lineContent = trimmedLine;
-        if (!isInJsonBlock && lineContent.includes('//') && !lineContent.includes('"//') && !lineContent.includes("'//")) {
-             lineContent = lineContent.split('//')[0].trim();
-        }
+        if (!isInJsonBlock && lineContent.includes('//')) lineContent = stripJsonCommentsPreservingStrings_ACU(lineContent).trim();
         if (lineContent === '') return;
 
         if ((lineContent.startsWith('insertRow') || lineContent.startsWith('deleteRow') || lineContent.startsWith('updateRow')) && !isInJsonBlock) {
@@ -205,10 +204,7 @@ import { extractStrictJsonTableFillResponse_ACU } from './strict-json-table-fill
     // 指令解析函数
     const parseTableEditCommandLine_ACU = (rawLine: string) => {
         try {
-            let commandLineWithoutComment = rawLine;
-            if (commandLineWithoutComment.match(/\)\s*;?\s*\/\/.*$/)) {
-                commandLineWithoutComment = commandLineWithoutComment.replace(/\/\/.*$/, '').trim();
-            }
+            let commandLineWithoutComment = stripJsonCommentsPreservingStrings_ACU(rawLine).trim();
             if (!commandLineWithoutComment) return null;
             const match = commandLineWithoutComment.match(/^(insertRow|deleteRow|updateRow)\s*\((.*)\);?$/);
             if (!match) return null;

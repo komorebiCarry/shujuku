@@ -10,7 +10,7 @@
  */
 import { TABLE_TEMPLATE_ACU } from './defaults-json.js';
 import { DEBUG_MODE_ACU, SCRIPT_ID_PREFIX_ACU, TABLE_ORDER_FIELD_ACU } from './constants';
-import { safeJsonParse_ACU } from './json-helpers';
+import { safeJsonParseWithJsoncComments_ACU } from './json-helpers';
 import { pushLog, isDebugLogEnabled } from './log-buffer';
 
 export function cleanChatName_ACU(fileName: string): string {
@@ -236,8 +236,8 @@ export   function stripSeedRowsFromTemplate_ACU(templateObj: any) {
 export   function parseTableTemplateJson_ACU({ stripSeedRows = false } = {}) {
       try {
           let cleanTemplate = TABLE_TEMPLATE_ACU.trim();
-          cleanTemplate = cleanTemplate.replace(/\/\/.*$/gm, '').replace(/\/\*[\s\S]*?\*\//g, '');
-          
+          const parseTemplateJson = (str: string) => safeJsonParseWithJsoncComments_ACU(str, null);
+
           // [修复2026-03-06] 处理DEFAULT_TABLE_TEMPLATE_ACU的双重JSON编码问题
           function escapeStringForJson_ACU(str: string) {
               return str
@@ -257,7 +257,7 @@ export   function parseTableTemplateJson_ACU({ stripSeedRows = false } = {}) {
                   try {
                       const unquoted = JSON.parse(cleanTemplate);
                       if (typeof unquoted === 'string') {
-                          obj = safeJsonParse_ACU(unquoted, null);
+                          obj = parseTemplateJson(unquoted);
                           if (obj) return stripSeedRows ? stripSeedRowsFromTemplate_ACU(obj) : obj;
                       } else if (typeof unquoted === 'object' && unquoted !== null) {
                           return stripSeedRows ? stripSeedRowsFromTemplate_ACU(unquoted) : unquoted;
@@ -274,10 +274,10 @@ export   function parseTableTemplateJson_ACU({ stripSeedRows = false } = {}) {
                   try {
                       const unquoted = JSON.parse(rewrapped);
                       if (typeof unquoted === 'string') {
-                          obj = safeJsonParse_ACU(unquoted, null);
+                          obj = parseTemplateJson(unquoted);
                           if (obj) return stripSeedRows ? stripSeedRowsFromTemplate_ACU(obj) : obj;
                           try {
-                              obj = JSON.parse(unquoted);
+                              obj = parseTemplateJson(unquoted);
                               if (obj) return stripSeedRows ? stripSeedRowsFromTemplate_ACU(obj) : obj;
                           } catch (e3) {
                               // fallback 也失败
@@ -295,14 +295,14 @@ export   function parseTableTemplateJson_ACU({ stripSeedRows = false } = {}) {
           
           // 常规解析
           if (!obj) {
-              obj = safeJsonParse_ACU(cleanTemplate, null);
+              obj = parseTemplateJson(cleanTemplate);
           }
           
           // 转义后解析
           if (!obj && typeof cleanTemplate === 'string') {
               try {
                   const escaped = escapeStringForJson_ACU(cleanTemplate);
-                  obj = safeJsonParse_ACU(escaped, null);
+                  obj = parseTemplateJson(escaped);
               } catch (e) {
                   // 转义后解析异常
               }

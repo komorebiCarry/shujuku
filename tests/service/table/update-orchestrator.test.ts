@@ -82,16 +82,18 @@ vi.mock('../../../src/service/ai/prompt-builder', () => ({
   prepareAIInput_ACU: (...args: any[]) => mockPrepareAIInput(...args),
 }));
 
-const { mockChatArrayForSeedStage, mockGetChatArray_ACU } = vi.hoisted(() => {
+const { mockChatArrayForSeedStage, mockGetChatArray_ACU, mockEnsureBoundaryCheckpoint } = vi.hoisted(() => {
   const chatArray: any[] = [];
   return {
     mockChatArrayForSeedStage: chatArray,
     mockGetChatArray_ACU: vi.fn(() => chatArray),
+    mockEnsureBoundaryCheckpoint: vi.fn().mockResolvedValue({ success: true, changed: false, skipped: true }),
   };
 });
 vi.mock('../../../src/service/chat/chat-service', () => ({
   getChatArray_ACU: mockGetChatArray_ACU,
   clearTableDataAtFloors_ACU: vi.fn().mockResolvedValue(0),
+  ensureV2BoundaryCheckpointForRetainedBuffer_ACU: mockEnsureBoundaryCheckpoint,
 }));
 
 vi.mock('../../../src/service/summary/merge-logic', () => ({
@@ -215,6 +217,7 @@ import {
 beforeEach(() => {
   mockChatArrayForSeedStage.length = 0;
   mockGetChatArray_ACU.mockImplementation(() => mockChatArrayForSeedStage);
+  mockEnsureBoundaryCheckpoint.mockResolvedValue({ success: true, changed: false, skipped: true });
 });
 
 // ═══════════════════════════════════════════════════════════════
@@ -981,6 +984,7 @@ describe('orchestrateManualUpdate_ACU', () => {
       updateBatchSize: 3,
       skipUpdateFloors: 0,
     };
+    mockWasStopped = false;
     mockPrepareAIInput.mockResolvedValue({ tableDataText: '模拟数据' });
     mockUpdateReadableLorebookEntry.mockResolvedValue(undefined);
     mockPersistTablesToChatMessage.mockResolvedValue({ saved: true, messageIndex: 3 });
@@ -1222,6 +1226,212 @@ describe('orchestrateManualUpdate_ACU', () => {
     expect(_set_manualExtraHint_ACU).toHaveBeenCalledWith('');
     expect(_set_isAutoUpdatingCard_ACU).toHaveBeenCalledWith(false);
   });
+
+  it('手动更新整体成功后建立 retained buffer boundary checkpoint', async () => {
+    const { getChatArray_ACU } = await import('../../../src/service/chat/chat-service');
+    vi.mocked(getChatArray_ACU).mockReturnValue([
+      { is_user: true },
+      { is_user: false, mes: 'AI回复' },
+    ]);
+    mockCallCustomOpenAI.mockResolvedValue('<tableEdit>sheet_0</tableEdit>');
+
+    const result = await orchestrateManualUpdate_ACU(['sheet_0'], vi.fn().mockResolvedValue({ success: true }), mockRefreshData);
+
+    expect(result.success).toBe(true);
+    expect(result.checkpointWarning).toBeUndefined();
+    expect(mockEnsureBoundaryCheckpoint).toHaveBeenCalledTimes(1);
+    expect(mockEnsureBoundaryCheckpoint).toHaveBeenCalledWith({ reason: 'manual_refill', save: true });
+  });
+
+  it('用户在最后一批成功后终止时不建立完成态 boundary checkpoint', async () => {
+    const { getChatArray_ACU } = await import('../../../src/service/chat/chat-service');
+    vi.mocked(getChatArray_ACU).mockReturnValue([
+      { is_user: true },
+      { is_user: false, mes: 'AI回复' },
+    ]);
+    mockCallCustomOpenAI.mockResolvedValue('<tableEdit>sheet_0</tableEdit>');
+    mockPersistTablesToChatMessage.mockImplementationOnce(async () => {
+      mockWasStopped = true;
+      return { saved: true, messageIndex: 3 };
+    });
+
+    const result = await orchestrateManualUpdate_ACU(['sheet_0'], vi.fn().mockResolvedValue({ success: true }), mockRefreshData);
+
+    expect(result.success).toBe(false);
+    expect(result.error).toContain('终止');
+    expect(mockEnsureBoundaryCheckpoint).not.toHaveBeenCalled();
+  });
+
+  it('boundary checkpoint 建立失败时保留成功结果并返回 checkpointWarning', async () => {
+    const { getChatArray_ACU } = await import('../../../src/service/chat/chat-service');
+    vi.mocked(getChatArray_ACU).mockReturnValue([
+      { is_user: true },
+      { is_user: false, mes: 'AI回复' },
+    ]);
+    mockCallCustomOpenAI.mockResolvedValue('<tableEdit>sheet_0</tableEdit>');
+    mockEnsureBoundaryCheckpoint.mockResolvedValueOnce({ success: false, changed: false, error: '边界 checkpoint 写入失败' });
+
+    const result = await orchestrateManualUpdate_ACU(['sheet_0'], vi.fn().mockResolvedValue({ success: true }), mockRefreshData);
+
+    expect(result.success).toBe(true);
+    expect(result.checkpointWarning).toContain('边界 checkpoint 写入失败');
+    expect(mockEnsureBoundaryCheckpoint).toHaveBeenCalledTimes(1);
+  });
+
+  it('boundary checkpoint 建立抛异常时保留成功结果、返回 checkpointWarning 并记录异常详情', async () => {
+    const { getChatArray_ACU } = await import('../../../src/service/chat/chat-service');
+    const { logError_ACU } = await import('../../../src/shared/utils');
+    const checkpointError = new Error('checkpoint boom');
+    vi.mocked(getChatArray_ACU).mockReturnValue([
+      { is_user: true },
+      { is_user: false, mes: 'AI回复' },
+    ]);
+    mockCallCustomOpenAI.mockResolvedValue('<tableEdit>sheet_0</tableEdit>');
+    mockEnsureBoundaryCheckpoint.mockRejectedValueOnce(checkpointError);
+
+    const result = await orchestrateManualUpdate_ACU(['sheet_0'], vi.fn().mockResolvedValue({ success: true }), mockRefreshData);
+
+    expect(result.success).toBe(true);
+    expect(result.checkpointWarning).toContain('checkpoint boom');
+    expect(logError_ACU).toHaveBeenCalledWith('[Manual Update] 边界 checkpoint 建立异常详情:', checkpointError);
+  });
+
+  it('手动更新失败时不建立完成态 boundary checkpoint', async () => {
+    const { getChatArray_ACU } = await import('../../../src/service/chat/chat-service');
+    vi.mocked(getChatArray_ACU).mockReturnValue([
+      { is_user: true },
+      { is_user: false, mes: 'AI回复' },
+    ]);
+    mockSettings.tableMaxRetries = 1;
+    mockCallCustomOpenAI.mockResolvedValue('无效响应');
+
+    const result = await orchestrateManualUpdate_ACU(['sheet_0'], vi.fn().mockResolvedValue({ success: true }), mockRefreshData);
+
+    expect(result.success).toBe(false);
+    expect(mockEnsureBoundaryCheckpoint).not.toHaveBeenCalled();
+  });
+
+  it('不同 groupId 的手动表格按 maxConcurrentGroups 分块并输出可观测进度', async () => {
+    const { getChatArray_ACU } = await import('../../../src/service/chat/chat-service');
+    const { parseTableTemplateJson_ACU, logDebug_ACU } = await import('../../../src/shared/utils');
+    vi.mocked(parseTableTemplateJson_ACU).mockReturnValue({
+      mate: { type: 'acu' },
+      sheet_0: { name: '表A', updateConfig: { groupId: 0 }, content: [['row_id', '值A']] },
+      sheet_1: { name: '表B', updateConfig: { groupId: 1 }, content: [['row_id', '值B']] },
+      sheet_2: { name: '表C', updateConfig: { groupId: 2 }, content: [['row_id', '值C']] },
+    });
+    vi.mocked(getChatArray_ACU).mockReturnValue([
+      { is_user: true },
+      { is_user: false, mes: 'AI回复1' },
+      { is_user: false, mes: 'AI回复2' },
+    ]);
+    mockSettings.maxConcurrentGroups = 2;
+    mockCurrentJsonTableData = {
+      sheet_0: { name: '表A', updateConfig: {}, content: [['row_id', '值A']] },
+      sheet_1: { name: '表B', updateConfig: {}, content: [['row_id', '值B']] },
+      sheet_2: { name: '表C', updateConfig: {}, content: [['row_id', '值C']] },
+    };
+    mockParseAndApplyTableEditsToData.mockImplementation((aiResponse: string, tableData: any) => {
+      const match = aiResponse.match(/sheet_[0-2]/)?.[0];
+      if (!match || !tableData[match]) return { success: false, modifiedKeys: [], appliedEdits: 0 };
+      tableData[match].content.push(['2', `来自${match}`]);
+      return { success: true, modifiedKeys: [match], appliedEdits: 1 };
+    });
+    mockCallCustomOpenAI
+      .mockResolvedValueOnce('<tableEdit>sheet_0</tableEdit>')
+      .mockResolvedValueOnce('<tableEdit>sheet_1</tableEdit>')
+      .mockResolvedValueOnce('<tableEdit>sheet_2</tableEdit>');
+    const onProgress = vi.fn();
+
+    const result = await orchestrateManualUpdate_ACU(['sheet_0', 'sheet_1', 'sheet_2'], vi.fn().mockResolvedValue({ success: true }), mockRefreshData, { onProgress });
+
+    expect(result.success).toBe(true);
+    expect(mockCallCustomOpenAI).toHaveBeenCalledTimes(3);
+    expect(vi.mocked(logDebug_ACU).mock.calls.some(call => String(call[0]).includes('分组计划：选中 3 张表，生成 3 个组，最大并发组数 2'))).toBe(true);
+    expect(vi.mocked(logDebug_ACU).mock.calls.some(call => String(call[0]).includes('并发处理第 1/2 批，当前 2 组'))).toBe(true);
+    expect(vi.mocked(logDebug_ACU).mock.calls.some(call => String(call[0]).includes('并发处理第 2/2 批，当前 1 组'))).toBe(true);
+    expect(onProgress).toHaveBeenCalledWith(expect.objectContaining({ phase: 'preparing', message: '并发处理第 1/2 批，当前 2 组。' }));
+    expect(onProgress).toHaveBeenCalledWith(expect.objectContaining({ phase: 'preparing', message: '并发处理第 2/2 批，当前 1 组。' }));
+  });
+
+  it('手动分组 chunk 内在第一个响应完成前并发发起同批 group 请求', async () => {
+    const { getChatArray_ACU } = await import('../../../src/service/chat/chat-service');
+    const { parseTableTemplateJson_ACU } = await import('../../../src/shared/utils');
+    vi.mocked(parseTableTemplateJson_ACU).mockReturnValue({
+      mate: { type: 'acu' },
+      sheet_0: { name: '表A', updateConfig: { groupId: 0 }, content: [['row_id', '值A']] },
+      sheet_1: { name: '表B', updateConfig: { groupId: 1 }, content: [['row_id', '值B']] },
+      sheet_2: { name: '表C', updateConfig: { groupId: 2 }, content: [['row_id', '值C']] },
+    });
+    vi.mocked(getChatArray_ACU).mockReturnValue([
+      { is_user: true },
+      { is_user: false, mes: 'AI回复1' },
+      { is_user: false, mes: 'AI回复2' },
+    ]);
+    mockSettings.maxConcurrentGroups = 2;
+    mockCurrentJsonTableData = {
+      sheet_0: { name: '表A', updateConfig: {}, content: [['row_id', '值A']] },
+      sheet_1: { name: '表B', updateConfig: {}, content: [['row_id', '值B']] },
+      sheet_2: { name: '表C', updateConfig: {}, content: [['row_id', '值C']] },
+    };
+    mockParseAndApplyTableEditsToData.mockImplementation((aiResponse: string, tableData: any) => {
+      const match = aiResponse.match(/sheet_[0-2]/)?.[0];
+      if (!match || !tableData[match]) return { success: false, modifiedKeys: [], appliedEdits: 0 };
+      tableData[match].content.push(['2', `来自${match}`]);
+      return { success: true, modifiedKeys: [match], appliedEdits: 1 };
+    });
+    const resolvers: Array<(value: string) => void> = [];
+    mockCallCustomOpenAI.mockImplementation(() => new Promise<string>(resolve => {
+      resolvers.push(resolve);
+    }));
+    const waitForAiCallCount = async (count: number) => {
+      for (let i = 0; i < 20 && mockCallCustomOpenAI.mock.calls.length < count; i += 1) {
+        await new Promise(resolve => setTimeout(resolve, 0));
+      }
+      expect(mockCallCustomOpenAI).toHaveBeenCalledTimes(count);
+    };
+
+    const resultPromise = orchestrateManualUpdate_ACU(['sheet_0', 'sheet_1', 'sheet_2'], vi.fn().mockResolvedValue({ success: true }), mockRefreshData);
+    await waitForAiCallCount(2);
+    expect(resolvers).toHaveLength(2);
+
+    resolvers[0]('<tableEdit>sheet_0</tableEdit>');
+    await waitForAiCallCount(2);
+
+    resolvers[1]('<tableEdit>sheet_1</tableEdit>');
+    await waitForAiCallCount(3);
+    expect(resolvers).toHaveLength(3);
+
+    resolvers[2]('<tableEdit>sheet_2</tableEdit>');
+    const result = await resultPromise;
+    expect(result.success).toBe(true);
+  });
+
+  it('相同 groupId 的手动表格聚合到同一 group，而不是另起调度链', async () => {
+    const { getChatArray_ACU } = await import('../../../src/service/chat/chat-service');
+    const { parseTableTemplateJson_ACU, logDebug_ACU } = await import('../../../src/shared/utils');
+    vi.mocked(parseTableTemplateJson_ACU).mockReturnValue({
+      mate: { type: 'acu' },
+      sheet_0: { name: '表A', updateConfig: { groupId: 7 }, content: [['row_id', '值A']] },
+      sheet_1: { name: '表B', updateConfig: { groupId: 7 }, content: [['row_id', '值B']] },
+    });
+    vi.mocked(getChatArray_ACU).mockReturnValue([
+      { is_user: true },
+      { is_user: false, mes: 'AI回复' },
+    ]);
+    mockCurrentJsonTableData = {
+      sheet_0: { name: '表A', updateConfig: {}, content: [['row_id', '值A']] },
+      sheet_1: { name: '表B', updateConfig: {}, content: [['row_id', '值B']] },
+    };
+    mockCallCustomOpenAI.mockResolvedValue('<tableEdit>sheet_0 sheet_1</tableEdit>');
+
+    const result = await orchestrateManualUpdate_ACU(['sheet_0', 'sheet_1'], vi.fn().mockResolvedValue({ success: true }), mockRefreshData);
+
+    expect(result.success).toBe(true);
+    expect(mockCallCustomOpenAI).toHaveBeenCalledTimes(1);
+    expect(vi.mocked(logDebug_ACU).mock.calls.some(call => String(call[0]).includes('分组计划：选中 2 张表，生成 1 个组'))).toBe(true);
+    expect(mockPersistTablesToChatMessage.mock.calls[0][0].targetSheetKeys).toEqual(['sheet_0', 'sheet_1']);
+  });
 });
 
 // ═══════════════════════════════════════════════════════════════
@@ -1230,7 +1440,12 @@ describe('orchestrateManualUpdate_ACU', () => {
 describe('executeCardUpdateCore_ACU — SQL 错误反馈重试', () => {
   let setTimeoutSpy: ReturnType<typeof vi.spyOn>;
 
-  beforeEach(() => {
+  beforeEach(async () => {
+    const { isSqliteMode } = await import('../../../src/service/table/storage-mode');
+    const { disposeStorageProvider } = await import('../../../src/service/table/table-storage-strategy');
+    const { parseTableTemplateJson_ACU } = await import('../../../src/shared/utils');
+    vi.mocked(isSqliteMode).mockReturnValue(false);
+    disposeStorageProvider();
     vi.clearAllMocks();
     mockParseAndApplyTableEdits.mockReset();
     mockParseAndApplyTableEditsToData.mockReset();
@@ -1245,6 +1460,10 @@ describe('executeCardUpdateCore_ACU — SQL 错误反馈重试', () => {
     };
     mockCurrentJsonTableData = { sheet_0: { name: '测试表', content: [['row_id'], ['1']] } };
     mockPersistTablesToChatMessage.mockResolvedValue({ saved: true, messageIndex: 0 });
+    vi.mocked(parseTableTemplateJson_ACU).mockReturnValue({
+      mate: { type: 'acu' },
+      sheet_0: { name: '测试表', updateConfig: { groupId: 0 }, content: [['row_id', '值']] },
+    });
     mockApplySqlEditsToTableDataSnapshot.mockImplementation(() => mockParseAndApplyTableEdits());
   });
 

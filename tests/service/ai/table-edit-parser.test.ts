@@ -358,6 +358,25 @@ describe('parseAndApplyTableEdits_ACU — DSL 分支', () => {
     expect(content.length).toBe(4); // 表头 + 原2行 + 新1行
   });
 
+  it('insertRow 指令中的 URL 不会被行尾注释逻辑截断', () => {
+    const aiResponse = '<tableEdit>insertRow(0, {"0": "https://example.com/a//b?x=1#hash", "1": "1"})</tableEdit>';
+    const result = parseAndApplyTableEdits_ACU(aiResponse, 'standard');
+    expect(result).toHaveProperty('success');
+    const content = mockCurrentJsonTableData.sheet_0.content;
+    expect(content.length).toBe(4);
+    expect(content[3][1]).toBe('https://example.com/a//b?x=1#hash');
+  });
+
+  it('命令闭合后的真实行尾注释会被剥离且不影响 URL 字符串值', () => {
+    const aiResponse = '<tableEdit>insertRow(0, {"0": "https://example.com/a//b", "1": "2"}) // 模型追加说明</tableEdit>';
+    const result = parseAndApplyTableEdits_ACU(aiResponse, 'standard');
+    expect(result).toHaveProperty('success');
+    const content = mockCurrentJsonTableData.sheet_0.content;
+    expect(content.length).toBe(4);
+    expect(content[3][1]).toBe('https://example.com/a//b');
+    expect(content[3][2]).toBe('2');
+  });
+
   it('deleteRow 指令正确删除行', () => {
     const aiResponse = '<tableEdit>deleteRow(0, 1)</tableEdit>';
     const result = parseAndApplyTableEdits_ACU(aiResponse, 'standard');

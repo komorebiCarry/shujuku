@@ -14,15 +14,17 @@ import { deleteApiPreset_ACU, loadApiPreset_ACU } from '../../triggers/settings-
 import { saveSettingsAndNotify_ACU } from '../../components/settings-ui-helpers';
 import type { ApiGroupContext } from './callback-api';
 import {
-    buildDefaultAgentWorldbookControl_ACU,
-} from '../../../shared/defaults';
-import {
     clonePromptSegments_ACU,
     getDefaultAgentDecisionPromptSegments_ACU,
     getDefaultAgentSkillifyPromptSegments_ACU,
     normalizeEditablePromptSegments_ACU,
     normalizeAgentContextSettings_ACU,
 } from '../../../service/agent/agent-prompt-template';
+import type { AgentWorldbookControl_ACU } from '../../../data/models/settings-model';
+import {
+    readAgentWorldbookControlFromWorldbooks_ACU,
+    writeAgentWorldbookControlToWorldbook_ACU,
+} from '../../../service/agent/agent-worldbook-config-meta';
 
 type AgentContextSettingsForApi_ACU = ReturnType<typeof normalizeAgentContextSettings_ACU>;
 type PromptSegmentForApi_ACU = {
@@ -34,24 +36,21 @@ type PromptSegmentForApi_ACU = {
     isMain2?: boolean;
 };
 
-function ensureAgentWorldbookControlForApi_ACU(): Record<string, any> {
-    if (!settings_ACU.plotSettings || typeof settings_ACU.plotSettings !== 'object' || Array.isArray(settings_ACU.plotSettings)) {
-        settings_ACU.plotSettings = {} as any;
-    }
-    const plotSettings = settings_ACU.plotSettings as Record<string, any>;
-    if (!plotSettings.agentWorldbookControl || typeof plotSettings.agentWorldbookControl !== 'object' || Array.isArray(plotSettings.agentWorldbookControl)) {
-        plotSettings.agentWorldbookControl = buildDefaultAgentWorldbookControl_ACU();
-    }
-    return plotSettings.agentWorldbookControl as Record<string, any>;
+async function readAgentWorldbookControlForSettingsApi_ACU(): Promise<AgentWorldbookControl_ACU> {
+    const result = await readAgentWorldbookControlFromWorldbooks_ACU();
+    return result.control;
 }
 
-function getAgentContextSettingsForApi_ACU(): AgentContextSettingsForApi_ACU {
-    return normalizeAgentContextSettings_ACU(settings_ACU.plotSettings?.agentWorldbookControl?.contextSettings);
+function getAgentContextSettingsForApi_ACU(control: Pick<AgentWorldbookControl_ACU, 'contextSettings'> | null | undefined): AgentContextSettingsForApi_ACU {
+    return normalizeAgentContextSettings_ACU(control?.contextSettings);
 }
 
-function patchAgentContextSettingsForApi_ACU(patch: unknown): AgentContextSettingsForApi_ACU | null {
+function patchAgentContextSettingsForApi_ACU(
+    patch: unknown,
+    currentControl: Pick<AgentWorldbookControl_ACU, 'contextSettings'> | null | undefined,
+): AgentContextSettingsForApi_ACU | null {
     if (!patch || typeof patch !== 'object' || Array.isArray(patch)) return null;
-    const current = getAgentContextSettingsForApi_ACU() as unknown as Record<string, number>;
+    const current = getAgentContextSettingsForApi_ACU(currentControl) as unknown as Record<string, number>;
     const next: Record<string, number> = { ...current };
     for (const key of Object.keys(current)) {
         if (!Object.prototype.hasOwnProperty.call(patch, key)) continue;
@@ -69,6 +68,18 @@ function getAgentPromptSegmentsForApi_ACU(value: unknown, fallback: PromptSegmen
 function normalizeAgentPromptSegmentsForApi_ACU(value: unknown, fallback: PromptSegmentForApi_ACU[]): PromptSegmentForApi_ACU[] | null {
     if (!Array.isArray(value)) return null;
     return normalizeEditablePromptSegments_ACU(value, fallback);
+}
+
+async function writeAgentWorldbookControlPatchForSettingsApi_ACU(
+    patch: Partial<AgentWorldbookControl_ACU>,
+    failureContext: string,
+): Promise<boolean> {
+    const result = await writeAgentWorldbookControlToWorldbook_ACU(patch);
+    if (!result.updated) {
+        logError_ACU(`${failureContext}: ${result.reason || 'write_agent_worldbook_control_failed'}`);
+        return false;
+    }
+    return true;
 }
 
 export function createSettingsConfigApi(_ctx: ApiGroupContext): Record<string, Function> {
@@ -359,11 +370,11 @@ export function createSettingsConfigApi(_ctx: ApiGroupContext): Record<string, F
         // Agent 世界书提示词与上下文参数 API
         // =========================
 
-        getAgentPromptConfig: function() {
+        getAgentPromptConfig: async function() {
             try {
-                const control = ensureAgentWorldbookControlForApi_ACU();
+                const control = await readAgentWorldbookControlForSettingsApi_ACU();
                 return {
-                    contextSettings: getAgentContextSettingsForApi_ACU(),
+                    contextSettings: getAgentContextSettingsForApi_ACU(control),
                     agentDecisionPromptSegments: getAgentPromptSegmentsForApi_ACU(
                         control.agentDecisionPromptSegments,
                         getDefaultAgentDecisionPromptSegments_ACU(),
@@ -383,26 +394,29 @@ export function createSettingsConfigApi(_ctx: ApiGroupContext): Record<string, F
             }
         },
 
-        getAgentContextSettings: function() {
+        getAgentContextSettings: async function() {
             try {
-                return getAgentContextSettingsForApi_ACU();
+                const control = await readAgentWorldbookControlForSettingsApi_ACU();
+                return getAgentContextSettingsForApi_ACU(control);
             } catch (e) {
                 logError_ACU('getAgentContextSettings failed:', e);
                 return normalizeAgentContextSettings_ACU(undefined);
             }
         },
 
-        setAgentContextSettings: function(patch: any) {
+        setAgentContextSettings: async function(patch: any) {
             try {
-                const normalized = patchAgentContextSettingsForApi_ACU(patch);
+                const control = await readAgentWorldbookControlForSettingsApi_ACU();
+                const normalized = patchAgentContextSettingsForApi_ACU(patch, control);
                 if (!normalized) {
                     logError_ACU('setAgentContextSettings: Invalid context settings patch');
                     return false;
                 }
-                const control = ensureAgentWorldbookControlForApi_ACU();
-                control.contextSettings = normalized;
-                control.contextSettingsConfigured = true;
-                saveSettingsAndNotify_ACU();
+                const saved = await writeAgentWorldbookControlPatchForSettingsApi_ACU({
+                    contextSettings: normalized,
+                    contextSettingsConfigured: true,
+                }, 'setAgentContextSettings');
+                if (!saved) return false;
                 logDebug_ACU('Agent context settings saved:', normalized);
                 return true;
             } catch (e) {
@@ -411,12 +425,14 @@ export function createSettingsConfigApi(_ctx: ApiGroupContext): Record<string, F
             }
         },
 
-        resetAgentContextSettings: function() {
+        resetAgentContextSettings: async function() {
             try {
-                const control = ensureAgentWorldbookControlForApi_ACU();
-                control.contextSettings = normalizeAgentContextSettings_ACU(undefined);
-                control.contextSettingsConfigured = true;
-                saveSettingsAndNotify_ACU();
+                const normalized = normalizeAgentContextSettings_ACU(undefined);
+                const saved = await writeAgentWorldbookControlPatchForSettingsApi_ACU({
+                    contextSettings: normalized,
+                    contextSettingsConfigured: true,
+                }, 'resetAgentContextSettings');
+                if (!saved) return false;
                 logDebug_ACU('Agent context settings reset');
                 return true;
             } catch (e) {
@@ -425,9 +441,9 @@ export function createSettingsConfigApi(_ctx: ApiGroupContext): Record<string, F
             }
         },
 
-        getAgentDecisionPromptSegments: function() {
+        getAgentDecisionPromptSegments: async function() {
             try {
-                const control = ensureAgentWorldbookControlForApi_ACU();
+                const control = await readAgentWorldbookControlForSettingsApi_ACU();
                 return getAgentPromptSegmentsForApi_ACU(control.agentDecisionPromptSegments, getDefaultAgentDecisionPromptSegments_ACU());
             } catch (e) {
                 logError_ACU('getAgentDecisionPromptSegments failed:', e);
@@ -435,16 +451,17 @@ export function createSettingsConfigApi(_ctx: ApiGroupContext): Record<string, F
             }
         },
 
-        setAgentDecisionPromptSegments: function(segments: any) {
+        setAgentDecisionPromptSegments: async function(segments: any) {
             try {
                 const normalized = normalizeAgentPromptSegmentsForApi_ACU(segments, getDefaultAgentDecisionPromptSegments_ACU());
                 if (!normalized) {
                     logError_ACU('setAgentDecisionPromptSegments: segments must be an array');
                     return false;
                 }
-                const control = ensureAgentWorldbookControlForApi_ACU();
-                control.agentDecisionPromptSegments = normalized;
-                saveSettingsAndNotify_ACU();
+                const saved = await writeAgentWorldbookControlPatchForSettingsApi_ACU({
+                    agentDecisionPromptSegments: normalized,
+                }, 'setAgentDecisionPromptSegments');
+                if (!saved) return false;
                 logDebug_ACU('Agent decision prompt segments saved');
                 return true;
             } catch (e) {
@@ -453,11 +470,13 @@ export function createSettingsConfigApi(_ctx: ApiGroupContext): Record<string, F
             }
         },
 
-        resetAgentDecisionPromptSegments: function() {
+        resetAgentDecisionPromptSegments: async function() {
             try {
-                const control = ensureAgentWorldbookControlForApi_ACU();
-                control.agentDecisionPromptSegments = getDefaultAgentDecisionPromptSegments_ACU();
-                saveSettingsAndNotify_ACU();
+                const segments = getDefaultAgentDecisionPromptSegments_ACU();
+                const saved = await writeAgentWorldbookControlPatchForSettingsApi_ACU({
+                    agentDecisionPromptSegments: segments,
+                }, 'resetAgentDecisionPromptSegments');
+                if (!saved) return false;
                 logDebug_ACU('Agent decision prompt segments reset');
                 return true;
             } catch (e) {
@@ -466,9 +485,9 @@ export function createSettingsConfigApi(_ctx: ApiGroupContext): Record<string, F
             }
         },
 
-        getAgentSkillifyPromptSegments: function() {
+        getAgentSkillifyPromptSegments: async function() {
             try {
-                const control = ensureAgentWorldbookControlForApi_ACU();
+                const control = await readAgentWorldbookControlForSettingsApi_ACU();
                 return getAgentPromptSegmentsForApi_ACU(control.agentSkillifyPromptSegments, getDefaultAgentSkillifyPromptSegments_ACU());
             } catch (e) {
                 logError_ACU('getAgentSkillifyPromptSegments failed:', e);
@@ -476,16 +495,17 @@ export function createSettingsConfigApi(_ctx: ApiGroupContext): Record<string, F
             }
         },
 
-        setAgentSkillifyPromptSegments: function(segments: any) {
+        setAgentSkillifyPromptSegments: async function(segments: any) {
             try {
                 const normalized = normalizeAgentPromptSegmentsForApi_ACU(segments, getDefaultAgentSkillifyPromptSegments_ACU());
                 if (!normalized) {
                     logError_ACU('setAgentSkillifyPromptSegments: segments must be an array');
                     return false;
                 }
-                const control = ensureAgentWorldbookControlForApi_ACU();
-                control.agentSkillifyPromptSegments = normalized;
-                saveSettingsAndNotify_ACU();
+                const saved = await writeAgentWorldbookControlPatchForSettingsApi_ACU({
+                    agentSkillifyPromptSegments: normalized,
+                }, 'setAgentSkillifyPromptSegments');
+                if (!saved) return false;
                 logDebug_ACU('Agent skillify prompt segments saved');
                 return true;
             } catch (e) {
@@ -494,11 +514,13 @@ export function createSettingsConfigApi(_ctx: ApiGroupContext): Record<string, F
             }
         },
 
-        resetAgentSkillifyPromptSegments: function() {
+        resetAgentSkillifyPromptSegments: async function() {
             try {
-                const control = ensureAgentWorldbookControlForApi_ACU();
-                control.agentSkillifyPromptSegments = getDefaultAgentSkillifyPromptSegments_ACU();
-                saveSettingsAndNotify_ACU();
+                const segments = getDefaultAgentSkillifyPromptSegments_ACU();
+                const saved = await writeAgentWorldbookControlPatchForSettingsApi_ACU({
+                    agentSkillifyPromptSegments: segments,
+                }, 'resetAgentSkillifyPromptSegments');
+                if (!saved) return false;
                 logDebug_ACU('Agent skillify prompt segments reset');
                 return true;
             } catch (e) {

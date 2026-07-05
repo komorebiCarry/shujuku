@@ -24,6 +24,8 @@ if (window.AutoCardUpdaterAPI) {
 - [设置与更新 API](#设置与更新-api)
 - [世界书操作 API](#世界书操作-api)
 - [TXT导入链路 API](#txt导入链路-api)
+- [外部导入 Headless API](#外部导入-headless-api)
+- [Agent 世界书 API](#agent-世界书-api)
 - [表格锁定 API](#表格锁定-api)
 - [回调注册 API](#回调注册-api)
 - [更新配置参数 API](#更新配置参数-api)
@@ -588,11 +590,69 @@ await window.AutoCardUpdaterAPI.refreshDataAndWorldbook();
 
 ---
 
-### `injectImportedSelected()`
+### `importTxtTextAndSplit(text, options)`
 
-注入选中的导入内容。
+Headless TXT 文本拆分入口。该方法不打开文件选择器，不依赖导入界面，适合外部脚本或自动化流程直接传入文本并写入导入暂存区。
 
-**返回值**: `Promise<boolean>`
+**参数**:
+| 参数名 | 类型 | 必填 | 说明 |
+|--------|------|------|------|
+| text | string | 是 | 需要拆分的 TXT 原文。空文本会返回 `success:false`。 |
+| options.splitSize | number \| string | 否 | 每段目标长度；字符串会按数字解析。 |
+| options.clearPrevious | boolean | 否 | 是否先清空已有导入暂存，默认沿用 core 行为。 |
+
+**返回值**: `Promise<Object>` - 结构化结果。成功时包含 `success:true` 与拆分/暂存统计；失败时返回 `{ success:false, error:string }`。
+
+**示例**:
+```javascript
+const result = await window.AutoCardUpdaterAPI.importTxtTextAndSplit(longText, {
+    splitSize: 1200,
+    clearPrevious: true,
+});
+if (!result.success) throw new Error(result.error);
+```
+
+---
+
+### `injectImportedSelected(options)`
+
+Headless 注入选中的导入内容。该方法复用导入注入 core，不打开 UI，不触发 DOM/toast 流程。
+
+**参数**:
+| 参数名 | 类型 | 必填 | 说明 |
+|--------|------|------|------|
+| options.targetWorldbook | string | 否 | 目标世界书名称；缺省时使用当前配置的目标世界书。 |
+| options.selectedSheetKeys | Array<string> | 否 | 需要注入的表/分组 key；缺省时使用暂存区当前选择。 |
+| options.maxRetries | number \| string | 否 | 单项注入最大重试次数；字符串会按数字解析。 |
+| options.requestOptions | Object | 否 | 透传给底层 AI/请求流程的选项。 |
+
+**返回值**: `Promise<Object>` - 结构化注入结果。失败时返回 `{ success:false, error:string }`。
+
+**示例**:
+```javascript
+const inject = await window.AutoCardUpdaterAPI.injectImportedSelected({
+    targetWorldbook: '主世界书',
+    selectedSheetKeys: ['人物', '地点'],
+    maxRetries: 2,
+});
+if (!inject.success) throw new Error(inject.error);
+```
+
+---
+
+## 外部导入 Headless API
+
+`importTxtTextAndSplit(text, options)` 与 `injectImportedSelected(options)` 是 TXT 导入链路的 headless 入口。它们面向脚本调用，不打开文件选择器，不依赖导入面板状态，不直接操作 DOM。
+
+典型流程：
+
+```javascript
+const split = await window.AutoCardUpdaterAPI.importTxtTextAndSplit(text, { clearPrevious: true });
+if (!split.success) throw new Error(split.error);
+
+const injected = await window.AutoCardUpdaterAPI.injectImportedSelected({ targetWorldbook: '主世界书' });
+if (!injected.success) throw new Error(injected.error);
+```
 
 ---
 
@@ -651,6 +711,126 @@ await window.AutoCardUpdaterAPI.refreshDataAndWorldbook();
 | clearAll | boolean | 否 | 是否清除全部，默认 `true` |
 
 **返回值**: `Promise<boolean>`
+
+---
+
+## Agent 世界书 API
+
+Agent 世界书 API 通过世界书状态条目作为单事实源，提供控制模式、Skill 化、Skill 元数据维护与批量清理能力。
+
+### `getAgentWorldbookControl()`
+
+读取 Agent 世界书控制状态。
+
+**返回值**: `Promise<Object>` - 成功时返回 `{ success:true, control, source, bookName, entryUid, duplicateCount, writableBookName }`；失败时返回 `{ success:false, error:string }`。
+
+---
+
+### `setAgentWorldbookMode(mode, options)`
+
+设置 Agent 世界书模式，并按选项执行接管或恢复。
+
+**参数**:
+| 参数名 | 类型 | 必填 | 说明 |
+|--------|------|------|------|
+| mode | `'disabled' \| 'passive' \| 'agent'` | 是 | `disabled` 关闭并默认恢复；`passive` 只写控制状态；`agent` 启用并默认接管世界书绿灯。 |
+| options.runTakeover | boolean | 否 | `mode='agent'` 时是否执行接管，默认执行。 |
+| options.restoreOnDisable | boolean | 否 | `mode='disabled'` 时是否恢复受控条目，默认恢复。 |
+
+**返回值**: `Promise<Object>` - 包含 `success`、`mode`、`control`、`write`，以及可选 `takeover` 或 `restore`。
+
+---
+
+### `runAgentWorldbookSkillify(options)`
+
+对当前剧情世界书选择范围执行 Skill 化。若本次有更新且 `runTakeover !== false`，会同步执行世界书接管并刷新快照。
+
+**参数**:
+| 参数名 | 类型 | 必填 | 说明 |
+|--------|------|------|------|
+| options.runTakeover | boolean | 否 | Skill 化后是否同步接管，默认执行。 |
+| options.presetName | string | 否 | 使用的 API 预设名称。 |
+| options.maxConcurrency | number | 否 | 并发处理数量。 |
+| options.overwriteManual | boolean | 否 | 是否覆盖人工维护的 Skill 元数据。 |
+
+**返回值**: `Promise<Object>` - 成功时至少包含 `{ success:true, skillify }`；同步接管时还可能包含 `takeover` 与 `snapshot`。
+
+---
+
+### `skillifyWorldbookEntries(options)`
+
+计划名 API。可对指定世界书执行 Skill 化；未传 `options.bookNames` 时，回退为当前剧情世界书选择范围，与 `runAgentWorldbookSkillify(options)` 行为一致。
+
+**参数**:
+| 参数名 | 类型 | 必填 | 说明 |
+|--------|------|------|------|
+| options.bookNames | Array<string> \| string | 否 | 指定要处理的世界书名称。字符串支持逗号、中文逗号或换行分隔。未传或解析为空时使用当前剧情世界书选择。 |
+| options.selectedEntries | Array<{ bookName:string; uid:number\|string }> | 否 | 精确限定要处理的世界书条目。 |
+| options.runTakeover | boolean | 否 | Skill 化后是否同步接管，默认执行。 |
+| options.presetName | string | 否 | 使用的 API 预设名称。 |
+| options.maxConcurrency | number | 否 | 并发处理数量。 |
+| options.maxAiRetries | number | 否 | 单条目 AI 最大重试次数。 |
+| options.maxEntries | number | 否 | 本次最多处理候选条目数。 |
+| options.overwriteManual | boolean | 否 | 是否覆盖人工维护的 Skill 元数据。 |
+
+**返回值**: `Promise<Object>` - 成功时至少包含 `{ success:true, skillify }`；同步接管时还可能包含 `takeover` 与 `snapshot`。
+
+**示例**:
+```javascript
+const result = await window.AutoCardUpdaterAPI.skillifyWorldbookEntries({
+    bookNames: ['主世界书'],
+    selectedEntries: [{ bookName: '主世界书', uid: 12 }],
+    runTakeover: true,
+});
+if (!result.success) throw new Error(result.error);
+```
+
+---
+
+### `saveAgentWorldbookSkillMeta(bookName, uid, metaDraft, updatedBy)`
+
+保存指定世界书条目的 Skill 元数据。
+
+**参数**:
+| 参数名 | 类型 | 必填 | 说明 |
+|--------|------|------|------|
+| bookName | string | 是 | 世界书名称。 |
+| uid | number \| string | 是 | 世界书条目 UID。 |
+| metaDraft | Object | 是 | 要写入的 Skill 元数据草稿。 |
+| updatedBy | `'manual' \| 'agent-skillify'` | 否 | 更新来源，默认 `manual`。 |
+
+**返回值**: `Promise<Object>` - 成功时返回 `{ success:true, result }`；失败时返回 `{ success:false, error:string }`。
+
+**兼容别名**: `saveWorldbookEntrySkillMeta(bookName, uid, metaDraft, options)` 与本方法等价；`options` 可为 updatedBy 字符串或 `{ updatedBy }`。
+
+---
+
+### `deleteAgentWorldbookSkillMeta(bookName, uid)`
+
+删除指定世界书条目的 Skill 元数据块。
+
+**参数**:
+| 参数名 | 类型 | 必填 | 说明 |
+|--------|------|------|------|
+| bookName | string | 是 | 世界书名称。 |
+| uid | number \| string | 是 | 世界书条目 UID。 |
+
+**返回值**: `Promise<Object>` - 成功时返回 `{ success:true, result }`。
+
+**兼容别名**: `deleteWorldbookEntrySkillMeta(bookName, uid)` 与本方法等价。
+
+---
+
+### `clearAgentWorldbookSkillMetas(bookNames)`
+
+批量清理指定世界书中的 Agent Skill 元数据块。
+
+**参数**:
+| 参数名 | 类型 | 必填 | 说明 |
+|--------|------|------|------|
+| bookNames | Array<string> | 否 | 需要清理的世界书名称列表；缺省为空数组。 |
+
+**返回值**: `Promise<Object>` - 返回 `{ success, error?, result }`，其中 `result` 包含 `total`、`cleared`、`skipped`、`failed` 与 `errors`。
 
 ---
 
@@ -1640,3 +1820,4 @@ const analysis = await window.AutoCardUpdaterAPI.callAI(messages);
 | 1.3 | 新增更新配置参数 API：`getUpdateConfigParams()`, `setUpdateConfigParams()`；新增手动更新表选择 API：`getManualSelectedTables()`, `setManualSelectedTables()`, `clearManualSelectedTables()`；新增 API 预设管理 API：`getApiPresets()`, `getTableApiPreset()`, `setTableApiPreset()`, `getPlotApiPreset()`, `setPlotApiPreset()`, `saveApiPreset()`, `loadApiPreset()`, `deleteApiPreset()` |
 | 1.4 | 新增 AI 调用 API：`callAI(messages, options)` 使用数据库配置的 API 调用 AI；`getStoryContext(maxTurns)` 获取最近剧情上下文 |
 | 1.5 | 补充模板双作用域相关文档：`importTemplate(options)`、`exportTemplate(options)`、`resetTemplate(options)`、`getTemplatePresetNames()`、`switchTemplatePreset()`、`injectTemplatePresetToCurrentChat()`、`importTemplateFromData(templateData, options)` |
+| 1.6 | 新增外部导入 Headless API 与 Agent 世界书 API 文档：`importTxtTextAndSplit(text, options)`、结构化 `injectImportedSelected(options)`、`getAgentWorldbookControl()`、`setAgentWorldbookMode(mode, options)`、`runAgentWorldbookSkillify(options)` 及兼容别名 |

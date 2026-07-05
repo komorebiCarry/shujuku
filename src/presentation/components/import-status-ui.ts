@@ -1,12 +1,12 @@
-import { STORAGE_KEY_IMPORTED_ENTRIES_ACU, STORAGE_KEY_IMPORTED_STATUS_ACU, STORAGE_KEY_IMPORTED_STATUS_FULL_ACU, STORAGE_KEY_IMPORTED_STATUS_STANDARD_ACU, STORAGE_KEY_IMPORTED_STATUS_SUMMARY_ACU } from '../../shared/data-constants';
-import { importTempGet_ACU, importTempRemove_ACU, importTempSet_ACU } from '../../shared/idb-import-temp';
+import { STORAGE_KEY_IMPORTED_ENTRIES_ACU, STORAGE_KEY_IMPORTED_STATUS_ACU } from '../../shared/data-constants';
+import { importTempGet_ACU, importTempRemove_ACU } from '../../shared/idb-import-temp';
 import { getImportSelectionFromUI_ACU, renderImportTableSelector_ACU } from './table-selector';
 import { showToastr_ACU } from '../theme/toast';
 import { ACU_TOAST_CATEGORY_ACU } from '../../shared/constants';
 import { handleInjectImportedTxtSelected_ACU } from '../triggers/import-process';
+import { importTxtTextAndSplitCore_ACU } from '../../service/import/import-executor';
 import { settings_ACU } from '../../service/runtime/state-manager';
 import { SCRIPT_ID_PREFIX_ACU } from '../../shared/constants';
-import { logDebug_ACU } from '../../shared/utils';
 import { $popupInstance_ACU, $importTableSelector_ACU } from '../state/ui-refs';
 /**
  * presentation/components/import-status-ui.ts — 导入状态 UI
@@ -15,15 +15,6 @@ import { $popupInstance_ACU, $importTableSelector_ACU } from '../state/ui-refs';
   // --- [新增] 外部导入功能 ---
 
   export const IMPORTED_ENTRY_PREFIX_ACU = 'TavernDB-ACU-ImportedTxt-';
-  // [外部导入] 本次注入的批次ID（用于“每批独立注入，不覆盖上一批”）
-  let importBatchId_ACU = null;
-
-  function newImportBatchId_ACU() {
-      // 短且可读，避免 comment 过长
-      const t = Date.now().toString(36);
-      const r = Math.random().toString(36).slice(2, 6);
-      return `b${t}${r}`;
-  }
 
   // 外部导入前缀：
   // - stable: 用于 UI 识别/手动删除
@@ -110,7 +101,8 @@ import { $popupInstance_ACU, $importTableSelector_ACU } from '../state/ui-refs';
   // 兼容旧API/旧按钮调用（仍会走自选表格逻辑）
   export async function handleInjectSplitEntriesStandard_ACU() { return await handleInjectImportedTxtSelected_ACU(); }
   export async function handleInjectSplitEntriesSummary_ACU() { return await handleInjectImportedTxtSelected_ACU(); }
-  export async function handleInjectSplitEntriesFull_ACU() { return await handleInjectImportedTxtSelected_ACU(); }  export async function handleTxtImportAndSplit_ACU() {
+  export async function handleInjectSplitEntriesFull_ACU() { return await handleInjectImportedTxtSelected_ACU(); }
+  export async function handleTxtImportAndSplit_ACU() {
       const $splitSizeInput = $popupInstance_ACU.find(`#${SCRIPT_ID_PREFIX_ACU}-import-split-size`);
       const $encodingSelect = $popupInstance_ACU.find(`#${SCRIPT_ID_PREFIX_ACU}-import-encoding`); // 新增
       const $statusDisplay = $popupInstance_ACU.find(`#${SCRIPT_ID_PREFIX_ACU}-import-status`);
@@ -135,38 +127,46 @@ import { $popupInstance_ACU, $importTableSelector_ACU } from '../state/ui-refs';
               if (!content) {
                   showToastr_ACU('warning', '文件为空或读取失败。', { acuToastCategory: ACU_TOAST_CATEGORY_ACU.IMPORT });
                   void updateImportStatusUI_ACU();
+                  $fileInput.val('');
                   return;
               }
 
               // Use a timeout to allow the UI to update before this potentially long-running task
               setTimeout(async () => {
-                  // [新增] 清除旧的导入状态，确保每次导入都是全新的开始
-                  await importTempRemove_ACU(STORAGE_KEY_IMPORTED_STATUS_ACU);
-                  await importTempRemove_ACU(STORAGE_KEY_IMPORTED_STATUS_STANDARD_ACU);
-                  await importTempRemove_ACU(STORAGE_KEY_IMPORTED_STATUS_SUMMARY_ACU);
-                  await importTempRemove_ACU(STORAGE_KEY_IMPORTED_STATUS_FULL_ACU);
-
-                  const chunks = [];
-                  for (let i = 0; i < content.length; i += splitSize) {
-                      chunks.push({
-                          content: content.substring(i, i + splitSize)
+                  try {
+                      const result = await importTxtTextAndSplitCore_ACU(content, {
+                          splitSize,
+                          clearPrevious: true,
                       });
+
+                      if (!result.success) {
+                          showToastr_ACU('error', result.error || '文件拆分失败。', { acuToastCategory: ACU_TOAST_CATEGORY_ACU.ERROR });
+                          void updateImportStatusUI_ACU();
+                          $fileInput.val('');
+                          return;
+                      }
+                      
+                      showToastr_ACU(
+                          'success',
+                          `文件已成功拆分成 ${result.chunksCount || 0} 个部分。`,
+                          { acuToastCategory: ACU_TOAST_CATEGORY_ACU.IMPORT }
+                      );
+                      
+                      void updateImportStatusUI_ACU();
+                  } catch (e) {
+                      showToastr_ACU('error', e instanceof Error ? e.message : '文件拆分失败。', { acuToastCategory: ACU_TOAST_CATEGORY_ACU.ERROR });
+                      void updateImportStatusUI_ACU();
+                  } finally {
+                      // Reset file input value to allow re-importing the same file
+                      $fileInput.val('');
                   }
-                  
-                  await importTempSet_ACU(STORAGE_KEY_IMPORTED_ENTRIES_ACU, JSON.stringify(chunks));
-                  logDebug_ACU(`[外部导入] Saved ${chunks.length} text chunks to temp storage (IndexedDB preferred).`);
-                  showToastr_ACU('success', `文件已成功拆分成 ${chunks.length} 个部分。`, { acuToastCategory: ACU_TOAST_CATEGORY_ACU.IMPORT });
-                  
-                  void updateImportStatusUI_ACU();
-                  
-                  // Reset file input value to allow re-importing the same file
-                  $fileInput.val('');
               }, 50); // 50ms delay
           };
           
           reader.onerror = () => {
               showToastr_ACU('error', '读取文件时出错。', { acuToastCategory: ACU_TOAST_CATEGORY_ACU.ERROR });
               void updateImportStatusUI_ACU();
+              $fileInput.val('');
           };
 
           reader.readAsText(file, encoding); // 修改
