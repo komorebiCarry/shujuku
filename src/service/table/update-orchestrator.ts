@@ -6,7 +6,7 @@
 
 import { isAutoUpdatingCard_ACU, pendingFinalGenerationGreenlights_ACU, wasStoppedByUser_ACU, _set_isAutoUpdatingCard_ACU, _set_manualExtraHint_ACU, _set_wasStoppedByUser_ACU } from '../runtime/state-manager';
 import { callCustomOpenAI_ACU } from '../ai/prompt-builder';
-import { ensureV2BoundaryCheckpointForRetainedBuffer_ACU, getChatArray_ACU } from '../chat/chat-service';
+import { ensureV2BoundaryCheckpointForRetainedBuffer_ACU, getChatArray_ACU, shouldRotateV2BoundaryCheckpointForRetainedBuffer_ACU } from '../chat/chat-service';
 import { coreApisAreReady_ACU, currentJsonTableData_ACU, getCurrentIsolationKey_ACU, settings_ACU, _set_currentJsonTableData_ACU } from '../runtime/state-manager';
 import { checkAutoMergeTrigger_ACU, prepareAutoMergeBatches_ACU, executeAutoMergeBatch_ACU, finalizeAutoMerge_ACU } from '../summary/merge-logic';
 import { ensureStableRowIdsForSheetContent_ACU, getChatSheetGuideDataForIsolationKey_ACU, getEffectiveSeedRowsForSheet_ACU, shouldUseInitialSeedRows_ACU } from '../template/chat-scope';
@@ -1909,6 +1909,21 @@ export async function executeCardUpdateCore_ACU(
 
             emitProgress({ phase: 'complete' });
 
+            if (!isImportMode) {
+                try {
+                    await loadAllChatMessages_ACU();
+                    const boundaryCheckpoint = await ensureV2BoundaryCheckpointForRetainedBuffer_ACU({ reason: 'auto_update', save: true });
+                    if (!boundaryCheckpoint.success) {
+                        logWarn_ACU(`[Auto Update] 自动更新完成，但 AI 楼层边界 checkpoint 建立失败: ${boundaryCheckpoint.error || '未知错误'}`);
+                    }
+                } catch (checkpointError: any) {
+                    logWarn_ACU(
+                        `[Auto Update] 自动更新完成，但 AI 楼层边界 checkpoint 建立异常: ${checkpointError?.message || checkpointError}`,
+                        checkpointError,
+                    );
+                }
+            }
+
             // [spv3.6.6] 填表完成后异步触发交火向量索引防抖归档
             // 将 embedding + 归档写入从 saving 阶段移到 complete 之后，
             // 避免 embedding API 调用阻塞"正在保存"提示框。
@@ -2278,6 +2293,26 @@ export async function orchestrateManualUpdate_ACU(
                 phase: 'preparing',
                 message: `并发处理第 ${chunkIndex}/${totalChunks} 批，当前 ${groupedChunk.length} 组。`,
             });
+            try {
+                await loadAllChatMessages_ACU();
+                if (shouldRotateV2BoundaryCheckpointForRetainedBuffer_ACU()) {
+                    const boundaryCheckpoint = await ensureV2BoundaryCheckpointForRetainedBuffer_ACU({ reason: 'manual_refill', save: true });
+                    if (!boundaryCheckpoint.success) {
+                        failedGroups.push({
+                            key: chunkKeys[0] || 'manual_boundary_checkpoint',
+                            error: boundaryCheckpoint.error || 'AI 楼层边界 checkpoint 建立失败，已停止手动更新以避免跳楼推进。',
+                        });
+                        break;
+                    }
+                }
+            } catch (checkpointError: any) {
+                logError_ACU('[Manual Update] 继续下一批前同步聊天并建立 AI 楼层边界 checkpoint 异常详情:', checkpointError);
+                failedGroups.push({
+                    key: chunkKeys[0] || 'manual_boundary_checkpoint',
+                    error: checkpointError?.message || 'AI 楼层边界 checkpoint 建立异常，已停止手动更新以避免跳楼推进。',
+                });
+                break;
+            }
             const chunkResult = await processGroupedRuntimeChunk_ACU(groupedChunk, 'manual_independent', {
                 onProgress: options.onProgress,
                 deferPersist: manualRefillEnabled,

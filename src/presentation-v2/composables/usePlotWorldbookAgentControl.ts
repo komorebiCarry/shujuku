@@ -7,7 +7,7 @@ import type {
   AgentWorldbookControlMode_ACU,
   AgentWorldbookControlSnapshot_ACU,
   PromptSegment_ACU,
-} from '../../data/models/settings-model';
+} from '../../shared/models/agent-worldbook-model';
 import { settings_ACU, _set_pendingFinalGenerationGreenlights_ACU } from '../../service/runtime/state-manager';
 import { saveSettings_ACU } from '../../service/settings/settings-service';
 import {

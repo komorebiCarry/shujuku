@@ -1,7 +1,7 @@
 import type {
   AgentWorldbookControlSnapshot_ACU,
   AgentWorldbookControlSnapshotEntry_ACU,
-} from '../../data/models/settings-model';
+} from '../../shared/models/agent-worldbook-model';
 import {
   deleteLorebookEntries_ACU,
   getLorebookEntries_ACU,

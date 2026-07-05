@@ -1,4 +1,4 @@
-import type { AgentWorldbookControl_ACU } from '../../data/models/settings-model';
+import type { AgentWorldbookControl_ACU } from '../../shared/models/agent-worldbook-model';
 import { callAIWithPreset_ACU } from '../ai/api-call';
 import { settings_ACU } from '../runtime/state-manager';
 import { getCharLorebooks_ACU } from '../worldbook/worldbook-service';

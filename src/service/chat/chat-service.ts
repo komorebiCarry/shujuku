@@ -34,15 +34,22 @@ import type { TableMutationOperationV2_ACU, TableStorageFrameV2_ACU } from '../t
 
 // ─── 业务逻辑函数（从 presentation 层搬迁） ───
 
-const RETAIN_RECENT_CHECKPOINT_BUFFER_LAYERS_ACU = 10;
+const RETAIN_RECENT_CHECKPOINT_BUFFER_LAYERS_ACU = 20;
 
 interface RetainedCheckpointBoundary_ACU {
     shouldCompact: boolean;
+    shouldRotateCheckpoint: boolean;
+    aiMessageIndices: number[];
     dataMessageIndices: number[];
     effectiveRetainCount: number;
+    bufferLayers: number;
     cutoffIndex: number;
     indicesToPurge: number[];
     retainedDataIndices: number[];
+    retainedAiStartOrdinal?: number;
+    retainedAiEndOrdinal?: number;
+    bufferAiStartOrdinal?: number;
+    bufferAiEndOrdinal?: number;
     checkpointBufferIndices: number[];
     retainedStartIndex?: number;
     retainedEndIndex?: number;
@@ -60,7 +67,7 @@ export interface BoundaryCheckpointEnsureResult_ACU {
 }
 
 export interface BoundaryCheckpointEnsureOptions_ACU {
-    reason?: 'purge' | 'manual_refill';
+    reason?: 'purge' | 'manual_refill' | 'auto_update';
     save?: boolean;
 }
 
@@ -151,42 +158,57 @@ function hasV2FullCheckpointInRange_ACU(chat: any[], isolationKey: string, start
     return false;
 }
 
-function selectFirstAiIndex_ACU(chat: any[], indices: number[]): number | undefined {
-    for (let i = 0; i < indices.length; i++) {
-        const idx = indices[i];
-        if (idx >= 0 && chat[idx] && !chat[idx].is_user) return idx;
-    }
-    return undefined;
-}
-
 function resolveRetainedCheckpointBoundary_ACU(chat: any[], retainCount: number): RetainedCheckpointBoundary_ACU {
+    const aiMessageIndices: number[] = [];
     const dataMessageIndices: number[] = [];
     for (let i = 0; i < chat.length; i++) {
         const msg = chat[i];
+        if (msg && !msg.is_user) {
+            aiMessageIndices.push(i);
+        }
         if (messageHasLocalLayerData_ACU(msg)) {
             dataMessageIndices.push(i);
         }
     }
 
-    const effectiveRetainCount = retainCount + RETAIN_RECENT_CHECKPOINT_BUFFER_LAYERS_ACU;
-    const shouldCompact = dataMessageIndices.length > effectiveRetainCount;
-    const cutoffIndex = shouldCompact ? dataMessageIndices.length - effectiveRetainCount : 0;
-    const indicesToPurge = shouldCompact ? dataMessageIndices.slice(0, cutoffIndex) : [];
-    const retainedDataIndices = shouldCompact ? dataMessageIndices.slice(cutoffIndex) : dataMessageIndices.slice();
-    const checkpointBufferIndices = retainedDataIndices.slice(0, Math.min(RETAIN_RECENT_CHECKPOINT_BUFFER_LAYERS_ACU, retainedDataIndices.length));
-    const retainedStartIndex = retainedDataIndices[0];
-    const retainedEndIndex = retainedDataIndices[retainedDataIndices.length - 1];
+    const bufferLayers = RETAIN_RECENT_CHECKPOINT_BUFFER_LAYERS_ACU;
+    const effectiveRetainCount = retainCount + bufferLayers;
+    const shouldRotateCheckpoint = retainCount > 0 && aiMessageIndices.length >= effectiveRetainCount;
+    const shouldCompact = shouldRotateCheckpoint;
+    const retainedAiStartOrdinal = shouldRotateCheckpoint ? Math.max(0, aiMessageIndices.length - retainCount) : undefined;
+    const retainedAiEndOrdinal = shouldRotateCheckpoint ? aiMessageIndices.length - 1 : undefined;
+    const bufferAiStartOrdinal = shouldRotateCheckpoint ? Math.max(0, (retainedAiStartOrdinal as number) - bufferLayers) : undefined;
+    const bufferAiEndOrdinal = shouldRotateCheckpoint ? (retainedAiStartOrdinal as number) - 1 : undefined;
+    const retainedStartIndex = retainedAiStartOrdinal !== undefined ? aiMessageIndices[retainedAiStartOrdinal] : undefined;
+    const retainedEndIndex = retainedAiEndOrdinal !== undefined ? aiMessageIndices[retainedAiEndOrdinal] : undefined;
+    const anchorIndex = retainedStartIndex;
+    const checkpointBufferIndices = shouldRotateCheckpoint && bufferAiStartOrdinal !== undefined && bufferAiEndOrdinal !== undefined
+        ? aiMessageIndices.slice(bufferAiStartOrdinal, bufferAiEndOrdinal + 1)
+        : [];
     const checkpointBufferStartIndex = checkpointBufferIndices[0];
     const checkpointBufferEndIndex = checkpointBufferIndices[checkpointBufferIndices.length - 1];
-    const anchorIndex = selectFirstAiIndex_ACU(chat, checkpointBufferIndices);
+    const indicesToPurge = shouldCompact && anchorIndex !== undefined
+        ? dataMessageIndices.filter(index => index < anchorIndex)
+        : [];
+    const cutoffIndex = indicesToPurge.length;
+    const retainedDataIndices = shouldCompact && anchorIndex !== undefined
+        ? dataMessageIndices.filter(index => index >= anchorIndex)
+        : dataMessageIndices.slice();
 
     return {
         shouldCompact,
+        shouldRotateCheckpoint,
+        aiMessageIndices,
         dataMessageIndices,
         effectiveRetainCount,
+        bufferLayers,
         cutoffIndex,
         indicesToPurge,
         retainedDataIndices,
+        retainedAiStartOrdinal,
+        retainedAiEndOrdinal,
+        bufferAiStartOrdinal,
+        bufferAiEndOrdinal,
         checkpointBufferIndices,
         retainedStartIndex,
         retainedEndIndex,
@@ -201,7 +223,7 @@ async function ensureV2BoundaryCheckpointForRetainedBufferCore_ACU(
     boundary: RetainedCheckpointBoundary_ACU,
     options: BoundaryCheckpointEnsureOptions_ACU = {},
 ): Promise<BoundaryCheckpointEnsureResult_ACU> {
-    if (!boundary.shouldCompact || boundary.indicesToPurge.length === 0) {
+    if (!boundary.shouldRotateCheckpoint || boundary.indicesToPurge.length === 0) {
         return { success: true, changed: false, skipped: true };
     }
 
@@ -209,8 +231,8 @@ async function ensureV2BoundaryCheckpointForRetainedBufferCore_ACU(
     if (anchorIndex !== undefined && anchorIndex >= 0 && chat[anchorIndex]) {
         try {
             const changed = await writeV2BoundaryCheckpointBeforePurge_ACU(chat, anchorIndex, {
-                retainedStartIndex: boundary.checkpointBufferStartIndex ?? boundary.retainedStartIndex,
-                retainedEndIndex: boundary.checkpointBufferEndIndex ?? boundary.retainedEndIndex,
+                retainedStartIndex: boundary.retainedStartIndex,
+                retainedEndIndex: boundary.retainedEndIndex,
             });
             if (changed && options.save !== false) {
                 await saveChatToHost_ACU();
@@ -231,11 +253,22 @@ async function ensureV2BoundaryCheckpointForRetainedBufferCore_ACU(
         return {
             success: false,
             changed: false,
-            error: `checkpoint 缓冲区（额外 ${RETAIN_RECENT_CHECKPOINT_BUFFER_LAYERS_ACU} 层）内找不到可写入 checkpoint 的 AI 楼层。`,
+            error: `最新保留 AI 楼层窗口的边界处找不到可写入 checkpoint 的 AI 楼层（保留 ${boundary.effectiveRetainCount - boundary.bufferLayers} 个 AI 楼层，缓冲 ${boundary.bufferLayers} 个 AI 楼层）。`,
         };
     }
 
     return { success: true, changed: false, skipped: true };
+}
+
+export function shouldRotateV2BoundaryCheckpointForRetainedBuffer_ACU(): boolean {
+    const retainCount = settings_ACU.retainRecentLayers || 0;
+    if (retainCount <= 0) return false;
+
+    const chat = getChatArray_ACU();
+    if (!chat || !Array.isArray(chat) || chat.length === 0) return false;
+
+    const boundary = resolveRetainedCheckpointBoundary_ACU(chat, retainCount);
+    return boundary.shouldRotateCheckpoint && boundary.indicesToPurge.length > 0 && boundary.anchorIndex !== undefined;
 }
 
 export async function ensureV2BoundaryCheckpointForRetainedBuffer_ACU(
@@ -243,7 +276,9 @@ export async function ensureV2BoundaryCheckpointForRetainedBuffer_ACU(
 ): Promise<BoundaryCheckpointEnsureResult_ACU> {
     return runTableWriteTransaction_ACU({
         source: 'system_cleanup',
-        reason: options.reason === 'manual_refill' ? 'manual_refill_boundary_checkpoint' : 'ensureRetainedBoundaryCheckpoint',
+        reason: options.reason === 'manual_refill'
+            ? 'manual_refill_boundary_checkpoint'
+            : (options.reason === 'auto_update' ? 'auto_update_boundary_checkpoint' : 'ensureRetainedBoundaryCheckpoint'),
         isolationKey: getCurrentIsolationKey_ACU(),
         writeSet: [{ kind: 'all' }],
         maintenanceMode: 'exclusive',
@@ -261,8 +296,8 @@ export async function ensureV2BoundaryCheckpointForRetainedBuffer_ACU(
         }
 
         const boundary = resolveRetainedCheckpointBoundary_ACU(chat, retainCount);
-        if (!boundary.shouldCompact) {
-            logDebug_ACU(`[V2 Compaction] 含数据消息总数(${boundary.dataMessageIndices.length}) <= 实际保留层数(${boundary.effectiveRetainCount}=用户${retainCount}+缓冲${RETAIN_RECENT_CHECKPOINT_BUFFER_LAYERS_ACU})，无需建立边界 checkpoint。`);
+        if (!boundary.shouldRotateCheckpoint) {
+            logDebug_ACU(`[V2 Compaction] AI 楼层总数(${boundary.aiMessageIndices.length}) < 滚动触发层数(${boundary.effectiveRetainCount}=保留${retainCount}+缓冲${RETAIN_RECENT_CHECKPOINT_BUFFER_LAYERS_ACU})，无需建立边界 checkpoint。`);
         }
         return ensureV2BoundaryCheckpointForRetainedBufferCore_ACU(chat, boundary, options);
     });
@@ -270,11 +305,11 @@ export async function ensureV2BoundaryCheckpointForRetainedBuffer_ACU(
 
 async function writeV2BoundaryCheckpointBeforePurge_ACU(
     chat: any[],
-    anchorIndex: number,
+    boundaryAnchorIndex: number,
     options: { retainedStartIndex?: number; retainedEndIndex?: number } = {},
 ): Promise<boolean> {
-    if (anchorIndex < 0 || !chat[anchorIndex] || chat[anchorIndex].is_user) {
-        throw new Error(`边界 checkpoint 写入失败：anchorIndex=${anchorIndex} 不是有效 AI 楼层。`);
+    if (boundaryAnchorIndex < 0 || !chat[boundaryAnchorIndex] || chat[boundaryAnchorIndex].is_user) {
+        throw new Error(`边界 checkpoint 写入失败：boundaryAnchorIndex=${boundaryAnchorIndex} 不是有效 AI 楼层。`);
     }
 
     let changed = false;
@@ -283,7 +318,7 @@ async function writeV2BoundaryCheckpointBeforePurge_ACU(
         code: settings_ACU.dataIsolationCode,
     };
 
-    const isolationKeys = collectIsolationKeysWithV2Frames_ACU(chat, { maxMessageIndex: anchorIndex });
+    const isolationKeys = collectIsolationKeysWithV2Frames_ACU(chat, { maxMessageIndex: boundaryAnchorIndex });
     const retainedStartIndex = Number.isInteger(options.retainedStartIndex) ? options.retainedStartIndex as number : undefined;
     const retainedEndIndex = Number.isInteger(options.retainedEndIndex) ? options.retainedEndIndex as number : undefined;
     for (const isolationKey of isolationKeys) {
@@ -296,12 +331,12 @@ async function writeV2BoundaryCheckpointBeforePurge_ACU(
             continue;
         }
 
-        const data = await loadTableStateFromFramesV2_ACU(chat, isolationKey, { maxMessageIndex: anchorIndex });
+        const data = await loadTableStateFromFramesV2_ACU(chat, isolationKey, { maxMessageIndex: boundaryAnchorIndex });
         if (!data) {
-            throw new Error(`边界 checkpoint 写入失败：无法在 anchorIndex=${anchorIndex} 前恢复 isolationKey=[${isolationKey || '无标签'}] 的 V2 数据。`);
+            throw new Error(`边界 checkpoint 写入失败：无法在 boundaryAnchorIndex=${boundaryAnchorIndex} 前恢复 isolationKey=[${isolationKey || '无标签'}] 的 V2 数据。`);
         }
 
-        const anchorMsg = chat[anchorIndex];
+        const anchorMsg = chat[boundaryAnchorIndex];
         if (!anchorMsg.TavernDB_ACU_IsolatedData || typeof anchorMsg.TavernDB_ACU_IsolatedData !== 'object' || Array.isArray(anchorMsg.TavernDB_ACU_IsolatedData)) {
             anchorMsg.TavernDB_ACU_IsolatedData = {};
         }
@@ -314,7 +349,7 @@ async function writeV2BoundaryCheckpointBeforePurge_ACU(
                 createdAt: Date.now(),
                 reason: 'compaction',
                 data,
-                scheduleSummary: collectScheduleSummaryFromFramesV2_ACU(chat, isolationKey, { maxMessageIndex: anchorIndex }),
+                scheduleSummary: collectScheduleSummaryFromFramesV2_ACU(chat, isolationKey, { maxMessageIndex: boundaryAnchorIndex }),
             },
             logEntries: [],
         };
@@ -326,7 +361,7 @@ async function writeV2BoundaryCheckpointBeforePurge_ACU(
             _acu_storage_version: 2,
         };
         changed = true;
-        logDebug_ACU(`[V2 Compaction] 已在边界楼层 #${anchorIndex} 写入 isolationKey=[${isolationKey || '无标签'}] 的 full checkpoint。`);
+        logDebug_ACU(`[V2 Compaction] 已在 AI 保留边界楼层 #${boundaryAnchorIndex} 写入 isolationKey=[${isolationKey || '无标签'}] 的 full checkpoint。`);
     }
 
     return changed;
@@ -486,7 +521,7 @@ export async function saveCurrentDataForTable_ACU(sheetKey: string) {
  * 清理超出保留层数的旧本地数据（表格数据 + 剧情推进数据）
  * 从 presentation/triggers/settings-ui-sync/settings-ui-config.ts 搬迁
  * 
- * 按消息计数，用户可见语义保留最近N层有效数据；额外保留10层 checkpoint 缓冲区，确保清理后有可用 checkpoint。
+ * 按 AI 楼层计数，用户可见语义保留最近 N 个 AI 楼层；额外等待 20 个 AI 楼层缓冲后滚动边界 checkpoint。
  * 仅保护聊天第一层的"空白指导表"（TavernDB_ACU_InternalSheetGuide），不保护整层本地数据。
  */
 async function purgeOldLayerDataCore_ACU() {
@@ -504,7 +539,7 @@ async function purgeOldLayerDataCore_ACU() {
 
     const boundary = resolveRetainedCheckpointBoundary_ACU(chat, retainCount);
     if (!boundary.shouldCompact) {
-        logDebug_ACU(`[数据清理] 含数据消息总数(${boundary.dataMessageIndices.length}) <= 实际保留层数(${boundary.effectiveRetainCount}=用户${retainCount}+缓冲${RETAIN_RECENT_CHECKPOINT_BUFFER_LAYERS_ACU})，无需清理。`);
+        logDebug_ACU(`[数据清理] AI 楼层总数(${boundary.aiMessageIndices.length}) < 滚动触发层数(${boundary.effectiveRetainCount}=保留${retainCount}+缓冲${RETAIN_RECENT_CHECKPOINT_BUFFER_LAYERS_ACU})，无需清理。`);
         return;
     }
 
@@ -515,9 +550,9 @@ async function purgeOldLayerDataCore_ACU() {
         return;
     }
 
-    logDebug_ACU(`[数据清理] 将清理 ${indicesToPurge.length} 层消息的本地数据（用户保留最近 ${retainCount} 层，额外保留 ${RETAIN_RECENT_CHECKPOINT_BUFFER_LAYERS_ACU} 层 checkpoint 缓冲）...`);
+    logDebug_ACU(`[数据清理] 将清理 ${indicesToPurge.length} 层旧消息的本地数据（保留最近 ${retainCount} 个 AI 楼层，缓冲 ${RETAIN_RECENT_CHECKPOINT_BUFFER_LAYERS_ACU} 个 AI 楼层后滚动 checkpoint）...`);
 
-    // ── [V2 边界 checkpoint] 删除旧 frame 前，确保恢复缓冲区内有 full checkpoint ──
+    // ── [V2 边界 checkpoint] 删除旧 frame 前，确保最新保留 AI 窗口首个 AI 楼层有 full checkpoint ──
     const checkpointResult = await ensureV2BoundaryCheckpointForRetainedBufferCore_ACU(chat, boundary, { reason: 'purge', save: true });
     if (!checkpointResult.success) {
         logError_ACU('[V2 Compaction] 写入边界 checkpoint 失败，已中止本次清理以避免恢复链断裂:', checkpointResult.error);

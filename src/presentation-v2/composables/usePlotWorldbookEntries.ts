@@ -9,7 +9,7 @@ import { ref, shallowRef } from 'vue';
 import { getLorebookEntriesByNames_ACU } from '../../service/worldbook/pipeline';
 import { settings_ACU } from '../../service/runtime/state-manager';
 import { saveSettings_ACU } from '../../service/settings/settings-service';
-import type { AgentWorldbookControlSnapshot_ACU } from '../../data/models/settings-model';
+import type { AgentWorldbookControlSnapshot_ACU } from '../../shared/models/agent-worldbook-model';
 import {
   getPlotAgentWorldbookSnapshot_ACU,
 } from '../../service/agent/agent-worldbook-takeover';

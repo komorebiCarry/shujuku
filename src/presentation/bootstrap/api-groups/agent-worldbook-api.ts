@@ -1,4 +1,4 @@
-import type { AgentWorldbookControlMode_ACU } from '../../../data/models/settings-model';
+import type { AgentWorldbookControlMode_ACU } from '../../../shared/models/agent-worldbook-model';
 import { logError_ACU } from '../../../shared/utils';
 import {
     skillifyCurrentPlotWorldbookSelection_ACU,

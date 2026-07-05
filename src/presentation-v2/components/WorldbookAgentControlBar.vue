@@ -70,7 +70,7 @@
 
 <script setup lang="ts">
 import { computed, ref } from 'vue';
-import type { AgentWorldbookControlMode_ACU } from '../../data/models/settings-model';
+import type { AgentWorldbookControlMode_ACU } from '../../shared/models/agent-worldbook-model';
 import { usePlotWorldbookAgentControl } from '../composables/usePlotWorldbookAgentControl';
 import { plotCopy } from '../copy/plot-copy';
 import AcuBadge from './_lib/AcuBadge.vue';

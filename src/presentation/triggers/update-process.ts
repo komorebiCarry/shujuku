@@ -263,7 +263,8 @@ export async function handleManualUpdate_ACU() {
         const confirmed = await showCustomConfirm_ACU(
             '手动填表确认',
             '即将执行手动填表。\n\n' +
-            '系统会在内存中按当前上下文和批处理设置重填当前选中的表，全部成功后才写入新的完整 checkpoint。\n' +
+            '系统会在内存中按当前上下文和批处理设置重填当前选中的表，全部成功后才写入手动重填进度 checkpoint。\n' +
+            '保留边界 checkpoint 会按 AI 回复楼层计数，在达到保留窗口和 20 个 AI 楼层缓冲后自动滚动建立。\n' +
             '如果重填起点之前找不到可回放的 checkpoint，选中表的本次内存重建基底会从表头空基底开始；未选中的表会保持当前最新数据。\n\n' +
             '失败、终止或从中断处继续时，都不会清空聊天记录中的旧表格数据。',
             { confirmLabel: '确认并继续', cancelLabel: '取消' }
@@ -320,7 +321,7 @@ export async function handleManualUpdate_ACU() {
 
         // UI：根据返回值显示 toast
         if (result.success) {
-            showToastr_ACU(result.checkpointWarning ? 'warning' : 'success', result.checkpointWarning ? `手动更新完成，但边界 checkpoint 建立失败：${result.checkpointWarning}` : '手动更新完成！');
+            showToastr_ACU(result.checkpointWarning ? 'warning' : 'success', result.checkpointWarning ? `手动更新完成，但 AI 楼层保留边界 checkpoint 建立失败：${result.checkpointWarning}` : '手动更新完成！');
             updateStatusDisplay();
             notifyTableUpdate();
 

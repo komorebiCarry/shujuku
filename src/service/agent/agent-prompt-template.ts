@@ -1,4 +1,4 @@
-import type { AgentContextSettings_ACU, PromptSegment_ACU } from '../../data/models/settings-model';
+import type { AgentContextSettings_ACU, PromptSegment_ACU } from '../../shared/models/agent-worldbook-model';
 import {
   AGENT_CONTEXT_SETTINGS_LIMITS_ACU,
   DEFAULT_AGENT_CONTEXT_SETTINGS_ACU,

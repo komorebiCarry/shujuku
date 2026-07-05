@@ -3,9 +3,9 @@ import type {
   AgentWorldbookControlMode_ACU,
   WorldbookSkillMeta_ACU,
   WorldbookSkillMetaUpdatedBy_ACU,
-} from '../../data/models/settings-model';
+} from '../../shared/models/agent-worldbook-model';
 import { getLorebookEntries_ACU, setLorebookEntries_ACU } from '../../data/gateways/worldbook-gateway';
-export type { WorldbookSkillMeta_ACU, WorldbookSkillMetaUpdatedBy_ACU } from '../../data/models/settings-model';
+export type { WorldbookSkillMeta_ACU, WorldbookSkillMetaUpdatedBy_ACU } from '../../shared/models/agent-worldbook-model';
 import {
   readAgentWorldbookControlFromWorldbooks_ACU,
   resolveAgentWorldbookConfigBookNames_ACU,

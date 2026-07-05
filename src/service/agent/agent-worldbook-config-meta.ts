@@ -7,7 +7,7 @@ import type {
   AgentWorldbookControlSnapshotEntry_ACU,
   AgentPlotExecutionMode_ACU,
   AgentWorldbookStateMeta_ACU,
-} from '../../data/models/settings-model';
+} from '../../shared/models/agent-worldbook-model';
 import {
   createLorebookEntries_ACU,
   deleteLorebookEntries_ACU,

@@ -20,7 +20,7 @@ import {
     normalizeEditablePromptSegments_ACU,
     normalizeAgentContextSettings_ACU,
 } from '../../../service/agent/agent-prompt-template';
-import type { AgentWorldbookControl_ACU } from '../../../data/models/settings-model';
+import type { AgentWorldbookControl_ACU } from '../../../shared/models/agent-worldbook-model';
 import {
     readAgentWorldbookControlFromWorldbooks_ACU,
     writeAgentWorldbookControlToWorldbook_ACU,

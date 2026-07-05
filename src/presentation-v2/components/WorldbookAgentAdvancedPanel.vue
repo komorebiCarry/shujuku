@@ -133,7 +133,7 @@
 
 
 <script setup lang="ts">
-import type { AgentContextSettings_ACU, PromptSegment_ACU } from '../../data/models/settings-model';
+import type { AgentContextSettings_ACU, PromptSegment_ACU } from '../../shared/models/agent-worldbook-model';
 import type { AgentContextSettingKey_ACU, AgentPlotExecutionModeSetting_ACU, AgentPromptKind_ACU } from '../composables/usePlotWorldbookAgentControl';
 import { usePlotWorldbookAgentControl } from '../composables/usePlotWorldbookAgentControl';
 import { plotCopy } from '../copy/plot-copy';

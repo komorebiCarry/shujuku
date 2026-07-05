@@ -47,11 +47,11 @@ export function generateUpdateTabHTML(): string {
                                 </div>
                             </div>
                             <div>
-                                <label for="${SCRIPT_ID_PREFIX_ACU}-retain-recent-layers">保留最近N层数据:</label>
+                                <label for="${SCRIPT_ID_PREFIX_ACU}-retain-recent-layers">保留最近N个AI回复楼层数据:</label>
                                 <div class="input-group">
                                     <input type="number" id="${SCRIPT_ID_PREFIX_ACU}-retain-recent-layers" min="0" step="1" placeholder="空=全部保留">
                                 </div>
-                                <div class="notes" style="margin-top:4px;font-size:11px;opacity:0.7;">按AI楼层计数，自动更新后清理超出层数的旧数据</div>
+                                <div class="notes" style="margin-top:4px;font-size:11px;opacity:0.7;">只按 AI 回复楼层计数；达到保留窗口并经过 20 个 AI 楼层缓冲后滚动建立边界 checkpoint，再清理旧数据</div>
                             </div>
                         </div>
                     </div>

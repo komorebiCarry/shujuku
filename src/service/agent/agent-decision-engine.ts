@@ -1,4 +1,4 @@
-import type { AgentWorldbookControl_ACU } from '../../data/models/settings-model';
+import type { AgentWorldbookControl_ACU } from '../../shared/models/agent-worldbook-model';
 import { getChatArray_ACU } from '../../data/gateways/chat-gateway';
 import { getLorebookEntries_ACU } from '../../data/gateways/worldbook-gateway';
 import { normalizeNonNegativeInteger_ACU, normalizePositiveInteger_ACU, logWarn_ACU } from '../../shared/utils';

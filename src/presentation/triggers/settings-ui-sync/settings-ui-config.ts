@@ -336,10 +336,10 @@ import { maybeLiftWorldbookSuppression_ACU } from '../../../service/runtime/help
        }
    }
 
-   // [新增] 保存"保留最近N层数据"（全局）
+   // [新增] 保存"保留最近N个AI回复楼层数据"（全局）
    export function saveRetainRecentLayers_ACU({ silent = false, skipReload = false } = {}) {
        if (!$popupInstance_ACU || !$retainRecentLayersInput_ACU) {
-           logError_ACU('保存保留层数失败：UI元素未初始化。');
+           logError_ACU('保存 AI 回复楼层保留数失败：UI元素未初始化。');
            return;
        }
        const valStr = $retainRecentLayersInput_ACU.val() as string;
@@ -351,16 +351,16 @@ import { maybeLiftWorldbookSuppression_ACU } from '../../../service/runtime/help
        saveSettingsAndNotify_ACU();
        if (!silent) {
            if (newRetain === 0) {
-               showToastr_ACU('success', '保留层数已清空（将保留全部历史数据）！');
+               showToastr_ACU('success', 'AI 回复楼层保留数已清空（将保留全部历史数据）！');
            } else {
-               showToastr_ACU('success', `保留层数已保存：最近 ${newRetain} 层！`);
+               showToastr_ACU('success', `AI 回复楼层保留数已保存：最近 ${newRetain} 个 AI 回复楼层！`);
            }
        }
        if (!skipReload) loadSettingsAndRefreshUI_ACU();
    }
 
-   // [新增] 清理超出保留层数的旧本地数据（表格数据 + 剧情推进数据）
-   // 按AI楼层计数，仅保留最近N层的数据，更早楼层的 TavernDB_ACU_* 和 qrf_plot 字段将被删除
+   // [新增] 清理超出 AI 回复楼层保留数的旧本地数据（表格数据 + 剧情推进数据）
+   // 按 AI 回复楼层计数，仅保留最近 N 个 AI 回复楼层的数据，更早楼层的 TavernDB_ACU_* 和 qrf_plot 字段将被删除
    // [重要] 此函数不会删除聊天第一层的"空白指导表"（TavernDB_ACU_InternalSheetGuide），
    //        指导表用于保存表头结构和填表参数，作为该聊天的总指导。
    // purgeOldLayerData_ACU 已搬迁到 service/chat/chat-service.ts
