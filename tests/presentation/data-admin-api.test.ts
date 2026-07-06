@@ -1,10 +1,11 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-const { mockOpenVisualizer, mockHandleTxtImportAndSplit, mockImportTxtTextAndSplitCore, mockInjectImportedSelectedCore } = vi.hoisted(() => ({
+const { mockOpenVisualizer, mockHandleTxtImportAndSplit, mockImportTxtTextAndSplitCore, mockInjectImportedSelectedCore, mockDeleteImportedEntriesCore } = vi.hoisted(() => ({
   mockOpenVisualizer: vi.fn(),
   mockHandleTxtImportAndSplit: vi.fn(),
   mockImportTxtTextAndSplitCore: vi.fn(),
   mockInjectImportedSelectedCore: vi.fn(),
+  mockDeleteImportedEntriesCore: vi.fn(),
 }));
 
 vi.mock('../../src/presentation/triggers/data-admin-ui', () => ({
@@ -42,6 +43,7 @@ vi.mock('../../src/presentation/components/import-status-ui', () => ({
 vi.mock('../../src/service/import/import-executor', () => ({
   importTxtTextAndSplitCore_ACU: mockImportTxtTextAndSplitCore,
   injectImportedSelectedCore_ACU: mockInjectImportedSelectedCore,
+  deleteImportedEntriesCore_ACU: mockDeleteImportedEntriesCore,
 }));
 
 vi.mock('../../src/presentation/pages/visualizer', () => ({
@@ -57,6 +59,7 @@ describe('createDataAdminApi', () => {
     mockHandleTxtImportAndSplit.mockResolvedValue(true);
     mockImportTxtTextAndSplitCore.mockResolvedValue({ success: true, chunksCount: 1, splitSize: 10000 });
     mockInjectImportedSelectedCore.mockResolvedValue({ success: true, processedChunks: 1 });
+    mockDeleteImportedEntriesCore.mockResolvedValue(2);
   });
 
   it('暴露 openVisualizer 并调用 visualizer 入口', async () => {
@@ -158,5 +161,33 @@ describe('createDataAdminApi', () => {
     const result = await api.injectImportedSelected({ targetWorldbook: 'BookA' });
 
     expect(result).toEqual({ success: false, error: 'inject failed' });
+  });
+
+  it('clearImportedLorebookEntries 删除指定世界书里的外部导入注入条目并返回删除数量', async () => {
+    const api = createDataAdminApi({} as any);
+
+    const result = await api.clearImportedLorebookEntries({ targetWorldbook: '  BookA  ' });
+
+    expect(result).toEqual({ success: true, deletedCount: 2, targetWorldbook: 'BookA' });
+    expect(mockDeleteImportedEntriesCore).toHaveBeenCalledWith('BookA');
+  });
+
+  it('clearImportedLorebookEntries 拒绝缺失目标世界书且不调用 core', async () => {
+    const api = createDataAdminApi({} as any);
+
+    const result = await api.clearImportedLorebookEntries({ targetWorldbook: '   ' });
+
+    expect(result.success).toBe(false);
+    expect(result.error).toContain('targetWorldbook');
+    expect(mockDeleteImportedEntriesCore).not.toHaveBeenCalled();
+  });
+
+  it('clearImportedLorebookEntries 捕获 core 异常并返回结构化错误', async () => {
+    mockDeleteImportedEntriesCore.mockRejectedValue(new Error('delete failed'));
+    const api = createDataAdminApi({} as any);
+
+    const result = await api.clearImportedLorebookEntries({ targetWorldbook: 'BookA' });
+
+    expect(result).toEqual({ success: false, error: 'delete failed' });
   });
 });

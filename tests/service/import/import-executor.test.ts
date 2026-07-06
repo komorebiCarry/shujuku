@@ -277,27 +277,35 @@ describe('deleteImportedEntriesCore_ACU', () => {
     mockGetLorebookEntries.mockResolvedValue([
       { uid: 1, comment: '外部导入-物品表' },
       { uid: 2, comment: 'ACU-[tag]-外部导入-物品表' }, // 带隔离前缀，跳过
-      { uid: 3, comment: '普通条目' },
+      { uid: 3, comment: 'TavernDB-ACU-ImportedJsonData-Selected' }, // 临时 JSON 源，跳过
+      { uid: 4, comment: 'TavernDB-ACU-ImportedTxt-sheet_0' }, // 导入缓存源，跳过
+      { uid: 5, comment: '普通条目' },
     ]);
     const count = await deleteImportedEntriesCore_ACU('lorebook1');
     expect(count).toBe(1);
+    expect(mockDeleteLorebookEntries).toHaveBeenCalledWith('lorebook1', [1]);
   });
 
   it('隔离模式只删除带隔离前缀的条目', async () => {
     mockSettings.dataIsolationEnabled = true;
-    mockGetIsoPrefix.mockReturnValue('iso_');
+    mockGetIsoPrefix.mockReturnValue('ACU-[current]-');
     mockGetLorebookEntries.mockResolvedValue([
-      { uid: 1, comment: 'iso_外部导入-物品表' },
+      { uid: 1, comment: 'ACU-[current]-外部导入-物品表' },
       { uid: 2, comment: '外部导入-物品表' }, // 无隔离前缀，跳过
+      { uid: 3, comment: 'ACU-[other]-外部导入-物品表' }, // 其他隔离前缀，跳过
+      { uid: 4, comment: 'ACU-[current]-TavernDB-ACU-ImportedJsonData-Selected' }, // 临时 JSON 源，跳过
+      { uid: 5, comment: 'ACU-[current]-TavernDB-ACU-ImportedTxt-sheet_0' }, // 导入缓存源，跳过
     ]);
     const count = await deleteImportedEntriesCore_ACU('lorebook1');
     expect(count).toBe(1);
+    expect(mockDeleteLorebookEntries).toHaveBeenCalledWith('lorebook1', [1]);
   });
 
   it('无匹配条目返回 0', async () => {
     mockGetLorebookEntries.mockResolvedValue([]);
     const count = await deleteImportedEntriesCore_ACU('lorebook1');
     expect(count).toBe(0);
+    expect(mockDeleteLorebookEntries).not.toHaveBeenCalled();
   });
 });
 

@@ -10,7 +10,7 @@ import { exportCombinedSettings_ACU, handleManualMergeSummary_ACU } from '../../
 import { clearImportLocalStorage_ACU, clearImportedEntries_ACU, deleteImportedEntries_ACU } from '../../triggers/import-process';
 import { handleTxtImportAndSplit_ACU, handleInjectSplitEntriesFull_ACU, handleInjectSplitEntriesStandard_ACU, handleInjectSplitEntriesSummary_ACU } from '../../components/import-status-ui';
 import { openNewVisualizer_ACU } from '../../pages/visualizer';
-import { importTxtTextAndSplitCore_ACU, injectImportedSelectedCore_ACU } from '../../../service/import/import-executor';
+import { deleteImportedEntriesCore_ACU, importTxtTextAndSplitCore_ACU, injectImportedSelectedCore_ACU } from '../../../service/import/import-executor';
 import type { ApiGroupContext } from './callback-api';
 
 function dataAdminApiError_ACU(error: unknown, fallback: string): { success: false; error: string } {
@@ -79,6 +79,25 @@ function normalizeInjectImportedSelectedOptions_ACU(options: any = {}): { succes
     return { success: true, options: normalized };
 }
 
+function normalizeClearImportedLorebookEntriesOptions_ACU(options: any = {}): { success: true; targetWorldbook: string } | { success: false; error: string } {
+    if (options === undefined || options === null) {
+        return { success: false, error: 'clearImportedLorebookEntries options 必须是对象，并提供 targetWorldbook。' };
+    }
+    if (typeof options !== 'object' || Array.isArray(options)) {
+        return { success: false, error: 'clearImportedLorebookEntries options 必须是对象。' };
+    }
+
+    if (typeof options.targetWorldbook !== 'string') {
+        return { success: false, error: 'targetWorldbook 必须是非空字符串。' };
+    }
+
+    const targetWorldbook = options.targetWorldbook.trim();
+    if (!targetWorldbook) {
+        return { success: false, error: 'targetWorldbook 必须是非空字符串。' };
+    }
+    return { success: true, targetWorldbook };
+}
+
 export function createDataAdminApi(_ctx: ApiGroupContext): Record<string, Function> {
     return {
         // 模板/数据管理
@@ -102,6 +121,7 @@ export function createDataAdminApi(_ctx: ApiGroupContext): Record<string, Functi
         injectImportedFull: async function() { try { return await handleInjectSplitEntriesFull_ACU(); } catch (e) { logError_ACU('injectImportedFull failed:', e); return false; } },
         deleteImportedEntries: async function() { try { return await deleteImportedEntries_ACU(); } catch (e) { logError_ACU('deleteImportedEntries failed:', e); return false; } },
         clearImportedEntries: async function(clearAll = true) { try { return await clearImportedEntries_ACU(!!clearAll); } catch (e) { logError_ACU('clearImportedEntries failed:', e); return false; } },
+        clearImportedLorebookEntries: async function(options: any = {}) { try { const normalized = normalizeClearImportedLorebookEntriesOptions_ACU(options); if (normalized.success === false) return { success: false, error: normalized.error }; const deletedCount = await deleteImportedEntriesCore_ACU(normalized.targetWorldbook); return { success: true, deletedCount, targetWorldbook: normalized.targetWorldbook }; } catch (e) { logError_ACU('clearImportedLorebookEntries failed:', e); return dataAdminApiError_ACU(e, '删除外部导入世界书条目失败。'); } },
         clearImportCache: async function(clearAll = true) { try { return await clearImportLocalStorage_ACU(!!clearAll); } catch (e) { logError_ACU('clearImportCache failed:', e); return false; } },
 
         // 合并总结

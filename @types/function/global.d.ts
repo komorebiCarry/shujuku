@@ -124,6 +124,7 @@ interface AutoCardUpdaterAPI {
     injectImportedFull(): Promise<boolean>;
     deleteImportedEntries(): Promise<boolean>;
     clearImportedEntries(clearAll?: boolean): Promise<boolean>;
+    clearImportedLorebookEntries(options: { targetWorldbook: string }): Promise<{ success: true; deletedCount: number; targetWorldbook: string } | { success: false; error: string }>;
     clearImportCache(clearAll?: boolean): Promise<boolean>;
     mergeSummaryNow(): Promise<boolean>;
 

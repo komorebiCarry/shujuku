@@ -701,6 +701,31 @@ if (!injected.success) throw new Error(injected.error);
 
 ---
 
+### 导入清理 API 语义对照
+
+| API | 主要作用 | 是否删除世界书条目 | 是否清理本地导入缓存 | 推荐场景 |
+|-----|----------|--------------------|----------------------|----------|
+| `deleteImportedEntries()` | 兼容旧调用入口，按既有流程删除导入条目 | 是 | 否 | 旧脚本兼容，保留原行为 |
+| `clearImportedEntries(clearAll)` | 清除导入条目缓存，保留旧 API 语义 | 可能涉及旧流程条目 | 是 | 旧 UI 或旧脚本清理导入状态 |
+| `clearImportedLorebookEntries(options)` | 删除指定世界书中外部导入最终注入生成的条目 | 是，仅删除外部导入注入条目 | 否 | 明确撤回已注入到世界书的外部导入内容 |
+| `clearImportCache(clearAll)` | 清除本地导入缓存和状态 | 否 | 是 | 只重置导入暂存状态，不碰世界书 |
+
+---
+
+### `clearImportedLorebookEntries(options)`
+
+删除外部导入注入到指定世界书中的条目。该 API 只删除 comment 命中外部导入标记的世界书条目，不清理导入暂存缓存；开启数据隔离时，只删除当前隔离标识下的外部导入条目，不会删除其他隔离标识的条目；需要清理缓存时继续使用 `clearImportedEntries(clearAll)` 或 `clearImportCache(clearAll)`。
+
+**参数**:
+| 参数名 | 类型 | 必填 | 说明 |
+|--------|------|------|------|
+| options | object | 是 | 删除选项 |
+| options.targetWorldbook | string | 是 | 目标世界书名称，会自动去除首尾空白 |
+
+**返回值**: `Promise<Object>` - 成功时返回 `{ success:true, deletedCount:number, targetWorldbook:string }`；失败时返回 `{ success:false, error:string }`。
+
+---
+
 ### `clearImportCache(clearAll)`
 
 清除导入缓存（localStorage）。
