@@ -629,12 +629,13 @@ export function resolveUpdateMode_ACU(mode: string): string {
 export async function collectGroupFillResponse_ACU(
     job: GroupFillJob_ACU,
     feedback?: { lastSqlError?: string | null; lastUnifiedError?: string | null },
-    abortController: AbortController = new AbortController(),
+    abortController: AbortController | null = new AbortController(),
     options: {
         onProgress?: (event: CardUpdateProgressEvent) => void;
         maxRetriesOverride?: number;
     } = {}
 ): Promise<GroupFillResponse_ACU> {
+    const effectiveAbortController = abortController || new AbortController();
     options.onProgress?.({ phase: 'preparing' });
 
     const dynamicContent = await prepareAIInput_ACU(job.messagesForContext, job.updateMode, job.targetSheetKeys, {
@@ -678,12 +679,12 @@ export async function collectGroupFillResponse_ACU(
         }
 
         try {
-            const aiResponse = await callCustomOpenAI_ACU(dynamicContent, abortController, {
+            const aiResponse = await callCustomOpenAI_ACU(dynamicContent, effectiveAbortController, {
                 ...(job.requestOptions || {}),
                 tableData: job.baseSnapshot,
                 targetSheetKeys: job.targetSheetKeys,
             });
-            if (abortController.signal.aborted || wasStoppedByUser_ACU) {
+            if (effectiveAbortController.signal.aborted || wasStoppedByUser_ACU) {
                 return { job, success: false, attempt, aborted: true };
             }
 
@@ -1573,7 +1574,7 @@ export async function executeCardUpdateCore_ACU(
     isSilentMode: boolean,
     targetSheetKeys: string[] | null,
     requestOptions: Record<string, any> | null,
-    abortController: AbortController,
+    abortController: AbortController | null = new AbortController(),
     progressContext: BatchUpdateProgressContext | null = null,
     onProgress?: (event: CardUpdateProgressEvent) => void
 ): Promise<CardUpdateResult> {
@@ -1586,6 +1587,7 @@ export async function executeCardUpdateCore_ACU(
     if (progressContext && typeof progressContext !== 'object') {
         progressContext = null;
     }
+    const effectiveAbortController = abortController || new AbortController();
 
     const emitProgress = (event: CardUpdateProgressEvent): void => {
         onProgress?.({
@@ -1621,7 +1623,7 @@ export async function executeCardUpdateCore_ACU(
                     baseSnapshot: rawBaseSnapshot,
                     baseRevision,
                     isImportMode,
-                }, { lastSqlError }, abortController, { onProgress: emitProgress, maxRetriesOverride: 1 });
+                }, { lastSqlError }, effectiveAbortController, { onProgress: emitProgress, maxRetriesOverride: 1 });
 
                 if (collectResult.aborted) {
                     return { success: false, modifiedKeys: [], aborted: true };

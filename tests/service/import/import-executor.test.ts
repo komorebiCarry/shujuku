@@ -411,7 +411,10 @@ describe('injectImportedSelectedCore_ACU', () => {
     expect(result.success).toBe(true);
     expect(result.selectedSheetKeys).toEqual(['sheet_0']);
     expect(mockExecuteCardUpdateCore.mock.calls[0][5]).toEqual(['sheet_0']);
-    expect(mockExecuteCardUpdateCore.mock.calls[0][7]).toBeNull();
+    const abortController = mockExecuteCardUpdateCore.mock.calls[0][7];
+    expect(abortController).toBeInstanceOf(AbortController);
+    expect(abortController.signal).toBeInstanceOf(AbortSignal);
+    expect(abortController.signal.aborted).toBe(false);
   });
 
   it('selectedSheetKeys 为 undefined 且未开启 settings 表选择时按全表注入', async () => {

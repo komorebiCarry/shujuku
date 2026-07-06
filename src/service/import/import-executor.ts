@@ -255,7 +255,7 @@ export async function injectImportedSelectedCore_ACU(
 
             for (let attempt = 1; attempt <= maxRetries && !success; attempt++) {
                 hooks.onProgress?.({ phase: 'chunk_start', currentChunk: i + 1, totalChunks: allChunks.length, attempt, maxRetries });
-                const abortController = hooks.abortController || null;
+                const abortController = hooks.abortController || new AbortController();
                 const updateResult = await withImportPromptFilterForcedCore_ACU(() => executeCardUpdateCore_ACU(
                     [mockMessage],
                     -1,
