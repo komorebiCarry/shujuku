@@ -459,7 +459,7 @@ window.AutoCardUpdaterAPI.openVisualizer();
 
 ### `open()`
 
-打开 SP·数据库 V 新 UI 主界面。
+打开 SP·数据库 VII 新 UI 主界面。
 
 **返回值**: `Promise<boolean>`
 
