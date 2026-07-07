@@ -70,6 +70,171 @@ function removeFromArray(arr: string[], key: string): { result: string[]; change
     return { result: next, changed: next.length !== arr.length };
 }
 
+function isObjectRecord_ACU(value: any): value is Record<string, any> {
+    return !!value && typeof value === 'object' && !Array.isArray(value);
+}
+
+function deleteSheetKeysFromRecord_ACU(record: any, sheetKeys: Set<string>): boolean {
+    if (!isObjectRecord_ACU(record)) return false;
+    let changed = false;
+    sheetKeys.forEach(key => {
+        if (Object.prototype.hasOwnProperty.call(record, key)) {
+            delete record[key];
+            changed = true;
+        }
+    });
+    return changed;
+}
+
+function filterSheetKeyArray_ACU(value: any, sheetKeys: Set<string>): { value: any; changed: boolean } {
+    if (!Array.isArray(value)) return { value, changed: false };
+    const next = value.filter(item => !sheetKeys.has(item));
+    return { value: next, changed: next.length !== value.length };
+}
+
+function purgeEventSheetKeysV2_ACU(eventLike: any, sheetKeys: Set<string>): boolean {
+    if (!isObjectRecord_ACU(eventLike)) return false;
+    let changed = false;
+    ['filledSheetKeys', 'changedSheetKeys', 'groupKeys'].forEach(field => {
+        const result = filterSheetKeyArray_ACU(eventLike[field], sheetKeys);
+        if (result.changed) {
+            eventLike[field] = result.value;
+            changed = true;
+        }
+    });
+    return changed;
+}
+
+function purgeManualRefillProgressV2_ACU(progress: any, sheetKeys: Set<string>): boolean {
+    if (!isObjectRecord_ACU(progress)) return false;
+    let changed = false;
+    const selected = filterSheetKeyArray_ACU(progress.selectedSheetKeys, sheetKeys);
+    if (selected.changed) {
+        progress.selectedSheetKeys = selected.value;
+        changed = true;
+    }
+    if (deleteSheetKeysFromRecord_ACU(progress.completedSheetMessageIndexByKey, sheetKeys)) {
+        changed = true;
+    }
+    return changed;
+}
+
+function hasRemainingDataReplacePayload_ACU(data: any): boolean {
+    return isObjectRecord_ACU(data) && Object.keys(data).length > 0;
+}
+
+function purgeOperationV2_ACU(operation: any, sheetKeys: Set<string>): { operation: any | null; changed: boolean } {
+    if (!isObjectRecord_ACU(operation)) return { operation, changed: false };
+
+    if (
+        (operation.kind === 'sheet_replace'
+            || operation.kind === 'row_upsert'
+            || operation.kind === 'row_delete'
+            || operation.kind === 'meta_update')
+        && sheetKeys.has(operation.sheetKey)
+    ) {
+        return { operation: null, changed: true };
+    }
+
+    if (operation.kind === 'data_replace' && isObjectRecord_ACU(operation.data)) {
+        const changed = deleteSheetKeysFromRecord_ACU(operation.data, sheetKeys);
+        if (!changed) return { operation, changed: false };
+        return {
+            operation: hasRemainingDataReplacePayload_ACU(operation.data) ? operation : null,
+            changed: true,
+        };
+    }
+
+    return { operation, changed: false };
+}
+
+function purgePatchV2_ACU(patch: any, sheetKeys: Set<string>): { patch: any | null; changed: boolean } {
+    if (!isObjectRecord_ACU(patch)) return { patch, changed: false };
+    if (
+        (patch.kind === 'sheet_replace'
+            || patch.kind === 'row_upsert'
+            || patch.kind === 'row_delete'
+            || patch.kind === 'meta_update')
+        && sheetKeys.has(patch.sheetKey)
+    ) {
+        return { patch: null, changed: true };
+    }
+    return { patch, changed: false };
+}
+
+function purgeWriteSetV2_ACU(writeSet: any, sheetKeys: Set<string>): { writeSet: any; changed: boolean } {
+    if (!Array.isArray(writeSet)) return { writeSet, changed: false };
+    const next = writeSet.filter(unit => {
+        if (!isObjectRecord_ACU(unit)) return true;
+        if (unit.kind === 'all') return true;
+        return !sheetKeys.has(unit.sheetKey);
+    });
+    return { writeSet: next, changed: next.length !== writeSet.length };
+}
+
+function purgeOperationArrayV2_ACU(operations: any, sheetKeys: Set<string>): { value: any; changed: boolean } {
+    if (!Array.isArray(operations)) return { value: operations, changed: false };
+    let changed = false;
+    const next: any[] = [];
+    operations.forEach(operation => {
+        const result = purgeOperationV2_ACU(operation, sheetKeys);
+        if (result.changed) changed = true;
+        if (result.operation) next.push(result.operation);
+    });
+    return { value: next, changed };
+}
+
+function purgePatchArrayV2_ACU(patches: any, sheetKeys: Set<string>): { value: any; changed: boolean } {
+    if (!Array.isArray(patches)) return { value: patches, changed: false };
+    let changed = false;
+    const next: any[] = [];
+    patches.forEach(patch => {
+        const result = purgePatchV2_ACU(patch, sheetKeys);
+        if (result.changed) changed = true;
+        if (result.patch) next.push(result.patch);
+    });
+    return { value: next, changed };
+}
+
+function purgeSheetKeysFromStorageFrameV2_ACU(frame: any, sheetKeys: Set<string>): boolean {
+    if (!isObjectRecord_ACU(frame)) return false;
+    let changed = false;
+
+    const checkpoint = frame.checkpoint;
+    if (isObjectRecord_ACU(checkpoint)) {
+        if (deleteSheetKeysFromRecord_ACU(checkpoint.data, sheetKeys)) changed = true;
+        if (deleteSheetKeysFromRecord_ACU(checkpoint.scheduleSummary, sheetKeys)) changed = true;
+        if (purgeEventSheetKeysV2_ACU(checkpoint.event, sheetKeys)) changed = true;
+        if (purgeManualRefillProgressV2_ACU(checkpoint.manualRefillProgress, sheetKeys)) changed = true;
+    }
+
+    if (purgeManualRefillProgressV2_ACU(frame.manualRefillProgress, sheetKeys)) changed = true;
+
+    if (Array.isArray(frame.logEntries)) {
+        frame.logEntries.forEach((entry: any) => {
+            if (!isObjectRecord_ACU(entry)) return;
+            if (purgeEventSheetKeysV2_ACU(entry, sheetKeys)) changed = true;
+            const operations = purgeOperationArrayV2_ACU(entry.operations, sheetKeys);
+            if (operations.changed) {
+                entry.operations = operations.value;
+                changed = true;
+            }
+            const patches = purgePatchArrayV2_ACU(entry.patches, sheetKeys);
+            if (patches.changed) {
+                entry.patches = patches.value;
+                changed = true;
+            }
+            const writeSet = purgeWriteSetV2_ACU(entry.writeSet, sheetKeys);
+            if (writeSet.changed) {
+                entry.writeSet = writeSet.writeSet;
+                changed = true;
+            }
+        });
+    }
+
+    return changed;
+}
+
 // ════════════════════════════════════════════════════════════════
 // 读取类
 // ════════════════════════════════════════════════════════════════
@@ -355,6 +520,7 @@ export function purgeSheetKeysFromMessage_ACU(msg: any, sheetKeys: string[]): bo
     if (!msg || !Array.isArray(sheetKeys) || sheetKeys.length === 0) return false;
 
     let msgChanged = false;
+    const sheetKeySet = new Set(sheetKeys);
 
     // ── 新版：按标签分组（对该消息内所有标签槽执行删除） ──
     const isolated = parseIsolatedDataField(msg);
@@ -394,6 +560,10 @@ export function purgeSheetKeysFromMessage_ACU(msg: any, sheetKeys: string[]): bo
                         msgChanged = true;
                     }
                 });
+            }
+
+            if (purgeSheetKeysFromStorageFrameV2_ACU((tagData as any).storageFrame, sheetKeySet)) {
+                msgChanged = true;
             }
         });
         if (msgChanged) {

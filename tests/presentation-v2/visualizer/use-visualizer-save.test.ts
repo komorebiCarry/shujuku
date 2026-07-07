@@ -390,4 +390,63 @@ describe('useVisualizerSave', () => {
     expect(serviceMock.setSpecialIndexLockEnabled_ACU).toHaveBeenCalledWith('sheet_test_vz2', false);
     expect(store.pendingLockChanges).toEqual([]);
   });
+
+  it('保存已删除表时只把 deletedSheetKeys 传给硬删除且不把删除表写入 V2 commit', async () => {
+    const { useVisualizerStore } = await import('../../../src/presentation-v2/stores/visualizer-store');
+    const { useVisualizerSave } = await import('../../../src/presentation-v2/composables/visualizer/useVisualizerSave');
+    const store = useVisualizerStore();
+    const initialData = {
+      mate: { type: 'chatSheets', version: 1 },
+      sheet_keep: { ...sheet('保留表'), uid: 'sheet_keep' },
+      sheet_delete: { ...sheet('删除表'), uid: 'sheet_delete' },
+    };
+    store.loadSnapshot(initialData, ['sheet_keep', 'sheet_delete']);
+    runtimeMock._set_currentJsonTableData_ACU(JSON.parse(JSON.stringify(initialData)));
+    runtimeMock._set_currentJsonTableData_ACU.mockClear();
+
+    store.deleteSheet('sheet_delete');
+    store.updateCell(0, 1, '保留表更新');
+
+    const saved = await useVisualizerSave().saveToChat();
+
+    expect(saved).toBe(true);
+    expect(serviceMock.purgeSheetKeysFromChatHistoryHard_ACU).toHaveBeenCalledWith(['sheet_delete']);
+    expect(serviceMock.runTableUpdateCommit_ACU).toHaveBeenCalledWith(expect.objectContaining({
+      source: 'manual_crud',
+      reason: 'visualizer_save_native_batch',
+      targetSheetKeys: ['sheet_keep'],
+      writeSet: [expect.objectContaining({ kind: 'cell', sheetKey: 'sheet_keep' })],
+    }), expect.any(Function));
+    const commitOptions = serviceMock.runTableUpdateCommit_ACU.mock.calls[0][0];
+    expect(commitOptions.targetSheetKeys).not.toContain('sheet_delete');
+    expect(commitOptions.writeSet.map((unit: any) => unit.sheetKey)).not.toContain('sheet_delete');
+    expect(runtimeMock.getCurrentData().sheet_keep.content[1][2]).toBe('保留表更新');
+    expect(store.deletedSheetKeys).toEqual([]);
+  });
+
+  it('只删除整张表且没有行级增量时仍会执行硬删除清理', async () => {
+    const { useVisualizerStore } = await import('../../../src/presentation-v2/stores/visualizer-store');
+    const { useVisualizerSave } = await import('../../../src/presentation-v2/composables/visualizer/useVisualizerSave');
+    const store = useVisualizerStore();
+    const initialData = {
+      mate: { type: 'chatSheets', version: 1 },
+      sheet_keep: { ...sheet('保留表'), uid: 'sheet_keep' },
+      sheet_delete: { ...sheet('删除表'), uid: 'sheet_delete' },
+    };
+    store.loadSnapshot(initialData, ['sheet_keep', 'sheet_delete']);
+    runtimeMock._set_currentJsonTableData_ACU(JSON.parse(JSON.stringify(initialData)));
+    runtimeMock._set_currentJsonTableData_ACU.mockClear();
+
+    store.deleteSheet('sheet_delete');
+
+    const saved = await useVisualizerSave().saveToChat();
+
+    expect(saved).toBe(true);
+    expect(serviceMock.runTableUpdateCommit_ACU).not.toHaveBeenCalled();
+    expect(serviceMock.purgeSheetKeysFromChatHistoryHard_ACU).toHaveBeenCalledWith(['sheet_delete']);
+    expect(serviceMock.refreshMergedDataAndNotify_ACU).toHaveBeenCalled();
+    expect(store.deletedSheetKeys).toEqual([]);
+    expect(store.dirty).toBe(false);
+    expect(store.lastSavedTarget).toBe('data');
+  });
 });

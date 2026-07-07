@@ -379,6 +379,238 @@ describe('purgeSheetKeysFromMessage_ACU', () => {
     expect(msg.TavernDB_ACU_ModifiedKeys).toEqual([]);
     expect(msg.TavernDB_ACU_UpdateGroupKeys).toEqual([]);
   });
+
+  it('从 V2 checkpoint 中只删除目标 sheet 并保留同楼层其他 sheet', () => {
+    const msg: any = {
+      TavernDB_ACU_IsolatedData: {
+        tag1: {
+          independentData: {},
+          modifiedKeys: [],
+          updateGroupKeys: [],
+          storageFrame: {
+            version: 2,
+            checkpoint: {
+              kind: 'full',
+              createdAt: 1,
+              reason: 'manual',
+              data: {
+                sheet_0: { name: '被删表' },
+                sheet_1: { name: '保留表' },
+              },
+              scheduleSummary: {
+                sheet_0: { lastFilledAiFloor: 1, lastChangedAiFloor: 2 },
+                sheet_1: { lastFilledAiFloor: 3, lastChangedAiFloor: 4 },
+              },
+              event: {
+                filledSheetKeys: ['sheet_0', 'sheet_1'],
+                changedSheetKeys: ['sheet_0', 'sheet_1'],
+                groupKeys: ['sheet_0', 'sheet_1'],
+                requestId: 'req-1',
+              },
+            },
+            logEntries: [],
+          },
+        },
+      },
+    };
+
+    const result = purgeSheetKeysFromMessage_ACU(msg, ['sheet_0']);
+
+    expect(result).toBe(true);
+    const checkpoint = msg.TavernDB_ACU_IsolatedData.tag1.storageFrame.checkpoint;
+    expect(checkpoint.data.sheet_0).toBeUndefined();
+    expect(checkpoint.data.sheet_1).toEqual({ name: '保留表' });
+    expect(checkpoint.scheduleSummary.sheet_0).toBeUndefined();
+    expect(checkpoint.scheduleSummary.sheet_1).toEqual({ lastFilledAiFloor: 3, lastChangedAiFloor: 4 });
+    expect(checkpoint.event.filledSheetKeys).toEqual(['sheet_1']);
+    expect(checkpoint.event.changedSheetKeys).toEqual(['sheet_1']);
+    expect(checkpoint.event.groupKeys).toEqual(['sheet_1']);
+    expect(checkpoint.event.requestId).toBe('req-1');
+  });
+
+  it('从 V2 manualRefillProgress 中移除目标 sheet 但保留其他 sheet 进度', () => {
+    const msg: any = {
+      TavernDB_ACU_IsolatedData: {
+        tag1: {
+          independentData: {},
+          modifiedKeys: [],
+          updateGroupKeys: [],
+          storageFrame: {
+            version: 2,
+            checkpoint: {
+              kind: 'full',
+              createdAt: 1,
+              reason: 'manual',
+              data: {},
+              manualRefillProgress: {
+                kind: 'manual_refill',
+                status: 'in_progress',
+                selectedSheetKeys: ['sheet_0', 'sheet_1'],
+                completedSheetMessageIndexByKey: { sheet_0: 2, sheet_1: 3 },
+              },
+            },
+            manualRefillProgress: {
+              kind: 'manual_refill',
+              status: 'in_progress',
+              selectedSheetKeys: ['sheet_0', 'sheet_1'],
+              completedSheetMessageIndexByKey: { sheet_0: 4, sheet_1: 5 },
+            },
+            logEntries: [],
+          },
+        },
+      },
+    };
+
+    expect(purgeSheetKeysFromMessage_ACU(msg, ['sheet_0'])).toBe(true);
+
+    const frame = msg.TavernDB_ACU_IsolatedData.tag1.storageFrame;
+    expect(frame.manualRefillProgress.selectedSheetKeys).toEqual(['sheet_1']);
+    expect(frame.manualRefillProgress.completedSheetMessageIndexByKey).toEqual({ sheet_1: 5 });
+    expect(frame.checkpoint.manualRefillProgress.selectedSheetKeys).toEqual(['sheet_1']);
+    expect(frame.checkpoint.manualRefillProgress.completedSheetMessageIndexByKey).toEqual({ sheet_1: 3 });
+  });
+
+  it('从 V2 logEntries 中只清理目标 sheet 的结构化 operation、patch 和 writeSet', () => {
+    const msg: any = {
+      TavernDB_ACU_IsolatedData: {
+        tag1: {
+          independentData: {},
+          modifiedKeys: [],
+          updateGroupKeys: [],
+          storageFrame: {
+            version: 2,
+            logEntries: [
+              {
+                seq: 1,
+                entryId: 'entry-1',
+                createdAt: 1,
+                source: 'manual_crud',
+                targetMessageIndex: 0,
+                aiFloor: 1,
+                filledSheetKeys: ['sheet_0', 'sheet_1'],
+                changedSheetKeys: ['sheet_0', 'sheet_1'],
+                groupKeys: ['sheet_0', 'sheet_1'],
+                operations: [
+                  { kind: 'sheet_replace', sheetKey: 'sheet_0', sheet: { name: '被删表' }, reason: 'manual_crud' },
+                  { kind: 'sheet_replace', sheetKey: 'sheet_1', sheet: { name: '保留表' }, reason: 'manual_crud' },
+                  { kind: 'row_upsert', sheetKey: 'sheet_0', rowId: 'r0', cells: ['r0'] },
+                  { kind: 'row_upsert', sheetKey: 'sheet_1', rowId: 'r1', cells: ['r1'] },
+                  { kind: 'meta_update', sheetKey: 'sheet_0', meta: { name: '旧名' } },
+                  { kind: 'table_edit_dsl', text: 'update sheet_0 but text is not structured' },
+                ],
+                patches: [
+                  { kind: 'row_delete', sheetKey: 'sheet_0', rowId: 'r0' },
+                  { kind: 'row_delete', sheetKey: 'sheet_1', rowId: 'r1' },
+                ],
+                writeSet: [
+                  { kind: 'sheet', sheetKey: 'sheet_0' },
+                  { kind: 'row', sheetKey: 'sheet_0', rowId: 'r0' },
+                  { kind: 'sheet', sheetKey: 'sheet_1' },
+                  { kind: 'all' },
+                ],
+              },
+            ],
+          },
+        },
+      },
+    };
+
+    expect(purgeSheetKeysFromMessage_ACU(msg, ['sheet_0'])).toBe(true);
+
+    const entry = msg.TavernDB_ACU_IsolatedData.tag1.storageFrame.logEntries[0];
+    expect(entry.filledSheetKeys).toEqual(['sheet_1']);
+    expect(entry.changedSheetKeys).toEqual(['sheet_1']);
+    expect(entry.groupKeys).toEqual(['sheet_1']);
+    expect(entry.operations).toEqual([
+      { kind: 'sheet_replace', sheetKey: 'sheet_1', sheet: { name: '保留表' }, reason: 'manual_crud' },
+      { kind: 'row_upsert', sheetKey: 'sheet_1', rowId: 'r1', cells: ['r1'] },
+      { kind: 'table_edit_dsl', text: 'update sheet_0 but text is not structured' },
+    ]);
+    expect(entry.patches).toEqual([{ kind: 'row_delete', sheetKey: 'sheet_1', rowId: 'r1' }]);
+    expect(entry.writeSet).toEqual([{ kind: 'sheet', sheetKey: 'sheet_1' }, { kind: 'all' }]);
+  });
+
+  it('局部改写 V2 data_replace 并保留其他 sheet 数据', () => {
+    const msg: any = {
+      TavernDB_ACU_IsolatedData: {
+        tag1: {
+          independentData: {},
+          modifiedKeys: [],
+          updateGroupKeys: [],
+          storageFrame: {
+            version: 2,
+            logEntries: [
+              {
+                operations: [
+                  { kind: 'data_replace', data: { sheet_0: { name: '被删表' }, sheet_1: { name: '保留表' } }, reason: 'manual_crud' },
+                  { kind: 'sql_batch', statements: ['select * from sheet_0'] },
+                ],
+              },
+            ],
+          },
+        },
+      },
+    };
+
+    expect(purgeSheetKeysFromMessage_ACU(msg, ['sheet_0'])).toBe(true);
+
+    expect(msg.TavernDB_ACU_IsolatedData.tag1.storageFrame.logEntries[0].operations).toEqual([
+      { kind: 'data_replace', data: { sheet_1: { name: '保留表' } }, reason: 'manual_crud' },
+      { kind: 'sql_batch', statements: ['select * from sheet_0'] },
+    ]);
+  });
+
+  it('IsolatedData 为 JSON 字符串时也能清理 V2 storageFrame 并按既有约定写回对象', () => {
+    const msg: any = {
+      TavernDB_ACU_IsolatedData: JSON.stringify({
+        tag1: {
+          independentData: {},
+          modifiedKeys: [],
+          updateGroupKeys: [],
+          storageFrame: {
+            version: 2,
+            checkpoint: {
+              kind: 'full',
+              createdAt: 1,
+              reason: 'manual',
+              data: { sheet_0: { name: '被删表' }, sheet_1: { name: '保留表' } },
+            },
+            logEntries: [],
+          },
+        },
+      }),
+    };
+
+    expect(purgeSheetKeysFromMessage_ACU(msg, ['sheet_0'])).toBe(true);
+    expect(typeof msg.TavernDB_ACU_IsolatedData).toBe('object');
+    expect(msg.TavernDB_ACU_IsolatedData.tag1.storageFrame.checkpoint.data).toEqual({
+      sheet_1: { name: '保留表' },
+    });
+  });
+
+  it('目标 sheet 不存在于 V2 storageFrame 时不触发变更', () => {
+    const msg: any = {
+      TavernDB_ACU_IsolatedData: {
+        tag1: {
+          independentData: {},
+          modifiedKeys: [],
+          updateGroupKeys: [],
+          storageFrame: {
+            version: 2,
+            checkpoint: {
+              kind: 'full',
+              createdAt: 1,
+              reason: 'manual',
+              data: { sheet_1: { name: '保留表' } },
+            },
+            logEntries: [{ operations: [{ kind: 'sql_batch', statements: ['select sheet_0'] }] }],
+          },
+        },
+      },
+    };
+
+    expect(purgeSheetKeysFromMessage_ACU(msg, ['sheet_0'])).toBe(false);
+  });
 });
 
 describe('clearAllTableFields_ACU', () => {

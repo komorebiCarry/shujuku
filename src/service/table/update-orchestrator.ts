@@ -594,9 +594,8 @@ export async function buildBatchMergeBase_ACU(
     options: { maxMessageIndex?: number } = {},
 ): Promise<{ data: Record<string, any> | null; error: string | null }> {
     try {
-        const hasHistoricalBoundary = Number.isInteger(options.maxMessageIndex);
         const runtimeData = getRuntimeTableDataSnapshot_ACU();
-        if (runtimeData && isSqliteMode() && !hasHistoricalBoundary) {
+        if (runtimeData && isSqliteMode()) {
             logDebug_ACU(`[Batch ${batchNumber}] Using SQLite runtime storage snapshot as merge base.`);
             return { data: mergeGuideStructureIntoBaseData_ACU(runtimeData), error: null };
         }
@@ -606,7 +605,7 @@ export async function buildBatchMergeBase_ACU(
 
         // 指定了历史边界时，若当前聊天是 V2 但边界前没有可重放 checkpoint，不能退回“最新运行时快照”，
         // 否则会把目标楼之后的表格数据喂给本批次；此时应按空指导表/模板从零开始。
-        if (v2ReplayResult.attempted && hasHistoricalBoundary) {
+        if (!isSqliteMode() && v2ReplayResult.attempted && Number.isInteger(options.maxMessageIndex)) {
             return buildGuideOrTemplateMergeBase_ACU(batchNumber);
         }
 
@@ -656,6 +655,7 @@ async function buildManualRefillInitialData_ACU(
 
     if (!refillBase) {
         logWarn_ACU('[Manual Refill] 重填范围前找不到可用 checkpoint，选中表将从零基底开始重填。');
+        refillBase = zeroBase;
     }
 
     if (!finalBase.mate && (latestState?.mate || refillBase?.mate || zeroBase?.mate)) {
@@ -664,23 +664,20 @@ async function buildManualRefillInitialData_ACU(
 
     for (const sheetKey of selectedSheetKeys) {
         const replaySheet = refillBase?.[sheetKey];
-        const latestSheet = latestState?.[sheetKey];
         const allowLatestFallbackForSheet = hasReplayRefillBase
             && Boolean(replaySheet)
             && Array.isArray(replaySheet?.content)
-            && !hasSheetContentRows_ACU(replaySheet)
-            && hasSheetContentRows_ACU(latestSheet);
-        const allowScopedBaseFallbackForSheet = !hasReplayRefillBase && hasSheetContentRows_ACU(latestSheet);
+            && !hasSheetContentRows_ACU(replaySheet);
         const selectedSource = selectManualRefillSheetSource_ACU(
             sheetKey,
             replaySheet,
             zeroBase?.[sheetKey],
-            latestSheet,
-            allowLatestFallbackForSheet || allowScopedBaseFallbackForSheet,
+            latestState?.[sheetKey],
+            allowLatestFallbackForSheet,
         );
         if (selectedSource.sheet) {
-            if (selectedSource.source === 'latest' && (allowLatestFallbackForSheet || allowScopedBaseFallbackForSheet)) {
-                logDebug_ACU(`[Manual Refill] 表 ${sheetKey} 的重填边界基底为空或不可用，保留已构建的边界快照作为手动重填入口基底。`);
+            if (selectedSource.source === 'latest' && allowLatestFallbackForSheet) {
+                logDebug_ACU(`[Manual Refill] 表 ${sheetKey} 的 replay 基底为空骨架，保留当前快照中的已有数据作为手动重填入口基底。`);
             }
             finalBase[sheetKey] = JSON.parse(JSON.stringify(selectedSource.sheet));
             if (Array.isArray(finalBase[sheetKey]?.content)) {
@@ -2284,33 +2281,26 @@ export async function orchestrateManualUpdate_ACU(
         let shouldWriteInitialManualRefillBaseline = false;
         let manualRefillProgress: ManualRefillProgressV2_ACU | undefined;
         if (manualRefillEnabled) {
+            const preManualRefillLatestState = getManualRefillLatestState_ACU(null, targetKeys);
+            const latestBaseResult = await buildBatchMergeBase_ACU(0);
+            if (!latestBaseResult.data) {
+                return { success: false, error: latestBaseResult.error || '无法构建当前表格快照，操作已终止。' };
+            }
+            const manualRefillLatestState = getManualRefillLatestState_ACU(latestBaseResult.data, targetKeys, preManualRefillLatestState);
             const existingProgress = getManualRefillProgressAtMessage_ACU(getChatArray_ACU() || [], manualRefillTargetIndex);
             const matchedProgress = manualRefillProgressMatches_ACU(existingProgress, targetKeys, contextScopeIndices, manualRefillTargetIndex)
                 ? existingProgress
                 : null;
             if (matchedProgress) {
-                const preManualRefillLatestState = getManualRefillLatestState_ACU(null, targetKeys);
-                const latestBaseResult = await buildBatchMergeBase_ACU(0);
-                if (!latestBaseResult.data) {
-                    return { success: false, error: latestBaseResult.error || '无法构建当前表格快照，操作已终止。' };
-                }
-                const manualRefillLatestState = getManualRefillLatestState_ACU(latestBaseResult.data, targetKeys, preManualRefillLatestState);
                 manualRefillCheckpointData = JSON.parse(JSON.stringify(manualRefillLatestState));
                 manualRefillInitialData = JSON.parse(JSON.stringify(manualRefillLatestState));
                 logDebug_ACU(`[Manual Refill] 检测到未完成重填进度，将从消息索引 ${matchedProgress.completedUntilMessageIndex + 1} 继续。`);
             } else {
-                const manualRefillBaseBoundaryIndex = manualRefillStartIndex - 1;
-                const scopedBaseResult = manualRefillBaseBoundaryIndex >= 0
-                    ? await buildBatchMergeBase_ACU(0, { maxMessageIndex: manualRefillBaseBoundaryIndex })
-                    : { data: buildSchemaOnlyRefillBase_ACU(), error: null };
-                if (!scopedBaseResult.data) {
-                    return { success: false, error: scopedBaseResult.error || '无法构建手动重填起点前的表格快照，操作已终止。' };
-                }
                 manualRefillInitialData = await buildManualRefillInitialData_ACU(
                     getChatArray_ACU() || [],
                     contextScopeIndices[0],
                     targetKeys,
-                    scopedBaseResult.data,
+                    manualRefillLatestState,
                 );
                 manualRefillCheckpointData = JSON.parse(JSON.stringify(manualRefillInitialData));
             }

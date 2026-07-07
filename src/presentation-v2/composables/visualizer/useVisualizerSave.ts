@@ -357,14 +357,27 @@ export function useVisualizerSave(interactions: VisualizerSaveInteractions = {})
 
   async function saveDataToCurrentMessage(): Promise<boolean> {
     return runSaving(async () => {
+      const deletedSheetKeys = [...new Set((visualizer.deletedSheetKeys || [])
+        .filter(key => typeof key === 'string' && key.startsWith('sheet_')),
+      )];
       const result = await applyVisualizerPendingDataOps_ACU(visualizer);
       if (!result.success) {
         toastStore.error(result.error || '数据保存失败。', { muteable: false });
         return false;
       }
-      if (!result.changed) {
+      if (!result.changed && deletedSheetKeys.length === 0) {
         toastStore.info('没有需要保存的数据增量。', { muteable: false });
         return false;
+      }
+      if (deletedSheetKeys.length > 0) {
+        const purgeResult = await purgeSheetKeysFromChatHistoryHard_ACU(deletedSheetKeys);
+        if (purgeResult?.changed && isSqliteMode()) {
+          try {
+            await reloadStorageProvider();
+          } catch (error) {
+            logWarn_ACU('[ACU-V2 Visualizer] reloadStorageProvider failed after sheet purge:', error);
+          }
+        }
       }
       saveLockDrafts(visualizer.tableLockDrafts);
       await refreshMergedDataAndNotify_ACU();
@@ -372,7 +385,10 @@ export function useVisualizerSave(interactions: VisualizerSaveInteractions = {})
         (topLevelWindow_ACU as any).AutoCardUpdaterAPI?._notifyTableUpdate?.();
       } catch {}
       visualizer.markSaved('data');
-      toastStore.success('数据增量已保存到当前消息。', { muteable: false });
+      toastStore.success(
+        deletedSheetKeys.length > 0 ? '数据增量与删表清理已保存到当前消息。' : '数据增量已保存到当前消息。',
+        { muteable: false },
+      );
       return true;
     });
   }
