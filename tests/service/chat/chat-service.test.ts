@@ -86,6 +86,7 @@ import {
   purgeOldLayerData_ACU,
   ensureV2BoundaryCheckpointForRetainedBuffer_ACU,
   ensureManualRefillInitialBaseline_ACU,
+  clearTableDataAtFloors_ACU,
   deleteLocalDataInChatCore_ACU,
   overrideLatestLayerWithTemplateCore_ACU,
   saveCurrentDataForTable_ACU,
@@ -702,6 +703,101 @@ describe('deleteLocalDataInChatCore_ACU', () => {
     const count = await deleteLocalDataInChatCore_ACU('all', 1, 2);
     expect(count).toBe(2);
     expect(chat[2].TavernDB_ACU_Data).toBeDefined(); // 第3层不在范围内
+  });
+});
+
+// ═══ clearTableDataAtFloors_ACU ═══
+describe('clearTableDataAtFloors_ACU', () => {
+  it('按目标楼层和 selected sheet 精确清理 V2 storageFrame，保留同层其他表和范围外基底', async () => {
+    const chat = [
+      {
+        is_user: false,
+        mes: 'AI范围外基底',
+        TavernDB_ACU_IsolatedData: {
+          '': {
+            _acu_storage_version: 2,
+            storageFrame: {
+              version: 2,
+              checkpoint: {
+                kind: 'full',
+                reason: 'compaction',
+                data: {
+                  sheet_0: { name: '范围外表', content: [['row_id'], ['base']] },
+                },
+              },
+              logEntries: [],
+            },
+          },
+        },
+      },
+      { is_user: true, mes: '用户消息跳过' },
+      {
+        is_user: false,
+        mes: 'AI目标层',
+        TavernDB_ACU_IsolatedData: {
+          '': {
+            _acu_storage_version: 2,
+            independentData: {
+              sheet_0: { name: '旧目标表' },
+              sheet_1: { name: '保留表' },
+            },
+            modifiedKeys: ['sheet_0', 'sheet_1'],
+            updateGroupKeys: ['sheet_0', 'sheet_1'],
+            storageFrame: {
+              version: 2,
+              checkpoint: {
+                kind: 'full',
+                reason: 'manual',
+                data: {
+                  sheet_0: { name: '旧目标表', content: [['row_id'], ['old']] },
+                  sheet_1: { name: '保留表', content: [['row_id'], ['keep']] },
+                },
+                scheduleSummary: {
+                  sheet_0: { lastFilledAiFloor: 1 },
+                  sheet_1: { lastFilledAiFloor: 1 },
+                },
+                event: {
+                  filledSheetKeys: ['sheet_0', 'sheet_1'],
+                  changedSheetKeys: ['sheet_0', 'sheet_1'],
+                  groupKeys: ['sheet_0', 'sheet_1'],
+                },
+              },
+              logEntries: [
+                {
+                  seq: 1,
+                  operations: [
+                    { kind: 'data_replace', data: { sheet_0: { name: '旧目标表' }, sheet_1: { name: '保留表' } } },
+                  ],
+                  filledSheetKeys: ['sheet_0', 'sheet_1'],
+                  changedSheetKeys: ['sheet_0', 'sheet_1'],
+                  groupKeys: ['sheet_0', 'sheet_1'],
+                },
+              ],
+            },
+          },
+        },
+      },
+    ];
+    mockGetChatArray.mockReturnValue(chat);
+
+    const count = await clearTableDataAtFloors_ACU([1, 2], ['sheet_0']);
+
+    expect(count).toBe(1);
+    expect(chat[0].TavernDB_ACU_IsolatedData[''].storageFrame.checkpoint.data.sheet_0).toBeDefined();
+    expect(chat[1]).toEqual({ is_user: true, mes: '用户消息跳过' });
+    const targetTag = chat[2].TavernDB_ACU_IsolatedData[''];
+    expect(targetTag.independentData.sheet_0).toBeUndefined();
+    expect(targetTag.independentData.sheet_1).toEqual({ name: '保留表' });
+    expect(targetTag.modifiedKeys).toEqual(['sheet_1']);
+    expect(targetTag.updateGroupKeys).toEqual(['sheet_1']);
+    expect(targetTag.storageFrame.checkpoint.data.sheet_0).toBeUndefined();
+    expect(targetTag.storageFrame.checkpoint.data.sheet_1.content[1][0]).toBe('keep');
+    expect(targetTag.storageFrame.checkpoint.scheduleSummary.sheet_0).toBeUndefined();
+    expect(targetTag.storageFrame.checkpoint.scheduleSummary.sheet_1).toEqual({ lastFilledAiFloor: 1 });
+    expect(targetTag.storageFrame.checkpoint.event.filledSheetKeys).toEqual(['sheet_1']);
+    expect(targetTag.storageFrame.logEntries[0].operations[0].data).toEqual({ sheet_1: { name: '保留表' } });
+    expect(targetTag.storageFrame.logEntries[0].filledSheetKeys).toEqual(['sheet_1']);
+    expect(mockSaveChatToHost).toHaveBeenCalledTimes(1);
   });
 });
 

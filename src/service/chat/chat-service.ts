@@ -22,7 +22,7 @@ import { logDebug_ACU, logError_ACU, logWarn_ACU, isSummaryOrOutlineTable_ACU } 
 import { getLastOptimizationBase_ACU, setLastOptimizationBase_ACU } from '../optimization/content-optimization';
 import { settings_ACU, currentJsonTableData_ACU, getCurrentIsolationKey_ACU } from '../runtime/state-manager';
 import { sanitizeSheetForStorage_ACU } from '../template/chat-scope';
-import { clearTableFieldsForIsolation_ACU } from '../../data/repositories/chat-message-data-repo';
+import { clearTableFieldsForIsolation_ACU, purgeSheetKeysFromMessage_ACU } from '../../data/repositories/chat-message-data-repo';
 import { runTableUpdateCommit_ACU } from '../table/table-update-commit';
 import { getLatestAiMessageIndexFromChat_ACU, resolveTableHistoryStateFromChat_ACU } from '../table/table-history';
 import { deleteSummaryVectorIndexExternal_ACU } from '../vector/summary-vector-index-storage-service';
@@ -1330,68 +1330,5 @@ export async function clearTableDataAtFloors_ACU(targetMessageIndices: number[],
 }
 
 function purgeTargetSheetKeysFromMessage_ACU(msg: any, targetSheetKeys: string[]): boolean {
-    if (!msg || !Array.isArray(targetSheetKeys) || targetSheetKeys.length === 0) return false;
-
-    let changed = false;
-    const isolationKey = getCurrentIsolationKey_ACU();
-    const tagData = msg?.TavernDB_ACU_IsolatedData?.[isolationKey];
-    if (isV2TagData_ACU(tagData)) {
-        delete msg.TavernDB_ACU_IsolatedData[isolationKey];
-        if (Object.keys(msg.TavernDB_ACU_IsolatedData).length === 0) {
-            delete msg.TavernDB_ACU_IsolatedData;
-        }
-        return true;
-    }
-    if (tagData && typeof tagData === 'object') {
-        if (tagData.independentData && typeof tagData.independentData === 'object') {
-            targetSheetKeys.forEach(sheetKey => {
-                if (tagData.independentData[sheetKey]) {
-                    delete tagData.independentData[sheetKey];
-                    changed = true;
-                }
-            });
-        }
-        if (Array.isArray(tagData.modifiedKeys)) {
-            tagData.modifiedKeys = tagData.modifiedKeys.filter((key: string) => !targetSheetKeys.includes(key));
-        }
-        if (Array.isArray(tagData.updateGroupKeys)) {
-            tagData.updateGroupKeys = tagData.updateGroupKeys.filter((key: string) => !targetSheetKeys.includes(key));
-        }
-    }
-
-    if (msg?.TavernDB_ACU_IndependentData && typeof msg.TavernDB_ACU_IndependentData === 'object') {
-        targetSheetKeys.forEach(sheetKey => {
-            if (msg.TavernDB_ACU_IndependentData[sheetKey]) {
-                delete msg.TavernDB_ACU_IndependentData[sheetKey];
-                changed = true;
-            }
-        });
-    }
-
-    if (msg?.TavernDB_ACU_Data && typeof msg.TavernDB_ACU_Data === 'object') {
-        targetSheetKeys.forEach(sheetKey => {
-            if (msg.TavernDB_ACU_Data[sheetKey]) {
-                delete msg.TavernDB_ACU_Data[sheetKey];
-                changed = true;
-            }
-        });
-    }
-
-    if (msg?.TavernDB_ACU_SummaryData && typeof msg.TavernDB_ACU_SummaryData === 'object') {
-        targetSheetKeys.forEach(sheetKey => {
-            if (msg.TavernDB_ACU_SummaryData[sheetKey]) {
-                delete msg.TavernDB_ACU_SummaryData[sheetKey];
-                changed = true;
-            }
-        });
-    }
-
-    if (Array.isArray(msg?.TavernDB_ACU_ModifiedKeys)) {
-        msg.TavernDB_ACU_ModifiedKeys = msg.TavernDB_ACU_ModifiedKeys.filter((key: string) => !targetSheetKeys.includes(key));
-    }
-    if (Array.isArray(msg?.TavernDB_ACU_UpdateGroupKeys)) {
-        msg.TavernDB_ACU_UpdateGroupKeys = msg.TavernDB_ACU_UpdateGroupKeys.filter((key: string) => !targetSheetKeys.includes(key));
-    }
-
-    return changed;
+    return purgeSheetKeysFromMessage_ACU(msg, targetSheetKeys);
 }

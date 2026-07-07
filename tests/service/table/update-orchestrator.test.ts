@@ -1345,7 +1345,7 @@ describe('orchestrateManualUpdate_ACU', () => {
     expect(progressCalls.every(call => call.targetMessageIndex === 4)).toBe(true);
   });
 
-  it('retained boundary checkpoint 只有空骨架时，手动重填入口保留当前快照中的已有数据', async () => {
+  it('retained boundary checkpoint 只有空骨架时，手动重填入口不继承当前快照旧行', async () => {
     const { getChatArray_ACU } = await import('../../../src/service/chat/chat-service');
     const { parseTableTemplateJson_ACU } = await import('../../../src/shared/utils');
     vi.mocked(parseTableTemplateJson_ACU).mockReturnValue({
@@ -1399,16 +1399,16 @@ describe('orchestrateManualUpdate_ACU', () => {
       isolationKey: '',
       targetMessageIndex: 4,
       data: expect.objectContaining({
-        sheet_0: expect.objectContaining({ content: [['row_id', '值A'], ['1', '已有A']] }),
+        sheet_0: expect.objectContaining({ content: [['row_id', '值A']] }),
       }),
       save: true,
     });
     const progressCalls = mockPersistTablesToChatMessage.mock.calls.map(call => call[0]).filter(call => call.manualRefillProgress?.kind === 'manual_refill');
     expect(progressCalls.length).toBeGreaterThan(0);
-    expect(progressCalls[0].tableData.sheet_0.content).toEqual([['row_id', '值A'], ['1', '已有A'], ['2', '来自A']]);
+    expect(progressCalls[0].tableData.sheet_0.content).toEqual([['row_id', '值A'], ['2', '来自A']]);
     expect(progressCalls[0].operations).toHaveLength(1);
     expect(progressCalls[0].operations[0]).toMatchObject({ kind: 'data_replace', reason: 'checkpoint_fallback' });
-    expect(progressCalls[0].operations[0].data.sheet_0.content).toEqual([['row_id', '值A'], ['1', '已有A'], ['2', '来自A']]);
+    expect(progressCalls[0].operations[0].data.sheet_0.content).toEqual([['row_id', '值A'], ['2', '来自A']]);
   });
 
   it('retained boundary 多表场景下不会让非目标表更多行抢占选中表的入口快照', async () => {
@@ -1472,14 +1472,14 @@ describe('orchestrateManualUpdate_ACU', () => {
       isolationKey: '',
       targetMessageIndex: 4,
       data: expect.objectContaining({
-        sheet_0: expect.objectContaining({ content: [['row_id', '值A'], ['1', '已有A']] }),
+        sheet_0: expect.objectContaining({ content: [['row_id', '值A']] }),
       }),
       save: true,
     });
     const progressCalls = mockPersistTablesToChatMessage.mock.calls.map(call => call[0]).filter(call => call.manualRefillProgress?.kind === 'manual_refill');
     expect(progressCalls.length).toBeGreaterThan(0);
-    expect(progressCalls[0].tableData.sheet_0.content).toEqual([['row_id', '值A'], ['1', '已有A'], ['2', '来自A']]);
-    expect(progressCalls[0].operations[0].data.sheet_0.content).toEqual([['row_id', '值A'], ['1', '已有A'], ['2', '来自A']]);
+    expect(progressCalls[0].tableData.sheet_0.content).toEqual([['row_id', '值A'], ['2', '来自A']]);
+    expect(progressCalls[0].operations[0].data.sheet_0.content).toEqual([['row_id', '值A'], ['2', '来自A']]);
   });
 
   it('retained boundary replayBase 缺少选中表时，手动重填不继承当前快照旧行', async () => {
@@ -1692,7 +1692,7 @@ describe('orchestrateManualUpdate_ACU', () => {
   });
 
   it('手动重填续跑兼容读取旧 checkpoint.manualRefillProgress', async () => {
-    const { getChatArray_ACU } = await import('../../../src/service/chat/chat-service');
+    const { getChatArray_ACU, clearTableDataAtFloors_ACU } = await import('../../../src/service/chat/chat-service');
     const { parseTableTemplateJson_ACU } = await import('../../../src/shared/utils');
     vi.mocked(parseTableTemplateJson_ACU).mockReturnValue({
       mate: { type: 'acu' },
@@ -1751,6 +1751,7 @@ describe('orchestrateManualUpdate_ACU', () => {
     const result = await orchestrateManualUpdate_ACU(['sheet_0'], vi.fn().mockResolvedValue({ success: true }), mockRefreshData, { clearBeforeUpdate: true });
 
     expect(result.success).toBe(true);
+    expect(clearTableDataAtFloors_ACU).not.toHaveBeenCalled();
     const savedProgress = mockPersistTablesToChatMessage.mock.calls
       .map(call => call[0]?.manualRefillProgress)
       .find(progress => progress?.completedSheetMessageIndexByKey?.__legacy_marker === 2);
@@ -1761,7 +1762,7 @@ describe('orchestrateManualUpdate_ACU', () => {
   });
 
   it('手动重填续跑优先读取 frame.manualRefillProgress 而不是旧 checkpoint 字段', async () => {
-    const { getChatArray_ACU } = await import('../../../src/service/chat/chat-service');
+    const { getChatArray_ACU, clearTableDataAtFloors_ACU } = await import('../../../src/service/chat/chat-service');
     const frameProgress = {
       kind: 'manual_refill',
       status: 'in_progress',
@@ -1821,6 +1822,7 @@ describe('orchestrateManualUpdate_ACU', () => {
     const result = await orchestrateManualUpdate_ACU(['sheet_0'], vi.fn().mockResolvedValue({ success: true }), mockRefreshData, { clearBeforeUpdate: true });
 
     expect(result.success).toBe(true);
+    expect(clearTableDataAtFloors_ACU).not.toHaveBeenCalled();
     const savedProgress = mockPersistTablesToChatMessage.mock.calls
       .map(call => call[0]?.manualRefillProgress)
       .find(progress => progress?.completedSheetMessageIndexByKey?.__frame_marker === 2);

@@ -349,15 +349,11 @@ function selectManualRefillSheetSource_ACU(
     sheetKey: string,
     refillSheet: any,
     zeroSheet: any,
-    latestSheet: any,
-    allowLatestFallback: boolean,
-): { sheet: any; source: 'refill' | 'zero' | 'latest' | null } {
+): { sheet: any; source: 'refill' | 'zero' | null } {
     if (hasSheetContentRows_ACU(refillSheet)) return { sheet: refillSheet, source: 'refill' };
-    if (allowLatestFallback && hasSheetContentRows_ACU(latestSheet)) return { sheet: latestSheet, source: 'latest' };
     if (refillSheet) return { sheet: refillSheet, source: 'refill' };
     if (zeroSheet) return { sheet: zeroSheet, source: 'zero' };
-    if (allowLatestFallback && latestSheet) return { sheet: latestSheet, source: 'latest' };
-    logDebug_ACU(`[Manual Refill] 选中表 ${sheetKey} 在 replay/schema/latest 中均不存在，跳过基底覆盖。`);
+    logDebug_ACU(`[Manual Refill] 选中表 ${sheetKey} 在 replay/schema 中均不存在，跳过基底覆盖。`);
     return { sheet: null, source: null };
 }
 
@@ -639,14 +635,12 @@ async function buildManualRefillInitialData_ACU(
     const finalBase = JSON.parse(JSON.stringify(latestState || {}));
     const zeroBase = buildSchemaOnlyRefillBase_ACU();
     let refillBase: Record<string, any> | null = null;
-    let hasReplayRefillBase = false;
 
     if (firstMessageIndexOfRange > 0) {
         try {
             refillBase = await loadTableStateFromFramesV2_ACU(chatHistory, getCurrentIsolationKey_ACU(), {
                 maxMessageIndex: firstMessageIndexOfRange - 1,
             }) as Record<string, any> | null;
-            hasReplayRefillBase = Boolean(refillBase);
         } catch (error) {
             logWarn_ACU('[Manual Refill] 重放重填起点之前的数据失败，将从零基底重建选中表。', error);
             refillBase = null;
@@ -664,21 +658,12 @@ async function buildManualRefillInitialData_ACU(
 
     for (const sheetKey of selectedSheetKeys) {
         const replaySheet = refillBase?.[sheetKey];
-        const allowLatestFallbackForSheet = hasReplayRefillBase
-            && Boolean(replaySheet)
-            && Array.isArray(replaySheet?.content)
-            && !hasSheetContentRows_ACU(replaySheet);
         const selectedSource = selectManualRefillSheetSource_ACU(
             sheetKey,
             replaySheet,
             zeroBase?.[sheetKey],
-            latestState?.[sheetKey],
-            allowLatestFallbackForSheet,
         );
         if (selectedSource.sheet) {
-            if (selectedSource.source === 'latest' && allowLatestFallbackForSheet) {
-                logDebug_ACU(`[Manual Refill] 表 ${sheetKey} 的 replay 基底为空骨架，保留当前快照中的已有数据作为手动重填入口基底。`);
-            }
             finalBase[sheetKey] = JSON.parse(JSON.stringify(selectedSource.sheet));
             if (Array.isArray(finalBase[sheetKey]?.content)) {
                 finalBase[sheetKey].content = ensureStableRowIdsForSheetContent_ACU(finalBase[sheetKey].content);
@@ -2192,7 +2177,7 @@ export async function processUpdatesBatch_ACU(
  * @param processBatch 批处理执行回调
  * @param refreshData 数据刷新回调
  * @param options 可选参数：
- *   - clearBeforeUpdate: 兼容旧调用名；现在表示启用事务式手动重填，不会预先清空聊天记录。
+ *   - clearBeforeUpdate: 兼容旧调用名；启用事务式手动重填。首次重填会清理目标范围内选中表本地数据，匹配续跑进度时不预清理。
  */
 export async function orchestrateManualUpdate_ACU(
     targetKeys: string[],
@@ -2281,11 +2266,18 @@ export async function orchestrateManualUpdate_ACU(
         let shouldWriteInitialManualRefillBaseline = false;
         let manualRefillProgress: ManualRefillProgressV2_ACU | undefined;
         if (manualRefillEnabled) {
-            try {
-                await clearTableDataAtFloors_ACU(contextScopeIndices, targetKeys);
-            } catch (error: any) {
-                logError_ACU('[Manual Refill] 启动前清理选中表历史数据失败:', error);
-                return { success: false, error: error?.message || '手动重填启动前清理选中表历史数据失败。' };
+            const existingProgress = getManualRefillProgressAtMessage_ACU(getChatArray_ACU() || [], manualRefillTargetIndex);
+            const matchedProgress = manualRefillProgressMatches_ACU(existingProgress, targetKeys, contextScopeIndices, manualRefillTargetIndex)
+                ? existingProgress
+                : null;
+
+            if (!matchedProgress) {
+                try {
+                    await clearTableDataAtFloors_ACU(contextScopeIndices, targetKeys);
+                } catch (error: any) {
+                    logError_ACU('[Manual Refill] 启动前清理选中表历史数据失败:', error);
+                    return { success: false, error: error?.message || '手动重填启动前清理选中表历史数据失败。' };
+                }
             }
 
             const preManualRefillLatestState = getManualRefillLatestState_ACU(null, targetKeys);
@@ -2294,10 +2286,6 @@ export async function orchestrateManualUpdate_ACU(
                 return { success: false, error: latestBaseResult.error || '无法构建当前表格快照，操作已终止。' };
             }
             const manualRefillLatestState = getManualRefillLatestState_ACU(latestBaseResult.data, targetKeys, preManualRefillLatestState);
-            const existingProgress = getManualRefillProgressAtMessage_ACU(getChatArray_ACU() || [], manualRefillTargetIndex);
-            const matchedProgress = manualRefillProgressMatches_ACU(existingProgress, targetKeys, contextScopeIndices, manualRefillTargetIndex)
-                ? existingProgress
-                : null;
             if (matchedProgress) {
                 manualRefillCheckpointData = JSON.parse(JSON.stringify(manualRefillLatestState));
                 manualRefillInitialData = JSON.parse(JSON.stringify(manualRefillLatestState));
