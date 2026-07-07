@@ -341,6 +341,26 @@ function hasUsableRuntimeTableData_ACU(data: Record<string, any> | null): boolea
     return Object.keys(data).some(k => k.startsWith('sheet_') && Array.isArray(data[k]?.content));
 }
 
+function hasSheetContentRows_ACU(sheet: any): boolean {
+    return Array.isArray(sheet?.content) && sheet.content.length > 1;
+}
+
+function selectManualRefillSheetSource_ACU(
+    sheetKey: string,
+    refillSheet: any,
+    zeroSheet: any,
+    latestSheet: any,
+    allowLatestFallback: boolean,
+): { sheet: any; source: 'refill' | 'zero' | 'latest' | null } {
+    if (hasSheetContentRows_ACU(refillSheet)) return { sheet: refillSheet, source: 'refill' };
+    if (allowLatestFallback && hasSheetContentRows_ACU(latestSheet)) return { sheet: latestSheet, source: 'latest' };
+    if (refillSheet) return { sheet: refillSheet, source: 'refill' };
+    if (zeroSheet) return { sheet: zeroSheet, source: 'zero' };
+    if (allowLatestFallback && latestSheet) return { sheet: latestSheet, source: 'latest' };
+    logDebug_ACU(`[Manual Refill] 选中表 ${sheetKey} 在 replay/schema/latest 中均不存在，跳过基底覆盖。`);
+    return { sheet: null, source: null };
+}
+
 function buildWriteSetForSheetKeys_ACU(sheetKeys: string[] | null | undefined, fallbackData?: Record<string, any> | null) {
     const keys = Array.isArray(sheetKeys) && sheetKeys.length > 0
         ? sheetKeys
@@ -442,6 +462,49 @@ function getRuntimeTableDataSnapshot_ACU(fallbackData: Record<string, any> | nul
     const fallback = cloneTableDataSnapshot_ACU(currentJsonTableData_ACU || null);
     if (hasUsableRuntimeTableData_ACU(fallback)) return fallback;
     return null;
+}
+
+function getManualRefillLatestState_ACU(
+    fallbackData: Record<string, any> | null,
+    selectedSheetKeys: string[],
+    preferredSnapshot: Record<string, any> | null = null,
+): Record<string, any> {
+    const candidates: Record<string, any>[] = [];
+    const addCandidate = (candidate: Record<string, any> | null | undefined) => {
+        const cloned = cloneTableDataSnapshot_ACU(candidate || null);
+        if (hasUsableRuntimeTableData_ACU(cloned)) candidates.push(cloned as Record<string, any>);
+    };
+
+    addCandidate(preferredSnapshot);
+    try {
+        const providerData = getStorageProvider().getCurrentData();
+        addCandidate(providerData as any);
+    } catch (error) {
+        logWarn_ACU('[Manual Refill] 无法从运行时存储导出当前表格快照，改用内存快照兜底。', error);
+    }
+    addCandidate(currentJsonTableData_ACU || null);
+    addCandidate(fallbackData || null);
+
+    const base = candidates[0] || cloneTableDataSnapshot_ACU(fallbackData || null) || {};
+    const merged = JSON.parse(JSON.stringify(base));
+    const normalizedSheetKeys = [...new Set((selectedSheetKeys || [])
+        .filter(sheetKey => typeof sheetKey === 'string' && sheetKey.startsWith('sheet_')))
+    ];
+
+    for (const sheetKey of normalizedSheetKeys) {
+        const withRows = candidates.find(candidate => hasSheetContentRows_ACU(candidate?.[sheetKey]));
+        const withStructure = candidates.find(candidate => candidate?.[sheetKey]);
+        const sourceSheet = withRows?.[sheetKey] || withStructure?.[sheetKey];
+        if (sourceSheet) {
+            merged[sheetKey] = JSON.parse(JSON.stringify(sourceSheet));
+        }
+    }
+
+    if (hasUsableRuntimeTableData_ACU(merged)) return merged;
+
+    const replaySnapshot = cloneTableDataSnapshot_ACU(fallbackData || null);
+    if (replaySnapshot) return replaySnapshot;
+    return {};
 }
 
 async function resetSqliteRuntimeFromSnapshot_ACU(
@@ -576,12 +639,14 @@ async function buildManualRefillInitialData_ACU(
     const finalBase = JSON.parse(JSON.stringify(latestState || {}));
     const zeroBase = buildSchemaOnlyRefillBase_ACU();
     let refillBase: Record<string, any> | null = null;
+    let hasReplayRefillBase = false;
 
     if (firstMessageIndexOfRange > 0) {
         try {
             refillBase = await loadTableStateFromFramesV2_ACU(chatHistory, getCurrentIsolationKey_ACU(), {
                 maxMessageIndex: firstMessageIndexOfRange - 1,
             }) as Record<string, any> | null;
+            hasReplayRefillBase = Boolean(refillBase);
         } catch (error) {
             logWarn_ACU('[Manual Refill] 重放重填起点之前的数据失败，将从零基底重建选中表。', error);
             refillBase = null;
@@ -598,9 +663,23 @@ async function buildManualRefillInitialData_ACU(
     }
 
     for (const sheetKey of selectedSheetKeys) {
-        const sourceSheet = refillBase?.[sheetKey] || zeroBase?.[sheetKey] || latestState?.[sheetKey];
-        if (sourceSheet) {
-            finalBase[sheetKey] = JSON.parse(JSON.stringify(sourceSheet));
+        const replaySheet = refillBase?.[sheetKey];
+        const allowLatestFallbackForSheet = hasReplayRefillBase
+            && Boolean(replaySheet)
+            && Array.isArray(replaySheet?.content)
+            && !hasSheetContentRows_ACU(replaySheet);
+        const selectedSource = selectManualRefillSheetSource_ACU(
+            sheetKey,
+            replaySheet,
+            zeroBase?.[sheetKey],
+            latestState?.[sheetKey],
+            allowLatestFallbackForSheet,
+        );
+        if (selectedSource.sheet) {
+            if (selectedSource.source === 'latest' && allowLatestFallbackForSheet) {
+                logDebug_ACU(`[Manual Refill] 表 ${sheetKey} 的 replay 基底为空骨架，保留当前快照中的已有数据作为手动重填入口基底。`);
+            }
+            finalBase[sheetKey] = JSON.parse(JSON.stringify(selectedSource.sheet));
             if (Array.isArray(finalBase[sheetKey]?.content)) {
                 finalBase[sheetKey].content = ensureStableRowIdsForSheetContent_ACU(finalBase[sheetKey].content);
             }
@@ -2202,24 +2281,26 @@ export async function orchestrateManualUpdate_ACU(
         let shouldWriteInitialManualRefillBaseline = false;
         let manualRefillProgress: ManualRefillProgressV2_ACU | undefined;
         if (manualRefillEnabled) {
+            const preManualRefillLatestState = getManualRefillLatestState_ACU(null, targetKeys);
             const latestBaseResult = await buildBatchMergeBase_ACU(0);
             if (!latestBaseResult.data) {
                 return { success: false, error: latestBaseResult.error || '无法构建当前表格快照，操作已终止。' };
             }
+            const manualRefillLatestState = getManualRefillLatestState_ACU(latestBaseResult.data, targetKeys, preManualRefillLatestState);
             const existingProgress = getManualRefillProgressAtMessage_ACU(getChatArray_ACU() || [], manualRefillTargetIndex);
             const matchedProgress = manualRefillProgressMatches_ACU(existingProgress, targetKeys, contextScopeIndices, manualRefillTargetIndex)
                 ? existingProgress
                 : null;
             if (matchedProgress) {
-                manualRefillCheckpointData = JSON.parse(JSON.stringify(latestBaseResult.data));
-                manualRefillInitialData = JSON.parse(JSON.stringify(latestBaseResult.data));
+                manualRefillCheckpointData = JSON.parse(JSON.stringify(manualRefillLatestState));
+                manualRefillInitialData = JSON.parse(JSON.stringify(manualRefillLatestState));
                 logDebug_ACU(`[Manual Refill] 检测到未完成重填进度，将从消息索引 ${matchedProgress.completedUntilMessageIndex + 1} 继续。`);
             } else {
                 manualRefillInitialData = await buildManualRefillInitialData_ACU(
                     getChatArray_ACU() || [],
                     contextScopeIndices[0],
                     targetKeys,
-                    latestBaseResult.data,
+                    manualRefillLatestState,
                 );
                 manualRefillCheckpointData = JSON.parse(JSON.stringify(manualRefillInitialData));
             }

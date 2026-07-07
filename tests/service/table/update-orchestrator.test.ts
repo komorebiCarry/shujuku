@@ -1247,6 +1247,213 @@ describe('orchestrateManualUpdate_ACU', () => {
     expect(progressCalls.every(call => call.targetMessageIndex === 4)).toBe(true);
   });
 
+  it('retained boundary checkpoint 只有空骨架时，手动重填入口保留当前快照中的已有数据', async () => {
+    const { getChatArray_ACU } = await import('../../../src/service/chat/chat-service');
+    const { parseTableTemplateJson_ACU } = await import('../../../src/shared/utils');
+    vi.mocked(parseTableTemplateJson_ACU).mockReturnValue({
+      mate: { type: 'acu' },
+      sheet_0: { name: '测试表A', updateConfig: { groupId: 0 }, content: [['row_id', '值A']] },
+    });
+    vi.mocked(getChatArray_ACU).mockReturnValue([
+      {
+        is_user: false,
+        mes: 'AI回复24',
+        TavernDB_ACU_IsolatedData: {
+          '': {
+            _acu_storage_version: 2,
+            storageFrame: {
+              version: 2,
+              logEntries: [],
+              checkpoint: {
+                kind: 'full',
+                reason: 'compaction',
+                createdAt: 24,
+                data: {
+                  mate: { type: 'acu' },
+                  sheet_0: { name: '测试表A', updateConfig: { groupId: 0 }, content: [['row_id', '值A']] },
+                },
+              },
+            },
+          },
+        },
+      },
+      { is_user: true, mes: '用户25' },
+      { is_user: false, mes: 'AI回复29' },
+      { is_user: true, mes: '用户30' },
+      { is_user: false, mes: 'AI回复31' },
+      { is_user: true, mes: '用户32' },
+      { is_user: false, mes: 'AI回复33' },
+    ]);
+    mockSettings.maxConcurrentGroups = 1;
+    mockSettings.autoUpdateThreshold = 2;
+    mockSettings.updateBatchSize = 1;
+    mockCurrentJsonTableData = {
+      mate: { type: 'acu' },
+      sheet_0: { name: '测试表A', updateConfig: {}, content: [['row_id', '值A'], ['1', '已有A']] },
+    };
+    mockCallCustomOpenAI.mockResolvedValue('<tableEdit>sheet_0</tableEdit>');
+    mockPersistTablesToChatMessage.mockImplementation(async (options: any) => ({ saved: true, messageIndex: options.targetMessageIndex }));
+
+    const result = await orchestrateManualUpdate_ACU(['sheet_0'], vi.fn().mockResolvedValue({ success: true }), mockRefreshData, { clearBeforeUpdate: true });
+
+    expect(result.success).toBe(true);
+    expect(mockEnsureManualRefillInitialBaseline).toHaveBeenCalledWith({
+      isolationKey: '',
+      targetMessageIndex: 4,
+      data: expect.objectContaining({
+        sheet_0: expect.objectContaining({ content: [['row_id', '值A'], ['1', '已有A']] }),
+      }),
+      save: true,
+    });
+    const progressCalls = mockPersistTablesToChatMessage.mock.calls.map(call => call[0]).filter(call => call.manualRefillProgress?.kind === 'manual_refill');
+    expect(progressCalls.length).toBeGreaterThan(0);
+    expect(progressCalls[0].tableData.sheet_0.content).toEqual([['row_id', '值A'], ['1', '已有A'], ['2', '来自A']]);
+    expect(progressCalls[0].operations).toHaveLength(1);
+    expect(progressCalls[0].operations[0]).toMatchObject({ kind: 'data_replace', reason: 'checkpoint_fallback' });
+    expect(progressCalls[0].operations[0].data.sheet_0.content).toEqual([['row_id', '值A'], ['1', '已有A'], ['2', '来自A']]);
+  });
+
+  it('retained boundary 多表场景下不会让非目标表更多行抢占选中表的入口快照', async () => {
+    const { getChatArray_ACU } = await import('../../../src/service/chat/chat-service');
+    const { parseTableTemplateJson_ACU } = await import('../../../src/shared/utils');
+    vi.mocked(parseTableTemplateJson_ACU).mockReturnValue({
+      mate: { type: 'acu' },
+      sheet_0: { name: '测试表A', updateConfig: { groupId: 0 }, content: [['row_id', '值A']] },
+      sheet_1: { name: '测试表B', updateConfig: { groupId: 1 }, content: [['row_id', '值B']] },
+    });
+    vi.mocked(getChatArray_ACU).mockReturnValue([
+      {
+        is_user: false,
+        mes: 'AI回复24',
+        TavernDB_ACU_IsolatedData: {
+          '': {
+            _acu_storage_version: 2,
+            storageFrame: {
+              version: 2,
+              logEntries: [],
+              checkpoint: {
+                kind: 'full',
+                reason: 'compaction',
+                createdAt: 24,
+                data: {
+                  mate: { type: 'acu' },
+                  sheet_0: { name: '测试表A', updateConfig: { groupId: 0 }, content: [['row_id', '值A']] },
+                  sheet_1: {
+                    name: '测试表B',
+                    updateConfig: { groupId: 1 },
+                    content: [['row_id', '值B'], ['1', '非目标B1'], ['2', '非目标B2'], ['3', '非目标B3']],
+                  },
+                },
+              },
+            },
+          },
+        },
+      },
+      { is_user: true, mes: '用户25' },
+      { is_user: false, mes: 'AI回复29' },
+      { is_user: true, mes: '用户30' },
+      { is_user: false, mes: 'AI回复31' },
+      { is_user: true, mes: '用户32' },
+      { is_user: false, mes: 'AI回复33' },
+    ]);
+    mockSettings.maxConcurrentGroups = 1;
+    mockSettings.autoUpdateThreshold = 2;
+    mockSettings.updateBatchSize = 1;
+    mockCurrentJsonTableData = {
+      mate: { type: 'acu' },
+      sheet_0: { name: '测试表A', updateConfig: {}, content: [['row_id', '值A'], ['1', '已有A']] },
+      sheet_1: { name: '测试表B', updateConfig: {}, content: [['row_id', '值B']] },
+    };
+    mockCallCustomOpenAI.mockResolvedValue('<tableEdit>sheet_0</tableEdit>');
+    mockPersistTablesToChatMessage.mockImplementation(async (options: any) => ({ saved: true, messageIndex: options.targetMessageIndex }));
+
+    const result = await orchestrateManualUpdate_ACU(['sheet_0'], vi.fn().mockResolvedValue({ success: true }), mockRefreshData, { clearBeforeUpdate: true });
+
+    expect(result.success).toBe(true);
+    expect(mockEnsureManualRefillInitialBaseline).toHaveBeenCalledWith({
+      isolationKey: '',
+      targetMessageIndex: 4,
+      data: expect.objectContaining({
+        sheet_0: expect.objectContaining({ content: [['row_id', '值A'], ['1', '已有A']] }),
+      }),
+      save: true,
+    });
+    const progressCalls = mockPersistTablesToChatMessage.mock.calls.map(call => call[0]).filter(call => call.manualRefillProgress?.kind === 'manual_refill');
+    expect(progressCalls.length).toBeGreaterThan(0);
+    expect(progressCalls[0].tableData.sheet_0.content).toEqual([['row_id', '值A'], ['1', '已有A'], ['2', '来自A']]);
+    expect(progressCalls[0].operations[0].data.sheet_0.content).toEqual([['row_id', '值A'], ['1', '已有A'], ['2', '来自A']]);
+  });
+
+  it('retained boundary replayBase 缺少选中表时，手动重填不继承当前快照旧行', async () => {
+    const { getChatArray_ACU } = await import('../../../src/service/chat/chat-service');
+    const { parseTableTemplateJson_ACU } = await import('../../../src/shared/utils');
+    vi.mocked(parseTableTemplateJson_ACU).mockReturnValue({
+      mate: { type: 'acu' },
+      sheet_0: { name: '测试表A', updateConfig: { groupId: 0 }, content: [['row_id', '值A']] },
+      sheet_1: { name: '测试表B', updateConfig: { groupId: 1 }, content: [['row_id', '值B']] },
+    });
+    vi.mocked(getChatArray_ACU).mockReturnValue([
+      {
+        is_user: false,
+        mes: 'AI回复24',
+        TavernDB_ACU_IsolatedData: {
+          '': {
+            _acu_storage_version: 2,
+            storageFrame: {
+              version: 2,
+              logEntries: [],
+              checkpoint: {
+                kind: 'full',
+                reason: 'compaction',
+                createdAt: 24,
+                data: {
+                  mate: { type: 'acu' },
+                  sheet_1: {
+                    name: '测试表B',
+                    updateConfig: { groupId: 1 },
+                    content: [['row_id', '值B'], ['1', '边界B']],
+                  },
+                },
+              },
+            },
+          },
+        },
+      },
+      { is_user: true, mes: '用户25' },
+      { is_user: false, mes: 'AI回复29' },
+      { is_user: true, mes: '用户30' },
+      { is_user: false, mes: 'AI回复31' },
+      { is_user: true, mes: '用户32' },
+      { is_user: false, mes: 'AI回复33' },
+    ]);
+    mockSettings.maxConcurrentGroups = 1;
+    mockSettings.autoUpdateThreshold = 2;
+    mockSettings.updateBatchSize = 1;
+    mockCurrentJsonTableData = {
+      mate: { type: 'acu' },
+      sheet_0: { name: '测试表A', updateConfig: {}, content: [['row_id', '值A'], ['1', '不应继承A']] },
+      sheet_1: { name: '测试表B', updateConfig: {}, content: [['row_id', '值B'], ['1', '当前B']] },
+    };
+    mockCallCustomOpenAI.mockResolvedValue('<tableEdit>sheet_0</tableEdit>');
+    mockPersistTablesToChatMessage.mockImplementation(async (options: any) => ({ saved: true, messageIndex: options.targetMessageIndex }));
+
+    const result = await orchestrateManualUpdate_ACU(['sheet_0'], vi.fn().mockResolvedValue({ success: true }), mockRefreshData, { clearBeforeUpdate: true });
+
+    expect(result.success).toBe(true);
+    expect(mockEnsureManualRefillInitialBaseline).toHaveBeenCalledWith({
+      isolationKey: '',
+      targetMessageIndex: 4,
+      data: expect.objectContaining({
+        sheet_0: expect.objectContaining({ content: [['row_id', '值A']] }),
+      }),
+      save: true,
+    });
+    const progressCalls = mockPersistTablesToChatMessage.mock.calls.map(call => call[0]).filter(call => call.manualRefillProgress?.kind === 'manual_refill');
+    expect(progressCalls.length).toBeGreaterThan(0);
+    expect(progressCalls[0].tableData.sheet_0.content).toEqual([['row_id', '值A'], ['2', '来自A']]);
+    expect(progressCalls[0].operations[0].data.sheet_0.content).toEqual([['row_id', '值A'], ['2', '来自A']]);
+  });
+
   it('手动重填 initial baseline 前移失败时中止，不进入后续批处理', async () => {
     const { getChatArray_ACU } = await import('../../../src/service/chat/chat-service');
     const { parseTableTemplateJson_ACU } = await import('../../../src/shared/utils');
