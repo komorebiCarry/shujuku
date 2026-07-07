@@ -1220,7 +1220,7 @@ export async function processGroupedRuntimeChunk_ACU(
         checkpointBaseData?: Record<string, any> | null;
         manualRefillProgress?: ManualRefillProgressV2_ACU;
     } = {}
-): Promise<{ success: boolean; failedGroups: string[]; error?: string; tableData?: Record<string, any>; checkpointData?: Record<string, any> }> {
+): Promise<{ success: boolean; failedGroups: string[]; error?: string; tableData?: Record<string, any>; checkpointData?: Record<string, any>; manualRefillProgress?: ManualRefillProgressV2_ACU }> {
     if (!Array.isArray(groups) || groups.length === 0) {
         return { success: true, failedGroups: [] };
     }
@@ -1287,6 +1287,7 @@ export async function processGroupedRuntimeChunk_ACU(
         ? JSON.parse(JSON.stringify(options.checkpointBaseData))
         : (deferredWorkingData ? JSON.parse(JSON.stringify(deferredWorkingData)) : null);
     const useDeferredSqliteRuntime = options.deferPersist === true && isSqliteMode();
+    let latestManualRefillProgress: ManualRefillProgressV2_ACU | undefined = options.manualRefillProgress;
     if (useDeferredSqliteRuntime) {
         const initResult = await resetSqliteRuntimeFromSnapshot_ACU(deferredWorkingData, 'manual_refill_sql_runtime_init');
         if (!initResult.success) {
@@ -1453,7 +1454,7 @@ export async function processGroupedRuntimeChunk_ACU(
                     forceSnapshotApply: options.forceSnapshotApply === true,
                 });
             if (applyResult.success) {
-                if (options.deferPersist && applyResult.tableData) {
+                if (options.deferPersist && options.manualRefillProgress && applyResult.tableData) {
                     deferredWorkingData = JSON.parse(JSON.stringify(applyResult.tableData));
                     deferredCheckpointData = deferredCheckpointData || JSON.parse(JSON.stringify(deferredWorkingData));
                     const checkpointSheetKeys = bucketSheetKeys.filter(sheetKey => Boolean((deferredWorkingData as any)?.[sheetKey]));
@@ -1463,9 +1464,10 @@ export async function processGroupedRuntimeChunk_ACU(
                     _set_currentJsonTableData_ACU(deferredCheckpointData);
                     const checkpointTargetIndex = Number.isInteger(options.checkpointTargetIndex) ? options.checkpointTargetIndex as number : bucket.saveTargetIndex;
                     const revisionWriteSet = checkpointSheetKeys.map(sheetKey => ({ kind: 'sheet' as const, sheetKey }));
+                    const progressBase = latestManualRefillProgress || options.manualRefillProgress;
                     const maxPlannedMessageIndex = Math.max(...jobs.map(job => job.saveTargetIndex));
                     const completedSheetMessageIndexByKey = {
-                        ...(options.manualRefillProgress?.completedSheetMessageIndexByKey || {}),
+                        ...(progressBase.completedSheetMessageIndexByKey || {}),
                     };
                     for (const sheetKey of checkpointSheetKeys) {
                         completedSheetMessageIndexByKey[sheetKey] = Math.max(
@@ -1473,19 +1475,25 @@ export async function processGroupedRuntimeChunk_ACU(
                             maxPlannedMessageIndex,
                         );
                     }
-                    const selectedSheetKeys = options.manualRefillProgress?.selectedSheetKeys || [];
+                    const selectedSheetKeys = progressBase.selectedSheetKeys || [];
                     const allSelectedSheetsComplete = selectedSheetKeys.length > 0
                         && selectedSheetKeys.every(sheetKey => (Number(completedSheetMessageIndexByKey[sheetKey]) || -1) >= checkpointTargetIndex);
                     const progressStatus: ManualRefillProgressV2_ACU['status'] = allSelectedSheetsComplete ? 'complete' : 'in_progress';
-                    const progress: ManualRefillProgressV2_ACU | undefined = options.manualRefillProgress
+                    const progress: ManualRefillProgressV2_ACU | undefined = progressBase
                         ? {
-                            ...options.manualRefillProgress,
+                            ...progressBase,
                             status: progressStatus,
-                            completedUntilMessageIndex: Math.max(options.manualRefillProgress.completedUntilMessageIndex, maxPlannedMessageIndex),
+                            completedUntilMessageIndex: Math.max(progressBase.completedUntilMessageIndex, maxPlannedMessageIndex),
                             completedSheetMessageIndexByKey,
                             updatedAt: Date.now(),
                         }
                         : undefined;
+                    latestManualRefillProgress = progress;
+                    const progressRecordOperations: TableMutationOperationV2_ACU[] = [{
+                        kind: 'data_replace',
+                        data: deferredCheckpointData as any,
+                        reason: 'checkpoint_fallback',
+                    }];
                     const checkpointCommit = await runTableUpdateCommit_ACU<{ modifiedKeys: string[] }>({
                         source: 'group_fill',
                         reason: 'manual_refill_progress_record',
@@ -1498,6 +1506,7 @@ export async function processGroupedRuntimeChunk_ACU(
                         updateGroupKeys: checkpointSheetKeys,
                         trackingSheetKeys: checkpointSheetKeys,
                         trackAsUpdate: true,
+                        operations: progressRecordOperations,
                     }, () => ({
                         success: true,
                         value: { modifiedKeys: checkpointSheetKeys },
@@ -1509,6 +1518,7 @@ export async function processGroupedRuntimeChunk_ACU(
                             trackingSheetKeys: checkpointSheetKeys,
                             trackAsUpdate: true,
                             manualRefillProgress: progress,
+                            operations: progressRecordOperations,
                             revisionWriteSet,
                         },
                     }));
@@ -1558,8 +1568,8 @@ export async function processGroupedRuntimeChunk_ACU(
     }
 
     return failedGroups.size > 0
-        ? { success: false, failedGroups: [...failedGroups], error: firstError || '统一提交失败。', tableData: deferredWorkingData || undefined, checkpointData: deferredCheckpointData || undefined }
-        : { success: true, failedGroups: [], tableData: deferredWorkingData || undefined, checkpointData: deferredCheckpointData || undefined };
+        ? { success: false, failedGroups: [...failedGroups], error: firstError || '统一提交失败。', tableData: deferredWorkingData || undefined, checkpointData: deferredCheckpointData || undefined, manualRefillProgress: latestManualRefillProgress }
+        : { success: true, failedGroups: [], tableData: deferredWorkingData || undefined, checkpointData: deferredCheckpointData || undefined, manualRefillProgress: latestManualRefillProgress };
 }
 
 /**
@@ -2385,6 +2395,9 @@ export async function orchestrateManualUpdate_ACU(
             }
             if (manualRefillEnabled && chunkResult.checkpointData) {
                 manualRefillCheckpointData = JSON.parse(JSON.stringify(chunkResult.checkpointData));
+            }
+            if (manualRefillEnabled && chunkResult.manualRefillProgress) {
+                manualRefillProgress = JSON.parse(JSON.stringify(chunkResult.manualRefillProgress));
             }
             if (!chunkResult.success) {
                 chunkResult.failedGroups.forEach(key => {

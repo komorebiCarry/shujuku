@@ -1318,11 +1318,30 @@ describe('orchestrateManualUpdate_ACU', () => {
     const initBaseline = mockPersistTablesToChatMessage.mock.calls[0][0];
     expect(initBaseline.forceCheckpoint).toBe(true);
     expect(initBaseline.manualRefillProgress).toBeUndefined();
-    const firstCheckpointData = mockPersistTablesToChatMessage.mock.calls[1][0].tableData;
+    const firstProgressRecord = mockPersistTablesToChatMessage.mock.calls[1][0];
+    const firstCheckpointData = firstProgressRecord.tableData;
     expect(firstCheckpointData.sheet_0.content).toEqual([['row_id', '值A'], ['2', '来自A']]);
     expect(firstCheckpointData.sheet_1.content).toEqual([['row_id', '值B']]);
-    const finalCheckpointData = mockPersistTablesToChatMessage.mock.calls[2][0].tableData;
+    expect(firstProgressRecord.manualRefillProgress.status).toBe('in_progress');
+    expect(firstProgressRecord.operations).toHaveLength(1);
+    expect(firstProgressRecord.operations[0]).toMatchObject({
+      kind: 'data_replace',
+      reason: 'checkpoint_fallback',
+    });
+    expect(firstProgressRecord.operations[0].data.sheet_0.content).toEqual([['row_id', '值A'], ['2', '来自A']]);
+    expect(firstProgressRecord.operations[0].data.sheet_1.content).toEqual([['row_id', '值B']]);
+
+    const finalProgressRecord = mockPersistTablesToChatMessage.mock.calls[2][0];
+    const finalCheckpointData = finalProgressRecord.tableData;
     expect(finalCheckpointData.sheet_1.content).toEqual([['row_id', '值B'], ['2', '来自B']]);
+    expect(finalProgressRecord.manualRefillProgress.status).toBe('complete');
+    expect(finalProgressRecord.operations).toHaveLength(1);
+    expect(finalProgressRecord.operations[0]).toMatchObject({
+      kind: 'data_replace',
+      reason: 'checkpoint_fallback',
+    });
+    expect(finalProgressRecord.operations[0].data.sheet_0.content).toEqual([['row_id', '值A'], ['2', '来自A']]);
+    expect(finalProgressRecord.operations[0].data.sheet_1.content).toEqual([['row_id', '值B'], ['2', '来自B']]);
   });
 
   it('手动重填多分组仅完成部分表时 checkpoint 进度保持 in_progress', async () => {
@@ -2852,6 +2871,64 @@ describe('processGroupedRuntimeChunk_ACU', () => {
     expect(promptBaseRows).toHaveLength(2);
     expect(promptBaseRows[0]).toEqual([['row_id', '值'], ['1', 'base-a']]);
     expect(promptBaseRows[1]).toEqual([['row_id', '值'], ['1', 'base-a'], ['AM0001', '第一层纪要']]);
+  });
+
+  it('手动重填同一 chunk 多 bucket 会继承前序 progress 并在最终完成', async () => {
+    const { getChatArray_ACU } = await import('../../../src/service/chat/chat-service');
+    const { parseTableTemplateJson_ACU } = await import('../../../src/shared/utils');
+    vi.mocked(getChatArray_ACU).mockReturnValue([
+      { is_user: true, mes: 'u0' },
+      { is_user: false, mes: 'a1' },
+      { is_user: true, mes: 'u2' },
+      { is_user: false, mes: 'a3' },
+    ] as any);
+    vi.mocked(parseTableTemplateJson_ACU).mockReturnValue({
+      mate: { type: 'acu' },
+      sheet_0: { name: '表A', content: [['row_id', '值'], ['1', 'base-a']] },
+      sheet_1: { name: '表B', content: [['row_id', '值'], ['1', 'base-b']] },
+    } as any);
+    const initialData = {
+      sheet_0: { name: '表A', content: [['row_id', '值']] },
+      sheet_1: { name: '表B', content: [['row_id', '值']] },
+    };
+    mockCallCustomOpenAI
+      .mockResolvedValueOnce('<tableEdit>sheet_0 first</tableEdit>')
+      .mockResolvedValueOnce('<tableEdit>sheet_1 final</tableEdit>')
+      .mockResolvedValueOnce('<tableEdit>sheet_0 final</tableEdit>');
+
+    const result = await processGroupedRuntimeChunk_ACU([
+      { key: 'group_a', groupId: 0, indices: [1, 3], batchSize: 1, sheetKeys: ['sheet_0'], requestOptions: null },
+      { key: 'group_b', groupId: 1, indices: [3], batchSize: 1, sheetKeys: ['sheet_1'], requestOptions: null },
+    ], 'manual_independent', {
+      deferPersist: true,
+      forceSnapshotApply: true,
+      initialData,
+      checkpointBaseData: initialData,
+      checkpointTargetIndex: 3,
+      manualRefillProgress: {
+        kind: 'manual_refill',
+        status: 'in_progress',
+        selectedSheetKeys: ['sheet_0', 'sheet_1'],
+        contextMessageIndices: [1, 3],
+        originalStartMessageIndex: 1,
+        targetMessageIndex: 3,
+        batchSize: 1,
+        completedUntilMessageIndex: 0,
+        updatedAt: 1,
+      },
+    });
+
+    expect(result.success).toBe(true);
+    expect(mockPersistTablesToChatMessage).toHaveBeenCalledTimes(3);
+    const progressRecords = mockPersistTablesToChatMessage.mock.calls.map(call => call[0].manualRefillProgress);
+    expect(progressRecords[0].completedSheetMessageIndexByKey).toEqual({ sheet_0: 1 });
+    expect(progressRecords[0].status).toBe('in_progress');
+    expect(progressRecords[1].completedSheetMessageIndexByKey).toEqual({ sheet_0: 1, sheet_1: 3 });
+    expect(progressRecords[1].status).toBe('in_progress');
+    expect(progressRecords[2].completedSheetMessageIndexByKey).toEqual({ sheet_0: 3, sheet_1: 3 });
+    expect(progressRecords[2].status).toBe('complete');
+    expect(result.manualRefillProgress?.completedSheetMessageIndexByKey).toEqual({ sheet_0: 3, sheet_1: 3 });
+    expect(result.manualRefillProgress?.status).toBe('complete');
   });
 
   it('SQL 模式下不再早退，而是完成 grouped 统一提交', async () => {
