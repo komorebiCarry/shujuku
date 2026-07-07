@@ -11,6 +11,7 @@ import { coreApisAreReady_ACU, currentJsonTableData_ACU, getCurrentIsolationKey_
 import { checkAutoMergeTrigger_ACU, prepareAutoMergeBatches_ACU, executeAutoMergeBatch_ACU, finalizeAutoMerge_ACU } from '../summary/merge-logic';
 import { ensureStableRowIdsForSheetContent_ACU, getChatSheetGuideDataForIsolationKey_ACU, getEffectiveSeedRowsForSheet_ACU, shouldUseInitialSeedRows_ACU } from '../template/chat-scope';
 import { loadAllChatMessages_ACU, updateReadableLorebookEntry_ACU } from '../worldbook/pipeline';
+import { purgeSheetKeysFromChatHistoryHard_ACU } from '../worldbook/injection-engine-state';
 import { enqueueSummaryVectorIndexFlush_ACU } from '../vector/summary-vector-index-flush-queue';
 import { getCurrentWorldbookConfig_ACU } from '../settings/settings-readers';
 
@@ -2281,6 +2282,14 @@ export async function orchestrateManualUpdate_ACU(
         let shouldWriteInitialManualRefillBaseline = false;
         let manualRefillProgress: ManualRefillProgressV2_ACU | undefined;
         if (manualRefillEnabled) {
+            try {
+                await purgeSheetKeysFromChatHistoryHard_ACU(targetKeys);
+                await loadAllChatMessages_ACU();
+            } catch (error: any) {
+                logError_ACU('[Manual Refill] 启动前清理选中表历史数据失败:', error);
+                return { success: false, error: error?.message || '手动重填启动前清理选中表历史数据失败。' };
+            }
+
             const preManualRefillLatestState = getManualRefillLatestState_ACU(null, targetKeys);
             const latestBaseResult = await buildBatchMergeBase_ACU(0);
             if (!latestBaseResult.data) {

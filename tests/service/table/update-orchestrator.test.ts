@@ -82,7 +82,7 @@ vi.mock('../../../src/service/ai/prompt-builder', () => ({
   prepareAIInput_ACU: (...args: any[]) => mockPrepareAIInput(...args),
 }));
 
-const { mockChatArrayForSeedStage, mockGetChatArray_ACU, mockEnsureManualRefillInitialBaseline, mockEnsureBoundaryCheckpoint, mockShouldRotateBoundaryCheckpoint } = vi.hoisted(() => {
+const { mockChatArrayForSeedStage, mockGetChatArray_ACU, mockEnsureManualRefillInitialBaseline, mockEnsureBoundaryCheckpoint, mockShouldRotateBoundaryCheckpoint, mockPurgeSheetKeysFromChatHistoryHard } = vi.hoisted(() => {
   const chatArray: any[] = [];
   return {
     mockChatArrayForSeedStage: chatArray,
@@ -90,6 +90,7 @@ const { mockChatArrayForSeedStage, mockGetChatArray_ACU, mockEnsureManualRefillI
     mockEnsureManualRefillInitialBaseline: vi.fn().mockResolvedValue({ success: true, changed: false, skipped: true }),
     mockEnsureBoundaryCheckpoint: vi.fn().mockResolvedValue({ success: true, changed: false, skipped: true }),
     mockShouldRotateBoundaryCheckpoint: vi.fn(() => false),
+    mockPurgeSheetKeysFromChatHistoryHard: vi.fn().mockResolvedValue({ changed: true, changedCount: 1 }),
   };
 });
 vi.mock('../../../src/service/chat/chat-service', () => ({
@@ -105,6 +106,10 @@ vi.mock('../../../src/service/summary/merge-logic', () => ({
   prepareAutoMergeBatches_ACU: vi.fn(),
   executeAutoMergeBatch_ACU: vi.fn(),
   finalizeAutoMerge_ACU: vi.fn(),
+}));
+
+vi.mock('../../../src/service/worldbook/injection-engine-state', () => ({
+  purgeSheetKeysFromChatHistoryHard_ACU: (...args: any[]) => mockPurgeSheetKeysFromChatHistoryHard(...args),
 }));
 
 vi.mock('../../../src/service/template/chat-scope', () => ({
@@ -223,6 +228,7 @@ beforeEach(() => {
   mockGetChatArray_ACU.mockImplementation(() => mockChatArrayForSeedStage);
   mockEnsureManualRefillInitialBaseline.mockResolvedValue({ success: true, changed: false, skipped: true });
   mockEnsureBoundaryCheckpoint.mockResolvedValue({ success: true, changed: false, skipped: true });
+  mockPurgeSheetKeysFromChatHistoryHard.mockResolvedValue({ changed: true, changedCount: 1 });
 });
 
 // ═══════════════════════════════════════════════════════════════
@@ -1128,7 +1134,7 @@ describe('orchestrateManualUpdate_ACU', () => {
     expect(mockPersistTablesToChatMessage).toHaveBeenCalledTimes(1);
   });
 
-  it('事务式手动重填不会预清空聊天记录中的旧表格数据', async () => {
+  it('事务式手动重填启动前按选中表精确清理历史数据且不按楼层预清空', async () => {
     const { getChatArray_ACU, clearTableDataAtFloors_ACU } = await import('../../../src/service/chat/chat-service');
     vi.mocked(getChatArray_ACU).mockReturnValue([
       { is_user: true },
@@ -1144,7 +1150,29 @@ describe('orchestrateManualUpdate_ACU', () => {
 
     const result = await orchestrateManualUpdate_ACU(['sheet_0'], vi.fn().mockResolvedValue({ success: true }), mockRefreshData, { clearBeforeUpdate: true });
     expect(result.success).toBe(true);
+    expect(mockPurgeSheetKeysFromChatHistoryHard).toHaveBeenCalledWith(['sheet_0']);
     expect(clearTableDataAtFloors_ACU).not.toHaveBeenCalled();
+  });
+
+  it('事务式手动重填启动前清理选中表失败时中止，避免继续使用污染基底', async () => {
+    const { getChatArray_ACU } = await import('../../../src/service/chat/chat-service');
+    vi.mocked(getChatArray_ACU).mockReturnValue([
+      { is_user: true },
+      { is_user: false, mes: 'AI回复1' },
+      { is_user: true },
+      { is_user: false, mes: 'AI回复2' },
+    ]);
+    mockCurrentJsonTableData = {
+      sheet_0: { name: '测试表A', updateConfig: {}, content: [['row_id', '值A'], ['1', '旧A']] },
+      sheet_1: { name: '测试表B', updateConfig: {}, content: [['row_id', '值B'], ['1', '旧B']] },
+    };
+    mockPurgeSheetKeysFromChatHistoryHard.mockRejectedValueOnce(new Error('purge failed'));
+
+    const result = await orchestrateManualUpdate_ACU(['sheet_0'], vi.fn().mockResolvedValue({ success: true }), mockRefreshData, { clearBeforeUpdate: true });
+
+    expect(result.success).toBe(false);
+    expect(result.error).toContain('purge failed');
+    expect(mockPersistTablesToChatMessage).not.toHaveBeenCalled();
   });
 
   it('无 V2 full checkpoint 时手动重填先在重填起点写入 init baseline，后续进度仍写入目标层', async () => {
