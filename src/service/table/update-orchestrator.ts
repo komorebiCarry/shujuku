@@ -15,6 +15,7 @@ import { enqueueSummaryVectorIndexFlush_ACU } from '../vector/summary-vector-ind
 import { getCurrentWorldbookConfig_ACU } from '../settings/settings-readers';
 
 import { isSummaryOrOutlineTable_ACU, logDebug_ACU, logError_ACU, logWarn_ACU, parseTableTemplateJson_ACU } from '../../shared/utils';
+import { safeJsonParse_ACU } from '../../shared/json-helpers';
 
 import { applyTableDelta_ACU, isDeltaTagData_ACU } from './table-delta';
 /**
@@ -626,28 +627,88 @@ function buildSchemaOnlyRefillBase_ACU(): Record<string, any> {
     return parseTableTemplateJson_ACU({ stripSeedRows: true }) || {};
 }
 
+function readIsolatedDataContainerForManualRefill_ACU(msg: any): Record<string, any> | null {
+    const raw = msg?.TavernDB_ACU_IsolatedData;
+    if (!raw) return null;
+    if (typeof raw === 'string') {
+        const parsed = safeJsonParse_ACU(raw, null);
+        return parsed && typeof parsed === 'object' && !Array.isArray(parsed)
+            ? parsed as Record<string, any>
+            : null;
+    }
+    return typeof raw === 'object' && !Array.isArray(raw)
+        ? raw as Record<string, any>
+        : null;
+}
+
+function hasV2FrameAtOrBeforeMessageIndex_ACU(
+    chatHistory: any[],
+    isolationKey: string,
+    maxMessageIndex: number,
+): boolean {
+    if (!Array.isArray(chatHistory) || maxMessageIndex < 0) return false;
+    const upper = Math.min(maxMessageIndex, chatHistory.length - 1);
+    for (let i = 0; i <= upper; i += 1) {
+        const msg = chatHistory[i];
+        if (!msg || msg.is_user) continue;
+        const tagData = readIsolatedTagData_ACU(msg, isolationKey) as any;
+        if (isV2TagData_ACU(tagData)) return true;
+    }
+    return false;
+}
+
+function hasAnyV2FrameAtOrBeforeMessageIndex_ACU(
+    chatHistory: any[],
+    maxMessageIndex: number,
+): boolean {
+    if (!Array.isArray(chatHistory) || maxMessageIndex < 0) return false;
+    const upper = Math.min(maxMessageIndex, chatHistory.length - 1);
+    for (let i = 0; i <= upper; i += 1) {
+        const msg = chatHistory[i];
+        if (!msg || msg.is_user) continue;
+        const isolatedData = readIsolatedDataContainerForManualRefill_ACU(msg);
+        if (!isolatedData) continue;
+        if (Object.values(isolatedData).some(tagData => isV2TagData_ACU(tagData))) return true;
+    }
+    return false;
+}
+
+type ManualRefillInitialDataResult_ACU =
+    | { success: true; data: Record<string, any> }
+    | { success: false; error: string };
+
 async function buildManualRefillInitialData_ACU(
     chatHistory: any[],
-    firstMessageIndexOfRange: number,
+    refillTargetMessageIndex: number,
     selectedSheetKeys: string[],
     latestState: Record<string, any>,
-): Promise<Record<string, any>> {
+): Promise<ManualRefillInitialDataResult_ACU> {
     const finalBase = JSON.parse(JSON.stringify(latestState || {}));
     const zeroBase = buildSchemaOnlyRefillBase_ACU();
     let refillBase: Record<string, any> | null = null;
+    const isolationKey = getCurrentIsolationKey_ACU();
+    const replayMaxMessageIndex = refillTargetMessageIndex - 1;
+    const hasCurrentIsolationV2BeforeTarget = hasV2FrameAtOrBeforeMessageIndex_ACU(chatHistory, isolationKey, replayMaxMessageIndex);
+    const hasAnyV2FrameBeforeTarget = hasAnyV2FrameAtOrBeforeMessageIndex_ACU(chatHistory, replayMaxMessageIndex);
 
-    if (firstMessageIndexOfRange > 0) {
+    if (refillTargetMessageIndex > 0) {
         try {
-            refillBase = await loadTableStateFromFramesV2_ACU(chatHistory, getCurrentIsolationKey_ACU(), {
-                maxMessageIndex: firstMessageIndexOfRange - 1,
+            refillBase = await loadTableStateFromFramesV2_ACU(chatHistory, isolationKey, {
+                maxMessageIndex: replayMaxMessageIndex,
             }) as Record<string, any> | null;
         } catch (error) {
-            logWarn_ACU('[Manual Refill] 重放重填起点之前的数据失败，将从零基底重建选中表。', error);
-            refillBase = null;
+            logWarn_ACU('[Manual Refill] 重放填写层前一层的数据失败。', error);
+            return { success: false, error: '手动重填失败：无法从 V2 checkpoint 回放到填写层前一层，已中止以避免使用空表基底。' };
         }
     }
 
     if (!refillBase) {
+        if (hasCurrentIsolationV2BeforeTarget) {
+            return { success: false, error: '手动重填失败：填写层前存在 V2 数据，但找不到可用 full checkpoint，已中止以避免使用空表基底。' };
+        }
+        if (hasAnyV2FrameBeforeTarget) {
+            return { success: false, error: '手动重填失败：当前隔离标签下找不到可用 V2 checkpoint，可能是 isolationKey 不匹配，已中止以避免使用空表基底。' };
+        }
         logWarn_ACU('[Manual Refill] 重填范围前找不到可用 checkpoint，选中表将从零基底开始重填。');
         refillBase = zeroBase;
     }
@@ -671,7 +732,7 @@ async function buildManualRefillInitialData_ACU(
         }
     }
 
-    return finalBase;
+    return { success: true, data: finalBase };
 }
 
 /**
@@ -2291,12 +2352,16 @@ export async function orchestrateManualUpdate_ACU(
                 manualRefillInitialData = JSON.parse(JSON.stringify(manualRefillLatestState));
                 logDebug_ACU(`[Manual Refill] 检测到未完成重填进度，将从消息索引 ${matchedProgress.completedUntilMessageIndex + 1} 继续。`);
             } else {
-                manualRefillInitialData = await buildManualRefillInitialData_ACU(
+                const initialDataResult = await buildManualRefillInitialData_ACU(
                     getChatArray_ACU() || [],
-                    contextScopeIndices[0],
+                    manualRefillTargetIndex,
                     targetKeys,
                     manualRefillLatestState,
                 );
+                if (initialDataResult.success === false) {
+                    return { success: false, error: initialDataResult.error };
+                }
+                manualRefillInitialData = initialDataResult.data;
                 manualRefillCheckpointData = JSON.parse(JSON.stringify(manualRefillInitialData));
             }
             if (!matchedProgress) {
