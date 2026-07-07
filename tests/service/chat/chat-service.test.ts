@@ -86,6 +86,7 @@ import {
   purgeOldLayerData_ACU,
   ensureV2BoundaryCheckpointForRetainedBuffer_ACU,
   ensureManualRefillInitialBaseline_ACU,
+  clearManualRefillIncrementalDataInRange_ACU,
   clearTableDataAtFloors_ACU,
   deleteLocalDataInChatCore_ACU,
   overrideLatestLayerWithTemplateCore_ACU,
@@ -798,6 +799,114 @@ describe('clearTableDataAtFloors_ACU', () => {
     expect(targetTag.storageFrame.logEntries[0].operations[0].data).toEqual({ sheet_1: { name: '保留表' } });
     expect(targetTag.storageFrame.logEntries[0].filledSheetKeys).toEqual(['sheet_1']);
     expect(mockSaveChatToHost).toHaveBeenCalledTimes(1);
+  });
+});
+
+
+describe('clearManualRefillIncrementalDataInRange_ACU', () => {
+  it('只清理目标楼层 selected sheet 的 V2 增量数据并保留 checkpoint.data', async () => {
+    const chat = [
+      {
+        is_user: false,
+        mes: 'AI范围外基底',
+        TavernDB_ACU_IsolatedData: {
+          '': {
+            _acu_storage_version: 2,
+            storageFrame: {
+              version: 2,
+              checkpoint: {
+                kind: 'full',
+                reason: 'compaction',
+                data: {
+                  sheet_0: { name: '范围外表', content: [['row_id'], ['base']] },
+                },
+              },
+              logEntries: [],
+            },
+          },
+        },
+      },
+      { is_user: true, mes: '用户消息跳过' },
+      {
+        is_user: false,
+        mes: 'AI目标层',
+        TavernDB_ACU_IsolatedData: {
+          '': {
+            _acu_storage_version: 2,
+            independentData: {
+              sheet_0: { name: '旧目标表' },
+              sheet_1: { name: '保留表' },
+            },
+            modifiedKeys: ['sheet_0', 'sheet_1'],
+            updateGroupKeys: ['sheet_0', 'sheet_1'],
+            storageFrame: {
+              version: 2,
+              checkpoint: {
+                kind: 'full',
+                reason: 'manual',
+                data: {
+                  sheet_0: { name: '旧目标表', content: [['row_id'], ['old']] },
+                  sheet_1: { name: '保留表', content: [['row_id'], ['keep']] },
+                },
+                scheduleSummary: {
+                  sheet_0: { lastFilledAiFloor: 1 },
+                  sheet_1: { lastFilledAiFloor: 1 },
+                },
+              },
+              manualRefillProgress: {
+                kind: 'manual_refill',
+                status: 'in_progress',
+                selectedSheetKeys: ['sheet_0', 'sheet_1'],
+                completedSheetMessageIndexByKey: { sheet_0: 2, sheet_1: 3 },
+              },
+              logEntries: [
+                {
+                  seq: 1,
+                  operations: [
+                    { kind: 'data_replace', data: { sheet_0: { name: '旧目标表' }, sheet_1: { name: '保留表' } } },
+                  ],
+                  filledSheetKeys: ['sheet_0', 'sheet_1'],
+                  changedSheetKeys: ['sheet_0', 'sheet_1'],
+                  groupKeys: ['sheet_0', 'sheet_1'],
+                  writeSet: [{ kind: 'sheet', sheetKey: 'sheet_0' }, { kind: 'sheet', sheetKey: 'sheet_1' }],
+                },
+              ],
+            },
+          },
+        },
+      },
+    ];
+    mockGetChatArray.mockReturnValue(chat);
+
+    const count = await clearManualRefillIncrementalDataInRange_ACU([1, 2], ['sheet_0']);
+
+    expect(count).toBe(1);
+    expect(mockRunTableWriteTransaction).toHaveBeenCalledWith(expect.objectContaining({
+      source: 'system_cleanup',
+      reason: 'clearIncrementalOnly',
+      maintenanceMode: 'exclusive',
+      writeSet: [{ kind: 'sheet', sheetKey: 'sheet_0' }],
+    }), expect.any(Function));
+    expect(chat[0].TavernDB_ACU_IsolatedData[''].storageFrame.checkpoint.data.sheet_0).toBeDefined();
+    expect(chat[1]).toEqual({ is_user: true, mes: '用户消息跳过' });
+    const targetTag = chat[2].TavernDB_ACU_IsolatedData[''];
+    expect(targetTag.independentData.sheet_0).toEqual({ name: '旧目标表' });
+    expect(targetTag.modifiedKeys).toEqual(['sheet_0', 'sheet_1']);
+    expect(targetTag.updateGroupKeys).toEqual(['sheet_0', 'sheet_1']);
+    expect(targetTag.storageFrame.checkpoint.data.sheet_0.content[1][0]).toBe('old');
+    expect(targetTag.storageFrame.checkpoint.data.sheet_1.content[1][0]).toBe('keep');
+    expect(targetTag.storageFrame.checkpoint.scheduleSummary.sheet_0).toEqual({ lastFilledAiFloor: 1 });
+    expect(targetTag.storageFrame.manualRefillProgress.selectedSheetKeys).toEqual(['sheet_1']);
+    expect(targetTag.storageFrame.manualRefillProgress.completedSheetMessageIndexByKey).toEqual({ sheet_1: 3 });
+    expect(targetTag.storageFrame.logEntries[0].operations[0].data).toEqual({ sheet_1: { name: '保留表' } });
+    expect(targetTag.storageFrame.logEntries[0].filledSheetKeys).toEqual(['sheet_1']);
+    expect(targetTag.storageFrame.logEntries[0].writeSet).toEqual([{ kind: 'sheet', sheetKey: 'sheet_1' }]);
+    expect(mockSaveChatToHost).toHaveBeenCalledTimes(1);
+  });
+
+  it('未指定目标表时拒绝执行，避免把手动重填增量清理退化成全量清理', async () => {
+    await expect(clearManualRefillIncrementalDataInRange_ACU([1], null)).rejects.toThrow('手动重填增量清理必须指定目标表');
+    expect(mockRunTableWriteTransaction).not.toHaveBeenCalled();
   });
 });
 

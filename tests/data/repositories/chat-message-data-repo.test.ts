@@ -23,6 +23,7 @@ import {
   writeLegacyCompatData_ACU,
   writeLegacyStandardAndSummary_ACU,
   writeMessageIdentity_ACU,
+  purgeManualRefillIncrementalSheetKeysFromMessage_ACU,
   purgeSheetKeysFromMessage_ACU,
   clearAllTableFields_ACU,
   hasAnyTableData_ACU,
@@ -610,6 +611,138 @@ describe('purgeSheetKeysFromMessage_ACU', () => {
     };
 
     expect(purgeSheetKeysFromMessage_ACU(msg, ['sheet_0'])).toBe(false);
+  });
+});
+
+
+describe('purgeManualRefillIncrementalSheetKeysFromMessage_ACU', () => {
+  it('只裁剪 V2 增量日志和重填进度，不动 checkpoint.data、scheduleSummary 与 independentData', () => {
+    const msg: any = {
+      TavernDB_ACU_IsolatedData: {
+        tag1: {
+          independentData: { sheet_0: { name: '独立旧表' }, sheet_1: { name: '独立保留表' } },
+          modifiedKeys: ['sheet_0', 'sheet_1'],
+          updateGroupKeys: ['sheet_0', 'sheet_1'],
+          storageFrame: {
+            version: 2,
+            checkpoint: {
+              kind: 'full',
+              createdAt: 1,
+              reason: 'manual',
+              data: {
+                sheet_0: { name: 'checkpoint旧表', content: [['row_id'], ['base']] },
+                sheet_1: { name: 'checkpoint保留表', content: [['row_id'], ['keep']] },
+              },
+              scheduleSummary: {
+                sheet_0: { lastFilledAiFloor: 1 },
+                sheet_1: { lastFilledAiFloor: 2 },
+              },
+              manualRefillProgress: {
+                kind: 'manual_refill',
+                status: 'in_progress',
+                selectedSheetKeys: ['sheet_0', 'sheet_1'],
+                completedSheetMessageIndexByKey: { sheet_0: 2, sheet_1: 3 },
+              },
+            },
+            manualRefillProgress: {
+              kind: 'manual_refill',
+              status: 'in_progress',
+              selectedSheetKeys: ['sheet_0', 'sheet_1'],
+              completedSheetMessageIndexByKey: { sheet_0: 4, sheet_1: 5 },
+            },
+            logEntries: [
+              {
+                seq: 1,
+                entryId: 'entry-1',
+                filledSheetKeys: ['sheet_0', 'sheet_1'],
+                changedSheetKeys: ['sheet_0', 'sheet_1'],
+                groupKeys: ['sheet_0', 'sheet_1'],
+                operations: [
+                  { kind: 'data_replace', data: { sheet_0: { name: '增量旧表' }, sheet_1: { name: '增量保留表' } }, reason: 'manual_crud' },
+                  { kind: 'row_upsert', sheetKey: 'sheet_0', rowId: 'r0', cells: ['r0'] },
+                  { kind: 'row_upsert', sheetKey: 'sheet_1', rowId: 'r1', cells: ['r1'] },
+                  { kind: 'table_edit_dsl', text: 'update sheet_0 but text is not structured' },
+                ],
+                patches: [
+                  { kind: 'row_delete', sheetKey: 'sheet_0', rowId: 'r0' },
+                  { kind: 'row_delete', sheetKey: 'sheet_1', rowId: 'r1' },
+                ],
+                writeSet: [
+                  { kind: 'sheet', sheetKey: 'sheet_0' },
+                  { kind: 'sheet', sheetKey: 'sheet_1' },
+                  { kind: 'all' },
+                ],
+              },
+            ],
+          },
+        },
+      },
+    };
+
+    expect(purgeManualRefillIncrementalSheetKeysFromMessage_ACU(msg, ['sheet_0'])).toBe(true);
+
+    const tagData = msg.TavernDB_ACU_IsolatedData.tag1;
+    const frame = tagData.storageFrame;
+    expect(tagData.independentData.sheet_0).toEqual({ name: '独立旧表' });
+    expect(tagData.modifiedKeys).toEqual(['sheet_0', 'sheet_1']);
+    expect(tagData.updateGroupKeys).toEqual(['sheet_0', 'sheet_1']);
+    expect(frame.checkpoint.data.sheet_0).toEqual({ name: 'checkpoint旧表', content: [['row_id'], ['base']] });
+    expect(frame.checkpoint.data.sheet_1).toEqual({ name: 'checkpoint保留表', content: [['row_id'], ['keep']] });
+    expect(frame.checkpoint.scheduleSummary.sheet_0).toEqual({ lastFilledAiFloor: 1 });
+    expect(frame.checkpoint.scheduleSummary.sheet_1).toEqual({ lastFilledAiFloor: 2 });
+    expect(frame.checkpoint.manualRefillProgress.selectedSheetKeys).toEqual(['sheet_1']);
+    expect(frame.checkpoint.manualRefillProgress.completedSheetMessageIndexByKey).toEqual({ sheet_1: 3 });
+    expect(frame.manualRefillProgress.selectedSheetKeys).toEqual(['sheet_1']);
+    expect(frame.manualRefillProgress.completedSheetMessageIndexByKey).toEqual({ sheet_1: 5 });
+    expect(frame.logEntries[0].filledSheetKeys).toEqual(['sheet_1']);
+    expect(frame.logEntries[0].changedSheetKeys).toEqual(['sheet_1']);
+    expect(frame.logEntries[0].groupKeys).toEqual(['sheet_1']);
+    expect(frame.logEntries[0].operations).toEqual([
+      { kind: 'data_replace', data: { sheet_1: { name: '增量保留表' } }, reason: 'manual_crud' },
+      { kind: 'row_upsert', sheetKey: 'sheet_1', rowId: 'r1', cells: ['r1'] },
+      { kind: 'table_edit_dsl', text: 'update sheet_0 but text is not structured' },
+    ]);
+    expect(frame.logEntries[0].patches).toEqual([{ kind: 'row_delete', sheetKey: 'sheet_1', rowId: 'r1' }]);
+    expect(frame.logEntries[0].writeSet).toEqual([{ kind: 'sheet', sheetKey: 'sheet_1' }, { kind: 'all' }]);
+  });
+
+  it('IsolatedData 为 JSON 字符串时写回对象且保留 checkpoint.data', () => {
+    const msg: any = {
+      TavernDB_ACU_IsolatedData: JSON.stringify({
+        tag1: {
+          storageFrame: {
+            version: 2,
+            checkpoint: { kind: 'full', data: { sheet_0: { name: 'checkpoint旧表' }, sheet_1: { name: 'checkpoint保留表' } } },
+            logEntries: [{ operations: [{ kind: 'sheet_replace', sheetKey: 'sheet_0', sheet: { name: '旧表' }, reason: 'manual_crud' }] }],
+          },
+        },
+      }),
+    };
+
+    expect(purgeManualRefillIncrementalSheetKeysFromMessage_ACU(msg, ['sheet_0'])).toBe(true);
+    expect(typeof msg.TavernDB_ACU_IsolatedData).toBe('object');
+    expect(msg.TavernDB_ACU_IsolatedData.tag1.storageFrame.checkpoint.data).toEqual({
+      sheet_0: { name: 'checkpoint旧表' },
+      sheet_1: { name: 'checkpoint保留表' },
+    });
+    expect(msg.TavernDB_ACU_IsolatedData.tag1.storageFrame.logEntries[0].operations).toEqual([]);
+  });
+
+  it('目标 sheet 不存在于 V2 增量日志时不触发变更', () => {
+    const msg: any = {
+      TavernDB_ACU_IsolatedData: {
+        tag1: {
+          storageFrame: {
+            version: 2,
+            checkpoint: { kind: 'full', data: { sheet_0: { name: 'checkpoint旧表' } } },
+            logEntries: [{ operations: [{ kind: 'sql_batch', statements: ['select sheet_0'] }] }],
+          },
+        },
+      },
+    };
+
+    expect(purgeManualRefillIncrementalSheetKeysFromMessage_ACU(msg, ['sheet_0'])).toBe(false);
+    expect(msg.TavernDB_ACU_IsolatedData.tag1.storageFrame.checkpoint.data.sheet_0).toEqual({ name: 'checkpoint旧表' });
   });
 });
 

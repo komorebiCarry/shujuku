@@ -235,6 +235,66 @@ function purgeSheetKeysFromStorageFrameV2_ACU(frame: any, sheetKeys: Set<string>
     return changed;
 }
 
+function purgeManualRefillIncrementalSheetKeysFromStorageFrameV2_ACU(frame: any, sheetKeys: Set<string>): boolean {
+    if (!isObjectRecord_ACU(frame)) return false;
+    let changed = false;
+
+    const checkpoint = frame.checkpoint;
+    if (isObjectRecord_ACU(checkpoint)) {
+        if (purgeManualRefillProgressV2_ACU(checkpoint.manualRefillProgress, sheetKeys)) changed = true;
+    }
+
+    if (purgeManualRefillProgressV2_ACU(frame.manualRefillProgress, sheetKeys)) changed = true;
+
+    if (Array.isArray(frame.logEntries)) {
+        frame.logEntries.forEach((entry: any) => {
+            if (!isObjectRecord_ACU(entry)) return;
+            if (purgeEventSheetKeysV2_ACU(entry, sheetKeys)) changed = true;
+            if (purgeEventSheetKeysV2_ACU(entry.event, sheetKeys)) changed = true;
+            const operations = purgeOperationArrayV2_ACU(entry.operations, sheetKeys);
+            if (operations.changed) {
+                entry.operations = operations.value;
+                changed = true;
+            }
+            const patches = purgePatchArrayV2_ACU(entry.patches, sheetKeys);
+            if (patches.changed) {
+                entry.patches = patches.value;
+                changed = true;
+            }
+            const writeSet = purgeWriteSetV2_ACU(entry.writeSet, sheetKeys);
+            if (writeSet.changed) {
+                entry.writeSet = writeSet.writeSet;
+                changed = true;
+            }
+        });
+    }
+
+    return changed;
+}
+
+export function purgeManualRefillIncrementalSheetKeysFromMessage_ACU(msg: any, sheetKeys: string[]): boolean {
+    if (!msg || !Array.isArray(sheetKeys) || sheetKeys.length === 0) return false;
+
+    let msgChanged = false;
+    const sheetKeySet = new Set(sheetKeys);
+    const isolated = parseIsolatedDataField(msg);
+    if (!isolated) return false;
+
+    const nextIsolated = safeClone(isolated);
+    Object.keys(nextIsolated).forEach(tagKey => {
+        const tagData = nextIsolated[tagKey];
+        if (!tagData || typeof tagData !== 'object') return;
+        if (purgeManualRefillIncrementalSheetKeysFromStorageFrameV2_ACU((tagData as any).storageFrame, sheetKeySet)) {
+            msgChanged = true;
+        }
+    });
+
+    if (msgChanged) {
+        msg.TavernDB_ACU_IsolatedData = nextIsolated;
+    }
+    return msgChanged;
+}
+
 // ════════════════════════════════════════════════════════════════
 // 读取类
 // ════════════════════════════════════════════════════════════════

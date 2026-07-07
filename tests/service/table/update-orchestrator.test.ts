@@ -82,11 +82,12 @@ vi.mock('../../../src/service/ai/prompt-builder', () => ({
   prepareAIInput_ACU: (...args: any[]) => mockPrepareAIInput(...args),
 }));
 
-const { mockChatArrayForSeedStage, mockGetChatArray_ACU, mockEnsureManualRefillInitialBaseline, mockEnsureBoundaryCheckpoint, mockShouldRotateBoundaryCheckpoint, mockPurgeSheetKeysFromChatHistoryHard } = vi.hoisted(() => {
+const { mockChatArrayForSeedStage, mockGetChatArray_ACU, mockClearManualRefillIncrementalDataInRange, mockEnsureManualRefillInitialBaseline, mockEnsureBoundaryCheckpoint, mockShouldRotateBoundaryCheckpoint, mockPurgeSheetKeysFromChatHistoryHard } = vi.hoisted(() => {
   const chatArray: any[] = [];
   return {
     mockChatArrayForSeedStage: chatArray,
     mockGetChatArray_ACU: vi.fn(() => chatArray),
+    mockClearManualRefillIncrementalDataInRange: vi.fn().mockResolvedValue(0),
     mockEnsureManualRefillInitialBaseline: vi.fn().mockResolvedValue({ success: true, changed: false, skipped: true }),
     mockEnsureBoundaryCheckpoint: vi.fn().mockResolvedValue({ success: true, changed: false, skipped: true }),
     mockShouldRotateBoundaryCheckpoint: vi.fn(() => false),
@@ -96,6 +97,7 @@ const { mockChatArrayForSeedStage, mockGetChatArray_ACU, mockEnsureManualRefillI
 vi.mock('../../../src/service/chat/chat-service', () => ({
   getChatArray_ACU: mockGetChatArray_ACU,
   clearTableDataAtFloors_ACU: vi.fn().mockResolvedValue(0),
+  clearManualRefillIncrementalDataInRange_ACU: mockClearManualRefillIncrementalDataInRange,
   ensureManualRefillInitialBaseline_ACU: mockEnsureManualRefillInitialBaseline,
   ensureV2BoundaryCheckpointForRetainedBuffer_ACU: mockEnsureBoundaryCheckpoint,
   shouldRotateV2BoundaryCheckpointForRetainedBuffer_ACU: mockShouldRotateBoundaryCheckpoint,
@@ -226,6 +228,7 @@ import {
 beforeEach(() => {
   mockChatArrayForSeedStage.length = 0;
   mockGetChatArray_ACU.mockImplementation(() => mockChatArrayForSeedStage);
+  mockClearManualRefillIncrementalDataInRange.mockResolvedValue(0);
   mockEnsureManualRefillInitialBaseline.mockResolvedValue({ success: true, changed: false, skipped: true });
   mockEnsureBoundaryCheckpoint.mockResolvedValue({ success: true, changed: false, skipped: true });
   mockPurgeSheetKeysFromChatHistoryHard.mockResolvedValue({ changed: true, changedCount: 1 });
@@ -1135,7 +1138,7 @@ describe('orchestrateManualUpdate_ACU', () => {
   });
 
   it('事务式手动重填启动前仅清空重填范围内选中表历史数据', async () => {
-    const { getChatArray_ACU, clearTableDataAtFloors_ACU } = await import('../../../src/service/chat/chat-service');
+    const { getChatArray_ACU, clearManualRefillIncrementalDataInRange_ACU, clearTableDataAtFloors_ACU } = await import('../../../src/service/chat/chat-service');
     vi.mocked(getChatArray_ACU).mockReturnValue([
       { is_user: true },
       { is_user: false, mes: 'AI回复1' },
@@ -1150,12 +1153,13 @@ describe('orchestrateManualUpdate_ACU', () => {
 
     const result = await orchestrateManualUpdate_ACU(['sheet_0'], vi.fn().mockResolvedValue({ success: true }), mockRefreshData, { clearBeforeUpdate: true });
     expect(result.success).toBe(true);
-    expect(clearTableDataAtFloors_ACU).toHaveBeenCalledWith([1, 3], ['sheet_0']);
+    expect(clearManualRefillIncrementalDataInRange_ACU).toHaveBeenCalledWith([1, 3], ['sheet_0']);
+    expect(clearTableDataAtFloors_ACU).not.toHaveBeenCalled();
     expect(mockPurgeSheetKeysFromChatHistoryHard).not.toHaveBeenCalled();
   });
 
   it('事务式手动重填启动前清理选中表失败时中止，避免继续使用污染基底', async () => {
-    const { getChatArray_ACU, clearTableDataAtFloors_ACU } = await import('../../../src/service/chat/chat-service');
+    const { getChatArray_ACU, clearManualRefillIncrementalDataInRange_ACU } = await import('../../../src/service/chat/chat-service');
     vi.mocked(getChatArray_ACU).mockReturnValue([
       { is_user: true },
       { is_user: false, mes: 'AI回复1' },
@@ -1166,7 +1170,7 @@ describe('orchestrateManualUpdate_ACU', () => {
       sheet_0: { name: '测试表A', updateConfig: {}, content: [['row_id', '值A'], ['1', '旧A']] },
       sheet_1: { name: '测试表B', updateConfig: {}, content: [['row_id', '值B'], ['1', '旧B']] },
     };
-    vi.mocked(clearTableDataAtFloors_ACU).mockRejectedValueOnce(new Error('purge failed'));
+    vi.mocked(clearManualRefillIncrementalDataInRange_ACU).mockRejectedValueOnce(new Error('purge failed'));
 
     const result = await orchestrateManualUpdate_ACU(['sheet_0'], vi.fn().mockResolvedValue({ success: true }), mockRefreshData, { clearBeforeUpdate: true });
 
@@ -1177,7 +1181,7 @@ describe('orchestrateManualUpdate_ACU', () => {
   });
 
   it('事务式手动重填启动前不清理范围外历史基底，保护 V2 replay 初始数据', async () => {
-    const { getChatArray_ACU, clearTableDataAtFloors_ACU } = await import('../../../src/service/chat/chat-service');
+    const { getChatArray_ACU, clearManualRefillIncrementalDataInRange_ACU, clearTableDataAtFloors_ACU } = await import('../../../src/service/chat/chat-service');
     const chat = [
       { is_user: true, mes: '用户0' },
       {
@@ -1217,14 +1221,15 @@ describe('orchestrateManualUpdate_ACU', () => {
     const result = await orchestrateManualUpdate_ACU(['sheet_0'], vi.fn().mockResolvedValue({ success: true }), mockRefreshData, { clearBeforeUpdate: true });
 
     expect(result.success).toBe(true);
-    expect(clearTableDataAtFloors_ACU).toHaveBeenCalledWith([3, 5], ['sheet_0']);
-    expect(clearTableDataAtFloors_ACU).not.toHaveBeenCalledWith(expect.arrayContaining([1]), expect.anything());
+    expect(clearManualRefillIncrementalDataInRange_ACU).toHaveBeenCalledWith([3, 5], ['sheet_0']);
+    expect(clearManualRefillIncrementalDataInRange_ACU).not.toHaveBeenCalledWith(expect.arrayContaining([1]), expect.anything());
+    expect(clearTableDataAtFloors_ACU).not.toHaveBeenCalled();
     expect(mockPurgeSheetKeysFromChatHistoryHard).not.toHaveBeenCalled();
     expect((chat[1] as any).TavernDB_ACU_IsolatedData[''].storageFrame.checkpoint.data.sheet_0.content).toEqual([['row_id', '值A'], ['base', '范围外基底']]);
   });
 
   it('事务式手动重填启动前不清理 chat[0] sheet guide，避免 V2 replay 回退链路断裂', async () => {
-    const { getChatArray_ACU, clearTableDataAtFloors_ACU } = await import('../../../src/service/chat/chat-service');
+    const { getChatArray_ACU, clearManualRefillIncrementalDataInRange_ACU, clearTableDataAtFloors_ACU } = await import('../../../src/service/chat/chat-service');
     const chat = [
       { is_user: true, mes: '用户0', TavernDB_ACU_SheetGuide: { '': { sheet_0: { latestMessageIndex: 1 } } } },
       { is_user: false, mes: 'AI回复1' },
@@ -1240,7 +1245,8 @@ describe('orchestrateManualUpdate_ACU', () => {
     const result = await orchestrateManualUpdate_ACU(['sheet_0'], vi.fn().mockResolvedValue({ success: true }), mockRefreshData, { clearBeforeUpdate: true });
 
     expect(result.success).toBe(true);
-    expect(clearTableDataAtFloors_ACU).toHaveBeenCalledWith([1, 3], ['sheet_0']);
+    expect(clearManualRefillIncrementalDataInRange_ACU).toHaveBeenCalledWith([1, 3], ['sheet_0']);
+    expect(clearTableDataAtFloors_ACU).not.toHaveBeenCalled();
     expect(mockPurgeSheetKeysFromChatHistoryHard).not.toHaveBeenCalled();
     expect((chat[0] as any).TavernDB_ACU_SheetGuide).toEqual({ '': { sheet_0: { latestMessageIndex: 1 } } });
   });
@@ -1692,7 +1698,7 @@ describe('orchestrateManualUpdate_ACU', () => {
   });
 
   it('手动重填续跑兼容读取旧 checkpoint.manualRefillProgress', async () => {
-    const { getChatArray_ACU, clearTableDataAtFloors_ACU } = await import('../../../src/service/chat/chat-service');
+    const { getChatArray_ACU, clearManualRefillIncrementalDataInRange_ACU, clearTableDataAtFloors_ACU } = await import('../../../src/service/chat/chat-service');
     const { parseTableTemplateJson_ACU } = await import('../../../src/shared/utils');
     vi.mocked(parseTableTemplateJson_ACU).mockReturnValue({
       mate: { type: 'acu' },
@@ -1751,6 +1757,7 @@ describe('orchestrateManualUpdate_ACU', () => {
     const result = await orchestrateManualUpdate_ACU(['sheet_0'], vi.fn().mockResolvedValue({ success: true }), mockRefreshData, { clearBeforeUpdate: true });
 
     expect(result.success).toBe(true);
+    expect(clearManualRefillIncrementalDataInRange_ACU).not.toHaveBeenCalled();
     expect(clearTableDataAtFloors_ACU).not.toHaveBeenCalled();
     const savedProgress = mockPersistTablesToChatMessage.mock.calls
       .map(call => call[0]?.manualRefillProgress)
@@ -1762,7 +1769,7 @@ describe('orchestrateManualUpdate_ACU', () => {
   });
 
   it('手动重填续跑优先读取 frame.manualRefillProgress 而不是旧 checkpoint 字段', async () => {
-    const { getChatArray_ACU, clearTableDataAtFloors_ACU } = await import('../../../src/service/chat/chat-service');
+    const { getChatArray_ACU, clearManualRefillIncrementalDataInRange_ACU, clearTableDataAtFloors_ACU } = await import('../../../src/service/chat/chat-service');
     const frameProgress = {
       kind: 'manual_refill',
       status: 'in_progress',
@@ -1822,6 +1829,7 @@ describe('orchestrateManualUpdate_ACU', () => {
     const result = await orchestrateManualUpdate_ACU(['sheet_0'], vi.fn().mockResolvedValue({ success: true }), mockRefreshData, { clearBeforeUpdate: true });
 
     expect(result.success).toBe(true);
+    expect(clearManualRefillIncrementalDataInRange_ACU).not.toHaveBeenCalled();
     expect(clearTableDataAtFloors_ACU).not.toHaveBeenCalled();
     const savedProgress = mockPersistTablesToChatMessage.mock.calls
       .map(call => call[0]?.manualRefillProgress)
