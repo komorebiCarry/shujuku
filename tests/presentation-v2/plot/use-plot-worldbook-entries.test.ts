@@ -52,6 +52,17 @@ async function getComposable(presetSettings?: ReturnType<typeof createSettings>,
     saveWorldbookEntrySkillMeta_ACU: mockSaveEntrySkillMeta,
     stripWorldbookSkillMetaBlock_ACU: (comment: unknown) => String(comment || '').replace(/\n?<!--\s*ACU_SKILL_META_START\s*\n[\s\S]*?\nACU_SKILL_META_END\s*-->\n?/g, '').trim(),
   }));
+  vi.doMock('../../../src/service/agent/agent-skillify-service', () => ({
+    getWorldbookEntryKeywordsForSkillify_ACU: vi.fn((entry: any) => Array.isArray(entry?.keys)
+      ? entry.keys
+      : (entry?.key ? [entry.key] : [])),
+    isDatabaseGeneratedWorldbookEntryForAgent_ACU: vi.fn((entry: any) => /^(?:ACU-\[[^\]]+\]-)?(?:TavernDB-ACU-|重要人物条目|总结条目|小总结条目)/.test(String(entry?.comment || entry?.name || ''))
+      && !String(entry?.comment || entry?.name || '').trim().startsWith('外部导入-')),
+    isWorldbookEntrySkillifyCandidate_ACU: vi.fn((entry: any) => entry?.enabled !== false
+      && String(entry?.type || '').trim().toLowerCase() !== 'constant'
+      && !/^(?:ACU-\[[^\]]+\]-)?(?:TavernDB-ACU-|重要人物条目|总结条目|小总结条目)/.test(String(entry?.comment || entry?.name || ''))
+      && !String(entry?.comment || entry?.name || '').trim().startsWith('AGENT_INTERNAL-')),
+  }));
 
   const mod = await import('../../../src/presentation-v2/composables/usePlotWorldbookEntries');
   return mod.usePlotWorldbookEntries(options);
@@ -176,6 +187,60 @@ describe('usePlotWorldbookEntries', () => {
     expect(uids).toEqual([12]);
   });
 
+  it('loadEntries 分离剧情推进集合与 Agent Skill 化候选集合', async () => {
+    mockGetEntries.mockResolvedValue({
+      'AgentBook': [
+        { uid: 1, comment: '普通关键词条目', name: '普通关键词条目', enabled: true, type: 'selective', keys: ['普通'] },
+        { uid: 2, comment: '角色规则关键词条目', name: '角色规则关键词条目', enabled: true, type: 'selective', keys: ['规则'] },
+        { uid: 3, comment: '常驻关键词条目', name: '常驻关键词条目', enabled: true, type: 'constant', keys: ['常驻'] },
+        { uid: 4, comment: '角色规则\n<!-- ACU_SKILL_META_START\n{"description":"已 Skill 化","triggerWhen":"测试触发","tk":0,"updatedBy":"manual","updatedAt":1}\nACU_SKILL_META_END -->', name: '已 Skill 化规则条目', enabled: true, type: 'selective', keys: [] },
+        { uid: 5, comment: '外部导入-TavernDB-ACU-OutlineTable', name: '外部导入条目', enabled: true, type: 'selective', keys: [] },
+        { uid: 6, comment: 'TavernDB-ACU-OutlineTable', name: '数据库生成条目', enabled: true, type: 'selective', keys: ['db']},
+      ],
+    });
+
+    const c = await getComposable();
+    await c.loadEntries(['AgentBook']);
+
+    expect(c.groups.value[0].entries.map(e => e.uid)).toEqual([1, 5]);
+    expect(c.agentGroups.value[0].entries.map(e => ({ uid: e.uid, skillifySelectable: e.skillifySelectable }))).toEqual([
+      { uid: 1, skillifySelectable: true },
+      { uid: 2, skillifySelectable: true },
+      { uid: 3, skillifySelectable: false },
+      { uid: 4, skillifySelectable: true },
+      { uid: 5, skillifySelectable: true },
+    ]);
+    expect(c.agentGroups.value[0].entries.find(e => e.uid === 4)?.hasSkill).toBe(true);
+    expect(settings.plotSettings.plotWorldbookConfig.enabledEntries.AgentBook).toEqual([1, 5]);
+  });
+
+  it('loadEntries 在 Agent 集合显示 snapshot 命中的 constant disabled 条目但仍过滤数据库生成条目', async () => {
+    mockGetAgentSnapshot.mockReturnValue({
+      active: true,
+      selectionSignature: 'agent-snapshot',
+      createdAt: Date.now(),
+      books: {
+        AgentBook: [{ uid: 7, previousEnabled: false, previousKeys: ['旧关键词'], previousType: 'selective' }],
+      },
+    });
+    mockGetEntries.mockResolvedValue({
+      'AgentBook': [
+        { uid: 7, comment: 'snapshot 命中的常驻关闭条目', name: 'snapshot 命中的常驻关闭条目', enabled: false, type: 'constant', keys: [] },
+        { uid: 8, comment: 'TavernDB-ACU-CharTable', name: '数据库生成条目', enabled: true, type: 'selective', keys: ['db'] },
+      ],
+    });
+
+    const c = await getComposable();
+    await c.loadEntries(['AgentBook']);
+
+    expect(c.groups.value[0].entries.map(e => ({ uid: e.uid, state: e.agentTakeoverState, disabled: e.disabled }))).toEqual([
+      { uid: 7, state: 'taken_over', disabled: true },
+    ]);
+    expect(c.agentGroups.value[0].entries.map(e => ({ uid: e.uid, state: e.agentTakeoverState, disabled: e.disabled }))).toEqual([
+      { uid: 7, state: 'taken_over', disabled: true },
+    ]);
+  });
+
   it('首次加载默认启用所有可见条目', async () => {
     mockGetEntries.mockResolvedValue({
       'X': [makeEntry(1, '好条目'), makeEntry(2, '也好')],
@@ -294,15 +359,40 @@ describe('usePlotWorldbookEntries', () => {
       { bookName: 'SkillBook', uid: 1 },
       { bookName: 'SkillBook', uid: 3 },
     ]);
-    expect(c.groups.value[0].entries.map(e => ({ uid: e.uid, skillifySelected: e.skillifySelected }))).toEqual([
-      { uid: 1, skillifySelected: true },
-      { uid: 2, skillifySelected: false },
-      { uid: 3, skillifySelected: true },
+    expect(c.agentGroups.value[0].entries.map(e => ({ uid: e.uid, skillifySelected: e.skillifySelected, skillifySelectable: e.skillifySelectable }))).toEqual([
+      { uid: 1, skillifySelected: true, skillifySelectable: true },
+      { uid: 2, skillifySelected: false, skillifySelectable: false },
+      { uid: 3, skillifySelected: true, skillifySelectable: true },
     ]);
 
     c.deselectAllForSkillify();
     expect(c.getSelectedSkillifyEntries()).toEqual([]);
-    expect(c.groups.value[0].entries.every(e => !e.skillifySelected)).toBe(true);
+    expect(c.agentGroups.value[0].entries.every(e => !e.skillifySelected)).toBe(true);
+  });
+
+  it('Agent 设置显示不可 Skill 化条目，但全选和手动勾选都不能选中它们', async () => {
+    mockGetEntries.mockResolvedValue({
+      'SkillBook': [
+        { uid: 1, comment: '普通关键词条目', name: '普通关键词条目', enabled: true, type: 'selective', keys: ['普通'] },
+        { uid: 2, comment: '常驻关键词条目', name: '常驻关键词条目', enabled: true, type: 'constant', keys: ['常驻'] },
+      ],
+    });
+
+    const c = await getComposable();
+    await c.loadEntries(['SkillBook']);
+
+    expect(c.agentGroups.value[0].entries.map(e => ({ uid: e.uid, skillifySelectable: e.skillifySelectable }))).toEqual([
+      { uid: 1, skillifySelectable: true },
+      { uid: 2, skillifySelectable: false },
+    ]);
+
+    c.selectAllForSkillify();
+    expect(c.getSelectedSkillifyEntries()).toEqual([{ bookName: 'SkillBook', uid: 1 }]);
+    expect(c.agentGroups.value[0].entries.find(e => e.uid === 2)?.skillifySelected).toBe(false);
+
+    c.toggleSkillifyEntry('SkillBook', 2, true);
+    expect(c.getSelectedSkillifyEntries()).toEqual([{ bookName: 'SkillBook', uid: 1 }]);
+    expect(c.agentGroups.value[0].entries.find(e => e.uid === 2)?.skillifySelected).toBe(false);
   });
 
   it('loadEntries 清理已经不存在的 Skill 化勾选', async () => {
@@ -321,6 +411,55 @@ describe('usePlotWorldbookEntries', () => {
 
     expect(c.getSelectedSkillifyEntries()).toEqual([]);
     expect(c.groups.value[0].entries.map(e => e.uid)).toEqual([1]);
+  });
+
+  it('loadEntries 基于 agentGroups 而不是剧情推进 groups 清理 Skill 化勾选', async () => {
+    mockGetEntries.mockResolvedValueOnce({
+      'SkillBook': [
+        { uid: 1, comment: '普通条目', name: '普通条目', enabled: true, type: 'selective', keys: ['普通'] },
+        { uid: 2, comment: '角色规则关键词条目', name: '角色规则关键词条目', enabled: true, type: 'selective', keys: ['规则'] },
+      ],
+    });
+
+    const c = await getComposable();
+    await c.loadEntries(['SkillBook']);
+    c.toggleSkillifyEntry('SkillBook', 2, true);
+
+    mockGetEntries.mockResolvedValueOnce({
+      'SkillBook': [
+        { uid: 2, comment: '角色规则关键词条目', name: '角色规则关键词条目', enabled: true, type: 'selective', keys: ['规则'] },
+      ],
+    });
+    await c.loadEntries(['SkillBook']);
+
+    expect(c.groups.value).toEqual([]);
+    expect(c.agentGroups.value[0].entries.map(e => ({ uid: e.uid, skillifySelected: e.skillifySelected }))).toEqual([{ uid: 2, skillifySelected: true }]);
+    expect(c.getSelectedSkillifyEntries()).toEqual([{ bookName: 'SkillBook', uid: 2 }]);
+  });
+
+  it('loadEntries 会清理仍显示但不再具备 Skill 化资格的历史勾选', async () => {
+    mockGetEntries.mockResolvedValueOnce({
+      'SkillBook': [
+        { uid: 2, comment: '角色规则关键词条目', name: '角色规则关键词条目', enabled: true, type: 'selective', keys: ['规则'] },
+      ],
+    });
+
+    const c = await getComposable();
+    await c.loadEntries(['SkillBook']);
+    c.toggleSkillifyEntry('SkillBook', 2, true);
+    expect(c.getSelectedSkillifyEntries()).toEqual([{ bookName: 'SkillBook', uid: 2 }]);
+
+    mockGetEntries.mockResolvedValueOnce({
+      'SkillBook': [
+        { uid: 2, comment: '常驻关键词条目', name: '常驻关键词条目', enabled: true, type: 'constant', keys: ['常驻'] },
+      ],
+    });
+    await c.loadEntries(['SkillBook']);
+
+    expect(c.agentGroups.value[0].entries.map(e => ({ uid: e.uid, skillifySelected: e.skillifySelected, skillifySelectable: e.skillifySelectable }))).toEqual([
+      { uid: 2, skillifySelected: false, skillifySelectable: false },
+    ]);
+    expect(c.getSelectedSkillifyEntries()).toEqual([]);
   });
 
   it('saveEntrySkillMeta 成功更新时同步本地 Skill 状态并调用外部接管同步回调', async () => {

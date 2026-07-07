@@ -6,7 +6,7 @@
 
 import { isAutoUpdatingCard_ACU, pendingFinalGenerationGreenlights_ACU, wasStoppedByUser_ACU, _set_isAutoUpdatingCard_ACU, _set_manualExtraHint_ACU, _set_wasStoppedByUser_ACU } from '../runtime/state-manager';
 import { callCustomOpenAI_ACU } from '../ai/prompt-builder';
-import { ensureV2BoundaryCheckpointForRetainedBuffer_ACU, getChatArray_ACU, shouldRotateV2BoundaryCheckpointForRetainedBuffer_ACU } from '../chat/chat-service';
+import { ensureManualRefillInitialBaseline_ACU, ensureV2BoundaryCheckpointForRetainedBuffer_ACU, getChatArray_ACU, shouldRotateV2BoundaryCheckpointForRetainedBuffer_ACU } from '../chat/chat-service';
 import { coreApisAreReady_ACU, currentJsonTableData_ACU, getCurrentIsolationKey_ACU, settings_ACU, _set_currentJsonTableData_ACU } from '../runtime/state-manager';
 import { checkAutoMergeTrigger_ACU, prepareAutoMergeBatches_ACU, executeAutoMergeBatch_ACU, finalizeAutoMerge_ACU } from '../summary/merge-logic';
 import { ensureStableRowIdsForSheetContent_ACU, getChatSheetGuideDataForIsolationKey_ACU, getEffectiveSeedRowsForSheet_ACU, shouldUseInitialSeedRows_ACU } from '../template/chat-scope';
@@ -2213,8 +2213,22 @@ export async function orchestrateManualUpdate_ACU(
                 );
                 manualRefillCheckpointData = JSON.parse(JSON.stringify(manualRefillInitialData));
             }
-            const existingV2FullCheckpoints = collectV2CheckpointFloorsFromChat_ACU(getChatArray_ACU() || [], getCurrentIsolationKey_ACU());
-            shouldWriteInitialManualRefillBaseline = !matchedProgress && existingV2FullCheckpoints.length === 0;
+            if (!matchedProgress) {
+                const isolationKey = getCurrentIsolationKey_ACU();
+                const existingV2FullCheckpoints = collectV2CheckpointFloorsFromChat_ACU(getChatArray_ACU() || [], isolationKey);
+                shouldWriteInitialManualRefillBaseline = existingV2FullCheckpoints.length === 0;
+                if (!shouldWriteInitialManualRefillBaseline) {
+                    const baselineResult = await ensureManualRefillInitialBaseline_ACU({
+                        isolationKey,
+                        targetMessageIndex: manualRefillStartIndex,
+                        data: manualRefillInitialData,
+                        save: true,
+                    });
+                    if (!baselineResult.success) {
+                        return { success: false, error: baselineResult.error || '手动重填 initial baseline 前移失败。' };
+                    }
+                }
+            }
 
             let pendingContextScopeIndices = contextScopeIndices.slice();
             manualRefillProgress = matchedProgress

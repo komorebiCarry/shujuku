@@ -28,12 +28,26 @@
       :filter="filter"
       :loading="loading"
       :empty-text="emptyText"
+      :show-skillify-controls="false"
+      :show-skill-editor="false"
       @toggle="(bookName: string, uid: number, checked: boolean) => $emit('toggle', bookName, uid, checked)"
-      @toggle-skillify="(bookName: string, uid: number, checked: boolean) => $emit('toggle-skillify', bookName, uid, checked)"
       @toggle-group="$emit('toggle-group', $event)"
-      @save-skill="(bookName: string, uid: number, draft: WorldbookSkillDraft) => $emit('save-skill', bookName, uid, draft)"
-      @delete-skill="(bookName: string, uid: number) => $emit('delete-skill', bookName, uid)"
     />
+
+    <div class="acu-v2-wb-entry-picker__agent-section">
+      <p class="acu-v2-wb-entry-picker__subhint">Agent Skill 化候选条目</p>
+      <WorldbookEntryList
+        :groups="skillifyGroups"
+        :filter="filter"
+        :loading="loading"
+        empty-text="当前世界书中无可 Skill 化的 Agent 候选条目。"
+        :show-entry-toggle="false"
+        @toggle-skillify="(bookName: string, uid: number, checked: boolean) => $emit('toggle-skillify', bookName, uid, checked)"
+        @toggle-group="$emit('toggle-group', $event)"
+        @save-skill="(bookName: string, uid: number, draft: WorldbookSkillDraft) => $emit('save-skill', bookName, uid, draft)"
+        @delete-skill="(bookName: string, uid: number) => $emit('delete-skill', bookName, uid)"
+      />
+    </div>
   </div>
 </template>
 
@@ -65,6 +79,7 @@ interface WorldbookEntryItem {
   agentTakeoverState: 'native' | 'skill_ready' | 'taken_over' | 'final_greenlight' | 'initial_disabled';
   checked: boolean;
   skillifySelected: boolean;
+  skillifySelectable: boolean;
   disabled: boolean;
 }
 
@@ -83,12 +98,14 @@ withDefaults(defineProps<{
   currentLabel: string;
   filter: string;
   groups: WorldbookEntryGroup[];
+  skillifyGroups?: WorldbookEntryGroup[];
   loading: boolean;
   emptyText?: string;
   filterable?: boolean;
 }>(), {
   filterable: true,
   emptyText: '所选世界书中无可显示的条目。',
+  skillifyGroups: () => [],
 });
 
 defineEmits<{
@@ -124,6 +141,20 @@ defineEmits<{
 
 .acu-v2-wb-entry-picker__hint strong {
   color: var(--acu-text-1);
+  font-weight: 500;
+}
+
+.acu-v2-wb-entry-picker__agent-section {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding-top: 4px;
+}
+
+.acu-v2-wb-entry-picker__subhint {
+  margin: 0;
+  font-size: var(--acu-font-size-caption, 11px);
+  color: var(--acu-text-2);
   font-weight: 500;
 }
 </style>

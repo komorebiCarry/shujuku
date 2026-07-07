@@ -29,25 +29,27 @@
           :class="{ 'acu-v2-wb-entry-item--disabled': entry.disabled }"
         >
           <AcuCheckbox
+            v-if="showEntryToggle"
             :model-value="entry.checked"
             :label="entry.label"
             :disabled="entry.disabled"
             @update:model-value="onToggle(entry.bookName, entry.uid, $event)"
           />
-          <div class="acu-v2-wb-entry-item__actions">
+          <div v-else class="acu-v2-wb-entry-item__label">{{ entry.label }}</div>
+          <div v-if="showSkillifyControls" class="acu-v2-wb-entry-item__actions">
             <span v-if="entry.skillMeta" class="acu-v2-wb-entry-item__skill-badge">Skill</span>
             <span v-if="formatAgentTakeoverState(entry)" class="acu-v2-wb-entry-item__state-badge">{{ formatAgentTakeoverState(entry) }}</span>
             <AcuCheckbox
               :model-value="entry.skillifySelected"
               label="Skill 化"
-              :disabled="entry.disabled"
+              :disabled="entry.disabled || !entry.skillifySelectable"
               @update:model-value="$emit('toggle-skillify', entry.bookName, entry.uid, $event)"
             />
-            <AcuButton size="sm" @click="toggleSkillEditor(entry)">
+            <AcuButton v-if="showSkillEditor" size="sm" @click="toggleSkillEditor(entry)">
               {{ isSkillEditorOpen(entry) ? '收起 Skill' : '编辑 Skill' }}
             </AcuButton>
           </div>
-          <div v-if="isSkillEditorOpen(entry)" class="acu-v2-wb-entry-skill">
+          <div v-if="showSkillEditor && isSkillEditorOpen(entry)" class="acu-v2-wb-entry-skill">
             <AcuTextarea
               :model-value="getSkillDraft(entry).description"
               label="Skill 描述"
@@ -95,8 +97,14 @@ const props = withDefaults(defineProps<{
   filter: string;
   loading: boolean;
   emptyText?: string;
+  showEntryToggle?: boolean;
+  showSkillifyControls?: boolean;
+  showSkillEditor?: boolean;
 }>(), {
   emptyText: '所选世界书中无可显示的条目。',
+  showEntryToggle: true,
+  showSkillifyControls: true,
+  showSkillEditor: true,
 });
 
 const emit = defineEmits<{
@@ -127,14 +135,15 @@ const filteredGroups = computed(() => {
 });
 
 function formatGroupMeta(group: WorldbookEntryGroup): string {
-  const checkedCount = group.entries.filter(entry => entry.checked).length;
+  const checkedCount = props.showEntryToggle ? group.entries.filter(entry => entry.checked).length : null;
   const skillCount = group.entries.filter(entry => entry.hasSkill).length;
   const controlledCount = group.entries.filter(entry => entry.agentTakeoverState === 'taken_over' || entry.agentTakeoverState === 'final_greenlight').length;
   const suffix = [
-    skillCount > 0 ? `Skill ${skillCount}` : '',
-    controlledCount > 0 ? `接管 ${controlledCount}` : '',
+    props.showSkillifyControls && skillCount > 0 ? `Skill ${skillCount}` : '',
+    props.showSkillifyControls && controlledCount > 0 ? `接管 ${controlledCount}` : '',
   ].filter(Boolean).join(' · ');
-  return suffix ? `${checkedCount}/${group.entries.length} 条 · ${suffix}` : `${checkedCount}/${group.entries.length} 条`;
+  const prefix = checkedCount === null ? `${group.entries.length} 条` : `${checkedCount}/${group.entries.length} 条`;
+  return suffix ? `${prefix} · ${suffix}` : prefix;
 }
 
 function formatAgentTakeoverState(entry: WorldbookEntryItem): string {
@@ -217,6 +226,12 @@ function saveSkill(entry: WorldbookEntryItem): void {
   display: inline-flex;
   align-items: center;
   gap: 6px;
+}
+
+.acu-v2-wb-entry-item__label {
+  min-width: 0;
+  color: var(--acu-text-1);
+  font-size: var(--acu-font-size-body, 12px);
 }
 
 .acu-v2-wb-entry-item__skill-badge {

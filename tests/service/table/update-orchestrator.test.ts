@@ -82,11 +82,12 @@ vi.mock('../../../src/service/ai/prompt-builder', () => ({
   prepareAIInput_ACU: (...args: any[]) => mockPrepareAIInput(...args),
 }));
 
-const { mockChatArrayForSeedStage, mockGetChatArray_ACU, mockEnsureBoundaryCheckpoint, mockShouldRotateBoundaryCheckpoint } = vi.hoisted(() => {
+const { mockChatArrayForSeedStage, mockGetChatArray_ACU, mockEnsureManualRefillInitialBaseline, mockEnsureBoundaryCheckpoint, mockShouldRotateBoundaryCheckpoint } = vi.hoisted(() => {
   const chatArray: any[] = [];
   return {
     mockChatArrayForSeedStage: chatArray,
     mockGetChatArray_ACU: vi.fn(() => chatArray),
+    mockEnsureManualRefillInitialBaseline: vi.fn().mockResolvedValue({ success: true, changed: false, skipped: true }),
     mockEnsureBoundaryCheckpoint: vi.fn().mockResolvedValue({ success: true, changed: false, skipped: true }),
     mockShouldRotateBoundaryCheckpoint: vi.fn(() => false),
   };
@@ -94,6 +95,7 @@ const { mockChatArrayForSeedStage, mockGetChatArray_ACU, mockEnsureBoundaryCheck
 vi.mock('../../../src/service/chat/chat-service', () => ({
   getChatArray_ACU: mockGetChatArray_ACU,
   clearTableDataAtFloors_ACU: vi.fn().mockResolvedValue(0),
+  ensureManualRefillInitialBaseline_ACU: mockEnsureManualRefillInitialBaseline,
   ensureV2BoundaryCheckpointForRetainedBuffer_ACU: mockEnsureBoundaryCheckpoint,
   shouldRotateV2BoundaryCheckpointForRetainedBuffer_ACU: mockShouldRotateBoundaryCheckpoint,
 }));
@@ -219,6 +221,7 @@ import {
 beforeEach(() => {
   mockChatArrayForSeedStage.length = 0;
   mockGetChatArray_ACU.mockImplementation(() => mockChatArrayForSeedStage);
+  mockEnsureManualRefillInitialBaseline.mockResolvedValue({ success: true, changed: false, skipped: true });
   mockEnsureBoundaryCheckpoint.mockResolvedValue({ success: true, changed: false, skipped: true });
 });
 
@@ -1029,6 +1032,7 @@ describe('orchestrateManualUpdate_ACU', () => {
     mockWasStopped = false;
     mockPrepareAIInput.mockResolvedValue({ tableDataText: '模拟数据' });
     mockUpdateReadableLorebookEntry.mockResolvedValue(undefined);
+    mockEnsureManualRefillInitialBaseline.mockResolvedValue({ success: true, changed: false, skipped: true });
     mockEnsureBoundaryCheckpoint.mockResolvedValue({ success: true, changed: false, skipped: true });
     mockShouldRotateBoundaryCheckpoint.mockReturnValue(false);
     mockPersistTablesToChatMessage.mockResolvedValue({ saved: true, messageIndex: 3 });
@@ -1184,7 +1188,7 @@ describe('orchestrateManualUpdate_ACU', () => {
     expect(progressCalls[0].manualRefillProgress.targetMessageIndex).toBe(4);
   });
 
-  it('已有 V2 full checkpoint 且非续跑时不会额外写手动重填 init baseline', async () => {
+  it('已有更晚 V2 init checkpoint 且非续跑时交给 chat-service 前移 initial baseline，不额外写重复 checkpoint', async () => {
     const { getChatArray_ACU } = await import('../../../src/service/chat/chat-service');
     const { parseTableTemplateJson_ACU } = await import('../../../src/shared/utils');
     vi.mocked(parseTableTemplateJson_ACU).mockReturnValue({
@@ -1192,6 +1196,10 @@ describe('orchestrateManualUpdate_ACU', () => {
       sheet_0: { name: '测试表A', updateConfig: { groupId: 0 }, content: [['row_id', '值A']] },
     });
     vi.mocked(getChatArray_ACU).mockReturnValue([
+      { is_user: false, mes: 'AI回复1' },
+      { is_user: true },
+      { is_user: false, mes: 'AI回复2' },
+      { is_user: true },
       {
         is_user: false,
         mes: 'AI回复1',
@@ -1214,10 +1222,6 @@ describe('orchestrateManualUpdate_ACU', () => {
           },
         },
       },
-      { is_user: true },
-      { is_user: false, mes: 'AI回复2' },
-      { is_user: true },
-      { is_user: false, mes: 'AI回复3' },
     ]);
     mockSettings.maxConcurrentGroups = 1;
     mockSettings.autoUpdateThreshold = 0;
@@ -1232,9 +1236,54 @@ describe('orchestrateManualUpdate_ACU', () => {
     expect(result.success).toBe(true);
     const persistCalls = mockPersistTablesToChatMessage.mock.calls.map(call => call[0]);
     expect(persistCalls.some(call => call.forceCheckpoint === true && call.checkpointReason === 'init')).toBe(false);
+    expect(mockEnsureManualRefillInitialBaseline).toHaveBeenCalledWith({
+      isolationKey: '',
+      targetMessageIndex: 0,
+      data: expect.objectContaining({ sheet_0: expect.objectContaining({ content: [['row_id', '值A']] }) }),
+      save: true,
+    });
     const progressCalls = persistCalls.filter(call => call.manualRefillProgress?.kind === 'manual_refill');
     expect(progressCalls.length).toBeGreaterThan(0);
     expect(progressCalls.every(call => call.targetMessageIndex === 4)).toBe(true);
+  });
+
+  it('手动重填 initial baseline 前移失败时中止，不进入后续批处理', async () => {
+    const { getChatArray_ACU } = await import('../../../src/service/chat/chat-service');
+    const { parseTableTemplateJson_ACU } = await import('../../../src/shared/utils');
+    vi.mocked(parseTableTemplateJson_ACU).mockReturnValue({
+      mate: { type: 'acu' },
+      sheet_0: { name: '测试表A', updateConfig: { groupId: 0 }, content: [['row_id', '值A']] },
+    });
+    vi.mocked(getChatArray_ACU).mockReturnValue([
+      { is_user: false, mes: 'AI回复1' },
+      { is_user: true },
+      {
+        is_user: false,
+        mes: 'AI回复2',
+        TavernDB_ACU_IsolatedData: {
+          '': {
+            _acu_storage_version: 2,
+            storageFrame: {
+              version: 2,
+              logEntries: [],
+              checkpoint: { kind: 'full', reason: 'init', createdAt: 1, data: { sheet_0: { name: '测试表A', content: [['row_id', '值A']] } } },
+            },
+          },
+        },
+      },
+    ]);
+    mockSettings.autoUpdateThreshold = 0;
+    mockCurrentJsonTableData = {
+      sheet_0: { name: '测试表A', updateConfig: {}, content: [['row_id', '值A'], ['1', '旧A']] },
+    };
+    mockEnsureManualRefillInitialBaseline.mockResolvedValueOnce({ success: false, changed: false, error: '目标楼层已有 V2 logEntries' });
+
+    const processBatch = vi.fn().mockResolvedValue({ success: true });
+    const result = await orchestrateManualUpdate_ACU(['sheet_0'], processBatch, mockRefreshData, { clearBeforeUpdate: true });
+
+    expect(result.success).toBe(false);
+    expect(result.error).toContain('目标楼层已有 V2 logEntries');
+    expect(processBatch).not.toHaveBeenCalled();
   });
 
   it('从头手动重填时，阶段 checkpoint 的未处理选中表也使用清空后的基底', async () => {

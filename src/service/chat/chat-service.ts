@@ -66,6 +66,23 @@ export interface BoundaryCheckpointEnsureResult_ACU {
     anchorIndex?: number;
 }
 
+export interface ManualRefillInitialBaselineEnsureResult_ACU {
+    success: boolean;
+    changed: boolean;
+    skipped?: boolean;
+    error?: string;
+    targetMessageIndex?: number;
+    movedFromMessageIndex?: number;
+    downgradedCount?: number;
+}
+
+export interface ManualRefillInitialBaselineEnsureOptions_ACU {
+    isolationKey: string;
+    targetMessageIndex: number;
+    data: Record<string, any>;
+    save?: boolean;
+}
+
 export interface BoundaryCheckpointEnsureOptions_ACU {
     reason?: 'purge' | 'manual_refill' | 'auto_update';
     save?: boolean;
@@ -221,6 +238,40 @@ function countAiFloorAtMessage_ACU(chat: any[], messageIndex: number): number {
     return count;
 }
 
+function downgradeV2FullCheckpointAtIndex_ACU(chat: any[], isolationKey: string, messageIndex: number): boolean {
+    const msg = chat?.[messageIndex];
+    if (!msg || msg.is_user) return false;
+    const tagData = msg.TavernDB_ACU_IsolatedData?.[isolationKey];
+    if (!isV2TagData_ACU(tagData)) return false;
+
+    const frame = tagData.storageFrame;
+    const checkpoint = frame.checkpoint;
+    if (checkpoint?.kind !== 'full') return false;
+
+    const existingEntries = Array.isArray(frame.logEntries) ? frame.logEntries : [];
+    const finiteSeqs = existingEntries.map(entry => Number(entry.seq)).filter(Number.isFinite);
+    const minSeq = finiteSeqs.length > 0 ? Math.min(...finiteSeqs) : 1;
+    const seq = Math.min(0, minSeq - 1);
+    const sheetKeys = Object.keys(checkpoint.data || {}).filter(key => key.startsWith('sheet_'));
+    const downgradeEntry: TableMutationLogEntryV2_ACU = {
+        seq,
+        entryId: `downgraded-checkpoint-${messageIndex}-${checkpoint.createdAt || Date.now()}`,
+        createdAt: checkpoint.createdAt || Date.now(),
+        source: 'system',
+        targetMessageIndex: messageIndex,
+        aiFloor: countAiFloorAtMessage_ACU(chat, messageIndex),
+        filledSheetKeys: sheetKeys,
+        changedSheetKeys: sheetKeys,
+        groupKeys: [],
+        operations: [{ kind: 'data_replace', data: JSON.parse(JSON.stringify(checkpoint.data || {})), reason: 'checkpoint_fallback' }],
+        writeSet: [{ kind: 'all' }],
+    };
+    frame.logEntries = [downgradeEntry, ...existingEntries];
+    delete frame.checkpoint;
+    return true;
+}
+
+
 function downgradeCoveredV2FullCheckpointsAfterAnchor_ACU(chat: any[], anchorIndex: number): number {
     if (!Array.isArray(chat) || anchorIndex < 0 || anchorIndex >= chat.length) return 0;
 
@@ -233,38 +284,42 @@ function downgradeCoveredV2FullCheckpointsAfterAnchor_ACU(chat: any[], anchorInd
             const msg = chat[i];
             if (!msg || msg.is_user) continue;
             const tagData = msg.TavernDB_ACU_IsolatedData?.[isolationKey];
-            if (!isV2TagData_ACU(tagData)) continue;
-
-            const frame = tagData.storageFrame;
-            const checkpoint = frame.checkpoint;
-            if (checkpoint?.kind !== 'full') continue;
-
-            const existingEntries = Array.isArray(frame.logEntries) ? frame.logEntries : [];
-            const minSeq = existingEntries.length > 0
-                ? Math.min(...existingEntries.map(entry => Number(entry.seq)).filter(Number.isFinite))
-                : 1;
-            const seq = Number.isFinite(minSeq) ? Math.min(0, minSeq - 1) : 0;
-            const sheetKeys = Object.keys(checkpoint.data || {}).filter(key => key.startsWith('sheet_'));
-            const downgradeEntry: TableMutationLogEntryV2_ACU = {
-                seq,
-                entryId: `downgraded-checkpoint-${i}-${checkpoint.createdAt || Date.now()}`,
-                createdAt: checkpoint.createdAt || Date.now(),
-                source: 'system',
-                targetMessageIndex: i,
-                aiFloor: countAiFloorAtMessage_ACU(chat, i),
-                filledSheetKeys: sheetKeys,
-                changedSheetKeys: sheetKeys,
-                groupKeys: [],
-                operations: [{ kind: 'data_replace', data: JSON.parse(JSON.stringify(checkpoint.data || {})), reason: 'checkpoint_fallback' }],
-                writeSet: [{ kind: 'all' }],
-            };
-            frame.logEntries = [downgradeEntry, ...existingEntries];
-            delete frame.checkpoint;
-            downgradedCount += 1;
+            if (!isV2TagData_ACU(tagData) || tagData.storageFrame.checkpoint?.kind !== 'full') continue;
+            if (downgradeV2FullCheckpointAtIndex_ACU(chat, isolationKey, i)) downgradedCount += 1;
         }
     }
 
     return downgradedCount;
+}
+
+function downgradeObsoleteInitialV2FullCheckpointsBeforeCompaction_ACU(chat: any[], anchorIndex: number): number {
+    if (!Array.isArray(chat) || anchorIndex < 0 || anchorIndex >= chat.length) return 0;
+
+    let downgradedCount = 0;
+    const isolationKeys = collectIsolationKeysWithV2Frames_ACU(chat);
+    for (const isolationKey of isolationKeys) {
+        if (!hasV2CompactionCheckpointAtIndex_ACU(chat, isolationKey, anchorIndex)) continue;
+        for (let i = 0; i < anchorIndex; i += 1) {
+            const tagData = chat[i]?.TavernDB_ACU_IsolatedData?.[isolationKey];
+            if (!isV2TagData_ACU(tagData)) continue;
+            const checkpoint = tagData.storageFrame.checkpoint;
+            if (checkpoint?.kind !== 'full' || checkpoint.reason !== 'init') continue;
+            if (downgradeV2FullCheckpointAtIndex_ACU(chat, isolationKey, i)) downgradedCount += 1;
+        }
+    }
+    return downgradedCount;
+}
+
+function collectV2FullCheckpointRefsForIsolation_ACU(chat: any[], isolationKey: string): Array<{ messageIndex: number; checkpoint: any }> {
+    const refs: Array<{ messageIndex: number; checkpoint: any }> = [];
+    if (!Array.isArray(chat)) return refs;
+    for (let i = 0; i < chat.length; i += 1) {
+        const tagData = chat[i]?.TavernDB_ACU_IsolatedData?.[isolationKey];
+        if (!isV2TagData_ACU(tagData)) continue;
+        const checkpoint = tagData.storageFrame.checkpoint;
+        if (checkpoint?.kind === 'full') refs.push({ messageIndex: i, checkpoint });
+    }
+    return refs;
 }
 
 async function ensureV2BoundaryCheckpointForRetainedBufferCore_ACU(
@@ -281,10 +336,11 @@ async function ensureV2BoundaryCheckpointForRetainedBufferCore_ACU(
         try {
             const changed = await writeV2BoundaryCheckpointBeforePurge_ACU(chat, anchorIndex);
             const downgradedCount = downgradeCoveredV2FullCheckpointsAfterAnchor_ACU(chat, anchorIndex);
-            if ((changed || downgradedCount > 0) && options.save !== false) {
+            const obsoleteInitDowngradedCount = downgradeObsoleteInitialV2FullCheckpointsBeforeCompaction_ACU(chat, anchorIndex);
+            if ((changed || downgradedCount > 0 || obsoleteInitDowngradedCount > 0) && options.save !== false) {
                 await saveChatToHost_ACU();
             }
-            return { success: true, changed: changed || downgradedCount > 0, anchorIndex };
+            return { success: true, changed: changed || downgradedCount > 0 || obsoleteInitDowngradedCount > 0, anchorIndex };
         } catch (error: any) {
             return {
                 success: false,
@@ -347,6 +403,98 @@ export async function ensureV2BoundaryCheckpointForRetainedBuffer_ACU(
             logDebug_ACU(`[V2 Compaction] AI 楼层总数(${boundary.aiMessageIndices.length}) < 滚动触发层数(${boundary.effectiveRetainCount}=保留${retainCount}+缓冲${RETAIN_RECENT_CHECKPOINT_BUFFER_LAYERS_ACU})，无需建立边界 checkpoint。`);
         }
         return ensureV2BoundaryCheckpointForRetainedBufferCore_ACU(chat, boundary, options);
+    });
+}
+
+export async function ensureManualRefillInitialBaseline_ACU(
+    options: ManualRefillInitialBaselineEnsureOptions_ACU,
+): Promise<ManualRefillInitialBaselineEnsureResult_ACU> {
+    return runTableWriteTransaction_ACU({
+        source: 'system_cleanup',
+        reason: 'manual_refill_initial_baseline_move',
+        isolationKey: options.isolationKey,
+        writeSet: [{ kind: 'all' }],
+        maintenanceMode: 'exclusive',
+    }, async () => {
+        try {
+            const chat = getChatArray_ACU();
+            if (!Array.isArray(chat) || chat.length === 0) {
+                return { success: false, changed: false, error: '聊天记录为空，无法前移手动重填 initial baseline。' };
+            }
+
+            const targetIndex = options.targetMessageIndex;
+            const targetMsg = chat[targetIndex];
+            if (!targetMsg || targetMsg.is_user) {
+                return { success: false, changed: false, error: `手动重填 initial baseline 前移失败：targetMessageIndex=${targetIndex} 不是有效 AI 楼层。` };
+            }
+
+            const refs = collectV2FullCheckpointRefsForIsolation_ACU(chat, options.isolationKey);
+            if (refs.length === 0) {
+                return { success: true, changed: false, skipped: true, targetMessageIndex: targetIndex };
+            }
+
+            const compactionRefs = refs.filter(ref => ref.checkpoint.reason === 'compaction');
+            const initRefs = refs.filter(ref => ref.checkpoint.reason === 'init');
+            if (compactionRefs.length > 0) {
+                let downgradedCount = 0;
+                for (const initRef of initRefs) {
+                    if (initRef.messageIndex < Math.min(...compactionRefs.map(ref => ref.messageIndex))) {
+                        if (downgradeV2FullCheckpointAtIndex_ACU(chat, options.isolationKey, initRef.messageIndex)) downgradedCount += 1;
+                    }
+                }
+                if (downgradedCount > 0 && options.save !== false) await saveChatToHost_ACU();
+                return { success: true, changed: downgradedCount > 0, skipped: downgradedCount === 0, targetMessageIndex: targetIndex, downgradedCount };
+            }
+
+            const unsafeRefs = refs.filter(ref => ref.checkpoint.reason !== 'init');
+            if (unsafeRefs.length > 0) {
+                return { success: true, changed: false, skipped: true, targetMessageIndex: targetIndex };
+            }
+
+            const sortedInitRefs = [...initRefs].sort((a, b) => a.messageIndex - b.messageIndex);
+            const earliestInit = sortedInitRefs[0];
+            if (!earliestInit || earliestInit.messageIndex <= targetIndex) {
+                return { success: true, changed: false, skipped: true, targetMessageIndex: targetIndex };
+            }
+
+            const existingTargetTagData = targetMsg.TavernDB_ACU_IsolatedData?.[options.isolationKey];
+            if (isV2TagData_ACU(existingTargetTagData) && Array.isArray(existingTargetTagData.storageFrame.logEntries) && existingTargetTagData.storageFrame.logEntries.length > 0) {
+                return { success: false, changed: false, error: `手动重填 initial baseline 前移失败：目标楼层 #${targetIndex} 已存在 V2 logEntries，拒绝覆盖。`, targetMessageIndex: targetIndex };
+            }
+
+            if (!targetMsg.TavernDB_ACU_IsolatedData || typeof targetMsg.TavernDB_ACU_IsolatedData !== 'object' || Array.isArray(targetMsg.TavernDB_ACU_IsolatedData)) {
+                targetMsg.TavernDB_ACU_IsolatedData = {};
+            }
+            const existingTargetTag = targetMsg.TavernDB_ACU_IsolatedData[options.isolationKey];
+            const data = JSON.parse(JSON.stringify(options.data || {}));
+            targetMsg.TavernDB_ACU_IsolatedData[options.isolationKey] = {
+                ...(existingTargetTag?.summaryVectorIndexState !== undefined ? { summaryVectorIndexState: existingTargetTag.summaryVectorIndexState } : {}),
+                ...(existingTargetTag?.summaryVectorIndexManifest !== undefined ? { summaryVectorIndexManifest: existingTargetTag.summaryVectorIndexManifest } : {}),
+                storageFrame: {
+                    version: 2,
+                    checkpoint: {
+                        kind: 'full',
+                        createdAt: Date.now(),
+                        reason: 'init',
+                        data,
+                        scheduleSummary: collectScheduleSummaryFromFramesV2_ACU(chat, options.isolationKey, { maxMessageIndex: targetIndex }),
+                    },
+                    logEntries: [],
+                },
+                _acu_storage_version: 2,
+            };
+
+            let downgradedCount = 0;
+            for (const initRef of sortedInitRefs) {
+                if (initRef.messageIndex === targetIndex) continue;
+                if (downgradeV2FullCheckpointAtIndex_ACU(chat, options.isolationKey, initRef.messageIndex)) downgradedCount += 1;
+            }
+
+            if (options.save !== false) await saveChatToHost_ACU();
+            return { success: true, changed: true, targetMessageIndex: targetIndex, movedFromMessageIndex: earliestInit.messageIndex, downgradedCount };
+        } catch (error: any) {
+            return { success: false, changed: false, error: error?.message || String(error || '手动重填 initial baseline 前移失败。') };
+        }
     });
 }
 

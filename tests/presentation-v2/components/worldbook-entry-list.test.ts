@@ -40,9 +40,9 @@ function mountGroups() {
       bookName: 'CharBook',
       expanded: true,
       entries: [
-        { uid: 1, bookName: 'CharBook', label: '人物', checked: true, skillifySelected: false, disabled: false, hasSkill: true, agentTakeoverState: 'skill_ready' },
-        { uid: 2, bookName: 'CharBook', label: '地点', checked: false, skillifySelected: true, disabled: false, hasSkill: true, agentTakeoverState: 'taken_over' },
-        { uid: 3, bookName: 'CharBook', label: '背景', checked: true, skillifySelected: false, disabled: false, hasSkill: false, agentTakeoverState: 'native' },
+        { uid: 1, bookName: 'CharBook', label: '人物', checked: true, skillifySelected: false, skillifySelectable: true, disabled: false, hasSkill: true, agentTakeoverState: 'skill_ready' },
+        { uid: 2, bookName: 'CharBook', label: '地点', checked: false, skillifySelected: true, skillifySelectable: true, disabled: false, hasSkill: true, agentTakeoverState: 'taken_over' },
+        { uid: 3, bookName: 'CharBook', label: '背景', checked: true, skillifySelected: false, skillifySelectable: true, disabled: false, hasSkill: false, agentTakeoverState: 'native' },
       ],
     },
   ];

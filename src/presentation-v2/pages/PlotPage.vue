@@ -19,6 +19,7 @@
           :current-label="currentWorldbookLabel"
           v-model:filter="entryFilter"
           :groups="wbEntries.groups.value"
+          :skillify-groups="wbEntries.agentGroups.value"
           :loading="wbEntries.status.value === 'loading'"
           :empty-text="entryEmptyText"
           @update:source="onWorldbookSourceChange($event)"
