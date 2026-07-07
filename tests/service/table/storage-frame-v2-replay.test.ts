@@ -317,4 +317,108 @@ describe('loadTableStateFromFramesV2_ACU', () => {
 
     expect(result).toBeNull();
   });
+
+  it('从 boundary compaction checkpoint 开始回放降级旧 full 的 data_replace 与后续日志', async () => {
+    const boundaryData = {
+      mate: { type: 'acu', version: 1 },
+      sheet_0: {
+        name: '物品表',
+        content: [['row_id', '物品名'], ['1', '剑']],
+      },
+    } as any;
+    const downgradedManualSnapshot = {
+      mate: { type: 'acu', version: 1 },
+      sheet_0: {
+        name: '物品表',
+        content: [['row_id', '物品名'], ['1', '盾']],
+      },
+    } as any;
+    const chat = [
+      {
+        is_user: false,
+        TavernDB_ACU_IsolatedData: {
+          '': {
+            _acu_storage_version: 2,
+            storageFrame: {
+              version: 2,
+              checkpoint: {
+                kind: 'full',
+                createdAt: 1,
+                reason: 'init',
+                data: {
+                  mate: { type: 'acu', version: 1 },
+                  sheet_0: { name: '物品表', content: [['row_id', '物品名'], ['1', '旧剑']] },
+                },
+              },
+              logEntries: [],
+            },
+          },
+        },
+      },
+      {
+        is_user: false,
+        TavernDB_ACU_IsolatedData: {
+          '': {
+            _acu_storage_version: 2,
+            storageFrame: {
+              version: 2,
+              checkpoint: {
+                kind: 'full',
+                createdAt: 2,
+                reason: 'compaction',
+                data: boundaryData,
+              },
+              logEntries: [],
+            },
+          },
+        },
+      },
+      {
+        is_user: false,
+        TavernDB_ACU_IsolatedData: {
+          '': {
+            _acu_storage_version: 2,
+            storageFrame: {
+              version: 2,
+              logEntries: [
+                {
+                  seq: 0,
+                  entryId: 'downgraded-checkpoint-2',
+                  createdAt: 3,
+                  source: 'system',
+                  targetMessageIndex: 2,
+                  aiFloor: 3,
+                  filledSheetKeys: ['sheet_0'],
+                  changedSheetKeys: ['sheet_0'],
+                  groupKeys: [],
+                  operations: [{ kind: 'data_replace', data: downgradedManualSnapshot, reason: 'checkpoint_fallback' }],
+                  writeSet: [{ kind: 'all' }],
+                },
+                {
+                  seq: 1,
+                  entryId: 'after-downgrade-update',
+                  createdAt: 4,
+                  source: 'auto_fill',
+                  targetMessageIndex: 2,
+                  aiFloor: 3,
+                  filledSheetKeys: ['sheet_0'],
+                  changedSheetKeys: ['sheet_0'],
+                  groupKeys: [],
+                  operations: [{ kind: 'row_upsert', sheetKey: 'sheet_0', rowId: '2', cells: ['2', '药水'] }],
+                },
+              ],
+            },
+          },
+        },
+      },
+    ];
+
+    const result = await loadTableStateFromFramesV2_ACU(chat, '');
+
+    expect(result?.sheet_0.content).toEqual([
+      ['row_id', '物品名'],
+      ['1', '盾'],
+      ['2', '药水'],
+    ]);
+  });
 });

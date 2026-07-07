@@ -1,7 +1,6 @@
 export const formFillCopy = {
   nav: {
     status: "表格状态",
-    checkpoint: "Checkpoint",
     update: "自动更新",
     manual: "手动填表",
     filter: "标签筛选",
@@ -16,10 +15,6 @@ export const formFillCopy = {
     update: {
       title: "自动更新设置",
       description: "控制自动填表的各项参数。正常情况下不必手动修改高级参数。",
-    },
-    checkpoint: {
-      title: "Checkpoint 设置",
-      description: "查看 checkpoint 后的增量状态，用于判断是否接近自动生成 full checkpoint。",
     },
     filter: {
       title: "标签筛选",

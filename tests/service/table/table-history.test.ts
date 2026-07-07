@@ -249,6 +249,7 @@ describe('resolveTableHistoryStateFromChat_ACU', () => {
         checkpoint: {
           kind: 'full',
           createdAt: 2,
+          // 历史 fixture：reason:'periodic' 仅表示旧数据兼容，新策略不再生成 periodic full checkpoint。
           reason: 'periodic',
           data: { mate: {}, sheet_0: { name: '表A', content: [['row_id'], ['1'], ['2']] } },
           scheduleSummary: { sheet_0: { lastFilledAiFloor: 1, lastChangedAiFloor: 1 } },
@@ -340,6 +341,7 @@ describe('resolveTableHistoryStateFromChat_ACU', () => {
         checkpoint: {
           kind: 'full',
           createdAt: 2,
+          // 历史 fixture：reason:'periodic' 仅表示旧数据兼容，新策略不再生成 periodic full checkpoint。
           reason: 'periodic',
           data: { mate: {}, sheet_0: { name: '表A', content: [['row_id'], ['2']] } },
         },
@@ -349,6 +351,7 @@ describe('resolveTableHistoryStateFromChat_ACU', () => {
 
     expect(collectV2CheckpointFloorsFromChat_ACU(chat, '')).toEqual([
       { messageIndex: 1, aiFloor: 1, reason: 'init', createdAt: 1 },
+      // 历史 fixture：reason:'periodic' 仅表示旧数据兼容，新策略不再生成 periodic full checkpoint。
       { messageIndex: 4, aiFloor: 3, reason: 'periodic', createdAt: 2 },
     ]);
   });

@@ -1219,6 +1219,144 @@ describe('orchestrateManualUpdate_ACU', () => {
     expect(firstProgress.completedSheetMessageIndexByKey).toEqual({ sheet_0: 4 });
   });
 
+  it('手动重填续跑兼容读取旧 checkpoint.manualRefillProgress', async () => {
+    const { getChatArray_ACU } = await import('../../../src/service/chat/chat-service');
+    const { parseTableTemplateJson_ACU } = await import('../../../src/shared/utils');
+    vi.mocked(parseTableTemplateJson_ACU).mockReturnValue({
+      mate: { type: 'acu' },
+      sheet_0: { name: '测试表A', updateConfig: { groupId: 0 }, content: [['row_id', '值A']] },
+    });
+    const legacyProgress = {
+      kind: 'manual_refill',
+      status: 'in_progress',
+      selectedSheetKeys: ['sheet_0'],
+      contextMessageIndices: [1, 2, 3, 4],
+      originalStartMessageIndex: 1,
+      targetMessageIndex: 4,
+      batchSize: 1,
+      completedUntilMessageIndex: 2,
+      completedSheetMessageIndexByKey: { __legacy_marker: 2 },
+      updatedAt: 11,
+    };
+    vi.mocked(getChatArray_ACU).mockReturnValue([
+      { is_user: true, mes: '用户0' },
+      { is_user: false, mes: 'AI回复1' },
+      { is_user: true, mes: '用户1' },
+      { is_user: true, mes: '用户2' },
+      {
+        is_user: false,
+        mes: 'AI回复2',
+        TavernDB_ACU_IsolatedData: {
+          '': {
+            _acu_storage_version: 2,
+            storageFrame: {
+              version: 2,
+              logEntries: [],
+              checkpoint: {
+                kind: 'full',
+                reason: 'init',
+                createdAt: 1,
+                data: {
+                  mate: { type: 'acu' },
+                  sheet_0: { name: '测试表A', content: [['row_id', '值A'], ['1', '旧A']] },
+                },
+                manualRefillProgress: legacyProgress,
+              },
+            },
+          },
+        },
+      },
+    ]);
+    mockSettings.maxConcurrentGroups = 1;
+    mockSettings.manualUpdateContextDepth = 4;
+    mockSettings.updateBatchSize = 1;
+    mockSettings.autoUpdateThreshold = 0;
+    mockCurrentJsonTableData = {
+      sheet_0: { name: '测试表A', updateConfig: {}, content: [['row_id', '值A'], ['1', '旧A']] },
+    };
+    mockCallCustomOpenAI.mockResolvedValue('<tableEdit>sheet_0</tableEdit>');
+
+    const result = await orchestrateManualUpdate_ACU(['sheet_0'], vi.fn().mockResolvedValue({ success: true }), mockRefreshData, { clearBeforeUpdate: true });
+
+    expect(result.success).toBe(true);
+    const savedProgress = mockPersistTablesToChatMessage.mock.calls
+      .map(call => call[0]?.manualRefillProgress)
+      .find(progress => progress?.completedSheetMessageIndexByKey?.__legacy_marker === 2);
+    expect(savedProgress).toBeDefined();
+    expect(savedProgress.completedSheetMessageIndexByKey.__legacy_marker).toBe(2);
+    expect(savedProgress.originalStartMessageIndex).toBe(1);
+    expect(savedProgress.targetMessageIndex).toBe(4);
+  });
+
+  it('手动重填续跑优先读取 frame.manualRefillProgress 而不是旧 checkpoint 字段', async () => {
+    const { getChatArray_ACU } = await import('../../../src/service/chat/chat-service');
+    const frameProgress = {
+      kind: 'manual_refill',
+      status: 'in_progress',
+      selectedSheetKeys: ['sheet_0'],
+      contextMessageIndices: [1, 2, 3, 4],
+      originalStartMessageIndex: 1,
+      targetMessageIndex: 4,
+      batchSize: 1,
+      completedUntilMessageIndex: 2,
+      completedSheetMessageIndexByKey: { __frame_marker: 2 },
+      updatedAt: 22,
+    };
+    const legacyProgress = {
+      ...frameProgress,
+      completedSheetMessageIndexByKey: { __legacy_marker: 2 },
+      updatedAt: 11,
+    };
+    vi.mocked(getChatArray_ACU).mockReturnValue([
+      { is_user: true, mes: '用户0' },
+      { is_user: false, mes: 'AI回复1' },
+      { is_user: true, mes: '用户1' },
+      { is_user: true, mes: '用户2' },
+      {
+        is_user: false,
+        mes: 'AI回复2',
+        TavernDB_ACU_IsolatedData: {
+          '': {
+            _acu_storage_version: 2,
+            storageFrame: {
+              version: 2,
+              logEntries: [],
+              manualRefillProgress: frameProgress,
+              checkpoint: {
+                kind: 'full',
+                reason: 'init',
+                createdAt: 1,
+                data: {
+                  mate: { type: 'acu' },
+                  sheet_0: { name: '测试表A', content: [['row_id', '值A'], ['1', '旧A']] },
+                },
+                manualRefillProgress: legacyProgress,
+              },
+            },
+          },
+        },
+      },
+    ]);
+    mockSettings.maxConcurrentGroups = 1;
+    mockSettings.manualUpdateContextDepth = 4;
+    mockSettings.updateBatchSize = 1;
+    mockSettings.autoUpdateThreshold = 0;
+    mockCurrentJsonTableData = {
+      sheet_0: { name: '测试表A', updateConfig: {}, content: [['row_id', '值A'], ['1', '旧A']] },
+    };
+    mockCallCustomOpenAI.mockResolvedValue('<tableEdit>sheet_0</tableEdit>');
+
+    const result = await orchestrateManualUpdate_ACU(['sheet_0'], vi.fn().mockResolvedValue({ success: true }), mockRefreshData, { clearBeforeUpdate: true });
+
+    expect(result.success).toBe(true);
+    const savedProgress = mockPersistTablesToChatMessage.mock.calls
+      .map(call => call[0]?.manualRefillProgress)
+      .find(progress => progress?.completedSheetMessageIndexByKey?.__frame_marker === 2);
+    expect(savedProgress).toBeDefined();
+    expect(savedProgress.completedSheetMessageIndexByKey.__frame_marker).toBe(2);
+    expect(savedProgress.completedSheetMessageIndexByKey.__legacy_marker).toBeUndefined();
+  });
+
   it('processBatch 失败时返回错误', async () => {
     const { getChatArray_ACU } = await import('../../../src/service/chat/chat-service');
     vi.mocked(getChatArray_ACU).mockReturnValue([

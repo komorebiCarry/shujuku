@@ -361,7 +361,7 @@ export function useManualUpdate(): ManualUpdateState {
 
     const confirmed = await dialogStore.confirm({
       title: '执行手动填表',
-      message: `即将执行手动填表。\n\n当前 full checkpoint：${checkpointFloorsLabel.value}\n本次重填范围：${manualRefillRangeLabel.value}\n\n系统会在内存中按当前上下文和批处理设置重填当前选中的表，全部成功后才写入手动重填进度 checkpoint。\n保留边界 checkpoint 会按 AI 回复楼层计数，在达到保留窗口和 20 个 AI 楼层缓冲后自动滚动建立。\n如果重填起点之前找不到可回放的 checkpoint，选中表的本次内存重建基底会从表头空基底开始；未选中的表会保持当前最新数据。\n\n失败、终止或从中断处继续时，都不会清空聊天记录中的旧表格数据。`,
+      message: `即将执行手动填表。\n\n当前 full checkpoint：${checkpointFloorsLabel.value}\n本次重填范围：${manualRefillRangeLabel.value}\n\n系统会在内存中按当前上下文和批处理设置重填当前选中的表，全部成功后才写入手动重填进度记录。\n保留边界 checkpoint 会按 AI 回复楼层计数，在达到保留窗口和 20 个 AI 楼层缓冲后自动滚动建立。\n如果重填起点之前找不到可回放的 checkpoint，选中表的本次内存重建基底会从表头空基底开始；未选中的表会保持当前最新数据。\n\n失败、终止或从中断处继续时，都不会清空聊天记录中的旧表格数据。`,
       dangerMessage: checkpointRiskMessage.value || undefined,
       confirmLabel: '确认并继续',
       cancelLabel: '取消',

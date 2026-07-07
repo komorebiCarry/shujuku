@@ -148,5 +148,6 @@ export interface TableStorageFrameV2_ACU {
   version: 2;
   headRevision?: string | null;
   checkpoint?: TableCheckpointV2_ACU;
+  manualRefillProgress?: ManualRefillProgressV2_ACU;
   logEntries: TableMutationLogEntryV2_ACU[];
 }

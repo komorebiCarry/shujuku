@@ -30,7 +30,7 @@ import { assignSummaryVectorIndexStateToTagData_ACU } from '../vector/summary-ve
 import { isV2TagData_ACU, resolveTableStorageStrategy_ACU } from '../table/storage-strategy-resolver';
 import { collectScheduleSummaryFromFramesV2_ACU, loadTableStateFromFramesV2_ACU } from '../table/storage-frame-v2-replay';
 import { runTableWriteTransaction_ACU } from '../table/table-write-transaction';
-import type { TableMutationOperationV2_ACU, TableStorageFrameV2_ACU } from '../table/storage-frame-v2-types';
+import type { TableMutationLogEntryV2_ACU, TableMutationOperationV2_ACU, TableStorageFrameV2_ACU } from '../table/storage-frame-v2-types';
 
 // ─── 业务逻辑函数（从 presentation 层搬迁） ───
 
@@ -143,19 +143,14 @@ function collectIsolationKeysWithV2Frames_ACU(chat: any[], options: { maxMessage
     return [...keys];
 }
 
-function hasV2FullCheckpointInRange_ACU(chat: any[], isolationKey: string, startIndex: number, endIndex: number): boolean {
-    if (!Array.isArray(chat) || startIndex > endIndex) return false;
-    const start = Math.max(0, startIndex);
-    const end = Math.min(chat.length - 1, endIndex);
-    for (let i = start; i <= end; i++) {
-        const msg = chat[i];
-        if (!msg || msg.is_user) continue;
-        const tagData = msg.TavernDB_ACU_IsolatedData?.[isolationKey];
-        if (isV2TagData_ACU(tagData) && tagData.storageFrame.checkpoint?.kind === 'full') {
-            return true;
-        }
-    }
-    return false;
+function hasV2CompactionCheckpointAtIndex_ACU(chat: any[], isolationKey: string, messageIndex: number): boolean {
+    if (!Array.isArray(chat) || messageIndex < 0 || messageIndex >= chat.length) return false;
+    const msg = chat[messageIndex];
+    if (!msg || msg.is_user) return false;
+    const tagData = msg.TavernDB_ACU_IsolatedData?.[isolationKey];
+    return isV2TagData_ACU(tagData)
+        && tagData.storageFrame.checkpoint?.kind === 'full'
+        && tagData.storageFrame.checkpoint.reason === 'compaction';
 }
 
 function resolveRetainedCheckpointBoundary_ACU(chat: any[], retainCount: number): RetainedCheckpointBoundary_ACU {
@@ -218,6 +213,60 @@ function resolveRetainedCheckpointBoundary_ACU(chat: any[], retainCount: number)
     };
 }
 
+function countAiFloorAtMessage_ACU(chat: any[], messageIndex: number): number {
+    let count = 0;
+    for (let i = 0; i <= messageIndex && i < chat.length; i += 1) {
+        if (chat[i] && !chat[i].is_user) count += 1;
+    }
+    return count;
+}
+
+function downgradeCoveredV2FullCheckpointsAfterAnchor_ACU(chat: any[], anchorIndex: number): number {
+    if (!Array.isArray(chat) || anchorIndex < 0 || anchorIndex >= chat.length) return 0;
+
+    let downgradedCount = 0;
+    const isolationKeys = collectIsolationKeysWithV2Frames_ACU(chat);
+    for (const isolationKey of isolationKeys) {
+        if (!hasV2CompactionCheckpointAtIndex_ACU(chat, isolationKey, anchorIndex)) continue;
+
+        for (let i = anchorIndex + 1; i < chat.length; i += 1) {
+            const msg = chat[i];
+            if (!msg || msg.is_user) continue;
+            const tagData = msg.TavernDB_ACU_IsolatedData?.[isolationKey];
+            if (!isV2TagData_ACU(tagData)) continue;
+
+            const frame = tagData.storageFrame;
+            const checkpoint = frame.checkpoint;
+            if (checkpoint?.kind !== 'full') continue;
+
+            const existingEntries = Array.isArray(frame.logEntries) ? frame.logEntries : [];
+            const minSeq = existingEntries.length > 0
+                ? Math.min(...existingEntries.map(entry => Number(entry.seq)).filter(Number.isFinite))
+                : 1;
+            const seq = Number.isFinite(minSeq) ? Math.min(0, minSeq - 1) : 0;
+            const sheetKeys = Object.keys(checkpoint.data || {}).filter(key => key.startsWith('sheet_'));
+            const downgradeEntry: TableMutationLogEntryV2_ACU = {
+                seq,
+                entryId: `downgraded-checkpoint-${i}-${checkpoint.createdAt || Date.now()}`,
+                createdAt: checkpoint.createdAt || Date.now(),
+                source: 'system',
+                targetMessageIndex: i,
+                aiFloor: countAiFloorAtMessage_ACU(chat, i),
+                filledSheetKeys: sheetKeys,
+                changedSheetKeys: sheetKeys,
+                groupKeys: [],
+                operations: [{ kind: 'data_replace', data: JSON.parse(JSON.stringify(checkpoint.data || {})), reason: 'checkpoint_fallback' }],
+                writeSet: [{ kind: 'all' }],
+            };
+            frame.logEntries = [downgradeEntry, ...existingEntries];
+            delete frame.checkpoint;
+            downgradedCount += 1;
+        }
+    }
+
+    return downgradedCount;
+}
+
 async function ensureV2BoundaryCheckpointForRetainedBufferCore_ACU(
     chat: any[],
     boundary: RetainedCheckpointBoundary_ACU,
@@ -230,14 +279,12 @@ async function ensureV2BoundaryCheckpointForRetainedBufferCore_ACU(
     const anchorIndex = boundary.anchorIndex;
     if (anchorIndex !== undefined && anchorIndex >= 0 && chat[anchorIndex]) {
         try {
-            const changed = await writeV2BoundaryCheckpointBeforePurge_ACU(chat, anchorIndex, {
-                retainedStartIndex: boundary.retainedStartIndex,
-                retainedEndIndex: boundary.retainedEndIndex,
-            });
-            if (changed && options.save !== false) {
+            const changed = await writeV2BoundaryCheckpointBeforePurge_ACU(chat, anchorIndex);
+            const downgradedCount = downgradeCoveredV2FullCheckpointsAfterAnchor_ACU(chat, anchorIndex);
+            if ((changed || downgradedCount > 0) && options.save !== false) {
                 await saveChatToHost_ACU();
             }
-            return { success: true, changed, anchorIndex };
+            return { success: true, changed: changed || downgradedCount > 0, anchorIndex };
         } catch (error: any) {
             return {
                 success: false,
@@ -306,7 +353,6 @@ export async function ensureV2BoundaryCheckpointForRetainedBuffer_ACU(
 async function writeV2BoundaryCheckpointBeforePurge_ACU(
     chat: any[],
     boundaryAnchorIndex: number,
-    options: { retainedStartIndex?: number; retainedEndIndex?: number } = {},
 ): Promise<boolean> {
     if (boundaryAnchorIndex < 0 || !chat[boundaryAnchorIndex] || chat[boundaryAnchorIndex].is_user) {
         throw new Error(`边界 checkpoint 写入失败：boundaryAnchorIndex=${boundaryAnchorIndex} 不是有效 AI 楼层。`);
@@ -319,15 +365,12 @@ async function writeV2BoundaryCheckpointBeforePurge_ACU(
     };
 
     const isolationKeys = collectIsolationKeysWithV2Frames_ACU(chat, { maxMessageIndex: boundaryAnchorIndex });
-    const retainedStartIndex = Number.isInteger(options.retainedStartIndex) ? options.retainedStartIndex as number : undefined;
-    const retainedEndIndex = Number.isInteger(options.retainedEndIndex) ? options.retainedEndIndex as number : undefined;
     for (const isolationKey of isolationKeys) {
         const strategy = resolveTableStorageStrategy_ACU(chat, isolationKey, isolationConfig);
         if (strategy.mode !== 'v2') continue;
 
-        if (retainedStartIndex !== undefined && retainedEndIndex !== undefined
-            && hasV2FullCheckpointInRange_ACU(chat, isolationKey, retainedStartIndex, retainedEndIndex)) {
-            logDebug_ACU(`[V2 Compaction] 保留窗口内已存在 isolationKey=[${isolationKey || '无标签'}] 的 full checkpoint，跳过重建。`);
+        if (hasV2CompactionCheckpointAtIndex_ACU(chat, isolationKey, boundaryAnchorIndex)) {
+            logDebug_ACU(`[V2 Compaction] AI 保留边界楼层 #${boundaryAnchorIndex} 已存在 isolationKey=[${isolationKey || '无标签'}] 的 compaction full checkpoint，跳过重建。`);
             continue;
         }
 

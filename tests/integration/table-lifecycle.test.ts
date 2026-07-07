@@ -344,7 +344,7 @@ describe('V2 顺序日志追加', () => {
     expect(result.error).toContain('requires explicit operations');
   });
 
-  it('写 periodic checkpoint 前将既有 logEntries 汇总进 scheduleSummary', async () => {
+  it('忽略非初次 forceCheckpoint 并继续追加 operation log', async () => {
     const baseData = buildV2BaseData_ACU();
     seedV2FrameWithSheetACommit_ACU(baseData);
     const frameBefore = mockChat[0].TavernDB_ACU_IsolatedData[''].storageFrame;
@@ -370,10 +370,15 @@ describe('V2 顺序日志追加', () => {
 
     expect(result.saved).toBe(true);
     const frame = mockChat[0].TavernDB_ACU_IsolatedData[''].storageFrame;
-    expect(frame.logEntries).toHaveLength(0);
-    expect(frame.checkpoint.scheduleSummary.sheet_a.lastFilledAiFloor).toBe(1);
-    expect(frame.checkpoint.scheduleSummary.sheet_a.lastChangedAiFloor).toBe(1);
-    expect(frame.checkpoint.event.filledSheetKeys).toEqual(['sheet_b']);
+    expect(frame.checkpoint).toEqual(expect.objectContaining({
+      kind: 'full',
+      reason: 'init',
+    }));
+    expect(frame.logEntries).toHaveLength(2);
+    expect(frame.logEntries[1]).toEqual(expect.objectContaining({ source: 'group_fill' }));
+    expect(logWarn_ACU).toHaveBeenCalledWith(expect.stringContaining('已忽略非初次 forceCheckpoint'));
+    const replayed = await loadTableStateFromFramesV2_ACU(mockChat, '');
+    expect(replayed?.sheet_b.content[1]).toEqual(['b1', '新B']);
   });
 
   it('V2 持久层不处理冲突，baseRevision 落后也只顺序追加日志', async () => {

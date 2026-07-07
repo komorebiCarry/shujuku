@@ -355,8 +355,10 @@ function getManualRefillProgressAtMessage_ACU(chat: any[], messageIndex: number)
     if (!msg || msg.is_user) return null;
     const tagData = readIsolatedTagData_ACU(msg, getCurrentIsolationKey_ACU()) as any;
     if (!isV2TagData_ACU(tagData)) return null;
-    const progress = tagData.storageFrame?.checkpoint?.manualRefillProgress;
-    return progress?.kind === 'manual_refill' ? progress as ManualRefillProgressV2_ACU : null;
+    const frameProgress = tagData.storageFrame?.manualRefillProgress;
+    if (frameProgress?.kind === 'manual_refill') return frameProgress as ManualRefillProgressV2_ACU;
+    const legacyCheckpointProgress = tagData.storageFrame?.checkpoint?.manualRefillProgress;
+    return legacyCheckpointProgress?.kind === 'manual_refill' ? legacyCheckpointProgress as ManualRefillProgressV2_ACU : null;
 }
 
 function arraysEqualUnordered_ACU(a: string[], b: string[]): boolean {
@@ -1485,7 +1487,7 @@ export async function processGroupedRuntimeChunk_ACU(
                         : undefined;
                     const checkpointCommit = await runTableUpdateCommit_ACU<{ modifiedKeys: string[] }>({
                         source: 'group_fill',
-                        reason: 'manual_refill_progress_checkpoint',
+                        reason: 'manual_refill_progress_record',
                         isolationKey: getCurrentIsolationKey_ACU(),
                         writeSet: buildWriteSetForSheetKeys_ACU(checkpointSheetKeys, deferredCheckpointData),
                         revisionWriteSet,
@@ -1505,15 +1507,13 @@ export async function processGroupedRuntimeChunk_ACU(
                             updateGroupKeys: checkpointSheetKeys,
                             trackingSheetKeys: checkpointSheetKeys,
                             trackAsUpdate: true,
-                            forceCheckpoint: true,
-                            checkpointReason: 'manual',
                             manualRefillProgress: progress,
                             revisionWriteSet,
                         },
                     }));
                     if (!checkpointCommit.success) {
                         jobs.forEach(job => failedGroups.add(job.groupKey));
-                        firstError = firstError || checkpointCommit.error || '手动重填进度 checkpoint 保存失败。';
+                        firstError = firstError || checkpointCommit.error || '手动重填进度记录保存失败。';
                         break;
                     }
                     if (checkpointCommit.tableData) {
