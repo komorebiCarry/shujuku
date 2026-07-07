@@ -1143,6 +1143,100 @@ describe('orchestrateManualUpdate_ACU', () => {
     expect(clearTableDataAtFloors_ACU).not.toHaveBeenCalled();
   });
 
+  it('无 V2 full checkpoint 时手动重填先在重填起点写入 init baseline，后续进度仍写入目标层', async () => {
+    const { getChatArray_ACU } = await import('../../../src/service/chat/chat-service');
+    const { parseTableTemplateJson_ACU } = await import('../../../src/shared/utils');
+    vi.mocked(parseTableTemplateJson_ACU).mockReturnValue({
+      mate: { type: 'acu' },
+      sheet_0: { name: '测试表A', updateConfig: { groupId: 0 }, content: [['row_id', '值A']] },
+    });
+    vi.mocked(getChatArray_ACU).mockReturnValue([
+      { is_user: false, mes: 'AI回复1' },
+      { is_user: true },
+      { is_user: false, mes: 'AI回复2' },
+      { is_user: true },
+      { is_user: false, mes: 'AI回复3' },
+    ]);
+    mockSettings.maxConcurrentGroups = 1;
+    mockSettings.autoUpdateThreshold = 0;
+    mockSettings.updateBatchSize = 1;
+    mockCurrentJsonTableData = {
+      sheet_0: { name: '测试表A', updateConfig: {}, content: [['row_id', '值A'], ['1', '旧A']] },
+    };
+    mockCallCustomOpenAI.mockResolvedValue('<tableEdit>sheet_0</tableEdit>');
+    mockPersistTablesToChatMessage.mockImplementation(async (options: any) => ({ saved: true, messageIndex: options.targetMessageIndex }));
+
+    const result = await orchestrateManualUpdate_ACU(['sheet_0'], vi.fn().mockResolvedValue({ success: true }), mockRefreshData, { clearBeforeUpdate: true });
+
+    expect(result.success).toBe(true);
+    const persistCalls = mockPersistTablesToChatMessage.mock.calls.map(call => call[0]);
+    const initBaseline = persistCalls.find(call => call.forceCheckpoint === true && call.checkpointReason === 'init');
+    expect(initBaseline).toBeDefined();
+    expect(initBaseline.targetMessageIndex).toBe(0);
+    expect(initBaseline.manualRefillProgress).toBeUndefined();
+    expect(initBaseline.tableData.sheet_0.content).toEqual([['row_id', '值A']]);
+
+    const progressCalls = persistCalls.filter(call => call.manualRefillProgress?.kind === 'manual_refill');
+    expect(progressCalls.length).toBeGreaterThan(0);
+    expect(progressCalls.every(call => call.targetMessageIndex === 4)).toBe(true);
+    expect(progressCalls[0].manualRefillProgress.kind).toBe('manual_refill');
+    expect(progressCalls[0].manualRefillProgress.originalStartMessageIndex).toBe(0);
+    expect(progressCalls[0].manualRefillProgress.targetMessageIndex).toBe(4);
+  });
+
+  it('已有 V2 full checkpoint 且非续跑时不会额外写手动重填 init baseline', async () => {
+    const { getChatArray_ACU } = await import('../../../src/service/chat/chat-service');
+    const { parseTableTemplateJson_ACU } = await import('../../../src/shared/utils');
+    vi.mocked(parseTableTemplateJson_ACU).mockReturnValue({
+      mate: { type: 'acu' },
+      sheet_0: { name: '测试表A', updateConfig: { groupId: 0 }, content: [['row_id', '值A']] },
+    });
+    vi.mocked(getChatArray_ACU).mockReturnValue([
+      {
+        is_user: false,
+        mes: 'AI回复1',
+        TavernDB_ACU_IsolatedData: {
+          '': {
+            _acu_storage_version: 2,
+            storageFrame: {
+              version: 2,
+              logEntries: [],
+              checkpoint: {
+                kind: 'full',
+                reason: 'init',
+                createdAt: 1,
+                data: {
+                  mate: { type: 'acu' },
+                  sheet_0: { name: '测试表A', content: [['row_id', '值A']] },
+                },
+              },
+            },
+          },
+        },
+      },
+      { is_user: true },
+      { is_user: false, mes: 'AI回复2' },
+      { is_user: true },
+      { is_user: false, mes: 'AI回复3' },
+    ]);
+    mockSettings.maxConcurrentGroups = 1;
+    mockSettings.autoUpdateThreshold = 0;
+    mockSettings.updateBatchSize = 1;
+    mockCurrentJsonTableData = {
+      sheet_0: { name: '测试表A', updateConfig: {}, content: [['row_id', '值A'], ['1', '旧A']] },
+    };
+    mockCallCustomOpenAI.mockResolvedValue('<tableEdit>sheet_0</tableEdit>');
+
+    const result = await orchestrateManualUpdate_ACU(['sheet_0'], vi.fn().mockResolvedValue({ success: true }), mockRefreshData, { clearBeforeUpdate: true });
+
+    expect(result.success).toBe(true);
+    const persistCalls = mockPersistTablesToChatMessage.mock.calls.map(call => call[0]);
+    expect(persistCalls.some(call => call.forceCheckpoint === true && call.checkpointReason === 'init')).toBe(false);
+    const progressCalls = persistCalls.filter(call => call.manualRefillProgress?.kind === 'manual_refill');
+    expect(progressCalls.length).toBeGreaterThan(0);
+    expect(progressCalls.every(call => call.targetMessageIndex === 4)).toBe(true);
+  });
+
   it('从头手动重填时，阶段 checkpoint 的未处理选中表也使用清空后的基底', async () => {
     const { getChatArray_ACU } = await import('../../../src/service/chat/chat-service');
     const { parseTableTemplateJson_ACU } = await import('../../../src/shared/utils');
@@ -1171,11 +1265,14 @@ describe('orchestrateManualUpdate_ACU', () => {
     const result = await orchestrateManualUpdate_ACU(['sheet_0', 'sheet_1'], vi.fn().mockResolvedValue({ success: true }), mockRefreshData, { clearBeforeUpdate: true });
 
     expect(result.success).toBe(true);
-    expect(mockPersistTablesToChatMessage).toHaveBeenCalledTimes(2);
-    const firstCheckpointData = mockPersistTablesToChatMessage.mock.calls[0][0].tableData;
+    expect(mockPersistTablesToChatMessage).toHaveBeenCalledTimes(3);
+    const initBaseline = mockPersistTablesToChatMessage.mock.calls[0][0];
+    expect(initBaseline.forceCheckpoint).toBe(true);
+    expect(initBaseline.manualRefillProgress).toBeUndefined();
+    const firstCheckpointData = mockPersistTablesToChatMessage.mock.calls[1][0].tableData;
     expect(firstCheckpointData.sheet_0.content).toEqual([['row_id', '值A'], ['2', '来自A']]);
     expect(firstCheckpointData.sheet_1.content).toEqual([['row_id', '值B']]);
-    const finalCheckpointData = mockPersistTablesToChatMessage.mock.calls[1][0].tableData;
+    const finalCheckpointData = mockPersistTablesToChatMessage.mock.calls[2][0].tableData;
     expect(finalCheckpointData.sheet_1.content).toEqual([['row_id', '值B'], ['2', '来自B']]);
   });
 
@@ -1204,7 +1301,7 @@ describe('orchestrateManualUpdate_ACU', () => {
     let persistCallCount = 0;
     mockPersistTablesToChatMessage.mockImplementation(async (_options: any) => {
       persistCallCount += 1;
-      if (persistCallCount >= 2) {
+      if (persistCallCount >= 3) {
         return { saved: false, error: '模拟刷新中断' };
       }
       return { saved: true, messageIndex: 4 };
@@ -1213,7 +1310,9 @@ describe('orchestrateManualUpdate_ACU', () => {
     const result = await orchestrateManualUpdate_ACU(['sheet_0', 'sheet_1'], vi.fn().mockResolvedValue({ success: true }), mockRefreshData, { clearBeforeUpdate: true });
 
     expect(result.success).toBe(false);
-    const firstProgress = mockPersistTablesToChatMessage.mock.calls[0][0].manualRefillProgress;
+    const initBaseline = mockPersistTablesToChatMessage.mock.calls[0][0];
+    expect(initBaseline.manualRefillProgress).toBeUndefined();
+    const firstProgress = mockPersistTablesToChatMessage.mock.calls[1][0].manualRefillProgress;
     expect(firstProgress.status).toBe('in_progress');
     expect(firstProgress.completedUntilMessageIndex).toBe(4);
     expect(firstProgress.completedSheetMessageIndexByKey).toEqual({ sheet_0: 4 });

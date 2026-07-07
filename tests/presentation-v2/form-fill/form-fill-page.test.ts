@@ -289,7 +289,8 @@ describe('FormFillPage', () => {
     expect(text).toContain('填表 API 预设');
     expect(text).toContain('本次填表附加要求');
     expect(text).toContain('当前 full checkpoint');
-    expect(text).toContain('AI 第 1 层、AI 第 3 层');
+    expect(text).toContain('AI 第 1 层（初始基线）');
+    expect(text).toContain('AI 第 3 层（历史周期基线）');
     expect(text).toContain('预计处理范围');
     expect(text).toContain('执行手动填表');
     expect(text).toContain('表格模板预设');
@@ -667,7 +668,8 @@ describe('FormFillPage · 手动填表面板', () => {
     expect(text).toContain('每 N 层合并为一次填表');
     expect(text).toContain('本次填表附加要求');
     expect(text).toContain('当前 full checkpoint');
-    expect(text).toContain('AI 第 1 层、AI 第 3 层');
+    expect(text).toContain('AI 第 1 层（初始基线）');
+    expect(text).toContain('AI 第 3 层（历史周期基线）');
     expect(text).toContain('执行手动填表');
     expect(panel.querySelector('.acu-v2-form-fill-page__manual-extra .acu-toggle')).toBeNull();
     expect(panel.querySelector('.acu-v2-form-fill-page__manual-extra textarea')).not.toBeNull();
@@ -677,6 +679,25 @@ describe('FormFillPage · 手动填表面板', () => {
     const runPanel = Array.from(page!.querySelectorAll<HTMLElement>('.acu-v2-form-fill-page__grid > .acu-panel'))
       .find(item => item.querySelector('.acu-panel__title')?.textContent?.includes('自动更新设置'))!;
     expect(runPanel.textContent || '').toContain('填表 API 预设');
+
+    mount.__resetAcuV2MountForTests();
+  });
+
+  it('checkpoint reason 文案兼容历史手动、保留边界、未知和缺失 reason', async () => {
+    const { mount } = await mountFormFillPage(createSettings(), 'form-fill', [
+      { messageIndex: 1, aiFloor: 1, reason: 'manual', createdAt: 1 },
+      { messageIndex: 2, aiFloor: 2, reason: 'compaction', createdAt: 2 },
+      { messageIndex: 3, aiFloor: 3, reason: 'weird', createdAt: 3 },
+      { messageIndex: 4, aiFloor: 4, createdAt: 4 },
+    ]);
+
+    const panel = Array.from(document.querySelectorAll<HTMLElement>('.acu-v2-form-fill-page__grid > .acu-panel'))
+      .find(item => item.querySelector('.acu-panel__title')?.textContent?.includes('手动填表'))!;
+    const text = panel.textContent || '';
+    expect(text).toContain('AI 第 1 层（历史手动基线）');
+    expect(text).toContain('AI 第 2 层（保留边界基线）');
+    expect(text).toContain('AI 第 3 层（旧基线:weird）');
+    expect(text).toContain('AI 第 4 层（旧基线）');
 
     mount.__resetAcuV2MountForTests();
   });
@@ -752,7 +773,7 @@ describe('FormFillPage · 手动填表面板', () => {
 
     const dialogText = document.querySelector('.acu-dialog-layer')?.textContent || '';
     expect(dialogText).toContain('即将执行手动填表');
-    expect(dialogText).toContain('当前 full checkpoint：AI 第 1 层、AI 第 3 层');
+    expect(dialogText).toContain('当前 full checkpoint：AI 第 1 层（初始基线）、AI 第 3 层（历史周期基线）');
     expect(dialogText).toContain('本次重填范围：AI 第 1~3 层');
     expect(dialogText).toContain('系统会在内存中按当前上下文和批处理设置重填当前选中的表');
     expect(dialogText).toContain('失败、终止或从中断处继续时，都不会清空聊天记录中的旧表格数据');
@@ -789,7 +810,8 @@ describe('FormFillPage · 手动填表面板', () => {
 
     const panel = Array.from(document.querySelectorAll<HTMLElement>('.acu-v2-form-fill-page__grid > .acu-panel'))
       .find(item => item.querySelector('.acu-panel__title')?.textContent?.includes('手动填表'))!;
-    expect(panel.textContent || '').toContain('AI 第 1 层、AI 第 3 层');
+    expect(panel.textContent || '').toContain('AI 第 1 层（初始基线）');
+    expect(panel.textContent || '').toContain('AI 第 3 层（历史周期基线）');
     expect(panel.textContent || '').toContain('按当前设置预计处理范围：AI 第 1~3 层');
     expect(panel.textContent || '').not.toContain('危险：当前聊天的所有 full checkpoint');
     expect(panel.querySelector('.acu-v2-form-fill-page__checkpoint-risk')).toBeNull();

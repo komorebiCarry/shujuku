@@ -40,6 +40,7 @@ function resolveTableApiPresetOverride_ACU(tableName: any): string {
 import { checkIfFirstTimeInit_ACU, ensureLegacyStorageMigratedBeforeWrite_ACU } from './table-service';
 import { parseAndApplyTableEditsToData_ACU, prepareAIInput_ACU } from '../ai/prompt-builder';
 import { extractStrictJsonTableFillResponse_ACU } from '../ai/prompt-builder/strict-json-table-fill';
+import { collectV2CheckpointFloorsFromChat_ACU } from './table-history';
 import { isSqlContent } from '../ai/prompt-builder/table-edit-parser';
 import { buildGuidedBaseDataFromSheetGuide_ACU, getSortedSheetKeys_ACU } from '../template/chat-scope';
 import { isSqliteMode } from './storage-mode';
@@ -2187,6 +2188,8 @@ export async function orchestrateManualUpdate_ACU(
         let manualRefillInitialData: Record<string, any> | null = null;
         let manualRefillCheckpointData: Record<string, any> | null = null;
         let manualRefillTargetIndex = contextScopeIndices[contextScopeIndices.length - 1];
+        let manualRefillStartIndex = contextScopeIndices[0];
+        let shouldWriteInitialManualRefillBaseline = false;
         let manualRefillProgress: ManualRefillProgressV2_ACU | undefined;
         if (manualRefillEnabled) {
             const latestBaseResult = await buildBatchMergeBase_ACU(0);
@@ -2210,6 +2213,9 @@ export async function orchestrateManualUpdate_ACU(
                 );
                 manualRefillCheckpointData = JSON.parse(JSON.stringify(manualRefillInitialData));
             }
+            const existingV2FullCheckpoints = collectV2CheckpointFloorsFromChat_ACU(getChatArray_ACU() || [], getCurrentIsolationKey_ACU());
+            shouldWriteInitialManualRefillBaseline = !matchedProgress && existingV2FullCheckpoints.length === 0;
+
             let pendingContextScopeIndices = contextScopeIndices.slice();
             manualRefillProgress = matchedProgress
                 ? { ...matchedProgress, batchSize: uiBatchSize, contextMessageIndices: contextScopeIndices.slice(), updatedAt: Date.now() }
@@ -2264,6 +2270,42 @@ export async function orchestrateManualUpdate_ACU(
         const maxConcurrentGroups = Math.max(1, Number(settings_ACU.maxConcurrentGroups) || 1);
         const totalChunks = Math.max(1, Math.ceil(groupKeys.length / maxConcurrentGroups));
         const failedGroups: Array<{ key: string; error?: string }> = [];
+
+        if (shouldWriteInitialManualRefillBaseline && manualRefillInitialData) {
+            const baselineSheetKeys = getSortedSheetKeys_ACU(manualRefillInitialData);
+            const baselineCommit = await runTableUpdateCommit_ACU<{ modifiedKeys: string[] }>({
+                source: 'group_fill',
+                reason: 'manual_refill_initial_checkpoint',
+                isolationKey: getCurrentIsolationKey_ACU(),
+                writeSet: buildWriteSetForSheetKeys_ACU(baselineSheetKeys, manualRefillInitialData),
+                revisionWriteSet: baselineSheetKeys.map(sheetKey => ({ kind: 'sheet' as const, sheetKey })),
+                initialData: manualRefillInitialData as any,
+                targetMessageIndex: manualRefillStartIndex,
+                targetSheetKeys: baselineSheetKeys,
+                updateGroupKeys: targetKeys,
+                trackingSheetKeys: [],
+                trackAsUpdate: false,
+            }, () => ({
+                success: true,
+                value: { modifiedKeys: [] },
+                tableData: manualRefillInitialData as any,
+                persist: {
+                    targetMessageIndex: manualRefillStartIndex,
+                    targetSheetKeys: baselineSheetKeys,
+                    updateGroupKeys: targetKeys,
+                    trackingSheetKeys: [],
+                    trackAsUpdate: false,
+                    forceCheckpoint: true,
+                    checkpointReason: 'init',
+                    revisionWriteSet: baselineSheetKeys.map(sheetKey => ({ kind: 'sheet' as const, sheetKey })),
+                },
+            }));
+            if (!baselineCommit.success) {
+                _set_isAutoUpdatingCard_ACU(false);
+                return { success: false, error: baselineCommit.error || '手动重填初始 full checkpoint 建立失败。' };
+            }
+        }
+
         logDebug_ACU(`[Manual Update] 分组计划：选中 ${targetKeys.length} 张表，生成 ${groupKeys.length} 个组，最大并发组数 ${maxConcurrentGroups}。`);
 
         for (let start = 0; start < groupKeys.length; start += maxConcurrentGroups) {

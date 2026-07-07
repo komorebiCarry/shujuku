@@ -274,10 +274,29 @@ export function useManualUpdate(): ManualUpdateState {
     }
   });
 
+  function formatCheckpointReasonLabel(reason?: string): string {
+    switch (reason) {
+      case 'init':
+        return '初始基线';
+      case 'migration':
+        return '迁移基线';
+      case 'compaction':
+        return '保留边界基线';
+      case 'manual':
+        return '历史手动基线';
+      case 'periodic':
+        return '历史周期基线';
+      default:
+        return reason ? `旧基线:${reason}` : '旧基线';
+    }
+  }
+
   const checkpointFloorsLabel = computed<string>(() => {
-    const floors = checkpointFloors.value.map(item => item.aiFloor);
-    return floors.length > 0
-      ? floors.map(floor => `AI 第 ${floor} 层`).join('、')
+    const checkpoints = checkpointFloors.value;
+    return checkpoints.length > 0
+      ? checkpoints
+        .map(item => `AI 第 ${item.aiFloor} 层（${formatCheckpointReasonLabel(item.reason)}）`)
+        .join('、')
       : '当前隔离标签暂无 full checkpoint';
   });
 
