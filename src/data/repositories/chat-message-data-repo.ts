@@ -184,6 +184,14 @@ function purgeOperationArrayV2_ACU(operations: any, sheetKeys: Set<string>): { v
     return { value: next, changed };
 }
 
+function hasNonEmptyArray_ACU(value: any): boolean {
+    return Array.isArray(value) && value.length > 0;
+}
+
+function hasMeaningfulManualRefillLogPayloadV2_ACU(entry: any): boolean {
+    return hasNonEmptyArray_ACU(entry?.operations) || hasNonEmptyArray_ACU(entry?.patches) || hasNonEmptyArray_ACU(entry?.filledSheetKeys) || hasNonEmptyArray_ACU(entry?.changedSheetKeys) || hasNonEmptyArray_ACU(entry?.groupKeys) || hasNonEmptyArray_ACU(entry?.event?.filledSheetKeys) || hasNonEmptyArray_ACU(entry?.event?.changedSheetKeys) || hasNonEmptyArray_ACU(entry?.event?.groupKeys) || (Array.isArray(entry?.writeSet) && entry.writeSet.some((unit: any) => isObjectRecord_ACU(unit) && unit.kind !== 'all'));
+}
+
 function purgePatchArrayV2_ACU(patches: any, sheetKeys: Set<string>): { value: any; changed: boolean } {
     if (!Array.isArray(patches)) return { value: patches, changed: false };
     let changed = false;
@@ -247,26 +255,37 @@ function purgeManualRefillIncrementalSheetKeysFromStorageFrameV2_ACU(frame: any,
     if (purgeManualRefillProgressV2_ACU(frame.manualRefillProgress, sheetKeys)) changed = true;
 
     if (Array.isArray(frame.logEntries)) {
+        const nextEntries: any[] = [];
         frame.logEntries.forEach((entry: any) => {
-            if (!isObjectRecord_ACU(entry)) return;
-            if (purgeEventSheetKeysV2_ACU(entry, sheetKeys)) changed = true;
-            if (purgeEventSheetKeysV2_ACU(entry.event, sheetKeys)) changed = true;
+            if (!isObjectRecord_ACU(entry)) {
+                nextEntries.push(entry);
+                return;
+            }
+            let entryChanged = false;
+            if (purgeEventSheetKeysV2_ACU(entry, sheetKeys)) entryChanged = true;
+            if (purgeEventSheetKeysV2_ACU(entry.event, sheetKeys)) entryChanged = true;
             const operations = purgeOperationArrayV2_ACU(entry.operations, sheetKeys);
             if (operations.changed) {
                 entry.operations = operations.value;
-                changed = true;
+                entryChanged = true;
             }
             const patches = purgePatchArrayV2_ACU(entry.patches, sheetKeys);
             if (patches.changed) {
                 entry.patches = patches.value;
-                changed = true;
+                entryChanged = true;
             }
             const writeSet = purgeWriteSetV2_ACU(entry.writeSet, sheetKeys);
             if (writeSet.changed) {
                 entry.writeSet = writeSet.writeSet;
-                changed = true;
+                entryChanged = true;
+            }
+            if (entryChanged) changed = true;
+            if (!entryChanged || hasMeaningfulManualRefillLogPayloadV2_ACU(entry)) {
+                nextEntries.push(entry);
             }
         });
+        if (nextEntries.length !== frame.logEntries.length) changed = true;
+        frame.logEntries = nextEntries;
     }
 
     return changed;

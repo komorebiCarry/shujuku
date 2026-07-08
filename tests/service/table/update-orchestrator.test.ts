@@ -2762,6 +2762,85 @@ describe('processGroupedRuntimeChunk_ACU', () => {
   });
 
 
+  it('手动重填多 bucket 使用固定 mergeBaseMaxMessageIndex，不把前一 bucket 新写增量带入后续基底', async () => {
+    const { getChatArray_ACU } = await import('../../../src/service/chat/chat-service');
+    const { parseTableTemplateJson_ACU } = await import('../../../src/shared/utils');
+    const chat = Array.from({ length: 31 }, (_, index) => ({ is_user: false, mes: `AI ${index}` })) as any[];
+    const makeRows = (count: number) => [
+      ['row_id', '值'],
+      ...Array.from({ length: count }, (_unused, rowIndex) => [`${rowIndex + 1}`, `第${rowIndex + 1}层旧值`]),
+    ];
+    chat[20].TavernDB_ACU_IsolatedData = {
+      '': {
+        _acu_storage_version: 2,
+        storageFrame: {
+          version: 2,
+          checkpoint: {
+            kind: 'full',
+            createdAt: 20,
+            reason: 'compaction',
+            data: {
+              mate: { type: 'acu' },
+              sheet_0: { name: '测试表', content: makeRows(20) },
+            },
+          },
+          logEntries: [],
+        },
+      },
+    };
+    for (let index = 21; index <= 30; index += 1) {
+      chat[index].TavernDB_ACU_IsolatedData = {
+        '': {
+          _acu_storage_version: 2,
+          storageFrame: {
+            version: 2,
+            logEntries: [{
+              seq: 1,
+              entryId: `old-${index}`,
+              createdAt: index,
+              source: 'manual_fill',
+              targetMessageIndex: index,
+              aiFloor: index + 1,
+              filledSheetKeys: ['sheet_0'],
+              changedSheetKeys: ['sheet_0'],
+              groupKeys: ['sheet_0'],
+              operations: [{ kind: 'row_upsert', sheetKey: 'sheet_0', rowId: `${index}`, cells: [`${index}`, `第${index}层旧值`] }],
+              writeSet: [{ kind: 'sheet', sheetKey: 'sheet_0' }],
+            }],
+          },
+        },
+      };
+    }
+    vi.mocked(getChatArray_ACU).mockReturnValue(chat as any);
+    vi.mocked(parseTableTemplateJson_ACU).mockReturnValue({
+      mate: { type: 'acu' },
+      sheet_0: { name: '测试表', content: [['row_id', '值']], updateConfig: { groupId: 0 } },
+    } as any);
+    const promptBaseRows: any[][][] = [];
+    mockPrepareAIInput.mockImplementation(async (_messages: any, _mode: string, _keys: string[] | null, options: any) => {
+      promptBaseRows.push(JSON.parse(JSON.stringify(options.tableData.sheet_0.content)));
+      return { tableDataText: '模拟数据' };
+    });
+    mockCallCustomOpenAI
+      .mockResolvedValueOnce('<tableEdit>第27-28层新值</tableEdit>')
+      .mockResolvedValueOnce('<tableEdit>第29-30层新值</tableEdit>');
+    mockParseAndApplyTableEditsToData.mockImplementation((aiResponse: string, tableData: any) => {
+      if (aiResponse.includes('27-28')) tableData.sheet_0.content.push(['27', '第27层新值'], ['28', '第28层新值']);
+      if (aiResponse.includes('29-30')) tableData.sheet_0.content.push(['29', '第29层新值'], ['30', '第30层新值']);
+      return { success: true, modifiedKeys: ['sheet_0'], appliedEdits: 2 };
+    });
+
+    const result = await processGroupedRuntimeChunk_ACU([
+      { key: 'manual_refill', groupId: 0, indices: [27, 28, 29, 30], batchSize: 2, sheetKeys: ['sheet_0'], requestOptions: null, mergeBaseMaxMessageIndex: 26 },
+    ], 'manual_independent');
+
+    expect(result.success).toBe(true);
+    expect(promptBaseRows).toHaveLength(2);
+    expect(promptBaseRows[0]).toHaveLength(27);
+    expect(promptBaseRows[1]).toEqual(promptBaseRows[0]);
+    expect(promptBaseRows[1].some(row => row[0] === '27' || row[0] === '28' || row[0] === '29' || row[0] === '30')).toBe(false);
+  });
+
   it('SQL 模式下不再早退，而是完成 grouped 统一提交', async () => {
     const { getChatArray_ACU } = await import('../../../src/service/chat/chat-service');
     const { parseTableTemplateJson_ACU } = await import('../../../src/shared/utils');

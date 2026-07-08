@@ -706,7 +706,7 @@ describe('purgeManualRefillIncrementalSheetKeysFromMessage_ACU', () => {
     expect(frame.logEntries[0].writeSet).toEqual([{ kind: 'sheet', sheetKey: 'sheet_1' }, { kind: 'all' }]);
   });
 
-  it('IsolatedData 为 JSON 字符串时写回对象且保留 checkpoint.data', () => {
+  it('目标 sheet 专属 V2 增量日志清理后移除空壳 entry，并保留 checkpoint.data', () => {
     const msg: any = {
       TavernDB_ACU_IsolatedData: JSON.stringify({
         tag1: {
@@ -725,7 +725,55 @@ describe('purgeManualRefillIncrementalSheetKeysFromMessage_ACU', () => {
       sheet_0: { name: 'checkpoint旧表' },
       sheet_1: { name: 'checkpoint保留表' },
     });
-    expect(msg.TavernDB_ACU_IsolatedData.tag1.storageFrame.logEntries[0].operations).toEqual([]);
+    expect(msg.TavernDB_ACU_IsolatedData.tag1.storageFrame.logEntries).toEqual([]);
+  });
+
+  it('清理目标 sheet 专属 entry 时保留同 frame 内非目标 sheet 的混合 entry', () => {
+    const msg: any = {
+      TavernDB_ACU_IsolatedData: {
+        tag1: {
+          storageFrame: {
+            version: 2,
+            checkpoint: { kind: 'full', data: { sheet_0: { name: 'checkpoint旧表' }, sheet_1: { name: 'checkpoint保留表' } } },
+            logEntries: [
+              {
+                seq: 1,
+                filledSheetKeys: ['sheet_0'],
+                changedSheetKeys: ['sheet_0'],
+                groupKeys: ['sheet_0'],
+                operations: [{ kind: 'row_upsert', sheetKey: 'sheet_0', rowId: 'r0', cells: ['r0'] }],
+                writeSet: [{ kind: 'sheet', sheetKey: 'sheet_0' }],
+              },
+              {
+                seq: 2,
+                filledSheetKeys: ['sheet_0', 'sheet_1'],
+                changedSheetKeys: ['sheet_0', 'sheet_1'],
+                groupKeys: ['sheet_0', 'sheet_1'],
+                operations: [
+                  { kind: 'row_upsert', sheetKey: 'sheet_0', rowId: 'r0', cells: ['r0'] },
+                  { kind: 'row_upsert', sheetKey: 'sheet_1', rowId: 'r1', cells: ['r1'] },
+                ],
+                writeSet: [{ kind: 'sheet', sheetKey: 'sheet_0' }, { kind: 'sheet', sheetKey: 'sheet_1' }],
+              },
+            ],
+          },
+        },
+      },
+    };
+
+    expect(purgeManualRefillIncrementalSheetKeysFromMessage_ACU(msg, 'tag1', ['sheet_0'])).toBe(true);
+
+    const frame = msg.TavernDB_ACU_IsolatedData.tag1.storageFrame;
+    expect(frame.logEntries).toHaveLength(1);
+    expect(frame.logEntries[0]).toEqual(expect.objectContaining({
+      seq: 2,
+      filledSheetKeys: ['sheet_1'],
+      changedSheetKeys: ['sheet_1'],
+      groupKeys: ['sheet_1'],
+      operations: [{ kind: 'row_upsert', sheetKey: 'sheet_1', rowId: 'r1', cells: ['r1'] }],
+      writeSet: [{ kind: 'sheet', sheetKey: 'sheet_1' }],
+    }));
+    expect(frame.checkpoint.data.sheet_0).toEqual({ name: 'checkpoint旧表' });
   });
 
   it('目标 sheet 不存在于 V2 增量日志时不触发变更', () => {

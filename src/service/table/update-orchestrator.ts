@@ -156,6 +156,7 @@ export interface GroupedRuntimeUpdateGroup_ACU {
     batchSize: number;
     sheetKeys: string[];
     requestOptions: Record<string, any> | null;
+    mergeBaseMaxMessageIndex?: number;
 }
 
 interface PlannedGroupedRuntimeJob_ACU {
@@ -1161,7 +1162,20 @@ export async function processGroupedRuntimeChunk_ACU(
         for (let bucketAttempt = 1; bucketAttempt <= maxBucketRetries; bucketAttempt++) {
             const chatHistory = getChatArray_ACU();
             const bucketFirstMessageIndex = Math.min(...bucket.plannedJobs.map(job => job.firstMessageIndexOfBatch));
-            const baseResult: { data: Record<string, any> | null; error: string | null } = await buildBatchMergeBase_ACU(bucket.batchNumber, { maxMessageIndex: bucketFirstMessageIndex - 1 });
+            const explicitMergeBaseBounds = [...new Set(
+                bucket.plannedJobs
+                    .map(job => job.group.mergeBaseMaxMessageIndex)
+                    .filter((value): value is number => Number.isInteger(value)),
+            )];
+            if (explicitMergeBaseBounds.length > 1) {
+                bucket.plannedJobs.forEach(job => failedGroups.add(job.group.key));
+                firstError = firstError || '同一提交批次包含不一致的表格基底边界，已中止以避免重填数据污染。';
+                break;
+            }
+            const mergeBaseMaxMessageIndex = explicitMergeBaseBounds.length === 1
+                ? explicitMergeBaseBounds[0]
+                : bucketFirstMessageIndex - 1;
+            const baseResult: { data: Record<string, any> | null; error: string | null } = await buildBatchMergeBase_ACU(bucket.batchNumber, { maxMessageIndex: mergeBaseMaxMessageIndex });
             if (!baseResult.data) {
                 bucket.plannedJobs.forEach(job => failedGroups.add(job.group.key));
                 firstError = firstError || baseResult.error || '无法构建合并基底，操作已终止。';
@@ -1949,6 +1963,7 @@ export async function orchestrateManualUpdate_ACU(
         const groupKeys = Object.keys(updateGroups);
 
         const manualRefillEnabled = options.clearBeforeUpdate === true;
+        const manualRefillMergeBaseMaxMessageIndex = manualRefillEnabled ? contextScopeIndices[0] - 1 : undefined;
         if (manualRefillEnabled) {
             const replayBoundaryCheck = await ensureManualRefillV2ReplayBoundary_ACU(liveChat, getCurrentIsolationKey_ACU(), contextScopeIndices[0]);
             if (replayBoundaryCheck.success === false) {
@@ -1993,6 +2008,7 @@ export async function orchestrateManualUpdate_ACU(
                     batchSize: group.batchSize,
                     sheetKeys: group.sheetKeys,
                     requestOptions: effectiveRequestOptions,
+                    mergeBaseMaxMessageIndex: manualRefillMergeBaseMaxMessageIndex,
                 };
             });
             logDebug_ACU(`[Manual Update] 并发处理第 ${chunkIndex}/${totalChunks} 批，当前 ${groupedChunk.length} 组：${groupedChunk.map(group => `${group.key}(${group.sheetKeys.join(',')})`).join('; ')}`);

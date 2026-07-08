@@ -944,6 +944,16 @@ describe('clearManualRefillIncrementalDataInRange_ACU', () => {
                 {
                   seq: 1,
                   operations: [
+                    { kind: 'row_upsert', sheetKey: 'sheet_0', rowId: 'old-only', cells: ['old-only'] },
+                  ],
+                  filledSheetKeys: ['sheet_0'],
+                  changedSheetKeys: ['sheet_0'],
+                  groupKeys: ['sheet_0'],
+                  writeSet: [{ kind: 'sheet', sheetKey: 'sheet_0' }],
+                },
+                {
+                  seq: 2,
+                  operations: [
                     { kind: 'data_replace', data: { sheet_0: { name: '旧目标表' }, sheet_1: { name: '保留表' } } },
                   ],
                   filledSheetKeys: ['sheet_0', 'sheet_1'],
@@ -979,6 +989,8 @@ describe('clearManualRefillIncrementalDataInRange_ACU', () => {
     expect(targetTag.storageFrame.checkpoint.scheduleSummary.sheet_0).toEqual({ lastFilledAiFloor: 1 });
     expect(targetTag.storageFrame.manualRefillProgress.selectedSheetKeys).toEqual(['sheet_1']);
     expect(targetTag.storageFrame.manualRefillProgress.completedSheetMessageIndexByKey).toEqual({ sheet_1: 3 });
+    expect(targetTag.storageFrame.logEntries).toHaveLength(1);
+    expect(targetTag.storageFrame.logEntries[0].seq).toBe(2);
     expect(targetTag.storageFrame.logEntries[0].operations[0].data).toEqual({ sheet_1: { name: '保留表' } });
     expect(targetTag.storageFrame.logEntries[0].filledSheetKeys).toEqual(['sheet_1']);
     expect(targetTag.storageFrame.logEntries[0].writeSet).toEqual([{ kind: 'sheet', sheetKey: 'sheet_1' }]);
