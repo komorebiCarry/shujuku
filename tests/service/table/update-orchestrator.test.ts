@@ -1349,6 +1349,72 @@ describe('orchestrateManualUpdate_ACU', () => {
     expect(mockPersistTablesToChatMessage).not.toHaveBeenCalled();
   });
 
+  it('目标前只有 checkpoint_fallback 且目标层存在 init checkpoint 时仍中止，不把断链误判为可前移', async () => {
+    const { getChatArray_ACU } = await import('../../../src/service/chat/chat-service');
+    const { parseTableTemplateJson_ACU } = await import('../../../src/shared/utils');
+    vi.mocked(parseTableTemplateJson_ACU).mockReturnValue({
+      mate: { type: 'acu' },
+      sheet_0: { name: '测试表A', updateConfig: { groupId: 0 }, content: [['row_id', '值A']] },
+    });
+    vi.mocked(getChatArray_ACU).mockReturnValue([
+      {
+        is_user: false,
+        mes: 'AI回复1',
+        TavernDB_ACU_IsolatedData: {
+          '': {
+            _acu_storage_version: 2,
+            storageFrame: {
+              version: 2,
+              checkpoint: undefined,
+              logEntries: [{
+                seq: 1,
+                entryId: 'fallback-without-full',
+                createdAt: 1,
+                source: 'manual_refill_baseline',
+                targetMessageIndex: 0,
+                aiFloor: 1,
+                filledSheetKeys: ['sheet_0'],
+                changedSheetKeys: ['sheet_0'],
+                groupKeys: [],
+                operations: [{
+                  kind: 'data_replace',
+                  reason: 'checkpoint_fallback',
+                  data: { sheet_0: { name: '测试表A', content: [['row_id', '值A'], ['fallback', '不允许恢复']] } },
+                }],
+              }],
+            },
+          },
+        },
+      },
+      { is_user: true, mes: '用户2' },
+      { is_user: false, mes: 'AI回复3' },
+      { is_user: true, mes: '用户4' },
+      {
+        is_user: false,
+        mes: 'AI回复5',
+        TavernDB_ACU_IsolatedData: {
+          '': {
+            _acu_storage_version: 2,
+            storageFrame: { version: 2, logEntries: [], checkpoint: { kind: 'full', reason: 'init', createdAt: 2, data: { sheet_0: { name: '测试表A', content: [['row_id', '值A'], ['later', '目标层基底']] } } } },
+          },
+        },
+      },
+    ]);
+    mockSettings.maxConcurrentGroups = 1;
+    mockSettings.autoUpdateThreshold = 0;
+    mockSettings.updateBatchSize = 1;
+    mockCurrentJsonTableData = { sheet_0: { name: '测试表A', updateConfig: {}, content: [['row_id', '值A'], ['1', '旧A']] } };
+
+    const processBatch = vi.fn().mockResolvedValue({ success: true });
+    const result = await orchestrateManualUpdate_ACU(['sheet_0'], processBatch, mockRefreshData, { clearBeforeUpdate: true });
+
+    expect(result.success).toBe(false);
+    expect(result.error).toContain('找不到可用 full checkpoint');
+    expect(mockEnsureManualRefillInitialBaseline).not.toHaveBeenCalled();
+    expect(processBatch).not.toHaveBeenCalled();
+    expect(mockPersistTablesToChatMessage).not.toHaveBeenCalled();
+  });
+
   it('存在其他 isolationKey 的 V2 checkpoint 时手动重填中止，避免把隔离键不匹配误判为空表', async () => {
     const { getChatArray_ACU } = await import('../../../src/service/chat/chat-service');
     const { parseTableTemplateJson_ACU } = await import('../../../src/shared/utils');
@@ -1541,6 +1607,70 @@ describe('orchestrateManualUpdate_ACU', () => {
     const progressCalls = persistCalls.filter(call => call.manualRefillProgress?.kind === 'manual_refill');
     expect(progressCalls.length).toBeGreaterThan(0);
     expect(progressCalls.every(call => call.targetMessageIndex === 4)).toBe(true);
+  });
+
+  it('目标前无 V2 且目标后存在可前移 init checkpoint 时，手动重填 initial data 使用后续 checkpoint 非空基底', async () => {
+    const { getChatArray_ACU } = await import('../../../src/service/chat/chat-service');
+    const { parseTableTemplateJson_ACU } = await import('../../../src/shared/utils');
+    vi.mocked(parseTableTemplateJson_ACU).mockReturnValue({
+      mate: { type: 'acu' },
+      sheet_0: { name: '测试表A', updateConfig: { groupId: 0 }, content: [['row_id', '值A']] },
+    });
+    vi.mocked(getChatArray_ACU).mockReturnValue([
+      { is_user: false, mes: 'AI回复1' },
+      { is_user: true },
+      { is_user: false, mes: 'AI回复2' },
+      { is_user: true },
+      {
+        is_user: false,
+        mes: 'AI回复3',
+        TavernDB_ACU_IsolatedData: {
+          '': {
+            _acu_storage_version: 2,
+            storageFrame: {
+              version: 2,
+              logEntries: [],
+              checkpoint: {
+                kind: 'full',
+                reason: 'init',
+                createdAt: 1,
+                data: {
+                  mate: { type: 'acu' },
+                  sheet_0: {
+                    name: '测试表A',
+                    updateConfig: { groupId: 0 },
+                    content: [['row_id', '值A'], ['later', '目标后基底']],
+                  },
+                },
+              },
+            },
+          },
+        },
+      },
+    ]);
+    mockSettings.maxConcurrentGroups = 1;
+    mockSettings.autoUpdateThreshold = 0;
+    mockSettings.updateBatchSize = 1;
+    mockCurrentJsonTableData = {
+      mate: { type: 'acu' },
+      sheet_0: { name: '测试表A', updateConfig: {}, content: [['row_id', '值A'], ['1', '当前旧行']] },
+    };
+    mockCallCustomOpenAI.mockResolvedValue('<tableEdit>sheet_0</tableEdit>');
+    mockPersistTablesToChatMessage.mockImplementation(async (options: any) => ({ saved: true, messageIndex: options.targetMessageIndex }));
+
+    const result = await orchestrateManualUpdate_ACU(['sheet_0'], vi.fn().mockResolvedValue({ success: true }), mockRefreshData, { clearBeforeUpdate: true });
+
+    expect(result.success).toBe(true);
+    expect(mockEnsureManualRefillInitialBaseline).toHaveBeenCalledWith({
+      isolationKey: '',
+      targetMessageIndex: 0,
+      data: expect.objectContaining({
+        sheet_0: expect.objectContaining({ content: [['row_id', '值A'], ['later', '目标后基底']] }),
+      }),
+      save: true,
+    });
+    const persistCalls = mockPersistTablesToChatMessage.mock.calls.map(call => call[0]);
+    expect(persistCalls.some(call => call.forceCheckpoint === true && call.checkpointReason === 'init')).toBe(false);
   });
 
   it('retained boundary checkpoint 只有空骨架时，手动重填入口不继承当前快照旧行', async () => {

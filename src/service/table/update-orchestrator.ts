@@ -673,6 +673,35 @@ function hasAnyV2FrameAtOrBeforeMessageIndex_ACU(
     return false;
 }
 
+function findMovableManualRefillInitCheckpointAfterReplayBoundary_ACU(
+    chatHistory: any[],
+    isolationKey: string,
+    replayMaxMessageIndex: number,
+): { messageIndex: number; data: Record<string, any> } | null {
+    if (!Array.isArray(chatHistory)) return null;
+    const startIndex = Math.max(0, replayMaxMessageIndex + 1);
+    for (let i = startIndex; i < chatHistory.length; i += 1) {
+        const msg = chatHistory[i];
+        if (!msg || msg.is_user) continue;
+        const tagData = readIsolatedTagData_ACU(msg, isolationKey) as any;
+        if (!isV2TagData_ACU(tagData)) continue;
+        const checkpoint = tagData.storageFrame?.checkpoint;
+        if (
+            checkpoint?.kind === 'full'
+            && checkpoint.reason === 'init'
+            && checkpoint.data
+            && typeof checkpoint.data === 'object'
+            && !Array.isArray(checkpoint.data)
+        ) {
+            return {
+                messageIndex: i,
+                data: checkpoint.data as Record<string, any>,
+            };
+        }
+    }
+    return null;
+}
+
 type ManualRefillInitialDataResult_ACU =
     | { success: true; data: Record<string, any> }
     | { success: false; error: string };
@@ -709,6 +738,14 @@ async function buildManualRefillInitialData_ACU(
         if (hasAnyV2FrameBeforeTarget) {
             return { success: false, error: '手动重填失败：当前隔离标签下找不到可用 V2 checkpoint，可能是 isolationKey 不匹配，已中止以避免使用空表基底。' };
         }
+        const movableInitCheckpoint = findMovableManualRefillInitCheckpointAfterReplayBoundary_ACU(chatHistory, isolationKey, replayMaxMessageIndex);
+        if (movableInitCheckpoint) {
+            logWarn_ACU(`[Manual Refill] 重填范围前找不到可用 checkpoint，将使用消息索引 ${movableInitCheckpoint.messageIndex} 的 init checkpoint 作为前移基底。`);
+            refillBase = JSON.parse(JSON.stringify(movableInitCheckpoint.data));
+        }
+    }
+
+    if (!refillBase) {
         logWarn_ACU('[Manual Refill] 重填范围前找不到可用 checkpoint，选中表将从零基底开始重填。');
         refillBase = zeroBase;
     }

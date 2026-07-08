@@ -1075,6 +1075,10 @@ describe('ensureManualRefillInitialBaseline_ACU', () => {
     const oldFrame = chat[2].TavernDB_ACU_IsolatedData[''].storageFrame;
     expect(oldFrame.checkpoint).toBeUndefined();
     expect(oldFrame.logEntries[0].operations[0]).toEqual({ kind: 'data_replace', data: laterData, reason:'checkpoint_fallback' });
+    const fullCheckpointCount = chat.filter((msg: any) => (
+      msg?.TavernDB_ACU_IsolatedData?.['']?.storageFrame?.checkpoint?.kind === 'full'
+    )).length;
+    expect(fullCheckpointCount).toBeGreaterThanOrEqual(1);
     expect(mockSaveChatToHost).toHaveBeenCalledTimes(1);
   });
 
@@ -1102,6 +1106,8 @@ describe('ensureManualRefillInitialBaseline_ACU', () => {
     expect(result.success).toBe(false);
     expect(result.error).toContain('已存在 V2 logEntries');
     expect(mockSaveChatToHost).not.toHaveBeenCalled();
+    const oldFrame = chat[1].TavernDB_ACU_IsolatedData[''].storageFrame;
+    expect(oldFrame.checkpoint).toEqual(expect.objectContaining({ kind: 'full', reason: 'init', createdAt: 12 }));
   });
 
   it('存在 compaction checkpoint 时只降级 compaction 之前的 obsolete init，不前移 baseline', async () => {
