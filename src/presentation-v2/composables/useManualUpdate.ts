@@ -380,14 +380,14 @@ export function useManualUpdate(): ManualUpdateState {
 
     const confirmed = await dialogStore.confirm({
       title: '执行手动填表',
-      message: `即将执行手动填表。\n\n当前 full checkpoint：${checkpointFloorsLabel.value}\n本次重填范围：${manualRefillRangeLabel.value}\n\n系统会在内存中按当前上下文和批处理设置重填当前选中的表，全部成功后才写入手动重填进度记录。\n保留边界 checkpoint 会按 AI 回复楼层计数，在达到保留窗口和 20 个 AI 楼层缓冲后自动滚动建立。\n如果重填起点之前找不到可回放的 checkpoint，选中表的本次内存重建基底会从表头空基底开始；未选中的表会保持当前最新数据。\n\n失败、终止或从中断处继续时，都不会清空聊天记录中的旧表格数据。`,
+      message: `即将执行手动填表。\n\n当前 full checkpoint：${checkpointFloorsLabel.value}\n本次重填范围：${manualRefillRangeLabel.value}\n\n系统会先对当前选中的表提交仅保留表头的空基底，再按当前上下文和批处理设置重新填表；未选中的表会保持当前最新数据。\n保留边界 checkpoint 会按 AI 回复楼层计数，在达到保留窗口和 20 个 AI 楼层缓冲后自动滚动建立。\n如果重填起点之前找不到可回放的 checkpoint，系统会中止以避免从不完整基底重建。\n\n如果空基底提交或运行时刷新失败，重填会立即中止，不会继续把旧数据送入 AI prompt。`,
       dangerMessage: checkpointRiskMessage.value || undefined,
       confirmLabel: '确认并继续',
       cancelLabel: '取消',
       confirmVariant: checkpointRiskMessage.value ? 'danger' : undefined,
     });
     if (!confirmed) return;
-    // 兼容沿用 clearBeforeUpdate 参数名；service 层实际执行事务式重填，不会预清空聊天记录。
+    // 兼容沿用 clearBeforeUpdate 参数名；service 层会先提交选中表空基底，再执行事务式重填。
     const clearBeforeUpdate = true;
 
     manualUpdateBusy.value = true;

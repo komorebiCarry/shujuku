@@ -506,6 +506,69 @@ async function ensureManualRefillV2ReplayBoundary_ACU(
     }
 }
 
+async function commitManualRefillEmptyBase_ACU(
+    targetSheetKeys: string[],
+    targetMessageIndex: number,
+): Promise<{ success: true; clearedSheetKeys: string[] } | { success: false; error: string }> {
+    const normalizedTargetKeys = [...new Set(
+        (Array.isArray(targetSheetKeys) ? targetSheetKeys : [])
+            .filter(sheetKey => typeof sheetKey === 'string' && sheetKey.startsWith('sheet_')),
+    )].sort();
+    if (normalizedTargetKeys.length === 0) {
+        return { success: false, error: '手动重填预清空失败：未提供有效目标表。' };
+    }
+
+    const baseSnapshot = getRuntimeTableDataSnapshot_ACU();
+    if (!baseSnapshot) {
+        return { success: false, error: '手动重填预清空失败：无法读取当前表格运行时快照。' };
+    }
+
+    const workingData = cloneTableDataSnapshot_ACU(baseSnapshot) || {};
+    const operations: TableMutationOperationV2_ACU[] = [];
+    for (const sheetKey of normalizedTargetKeys) {
+        const sheet = workingData[sheetKey];
+        if (!sheet || typeof sheet !== 'object' || !Array.isArray(sheet.content)) {
+            return { success: false, error: `手动重填预清空失败：目标表 ${sheetKey} 在运行时不存在。` };
+        }
+        const header = Array.isArray(sheet.content[0]) ? [...sheet.content[0]] : null;
+        if (!header || header.length === 0) {
+            return { success: false, error: `手动重填预清空失败：目标表 ${sheetKey} 缺少有效表头。` };
+        }
+        const emptySheet = {
+            ...JSON.parse(JSON.stringify(sheet)),
+            content: [header],
+        };
+        workingData[sheetKey] = emptySheet;
+        operations.push({ kind: 'sheet_replace', sheetKey, sheet: emptySheet as any, reason: 'manual_crud' });
+    }
+
+    const writeSet = normalizedTargetKeys.map(sheetKey => ({ kind: 'sheet' as const, sheetKey }));
+    const commitResult = await runTableUpdateCommit_ACU<{ clearedSheetKeys: string[] }>({
+        source: 'manual_fill',
+        reason: 'manual_refill_clear_before_update_empty_base',
+        isolationKey: getCurrentIsolationKey_ACU(),
+        writeSet,
+        revisionWriteSet: writeSet,
+        initialData: baseSnapshot as any,
+        targetMessageIndex,
+        targetSheetKeys: normalizedTargetKeys,
+        updateGroupKeys: normalizedTargetKeys,
+        trackingSheetKeys: normalizedTargetKeys,
+        trackAsUpdate: true,
+        operations,
+    }, () => ({
+        success: true,
+        value: { clearedSheetKeys: normalizedTargetKeys },
+        tableData: workingData as any,
+        mutationResult: { changes: normalizedTargetKeys.length, errors: [] },
+    }));
+
+    if (!commitResult.success || !commitResult.value) {
+        return { success: false, error: commitResult.error || '手动重填预清空失败：无法提交目标表空基底。' };
+    }
+    return { success: true, clearedSheetKeys: commitResult.value.clearedSheetKeys };
+}
+
 function buildGuideOrTemplateMergeBase_ACU(batchNumber: number): { data: Record<string, any> | null; error: string | null } {
     const batchIsoKey = getCurrentIsolationKey_ACU();
     const sheetGuideForBatch = getChatSheetGuideDataForIsolationKey_ACU(batchIsoKey);
@@ -1963,7 +2026,7 @@ export async function orchestrateManualUpdate_ACU(
         const groupKeys = Object.keys(updateGroups);
 
         const manualRefillEnabled = options.clearBeforeUpdate === true;
-        const manualRefillMergeBaseMaxMessageIndex = manualRefillEnabled ? contextScopeIndices[0] - 1 : undefined;
+        const manualRefillMergeBaseMaxMessageIndex = manualRefillEnabled ? contextScopeIndices[0] : undefined;
         if (manualRefillEnabled) {
             const replayBoundaryCheck = await ensureManualRefillV2ReplayBoundary_ACU(liveChat, getCurrentIsolationKey_ACU(), contextScopeIndices[0]);
             if (replayBoundaryCheck.success === false) {
@@ -1977,15 +2040,22 @@ export async function orchestrateManualUpdate_ACU(
                 return { success: false, error: error?.message || '手动重填启动前清理选中表增量数据失败。' };
             }
 
+            const emptyBaseCommit = await commitManualRefillEmptyBase_ACU(targetKeys, contextScopeIndices[0]);
+            if (!emptyBaseCommit.success) {
+                const error = 'error' in emptyBaseCommit ? emptyBaseCommit.error : '手动重填预清空失败：无法提交目标表空基底。';
+                logError_ACU('[Manual Refill] 提交选中表空基底失败:', error);
+                return { success: false, error };
+            }
+
             try {
-                // 清理历史 V2 数据后必须刷新 SQLite/runtime 快照，
+                // 清理历史 V2 数据并提交目标表空基底后必须刷新 SQLite/runtime 快照，
                 // 否则 AI prompt 基底会继续读到清理前的旧 chronicle 行（test6.8 类事故）。
                 await reloadStorageProvider();
             } catch (error: any) {
-                logError_ACU('[Manual Refill] 清理后刷新运行时快照失败:', error);
-                return { success: false, error: error?.message || '手动重填清理后刷新运行时快照失败。' };
+                logError_ACU('[Manual Refill] 预清空后刷新运行时快照失败:', error);
+                return { success: false, error: error?.message || '手动重填预清空后刷新运行时快照失败。' };
             }
-            logDebug_ACU(`[Manual Refill] 已清理选中表旧增量数据并刷新运行时快照，将按普通手动填写路径重写 ${contextScopeIndices[0]}..${contextScopeIndices[contextScopeIndices.length - 1]}。`);
+            logDebug_ACU(`[Manual Refill] 已清理选中表旧增量数据、提交空基底并刷新运行时快照，将按普通手动填写路径重写 ${contextScopeIndices[0]}..${contextScopeIndices[contextScopeIndices.length - 1]}。`);
         }
 
         _set_isAutoUpdatingCard_ACU(true);
