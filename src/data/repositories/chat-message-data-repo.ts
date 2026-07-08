@@ -272,7 +272,7 @@ function purgeManualRefillIncrementalSheetKeysFromStorageFrameV2_ACU(frame: any,
     return changed;
 }
 
-export function purgeManualRefillIncrementalSheetKeysFromMessage_ACU(msg: any, sheetKeys: string[]): boolean {
+export function purgeManualRefillIncrementalSheetKeysFromMessage_ACU(msg: any, isolationKey: string, sheetKeys: string[]): boolean {
     if (!msg || !Array.isArray(sheetKeys) || sheetKeys.length === 0) return false;
 
     let msgChanged = false;
@@ -281,13 +281,11 @@ export function purgeManualRefillIncrementalSheetKeysFromMessage_ACU(msg: any, s
     if (!isolated) return false;
 
     const nextIsolated = safeClone(isolated);
-    Object.keys(nextIsolated).forEach(tagKey => {
-        const tagData = nextIsolated[tagKey];
-        if (!tagData || typeof tagData !== 'object') return;
-        if (purgeManualRefillIncrementalSheetKeysFromStorageFrameV2_ACU((tagData as any).storageFrame, sheetKeySet)) {
-            msgChanged = true;
-        }
-    });
+    const tagData = nextIsolated[isolationKey || ''];
+    if (!tagData || typeof tagData !== 'object') return false;
+    if (purgeManualRefillIncrementalSheetKeysFromStorageFrameV2_ACU((tagData as any).storageFrame, sheetKeySet)) {
+        msgChanged = true;
+    }
 
     if (msgChanged) {
         msg.TavernDB_ACU_IsolatedData = nextIsolated;

@@ -18,6 +18,7 @@ import { useThemeStore } from '../stores/theme-store';
 import { applyAppearance, __resetAppearanceInjectorForTests } from '../theme/appearance-injector';
 import { applyTheme } from '../theme/theme-injector';
 import { __resetUiCloseGuardsForTests } from '../composables/useUiCloseGuard';
+import { __resetToastStoreForTests } from '../stores/toast-store';
 import {
   __resetHostDocumentCacheForTests,
   getAcuHostDocument,
@@ -129,6 +130,7 @@ export function __resetAcuV2MountForTests(): void {
     state = null;
   }
   __resetUiCloseGuardsForTests();
+  __resetToastStoreForTests();
   __resetAppearanceInjectorForTests();
   __resetHostDocumentCacheForTests();
   __resetHostRendererForTests();

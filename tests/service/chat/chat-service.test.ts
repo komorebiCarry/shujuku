@@ -85,6 +85,7 @@ import {
   getOriginalContent_ACU,
   purgeOldLayerData_ACU,
   ensureV2BoundaryCheckpointForRetainedBuffer_ACU,
+  shouldRotateV2BoundaryCheckpointForRetainedBuffer_ACU,
   ensureManualRefillInitialBaseline_ACU,
   clearManualRefillIncrementalDataInRange_ACU,
   clearTableDataAtFloors_ACU,
@@ -430,6 +431,34 @@ describe('ensureV2BoundaryCheckpointForRetainedBuffer_ACU', () => {
     expect(mockSaveChatToHost).toHaveBeenCalledTimes(1);
   });
 
+  it('retainRecentLayers=100 且 30 个 AI 楼层时不触发边界 rotate', async () => {
+    mockSettings.retainRecentLayers = 100;
+    const chat = Array.from({ length: 30 }, (_, index) => ({
+      is_user: false,
+      TavernDB_ACU_IsolatedData: {
+        '': {
+          storageFrame: {
+            version: 2,
+            checkpoint: index === 29
+              ? { kind: 'full', createdAt: 30, reason: 'manual', data: { sheet_0: { name: '默认保留', content: [['row_id'], ['30']] } } }
+              : undefined,
+            logEntries: [],
+          },
+          _acu_storage_version: 2,
+        },
+      },
+    }));
+    mockGetChatArray.mockReturnValue(chat);
+
+    expect(shouldRotateV2BoundaryCheckpointForRetainedBuffer_ACU()).toBe(false);
+    const result = await ensureV2BoundaryCheckpointForRetainedBuffer_ACU({ reason: 'manual_refill', save: true });
+
+    expect(result).toEqual(expect.objectContaining({ success: true, changed: false, skipped: true }));
+    expect(mockLoadTableStateFromFramesV2).not.toHaveBeenCalled();
+    expect(mockSaveChatToHost).not.toHaveBeenCalled();
+    expect(chat[29].TavernDB_ACU_IsolatedData[''].storageFrame.checkpoint).toEqual(expect.objectContaining({ kind: 'full', reason: 'manual' }));
+  });
+
   it('已有 anchor compaction full checkpoint 时跳过写入并不保存', async () => {
     mockSettings.retainRecentLayers = 2;
     const chat = Array.from({ length: 25 }, (_, index) => ({
@@ -639,7 +668,59 @@ describe('ensureV2BoundaryCheckpointForRetainedBuffer_ACU', () => {
     }));
     expect(mockSaveChatToHost).toHaveBeenCalledTimes(1);
   });
+
+  it('retainRecentLayers=10 且 30 个 AI 楼层时在第 21 个 AI 楼层写边界并降级第 30 层 full', async () => {
+    mockSettings.retainRecentLayers = 10;
+    const fullRefillData = {
+      mate: { type: 'chatSheets', version: 1 },
+      sheet_1: {
+        name: '纪要表',
+        content: [
+          ['row_id', '事件'],
+          ...Array.from({ length: 30 }, (_, index) => [`${index + 1}`, `第${index + 1}层事件`]),
+        ],
+      },
+    };
+    mockLoadTableStateFromFramesV2.mockResolvedValueOnce({
+      mate: { type: 'chatSheets', version: 1 },
+      sheet_1: { name: '纪要表', content: [['row_id', '事件'], ['20', '边界旧事件']] },
+    });
+    const chat = Array.from({ length: 30 }, (_, index) => ({
+      is_user: false,
+      TavernDB_ACU_IsolatedData: {
+        '': {
+          storageFrame: {
+            version: 2,
+            checkpoint: index === 29
+              ? { kind: 'full', createdAt: 30, reason: 'init', data: fullRefillData }
+              : undefined,
+            logEntries: [],
+          },
+          _acu_storage_version: 2,
+        },
+      },
+    }));
+    mockGetChatArray.mockReturnValue(chat);
+
+    const result = await ensureV2BoundaryCheckpointForRetainedBuffer_ACU({ reason: 'manual_refill', save: true });
+
+    expect(result).toEqual(expect.objectContaining({ success: true, changed: true, anchorIndex: 20 }));
+    expect(mockLoadTableStateFromFramesV2).toHaveBeenCalledWith(chat, '', { maxMessageIndex: 20 });
+    expect(chat[20].TavernDB_ACU_IsolatedData[''].storageFrame.checkpoint).toEqual(expect.objectContaining({
+      kind: 'full',
+      reason: 'compaction',
+    }));
+    expect(chat[20].TavernDB_ACU_IsolatedData[''].storageFrame.checkpoint.data.sheet_1.content[1]).toEqual(['20', '边界旧事件']);
+    const deletedLaterFrame = chat[29].TavernDB_ACU_IsolatedData[''].storageFrame;
+    expect(deletedLaterFrame.checkpoint).toBeUndefined();
+    expect(deletedLaterFrame.logEntries[0].operations[0]).toEqual({
+      kind: 'data_replace',
+      data: fullRefillData,
+      reason: 'checkpoint_fallback',
+    });
+  });
 });
+
 
 
 // ═══ deleteLocalDataInChatCore_ACU ═══

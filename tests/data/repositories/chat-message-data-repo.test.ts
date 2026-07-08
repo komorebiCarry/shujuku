@@ -679,7 +679,7 @@ describe('purgeManualRefillIncrementalSheetKeysFromMessage_ACU', () => {
       },
     };
 
-    expect(purgeManualRefillIncrementalSheetKeysFromMessage_ACU(msg, ['sheet_0'])).toBe(true);
+    expect(purgeManualRefillIncrementalSheetKeysFromMessage_ACU(msg, 'tag1', ['sheet_0'])).toBe(true);
 
     const tagData = msg.TavernDB_ACU_IsolatedData.tag1;
     const frame = tagData.storageFrame;
@@ -719,7 +719,7 @@ describe('purgeManualRefillIncrementalSheetKeysFromMessage_ACU', () => {
       }),
     };
 
-    expect(purgeManualRefillIncrementalSheetKeysFromMessage_ACU(msg, ['sheet_0'])).toBe(true);
+    expect(purgeManualRefillIncrementalSheetKeysFromMessage_ACU(msg, 'tag1', ['sheet_0'])).toBe(true);
     expect(typeof msg.TavernDB_ACU_IsolatedData).toBe('object');
     expect(msg.TavernDB_ACU_IsolatedData.tag1.storageFrame.checkpoint.data).toEqual({
       sheet_0: { name: 'checkpoint旧表' },
@@ -741,8 +741,55 @@ describe('purgeManualRefillIncrementalSheetKeysFromMessage_ACU', () => {
       },
     };
 
-    expect(purgeManualRefillIncrementalSheetKeysFromMessage_ACU(msg, ['sheet_0'])).toBe(false);
+    expect(purgeManualRefillIncrementalSheetKeysFromMessage_ACU(msg, 'tag1', ['sheet_0'])).toBe(false);
     expect(msg.TavernDB_ACU_IsolatedData.tag1.storageFrame.checkpoint.data.sheet_0).toEqual({ name: 'checkpoint旧表' });
+  });
+
+  it('只清理指定 isolationKey，不串改其他隔离标签的同名 sheet', () => {
+    const msg: any = {
+      TavernDB_ACU_IsolatedData: {
+        tag1: {
+          storageFrame: {
+            version: 2,
+            checkpoint: { kind: 'full', data: { sheet_0: { name: 'tag1 checkpoint' } } },
+            logEntries: [{
+              filledSheetKeys: ['sheet_0', 'sheet_1'],
+              changedSheetKeys: ['sheet_0', 'sheet_1'],
+              operations: [
+                { kind: 'sheet_replace', sheetKey: 'sheet_0', sheet: { name: 'tag1 旧表' }, reason: 'manual_crud' },
+                { kind: 'sheet_replace', sheetKey: 'sheet_1', sheet: { name: 'tag1 保留表' }, reason: 'manual_crud' },
+              ],
+            }],
+          },
+        },
+        tag2: {
+          storageFrame: {
+            version: 2,
+            checkpoint: { kind: 'full', data: { sheet_0: { name: 'tag2 checkpoint' } } },
+            logEntries: [{
+              filledSheetKeys: ['sheet_0'],
+              changedSheetKeys: ['sheet_0'],
+              operations: [
+                { kind: 'sheet_replace', sheetKey: 'sheet_0', sheet: { name: 'tag2 不应被清理' }, reason: 'manual_crud' },
+              ],
+            }],
+          },
+        },
+      },
+    };
+
+    expect(purgeManualRefillIncrementalSheetKeysFromMessage_ACU(msg, 'tag1', ['sheet_0'])).toBe(true);
+
+    expect(msg.TavernDB_ACU_IsolatedData.tag1.storageFrame.logEntries[0].filledSheetKeys).toEqual(['sheet_1']);
+    expect(msg.TavernDB_ACU_IsolatedData.tag1.storageFrame.logEntries[0].changedSheetKeys).toEqual(['sheet_1']);
+    expect(msg.TavernDB_ACU_IsolatedData.tag1.storageFrame.logEntries[0].operations).toEqual([
+      { kind: 'sheet_replace', sheetKey: 'sheet_1', sheet: { name: 'tag1 保留表' }, reason: 'manual_crud' },
+    ]);
+    expect(msg.TavernDB_ACU_IsolatedData.tag2.storageFrame.logEntries[0].filledSheetKeys).toEqual(['sheet_0']);
+    expect(msg.TavernDB_ACU_IsolatedData.tag2.storageFrame.logEntries[0].changedSheetKeys).toEqual(['sheet_0']);
+    expect(msg.TavernDB_ACU_IsolatedData.tag2.storageFrame.logEntries[0].operations).toEqual([
+      { kind: 'sheet_replace', sheetKey: 'sheet_0', sheet: { name: 'tag2 不应被清理' }, reason: 'manual_crud' },
+    ]);
   });
 });
 

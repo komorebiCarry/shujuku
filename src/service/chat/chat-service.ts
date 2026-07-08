@@ -498,6 +498,7 @@ export async function ensureManualRefillInitialBaseline_ACU(
     });
 }
 
+
 async function writeV2BoundaryCheckpointBeforePurge_ACU(
     chat: any[],
     boundaryAnchorIndex: number,
@@ -1347,7 +1348,7 @@ async function clearManualRefillIncrementalDataInRangeCore_ACU(targetMessageIndi
         const msg = chat[idx];
         if (!msg || msg.is_user) continue;
 
-        const changed = purgeManualRefillIncrementalSheetKeysFromMessage_ACU(msg, targetSheetKeys);
+        const changed = purgeManualRefillIncrementalSheetKeysFromMessage_ACU(msg, isolationKey, targetSheetKeys);
         if (clearsSummaryOrOutline) {
             const isolatedData = msg?.TavernDB_ACU_IsolatedData;
             const tagData = isolatedData && typeof isolatedData === 'object' && !Array.isArray(isolatedData)

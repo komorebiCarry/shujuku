@@ -154,3 +154,13 @@ export const useToastStore = defineStore("acu-v2-toast", {
     },
   },
 });
+
+/** 仅供测试使用：清理模块级自动关闭定时器，避免 jsdom teardown 后回调访问已销毁的 window。 */
+export function __resetToastStoreForTests(): void {
+  for (const timer of dismissTimers.values()) {
+    acuClearTimeout(timer);
+  }
+  dismissTimers.clear();
+  nextToastId = 1;
+  nextClearVersion = 0;
+}

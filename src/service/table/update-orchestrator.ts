@@ -6,7 +6,7 @@
 
 import { isAutoUpdatingCard_ACU, pendingFinalGenerationGreenlights_ACU, wasStoppedByUser_ACU, _set_isAutoUpdatingCard_ACU, _set_manualExtraHint_ACU, _set_wasStoppedByUser_ACU } from '../runtime/state-manager';
 import { callCustomOpenAI_ACU } from '../ai/prompt-builder';
-import { clearManualRefillIncrementalDataInRange_ACU, ensureManualRefillInitialBaseline_ACU, ensureV2BoundaryCheckpointForRetainedBuffer_ACU, getChatArray_ACU, shouldRotateV2BoundaryCheckpointForRetainedBuffer_ACU } from '../chat/chat-service';
+import { clearManualRefillIncrementalDataInRange_ACU, ensureV2BoundaryCheckpointForRetainedBuffer_ACU, getChatArray_ACU, shouldRotateV2BoundaryCheckpointForRetainedBuffer_ACU } from '../chat/chat-service';
 import { coreApisAreReady_ACU, currentJsonTableData_ACU, getCurrentIsolationKey_ACU, settings_ACU, _set_currentJsonTableData_ACU } from '../runtime/state-manager';
 import { checkAutoMergeTrigger_ACU, prepareAutoMergeBatches_ACU, executeAutoMergeBatch_ACU, finalizeAutoMerge_ACU } from '../summary/merge-logic';
 import { ensureStableRowIdsForSheetContent_ACU, getChatSheetGuideDataForIsolationKey_ACU, getEffectiveSeedRowsForSheet_ACU, shouldUseInitialSeedRows_ACU } from '../template/chat-scope';
@@ -15,7 +15,6 @@ import { enqueueSummaryVectorIndexFlush_ACU } from '../vector/summary-vector-ind
 import { getCurrentWorldbookConfig_ACU } from '../settings/settings-readers';
 
 import { isSummaryOrOutlineTable_ACU, logDebug_ACU, logError_ACU, logWarn_ACU, parseTableTemplateJson_ACU } from '../../shared/utils';
-import { safeJsonParse_ACU } from '../../shared/json-helpers';
 
 import { applyTableDelta_ACU, isDeltaTagData_ACU } from './table-delta';
 /**
@@ -41,18 +40,16 @@ function resolveTableApiPresetOverride_ACU(tableName: any): string {
 import { checkIfFirstTimeInit_ACU, ensureLegacyStorageMigratedBeforeWrite_ACU } from './table-service';
 import { parseAndApplyTableEditsToData_ACU, prepareAIInput_ACU } from '../ai/prompt-builder';
 import { extractStrictJsonTableFillResponse_ACU } from '../ai/prompt-builder/strict-json-table-fill';
-import { collectV2CheckpointFloorsFromChat_ACU } from './table-history';
 import { isSqlContent } from '../ai/prompt-builder/table-edit-parser';
 import { buildGuidedBaseDataFromSheetGuide_ACU, getSortedSheetKeys_ACU } from '../template/chat-scope';
 import { isSqliteMode } from './storage-mode';
-import type { ManualRefillProgressV2_ACU, TableMutationOperationV2_ACU } from './storage-frame-v2-types';
+import type { TableMutationOperationV2_ACU } from './storage-frame-v2-types';
 import { applySqlEditsToTableDataSnapshot_ACU, extractTableNamesFromStatements, mapSqlTableNamesToSheetKeys_ACU, normalizeSqlStatementsForRuntimeLog_ACU } from './sql-table-service';
 import { loadTableStateFromFramesV2_ACU } from './storage-frame-v2-replay';
 import { ensureStorageProviderReady_ACU, getStorageProvider, reloadStorageProvider } from './table-storage-strategy';
 import { applySpecialIndexSequenceToSummaryTables_ACU } from '../runtime/helpers-remaining';
 import { captureTableRuntimeRevisionForWriteSet_ACU } from './table-write-transaction';
 import { runTableUpdateCommit_ACU } from './table-update-commit';
-import { readIsolatedTagData_ACU } from '../../data/repositories/chat-message-data-repo';
 import { isV2TagData_ACU, resolveTableStorageStrategy_ACU } from './storage-strategy-resolver';
 
 // ============================================================
@@ -342,22 +339,6 @@ function hasUsableRuntimeTableData_ACU(data: Record<string, any> | null): boolea
     return Object.keys(data).some(k => k.startsWith('sheet_') && Array.isArray(data[k]?.content));
 }
 
-function hasSheetContentRows_ACU(sheet: any): boolean {
-    return Array.isArray(sheet?.content) && sheet.content.length > 1;
-}
-
-function selectManualRefillSheetSource_ACU(
-    sheetKey: string,
-    refillSheet: any,
-    zeroSheet: any,
-): { sheet: any; source: 'refill' | 'zero' | null } {
-    if (hasSheetContentRows_ACU(refillSheet)) return { sheet: refillSheet, source: 'refill' };
-    if (refillSheet) return { sheet: refillSheet, source: 'refill' };
-    if (zeroSheet) return { sheet: zeroSheet, source: 'zero' };
-    logDebug_ACU(`[Manual Refill] 选中表 ${sheetKey} 在 replay/schema 中均不存在，跳过基底覆盖。`);
-    return { sheet: null, source: null };
-}
-
 function buildWriteSetForSheetKeys_ACU(sheetKeys: string[] | null | undefined, fallbackData?: Record<string, any> | null) {
     const keys = Array.isArray(sheetKeys) && sheetKeys.length > 0
         ? sheetKeys
@@ -368,38 +349,11 @@ function buildWriteSetForSheetKeys_ACU(sheetKeys: string[] | null | undefined, f
         : [{ kind: 'all' as const }];
 }
 
-function getManualRefillProgressAtMessage_ACU(chat: any[], messageIndex: number): ManualRefillProgressV2_ACU | null {
-    const msg = Array.isArray(chat) ? chat[messageIndex] : null;
-    if (!msg || msg.is_user) return null;
-    const tagData = readIsolatedTagData_ACU(msg, getCurrentIsolationKey_ACU()) as any;
-    if (!isV2TagData_ACU(tagData)) return null;
-    const frameProgress = tagData.storageFrame?.manualRefillProgress;
-    if (frameProgress?.kind === 'manual_refill') return frameProgress as ManualRefillProgressV2_ACU;
-    const legacyCheckpointProgress = tagData.storageFrame?.checkpoint?.manualRefillProgress;
-    return legacyCheckpointProgress?.kind === 'manual_refill' ? legacyCheckpointProgress as ManualRefillProgressV2_ACU : null;
+
+function hasSheetContentRows_ACU(sheet: any): boolean {
+    return Array.isArray(sheet?.content) && sheet.content.length > 1;
 }
 
-function arraysEqualUnordered_ACU(a: string[], b: string[]): boolean {
-    const aa = [...new Set(a)].sort();
-    const bb = [...new Set(b)].sort();
-    return aa.length === bb.length && aa.every((value, index) => value === bb[index]);
-}
-
-function manualRefillProgressMatches_ACU(
-    progress: ManualRefillProgressV2_ACU | null,
-    selectedSheetKeys: string[],
-    contextMessageIndices: number[],
-    targetMessageIndex: number,
-): progress is ManualRefillProgressV2_ACU {
-    if (!progress || progress.status !== 'in_progress') return false;
-    if (progress.targetMessageIndex !== targetMessageIndex) return false;
-    if (!arraysEqualUnordered_ACU(progress.selectedSheetKeys || [], selectedSheetKeys)) return false;
-    const currentStart = contextMessageIndices[0];
-    const originalStart = Number(progress.originalStartMessageIndex);
-    if (!Number.isFinite(currentStart) || !Number.isFinite(originalStart)) return false;
-    // 允许用户调整上下文层数和批大小；只要当前请求没有扩展到上次重填起点之前，就按已完成楼层续跑。
-    return currentStart >= originalStart;
-}
 
 function buildSqlBatchOperationsFromText_ACU(sqlText: string): TableMutationOperationV2_ACU[] {
     const statements = normalizeSqlStatementsForRuntimeLog_ACU(sqlText);
@@ -429,21 +383,6 @@ function findSqlFailureGroupKey_ACU(sqlTexts: string[], responses: GroupFillResp
     return null;
 }
 
-function createRuntimeRollbackSnapshot_ACU(provider: any): unknown | null {
-    return typeof provider?.createRuntimeSnapshot === 'function' ? provider.createRuntimeSnapshot() : null;
-}
-
-async function restoreRuntimeRollbackSnapshot_ACU(provider: any, snapshot: unknown, reason: string): Promise<void> {
-    if (!snapshot || typeof provider?.restoreRuntimeSnapshot !== 'function') return;
-    try {
-        await provider.restoreRuntimeSnapshot(snapshot);
-        logDebug_ACU(`[RuntimeRollback] 已恢复运行时 DB 快照: ${reason}`);
-    } catch (error) {
-        logWarn_ACU(`[RuntimeRollback] 恢复运行时 DB 快照失败，尝试 reload: ${reason}`, error);
-        await reloadStorageProvider();
-    }
-}
-
 function getRuntimeTableDataSnapshot_ACU(fallbackData: Record<string, any> | null = null): Record<string, any> | null {
     const explicitFallback = cloneTableDataSnapshot_ACU(fallbackData || null);
     if (hasUsableRuntimeTableData_ACU(explicitFallback)) return explicitFallback;
@@ -461,67 +400,6 @@ function getRuntimeTableDataSnapshot_ACU(fallbackData: Record<string, any> | nul
     return null;
 }
 
-function getManualRefillLatestState_ACU(
-    fallbackData: Record<string, any> | null,
-    selectedSheetKeys: string[],
-    preferredSnapshot: Record<string, any> | null = null,
-): Record<string, any> {
-    const candidates: Record<string, any>[] = [];
-    const addCandidate = (candidate: Record<string, any> | null | undefined) => {
-        const cloned = cloneTableDataSnapshot_ACU(candidate || null);
-        if (hasUsableRuntimeTableData_ACU(cloned)) candidates.push(cloned as Record<string, any>);
-    };
-
-    addCandidate(preferredSnapshot);
-    try {
-        const providerData = getStorageProvider().getCurrentData();
-        addCandidate(providerData as any);
-    } catch (error) {
-        logWarn_ACU('[Manual Refill] 无法从运行时存储导出当前表格快照，改用内存快照兜底。', error);
-    }
-    addCandidate(currentJsonTableData_ACU || null);
-    addCandidate(fallbackData || null);
-
-    const base = candidates[0] || cloneTableDataSnapshot_ACU(fallbackData || null) || {};
-    const merged = JSON.parse(JSON.stringify(base));
-    const normalizedSheetKeys = [...new Set((selectedSheetKeys || [])
-        .filter(sheetKey => typeof sheetKey === 'string' && sheetKey.startsWith('sheet_')))
-    ];
-
-    for (const sheetKey of normalizedSheetKeys) {
-        const withRows = candidates.find(candidate => hasSheetContentRows_ACU(candidate?.[sheetKey]));
-        const withStructure = candidates.find(candidate => candidate?.[sheetKey]);
-        const sourceSheet = withRows?.[sheetKey] || withStructure?.[sheetKey];
-        if (sourceSheet) {
-            merged[sheetKey] = JSON.parse(JSON.stringify(sourceSheet));
-        }
-    }
-
-    if (hasUsableRuntimeTableData_ACU(merged)) return merged;
-
-    const replaySnapshot = cloneTableDataSnapshot_ACU(fallbackData || null);
-    if (replaySnapshot) return replaySnapshot;
-    return {};
-}
-
-async function resetSqliteRuntimeFromSnapshot_ACU(
-    snapshotData: Record<string, any> | null | undefined,
-    reason: string,
-): Promise<{ success: boolean; data?: Record<string, any>; error?: string }> {
-    if (!snapshotData || typeof snapshotData !== 'object') {
-        return { success: false, error: `${reason}: 缺少可用于初始化 SQLite 运行时的快照。` };
-    }
-    const provider = await ensureStorageProviderReady_ACU();
-    if (typeof provider.replaceAllData !== 'function') {
-        return { success: false, error: `${reason}: 当前存储 provider 不支持运行时全量替换。` };
-    }
-    const replaceResult = await provider.replaceAllData(snapshotData as any);
-    if (!replaceResult.success) {
-        return { success: false, error: replaceResult.error || `${reason}: SQLite 运行时初始化失败。` };
-    }
-    const runtimeData = provider.getCurrentData() as Record<string, any> | null;
-    return { success: true, data: runtimeData || JSON.parse(JSON.stringify(snapshotData)) };
-}
 
 function mergeGuideStructureIntoBaseData_ACU(data: Record<string, any>): Record<string, any> {
     const base = cloneTableDataSnapshot_ACU(data) || {};
@@ -573,6 +451,60 @@ async function loadV2ReplayMergeBase_ACU(
     }
 }
 
+function scanManualRefillV2ReplayBoundary_ACU(
+    chat: any[],
+    currentIsolationKey: string,
+    maxMessageIndex: number,
+): { hasCurrentIsolationV2: boolean; otherIsolationKeys: string[] } {
+    if (!Array.isArray(chat) || maxMessageIndex < 0) {
+        return { hasCurrentIsolationV2: false, otherIsolationKeys: [] };
+    }
+
+    const otherIsolationKeys = new Set<string>();
+    const boundary = Math.min(maxMessageIndex, chat.length - 1);
+    let hasCurrentIsolationV2 = false;
+
+    for (let i = 0; i <= boundary; i += 1) {
+        const message = chat[i];
+        if (!message || message.is_user) continue;
+        const isolatedData = message.TavernDB_ACU_IsolatedData;
+        if (!isolatedData || typeof isolatedData !== 'object' || Array.isArray(isolatedData)) continue;
+
+        for (const [isolationKey, tagData] of Object.entries(isolatedData)) {
+            if (!isV2TagData_ACU(tagData)) continue;
+            if (isolationKey === currentIsolationKey) {
+                hasCurrentIsolationV2 = true;
+            } else {
+                otherIsolationKeys.add(isolationKey);
+            }
+        }
+    }
+
+    return { hasCurrentIsolationV2, otherIsolationKeys: [...otherIsolationKeys] };
+}
+
+async function ensureManualRefillV2ReplayBoundary_ACU(
+    chat: any[],
+    currentIsolationKey: string,
+    maxMessageIndex: number,
+): Promise<{ success: true } | { success: false; error: string }> {
+    const boundary = scanManualRefillV2ReplayBoundary_ACU(chat, currentIsolationKey, maxMessageIndex);
+    if (!boundary.hasCurrentIsolationV2) {
+        if (boundary.otherIsolationKeys.length > 0) {
+            return { success: false, error: `手动重填中止：目标前存在其他 isolationKey 的 V2 数据（${boundary.otherIsolationKeys.join(', ')}），当前 isolationKey 不匹配。` };
+        }
+        return { success: true };
+    }
+
+    try {
+        const replayedData = await loadTableStateFromFramesV2_ACU(chat, currentIsolationKey, { maxMessageIndex });
+        if (replayedData) return { success: true };
+        return { success: false, error: '手动重填中止：找不到可用 full checkpoint，无法安全回放到重填起点前。' };
+    } catch (error: any) {
+        return { success: false, error: error?.message || '手动重填中止：V2 数据回放失败，无法安全回放到重填起点前。' };
+    }
+}
+
 function buildGuideOrTemplateMergeBase_ACU(batchNumber: number): { data: Record<string, any> | null; error: string | null } {
     const batchIsoKey = getCurrentIsolationKey_ACU();
     const sheetGuideForBatch = getChatSheetGuideDataForIsolationKey_ACU(batchIsoKey);
@@ -618,159 +550,6 @@ export async function buildBatchMergeBase_ACU(
     }
 }
 
-function buildSchemaOnlyRefillBase_ACU(): Record<string, any> {
-    const batchIsoKey = getCurrentIsolationKey_ACU();
-    const sheetGuideForBatch = getChatSheetGuideDataForIsolationKey_ACU(batchIsoKey);
-    if (sheetGuideForBatch && typeof sheetGuideForBatch === 'object' && Object.keys(sheetGuideForBatch).some(k => k.startsWith('sheet_'))) {
-        return buildGuidedBaseDataFromSheetGuide_ACU(sheetGuideForBatch);
-    }
-    return parseTableTemplateJson_ACU({ stripSeedRows: true }) || {};
-}
-
-function readIsolatedDataContainerForManualRefill_ACU(msg: any): Record<string, any> | null {
-    const raw = msg?.TavernDB_ACU_IsolatedData;
-    if (!raw) return null;
-    if (typeof raw === 'string') {
-        const parsed = safeJsonParse_ACU(raw, null);
-        return parsed && typeof parsed === 'object' && !Array.isArray(parsed)
-            ? parsed as Record<string, any>
-            : null;
-    }
-    return typeof raw === 'object' && !Array.isArray(raw)
-        ? raw as Record<string, any>
-        : null;
-}
-
-function hasV2FrameAtOrBeforeMessageIndex_ACU(
-    chatHistory: any[],
-    isolationKey: string,
-    maxMessageIndex: number,
-): boolean {
-    if (!Array.isArray(chatHistory) || maxMessageIndex < 0) return false;
-    const upper = Math.min(maxMessageIndex, chatHistory.length - 1);
-    for (let i = 0; i <= upper; i += 1) {
-        const msg = chatHistory[i];
-        if (!msg || msg.is_user) continue;
-        const tagData = readIsolatedTagData_ACU(msg, isolationKey) as any;
-        if (isV2TagData_ACU(tagData)) return true;
-    }
-    return false;
-}
-
-function hasAnyV2FrameAtOrBeforeMessageIndex_ACU(
-    chatHistory: any[],
-    maxMessageIndex: number,
-): boolean {
-    if (!Array.isArray(chatHistory) || maxMessageIndex < 0) return false;
-    const upper = Math.min(maxMessageIndex, chatHistory.length - 1);
-    for (let i = 0; i <= upper; i += 1) {
-        const msg = chatHistory[i];
-        if (!msg || msg.is_user) continue;
-        const isolatedData = readIsolatedDataContainerForManualRefill_ACU(msg);
-        if (!isolatedData) continue;
-        if (Object.values(isolatedData).some(tagData => isV2TagData_ACU(tagData))) return true;
-    }
-    return false;
-}
-
-function findMovableManualRefillInitCheckpointAfterReplayBoundary_ACU(
-    chatHistory: any[],
-    isolationKey: string,
-    replayMaxMessageIndex: number,
-): { messageIndex: number; data: Record<string, any> } | null {
-    if (!Array.isArray(chatHistory)) return null;
-    const startIndex = Math.max(0, replayMaxMessageIndex + 1);
-    for (let i = startIndex; i < chatHistory.length; i += 1) {
-        const msg = chatHistory[i];
-        if (!msg || msg.is_user) continue;
-        const tagData = readIsolatedTagData_ACU(msg, isolationKey) as any;
-        if (!isV2TagData_ACU(tagData)) continue;
-        const checkpoint = tagData.storageFrame?.checkpoint;
-        if (
-            checkpoint?.kind === 'full'
-            && checkpoint.reason === 'init'
-            && checkpoint.data
-            && typeof checkpoint.data === 'object'
-            && !Array.isArray(checkpoint.data)
-        ) {
-            return {
-                messageIndex: i,
-                data: checkpoint.data as Record<string, any>,
-            };
-        }
-    }
-    return null;
-}
-
-type ManualRefillInitialDataResult_ACU =
-    | { success: true; data: Record<string, any> }
-    | { success: false; error: string };
-
-async function buildManualRefillInitialData_ACU(
-    chatHistory: any[],
-    refillTargetMessageIndex: number,
-    selectedSheetKeys: string[],
-    latestState: Record<string, any>,
-): Promise<ManualRefillInitialDataResult_ACU> {
-    const finalBase = JSON.parse(JSON.stringify(latestState || {}));
-    const zeroBase = buildSchemaOnlyRefillBase_ACU();
-    let refillBase: Record<string, any> | null = null;
-    const isolationKey = getCurrentIsolationKey_ACU();
-    const replayMaxMessageIndex = refillTargetMessageIndex - 1;
-    const hasCurrentIsolationV2BeforeTarget = hasV2FrameAtOrBeforeMessageIndex_ACU(chatHistory, isolationKey, replayMaxMessageIndex);
-    const hasAnyV2FrameBeforeTarget = hasAnyV2FrameAtOrBeforeMessageIndex_ACU(chatHistory, replayMaxMessageIndex);
-
-    if (refillTargetMessageIndex > 0) {
-        try {
-            refillBase = await loadTableStateFromFramesV2_ACU(chatHistory, isolationKey, {
-                maxMessageIndex: replayMaxMessageIndex,
-            }) as Record<string, any> | null;
-        } catch (error) {
-            logWarn_ACU('[Manual Refill] 重放填写层前一层的数据失败。', error);
-            return { success: false, error: '手动重填失败：无法从 V2 checkpoint 回放到填写层前一层，已中止以避免使用空表基底。' };
-        }
-    }
-
-    if (!refillBase) {
-        if (hasCurrentIsolationV2BeforeTarget) {
-            return { success: false, error: '手动重填失败：填写层前存在 V2 数据，但找不到可用 full checkpoint，已中止以避免使用空表基底。' };
-        }
-        if (hasAnyV2FrameBeforeTarget) {
-            return { success: false, error: '手动重填失败：当前隔离标签下找不到可用 V2 checkpoint，可能是 isolationKey 不匹配，已中止以避免使用空表基底。' };
-        }
-        const movableInitCheckpoint = findMovableManualRefillInitCheckpointAfterReplayBoundary_ACU(chatHistory, isolationKey, replayMaxMessageIndex);
-        if (movableInitCheckpoint) {
-            logWarn_ACU(`[Manual Refill] 重填范围前找不到可用 checkpoint，将使用消息索引 ${movableInitCheckpoint.messageIndex} 的 init checkpoint 作为前移基底。`);
-            refillBase = JSON.parse(JSON.stringify(movableInitCheckpoint.data));
-        }
-    }
-
-    if (!refillBase) {
-        logWarn_ACU('[Manual Refill] 重填范围前找不到可用 checkpoint，选中表将从零基底开始重填。');
-        refillBase = zeroBase;
-    }
-
-    if (!finalBase.mate && (latestState?.mate || refillBase?.mate || zeroBase?.mate)) {
-        finalBase.mate = JSON.parse(JSON.stringify(latestState?.mate || refillBase?.mate || zeroBase?.mate));
-    }
-
-    for (const sheetKey of selectedSheetKeys) {
-        const replaySheet = refillBase?.[sheetKey];
-        const selectedSource = selectManualRefillSheetSource_ACU(
-            sheetKey,
-            replaySheet,
-            zeroBase?.[sheetKey],
-        );
-        if (selectedSource.sheet) {
-            finalBase[sheetKey] = JSON.parse(JSON.stringify(selectedSource.sheet));
-            if (Array.isArray(finalBase[sheetKey]?.content)) {
-                finalBase[sheetKey].content = ensureStableRowIdsForSheetContent_ACU(finalBase[sheetKey].content);
-            }
-        }
-    }
-
-    return { success: true, data: finalBase };
-}
 
 /**
  * 确定更新模式
@@ -1030,71 +809,6 @@ function buildMixedSqliteFormatError_ACU(nonSqlResponses: GroupFillResponse_ACU[
     return `SQLite 严格模式下同一批分组填表禁止混合 SQL/非 SQL 输出；以下 group 未返回 SQL tableEdit：${groupKeys}。请只重试这些 group，并输出 SQL。`;
 }
 
-async function applySqlResponsesToCurrentRuntime_ACU(
-    responses: GroupFillResponse_ACU[],
-    baseSnapshot: Record<string, any>,
-    updateMode: string,
-): Promise<CardUpdateResult> {
-    if (!Array.isArray(responses) || responses.length === 0) {
-        return { success: false, modifiedKeys: [], error: 'SQLite 运行时提交失败：responses 为空。' };
-    }
-    const sortedResponses = sortGroupFillResponses_ACU(responses);
-    const sqlTexts: string[] = [];
-    for (const response of sortedResponses) {
-        if (!response.success || !response.aiResponse || response.tableEditText === undefined || response.tableEditText === null || !response.job) {
-            return { success: false, modifiedKeys: [], error: 'SQLite 运行时提交失败：存在未完成或无效的 group 响应。' };
-        }
-        if (typeof response.tableEditText !== 'string' || !isSqlContent(response.tableEditText)) {
-            return { success: false, modifiedKeys: [], error: `SQLite 运行时提交失败：group ${response.job.groupKey} 未返回 SQL tableEdit。` };
-        }
-        const touchedKeys = getTouchedSheetKeysFromSqlText_ACU(response.tableEditText, baseSnapshot);
-        if (Array.isArray(response.job.targetSheetKeys) && response.job.targetSheetKeys.length > 0) {
-            const allowedSheetKeys = new Set(response.job.targetSheetKeys);
-            const unauthorizedKeys = touchedKeys.filter((sheetKey: string) => !allowedSheetKeys.has(sheetKey));
-            if (unauthorizedKeys.length > 0) {
-                return {
-                    success: false,
-                    modifiedKeys: [],
-                    error: `SQLite 运行时提交失败：group ${response.job.groupKey} 越权修改了非目标表 (${unauthorizedKeys.join(', ')})。`,
-                };
-            }
-        }
-        sqlTexts.push(response.tableEditText);
-    }
-
-    const provider = await ensureStorageProviderReady_ACU();
-    const rollbackSnapshot = createRuntimeRollbackSnapshot_ACU(provider);
-    try {
-        const parseResult = typeof provider.applyEditsBatch === 'function'
-            ? provider.applyEditsBatch(sqlTexts, updateMode)
-            : provider.applyEdits(sqlTexts.join('\n'), updateMode);
-        if (!parseResult?.success) {
-            await restoreRuntimeRollbackSnapshot_ACU(provider, rollbackSnapshot, 'manual_refill_sql_runtime_apply_failed');
-            return { success: false, modifiedKeys: [], error: parseResult?.error || 'SQLite 运行时 SQL 执行失败。' };
-        }
-        const runtimeData = provider.getCurrentData() as Record<string, any> | null;
-        if (!runtimeData) {
-            await restoreRuntimeRollbackSnapshot_ACU(provider, rollbackSnapshot, 'manual_refill_sql_runtime_export_failed');
-            return { success: false, modifiedKeys: [], error: 'SQLite 运行时提交失败：无法导出运行时数据。' };
-        }
-        const modifiedKeys = Array.isArray(parseResult.modifiedKeys)
-            ? [...new Set(parseResult.modifiedKeys.filter((key: unknown): key is string => typeof key === 'string'))].sort()
-            : [];
-        return { success: true, modifiedKeys, tableData: runtimeData };
-    } catch (error: any) {
-        await restoreRuntimeRollbackSnapshot_ACU(provider, rollbackSnapshot, 'manual_refill_sql_runtime_exception');
-        const rawErrorMessage = error?.message || String(error);
-        const failedGroupKey = findSqlFailureGroupKey_ACU(sqlTexts, sortedResponses, rawErrorMessage);
-        return {
-            success: false,
-            modifiedKeys: [],
-            error: failedGroupKey
-                ? `SQLite 运行时提交失败：group ${failedGroupKey} SQL 执行失败。${rawErrorMessage}`
-                : `SQLite 运行时提交失败：SQL 执行失败。${rawErrorMessage}`,
-        };
-    }
-}
-
 export async function applyUnifiedGroupFillResponses_ACU(
     responses: GroupFillResponse_ACU[],
     baseSnapshot: Record<string, any>,
@@ -1103,8 +817,6 @@ export async function applyUnifiedGroupFillResponses_ACU(
         updateMode: string;
         isImportMode: boolean;
         baseRevision?: string | null;
-        deferPersist?: boolean;
-        forceSnapshotApply?: boolean;
     }
 ): Promise<CardUpdateResult> {
     if (!Array.isArray(responses) || responses.length === 0) {
@@ -1142,8 +854,6 @@ export async function applyUnifiedGroupFillResponses_ACU(
     }
 
     const allResponsesAreRuntimeSql = isSqliteMode()
-        && !options.deferPersist
-        && !options.forceSnapshotApply
         && sortedResponses.length > 0
         && sortedResponses.every(isGroupFillSqlResponse_ACU);
 
@@ -1321,9 +1031,6 @@ export async function applyUnifiedGroupFillResponses_ACU(
     applySpecialIndexSequenceToSummaryTables_ACU(workingTableData);
 
     const modifiedKeys = [...modifiedKeySet].sort();
-    if (options.deferPersist) {
-        return { success: true, modifiedKeys, tableData: workingTableData as any };
-    }
     if (!options.isImportMode) {
         const isFirstTimeInit = await checkIfFirstTimeInit_ACU();
         const allUnifiedSheetKeys = getSortedSheetKeys_ACU(workingTableData);
@@ -1375,14 +1082,8 @@ export async function processGroupedRuntimeChunk_ACU(
         isImportMode?: boolean;
         abortController?: AbortController;
         onProgress?: (event: CardUpdateProgressEvent) => void;
-        deferPersist?: boolean;
-        forceSnapshotApply?: boolean;
-        initialData?: Record<string, any> | null;
-        checkpointTargetIndex?: number;
-        checkpointBaseData?: Record<string, any> | null;
-        manualRefillProgress?: ManualRefillProgressV2_ACU;
     } = {}
-): Promise<{ success: boolean; failedGroups: string[]; error?: string; tableData?: Record<string, any>; checkpointData?: Record<string, any>; manualRefillProgress?: ManualRefillProgressV2_ACU }> {
+): Promise<{ success: boolean; failedGroups: string[]; error?: string }> {
     if (!Array.isArray(groups) || groups.length === 0) {
         return { success: true, failedGroups: [] };
     }
@@ -1444,20 +1145,6 @@ export async function processGroupedRuntimeChunk_ACU(
     }
 
     const orderedBuckets = [...transactionBuckets.values()].sort((a, b) => a.saveTargetIndex - b.saveTargetIndex || a.batchNumber - b.batchNumber);
-    let deferredWorkingData: Record<string, any> | null = options.initialData ? JSON.parse(JSON.stringify(options.initialData)) : null;
-    let deferredCheckpointData: Record<string, any> | null = options.checkpointBaseData
-        ? JSON.parse(JSON.stringify(options.checkpointBaseData))
-        : (deferredWorkingData ? JSON.parse(JSON.stringify(deferredWorkingData)) : null);
-    const useDeferredSqliteRuntime = options.deferPersist === true && isSqliteMode();
-    let latestManualRefillProgress: ManualRefillProgressV2_ACU | undefined = options.manualRefillProgress;
-    if (useDeferredSqliteRuntime) {
-        const initResult = await resetSqliteRuntimeFromSnapshot_ACU(deferredWorkingData, 'manual_refill_sql_runtime_init');
-        if (!initResult.success) {
-            return { success: false, failedGroups: groups.map(group => group.key), error: initResult.error || '手动重填 SQLite 运行时初始化失败。' };
-        }
-        deferredWorkingData = JSON.parse(JSON.stringify(initResult.data || deferredWorkingData));
-        deferredCheckpointData = deferredCheckpointData || JSON.parse(JSON.stringify(deferredWorkingData));
-    }
     const emitBucketProgress = (bucketIndex: number, event: CardUpdateProgressEvent): void => {
         options.onProgress?.({
             ...event,
@@ -1474,9 +1161,7 @@ export async function processGroupedRuntimeChunk_ACU(
         for (let bucketAttempt = 1; bucketAttempt <= maxBucketRetries; bucketAttempt++) {
             const chatHistory = getChatArray_ACU();
             const bucketFirstMessageIndex = Math.min(...bucket.plannedJobs.map(job => job.firstMessageIndexOfBatch));
-            const baseResult: { data: Record<string, any> | null; error: string | null } = options.deferPersist && deferredWorkingData
-                ? { data: JSON.parse(JSON.stringify(deferredWorkingData)), error: null }
-                : await buildBatchMergeBase_ACU(bucket.batchNumber, { maxMessageIndex: bucketFirstMessageIndex - 1 });
+            const baseResult: { data: Record<string, any> | null; error: string | null } = await buildBatchMergeBase_ACU(bucket.batchNumber, { maxMessageIndex: bucketFirstMessageIndex - 1 });
             if (!baseResult.data) {
                 bucket.plannedJobs.forEach(job => failedGroups.add(job.group.key));
                 firstError = firstError || baseResult.error || '无法构建合并基底，操作已终止。';
@@ -1605,106 +1290,13 @@ export async function processGroupedRuntimeChunk_ACU(
             }
 
             emitBucketProgress(bucketIndex, { phase: 'saving' });
-            const applyResult = useDeferredSqliteRuntime
-                ? await applySqlResponsesToCurrentRuntime_ACU(responses, baseSnapshot, bucket.updateMode)
-                : await applyUnifiedGroupFillResponses_ACU(responses, baseSnapshot, {
-                    saveTargetIndex: bucket.saveTargetIndex,
-                    updateMode: bucket.updateMode,
-                    isImportMode: options.isImportMode === true,
-                    baseRevision,
-                    deferPersist: options.deferPersist === true,
-                    forceSnapshotApply: options.forceSnapshotApply === true,
-                });
+            const applyResult = await applyUnifiedGroupFillResponses_ACU(responses, baseSnapshot, {
+                saveTargetIndex: bucket.saveTargetIndex,
+                updateMode: bucket.updateMode,
+                isImportMode: options.isImportMode === true,
+                baseRevision,
+            });
             if (applyResult.success) {
-                if (options.deferPersist && options.manualRefillProgress && applyResult.tableData) {
-                    deferredWorkingData = JSON.parse(JSON.stringify(applyResult.tableData));
-                    deferredCheckpointData = deferredCheckpointData || JSON.parse(JSON.stringify(deferredWorkingData));
-                    const checkpointSheetKeys = bucketSheetKeys.filter(sheetKey => Boolean((deferredWorkingData as any)?.[sheetKey]));
-                    for (const sheetKey of checkpointSheetKeys) {
-                        (deferredCheckpointData as any)[sheetKey] = JSON.parse(JSON.stringify((deferredWorkingData as any)[sheetKey]));
-                    }
-                    _set_currentJsonTableData_ACU(deferredCheckpointData);
-                    const checkpointTargetIndex = Number.isInteger(options.checkpointTargetIndex) ? options.checkpointTargetIndex as number : bucket.saveTargetIndex;
-                    const revisionWriteSet = checkpointSheetKeys.map(sheetKey => ({ kind: 'sheet' as const, sheetKey }));
-                    const progressBase = latestManualRefillProgress || options.manualRefillProgress;
-                    const maxPlannedMessageIndex = Math.max(...jobs.map(job => job.saveTargetIndex));
-                    const completedSheetMessageIndexByKey = {
-                        ...(progressBase.completedSheetMessageIndexByKey || {}),
-                    };
-                    for (const sheetKey of checkpointSheetKeys) {
-                        completedSheetMessageIndexByKey[sheetKey] = Math.max(
-                            Number(completedSheetMessageIndexByKey[sheetKey]) || -1,
-                            maxPlannedMessageIndex,
-                        );
-                    }
-                    const selectedSheetKeys = progressBase.selectedSheetKeys || [];
-                    const allSelectedSheetsComplete = selectedSheetKeys.length > 0
-                        && selectedSheetKeys.every(sheetKey => (Number(completedSheetMessageIndexByKey[sheetKey]) || -1) >= checkpointTargetIndex);
-                    const progressStatus: ManualRefillProgressV2_ACU['status'] = allSelectedSheetsComplete ? 'complete' : 'in_progress';
-                    const progress: ManualRefillProgressV2_ACU | undefined = progressBase
-                        ? {
-                            ...progressBase,
-                            status: progressStatus,
-                            completedUntilMessageIndex: Math.max(progressBase.completedUntilMessageIndex, maxPlannedMessageIndex),
-                            completedSheetMessageIndexByKey,
-                            updatedAt: Date.now(),
-                        }
-                        : undefined;
-                    latestManualRefillProgress = progress;
-                    const progressRecordOperations: TableMutationOperationV2_ACU[] = [{
-                        kind: 'data_replace',
-                        data: deferredCheckpointData as any,
-                        reason: 'checkpoint_fallback',
-                    }];
-                    const checkpointCommit = await runTableUpdateCommit_ACU<{ modifiedKeys: string[] }>({
-                        source: 'group_fill',
-                        reason: 'manual_refill_progress_record',
-                        isolationKey: getCurrentIsolationKey_ACU(),
-                        writeSet: buildWriteSetForSheetKeys_ACU(checkpointSheetKeys, deferredCheckpointData),
-                        revisionWriteSet,
-                        initialData: deferredCheckpointData as any,
-                        targetMessageIndex: checkpointTargetIndex,
-                        targetSheetKeys: getSortedSheetKeys_ACU(deferredCheckpointData),
-                        updateGroupKeys: checkpointSheetKeys,
-                        trackingSheetKeys: checkpointSheetKeys,
-                        trackAsUpdate: true,
-                        operations: progressRecordOperations,
-                    }, () => ({
-                        success: true,
-                        value: { modifiedKeys: checkpointSheetKeys },
-                        tableData: deferredCheckpointData as any,
-                        persist: {
-                            targetMessageIndex: checkpointTargetIndex,
-                            targetSheetKeys: getSortedSheetKeys_ACU(deferredCheckpointData),
-                            updateGroupKeys: checkpointSheetKeys,
-                            trackingSheetKeys: checkpointSheetKeys,
-                            trackAsUpdate: true,
-                            manualRefillProgress: progress,
-                            operations: progressRecordOperations,
-                            revisionWriteSet,
-                        },
-                    }));
-                    if (!checkpointCommit.success) {
-                        jobs.forEach(job => failedGroups.add(job.groupKey));
-                        firstError = firstError || checkpointCommit.error || '手动重填进度记录保存失败。';
-                        break;
-                    }
-                    if (checkpointCommit.tableData) {
-                        deferredCheckpointData = JSON.parse(JSON.stringify(checkpointCommit.tableData));
-                        _set_currentJsonTableData_ACU(deferredCheckpointData);
-                        if (isSqliteMode()) {
-                            try {
-                                await reloadStorageProvider();
-                            } catch (reloadError: any) {
-                                logWarn_ACU(`[Manual Refill] SQLite provider 重建失败: ${reloadError?.message || reloadError}`);
-                            }
-                        }
-                        await updateReadableLorebookEntry_ACU(true, false, null, deferredCheckpointData);
-                    }
-                    if (getCurrentWorldbookConfig_ACU().summaryVectorIndexModeEnabled === true) {
-                        await enqueueSummaryVectorIndexFlush_ACU({ targetMessageIndex: checkpointTargetIndex, mode: 'sync', reason: 'manual_refill_progress' });
-                    }
-                }
                 emitBucketProgress(bucketIndex, { phase: 'complete' });
                 bucketSucceeded = true;
                 break;
@@ -1730,8 +1322,8 @@ export async function processGroupedRuntimeChunk_ACU(
     }
 
     return failedGroups.size > 0
-        ? { success: false, failedGroups: [...failedGroups], error: firstError || '统一提交失败。', tableData: deferredWorkingData || undefined, checkpointData: deferredCheckpointData || undefined, manualRefillProgress: latestManualRefillProgress }
-        : { success: true, failedGroups: [], tableData: deferredWorkingData || undefined, checkpointData: deferredCheckpointData || undefined, manualRefillProgress: latestManualRefillProgress };
+        ? { success: false, failedGroups: [...failedGroups], error: firstError || '统一提交失败。' }
+        : { success: true, failedGroups: [] };
 }
 
 /**
@@ -2357,156 +1949,25 @@ export async function orchestrateManualUpdate_ACU(
         const groupKeys = Object.keys(updateGroups);
 
         const manualRefillEnabled = options.clearBeforeUpdate === true;
-        let manualRefillInitialData: Record<string, any> | null = null;
-        let manualRefillCheckpointData: Record<string, any> | null = null;
-        let manualRefillTargetIndex = contextScopeIndices[contextScopeIndices.length - 1];
-        let manualRefillStartIndex = contextScopeIndices[0];
-        let shouldWriteInitialManualRefillBaseline = false;
-        let manualRefillProgress: ManualRefillProgressV2_ACU | undefined;
         if (manualRefillEnabled) {
-            const existingProgress = getManualRefillProgressAtMessage_ACU(getChatArray_ACU() || [], manualRefillTargetIndex);
-            const matchedProgress = manualRefillProgressMatches_ACU(existingProgress, targetKeys, contextScopeIndices, manualRefillTargetIndex)
-                ? existingProgress
-                : null;
-
-            if (!matchedProgress) {
-                try {
-                    await clearManualRefillIncrementalDataInRange_ACU(contextScopeIndices, targetKeys);
-                } catch (error: any) {
-                    logError_ACU('[Manual Refill] 启动前清理选中表增量数据失败:', error);
-                    return { success: false, error: error?.message || '手动重填启动前清理选中表增量数据失败。' };
-                }
+            const replayBoundaryCheck = await ensureManualRefillV2ReplayBoundary_ACU(liveChat, getCurrentIsolationKey_ACU(), contextScopeIndices[0]);
+            if (replayBoundaryCheck.success === false) {
+                return { success: false, error: replayBoundaryCheck.error };
             }
 
-            const preManualRefillLatestState = getManualRefillLatestState_ACU(null, targetKeys);
-            const latestBaseResult = await buildBatchMergeBase_ACU(0);
-            if (!latestBaseResult.data) {
-                return { success: false, error: latestBaseResult.error || '无法构建当前表格快照，操作已终止。' };
+            try {
+                await clearManualRefillIncrementalDataInRange_ACU(contextScopeIndices, targetKeys);
+            } catch (error: any) {
+                logError_ACU('[Manual Refill] 启动前清理选中表增量数据失败:', error);
+                return { success: false, error: error?.message || '手动重填启动前清理选中表增量数据失败。' };
             }
-            const manualRefillLatestState = getManualRefillLatestState_ACU(latestBaseResult.data, targetKeys, preManualRefillLatestState);
-            if (matchedProgress) {
-                manualRefillCheckpointData = JSON.parse(JSON.stringify(manualRefillLatestState));
-                manualRefillInitialData = JSON.parse(JSON.stringify(manualRefillLatestState));
-                logDebug_ACU(`[Manual Refill] 检测到未完成重填进度，将从消息索引 ${matchedProgress.completedUntilMessageIndex + 1} 继续。`);
-            } else {
-                const initialDataResult = await buildManualRefillInitialData_ACU(
-                    getChatArray_ACU() || [],
-                    manualRefillTargetIndex,
-                    targetKeys,
-                    manualRefillLatestState,
-                );
-                if (initialDataResult.success === false) {
-                    return { success: false, error: initialDataResult.error };
-                }
-                manualRefillInitialData = initialDataResult.data;
-                manualRefillCheckpointData = JSON.parse(JSON.stringify(manualRefillInitialData));
-            }
-            if (!matchedProgress) {
-                const isolationKey = getCurrentIsolationKey_ACU();
-                const existingV2FullCheckpoints = collectV2CheckpointFloorsFromChat_ACU(getChatArray_ACU() || [], isolationKey);
-                shouldWriteInitialManualRefillBaseline = existingV2FullCheckpoints.length === 0;
-                if (!shouldWriteInitialManualRefillBaseline) {
-                    const baselineResult = await ensureManualRefillInitialBaseline_ACU({
-                        isolationKey,
-                        targetMessageIndex: manualRefillStartIndex,
-                        data: manualRefillInitialData,
-                        save: true,
-                    });
-                    if (!baselineResult.success) {
-                        return { success: false, error: baselineResult.error || '手动重填 initial baseline 前移失败。' };
-                    }
-                }
-            }
-
-            let pendingContextScopeIndices = contextScopeIndices.slice();
-            manualRefillProgress = matchedProgress
-                ? { ...matchedProgress, batchSize: uiBatchSize, contextMessageIndices: contextScopeIndices.slice(), updatedAt: Date.now() }
-                : {
-                    kind: 'manual_refill',
-                    status: 'in_progress',
-                    selectedSheetKeys: [...new Set(targetKeys)].sort(),
-                    contextMessageIndices: contextScopeIndices.slice(),
-                    originalStartMessageIndex: contextScopeIndices[0],
-                    targetMessageIndex: manualRefillTargetIndex,
-                    batchSize: uiBatchSize,
-                    completedUntilMessageIndex: contextScopeIndices[0] - 1,
-                    updatedAt: Date.now(),
-                };
-            if (matchedProgress) {
-                let hasPendingGroup = false;
-                const completedBySheet = matchedProgress.completedSheetMessageIndexByKey || {};
-                const hasPerSheetProgress = Object.keys(completedBySheet).length > 0;
-                let earliestPendingIndex = Number.POSITIVE_INFINITY;
-                for (const gKey of Object.keys(updateGroups)) {
-                    const group = updateGroups[gKey];
-                    const completedUntilForGroup = (group.sheetKeys || []).reduce((minCompleted, sheetKey) => {
-                        const rawCompleted = completedBySheet[sheetKey];
-                        const sheetCompleted = Number.isFinite(Number(rawCompleted))
-                            ? Number(rawCompleted)
-                            : (hasPerSheetProgress ? matchedProgress.originalStartMessageIndex - 1 : matchedProgress.completedUntilMessageIndex);
-                        return Math.min(minCompleted, sheetCompleted);
-                    }, Number.POSITIVE_INFINITY);
-                    const effectiveCompletedUntil = Number.isFinite(completedUntilForGroup)
-                        ? completedUntilForGroup
-                        : matchedProgress.completedUntilMessageIndex;
-                    const pendingIndicesForGroup = contextScopeIndices.filter(index => index > effectiveCompletedUntil);
-                    group.indices = pendingIndicesForGroup;
-                    if (pendingIndicesForGroup.length > 0) {
-                        hasPendingGroup = true;
-                        earliestPendingIndex = Math.min(earliestPendingIndex, pendingIndicesForGroup[0]);
-                    }
-                }
-                pendingContextScopeIndices = Number.isFinite(earliestPendingIndex)
-                    ? contextScopeIndices.filter(index => index >= earliestPendingIndex)
-                    : [];
-                if (!hasPendingGroup) {
-                    logDebug_ACU('[Manual Refill] 已存在完整的重填进度，无需继续处理。');
-                    return { success: true };
-                }
-            }
-            _set_currentJsonTableData_ACU(JSON.parse(JSON.stringify(manualRefillInitialData)));
-            logDebug_ACU(`[Manual Refill] 已构建事务式重填基底，选中 ${targetKeys.length} 张表，范围 ${pendingContextScopeIndices[0] ?? contextScopeIndices[0]}..${manualRefillTargetIndex}。`);
+            logDebug_ACU(`[Manual Refill] 已清理选中表旧增量数据，将按普通手动填写路径重写 ${contextScopeIndices[0]}..${contextScopeIndices[contextScopeIndices.length - 1]}。`);
         }
 
         _set_isAutoUpdatingCard_ACU(true);
         const maxConcurrentGroups = Math.max(1, Number(settings_ACU.maxConcurrentGroups) || 1);
         const totalChunks = Math.max(1, Math.ceil(groupKeys.length / maxConcurrentGroups));
         const failedGroups: Array<{ key: string; error?: string }> = [];
-
-        if (shouldWriteInitialManualRefillBaseline && manualRefillInitialData) {
-            const baselineSheetKeys = getSortedSheetKeys_ACU(manualRefillInitialData);
-            const baselineCommit = await runTableUpdateCommit_ACU<{ modifiedKeys: string[] }>({
-                source: 'group_fill',
-                reason: 'manual_refill_initial_checkpoint',
-                isolationKey: getCurrentIsolationKey_ACU(),
-                writeSet: buildWriteSetForSheetKeys_ACU(baselineSheetKeys, manualRefillInitialData),
-                revisionWriteSet: baselineSheetKeys.map(sheetKey => ({ kind: 'sheet' as const, sheetKey })),
-                initialData: manualRefillInitialData as any,
-                targetMessageIndex: manualRefillStartIndex,
-                targetSheetKeys: baselineSheetKeys,
-                updateGroupKeys: targetKeys,
-                trackingSheetKeys: [],
-                trackAsUpdate: false,
-            }, () => ({
-                success: true,
-                value: { modifiedKeys: [] },
-                tableData: manualRefillInitialData as any,
-                persist: {
-                    targetMessageIndex: manualRefillStartIndex,
-                    targetSheetKeys: baselineSheetKeys,
-                    updateGroupKeys: targetKeys,
-                    trackingSheetKeys: [],
-                    trackAsUpdate: false,
-                    forceCheckpoint: true,
-                    checkpointReason: 'init',
-                    revisionWriteSet: baselineSheetKeys.map(sheetKey => ({ kind: 'sheet' as const, sheetKey })),
-                },
-            }));
-            if (!baselineCommit.success) {
-                _set_isAutoUpdatingCard_ACU(false);
-                return { success: false, error: baselineCommit.error || '手动重填初始 full checkpoint 建立失败。' };
-            }
-        }
 
         logDebug_ACU(`[Manual Update] 分组计划：选中 ${targetKeys.length} 张表，生成 ${groupKeys.length} 个组，最大并发组数 ${maxConcurrentGroups}。`);
 
@@ -2561,22 +2022,7 @@ export async function orchestrateManualUpdate_ACU(
             }
             const chunkResult = await processGroupedRuntimeChunk_ACU(groupedChunk, 'manual_independent', {
                 onProgress: options.onProgress,
-                deferPersist: manualRefillEnabled,
-                forceSnapshotApply: manualRefillEnabled,
-                initialData: manualRefillInitialData,
-                checkpointTargetIndex: manualRefillTargetIndex,
-                checkpointBaseData: manualRefillCheckpointData,
-                manualRefillProgress,
             });
-            if (manualRefillEnabled && chunkResult.tableData) {
-                manualRefillInitialData = JSON.parse(JSON.stringify(chunkResult.tableData));
-            }
-            if (manualRefillEnabled && chunkResult.checkpointData) {
-                manualRefillCheckpointData = JSON.parse(JSON.stringify(chunkResult.checkpointData));
-            }
-            if (manualRefillEnabled && chunkResult.manualRefillProgress) {
-                manualRefillProgress = JSON.parse(JSON.stringify(chunkResult.manualRefillProgress));
-            }
             if (!chunkResult.success) {
                 chunkResult.failedGroups.forEach(key => {
                     failedGroups.push({ key, error: chunkResult.error || '手动更新失败或被终止。' });

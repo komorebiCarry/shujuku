@@ -421,4 +421,89 @@ describe('loadTableStateFromFramesV2_ACU', () => {
       ['2', '药水'],
     ]);
   });
+
+  it('手动重填 retain=10/30 层后删除第 30 层时，可从第 29 层安全 full baseline 恢复纪要表', async () => {
+    const staleBoundaryData = {
+      mate: { type: 'chatSheets', version: 1 },
+      sheet_summary: {
+        name: '纪要表',
+        content: [['row_id', '事件'], ['20', '边界旧事件']],
+      },
+    } as any;
+    const fullRefillData = {
+      mate: { type: 'chatSheets', version: 1 },
+      sheet_summary: {
+        name: '纪要表',
+        content: [
+          ['row_id', '事件'],
+          ...Array.from({ length: 30 }, (_, index) => [`${index + 1}`, `第${index + 1}层事件`]),
+        ],
+      },
+      sheet_outline: {
+        name: '总体大纲',
+        content: [
+          ['row_id', '大纲'],
+          ...Array.from({ length: 30 }, (_, index) => [`${index + 1}`, `第${index + 1}层大纲`]),
+        ],
+      },
+    } as any;
+    const chat = Array.from({ length: 30 }, (_, index) => ({ is_user: false } as any));
+    chat[20].TavernDB_ACU_IsolatedData = {
+      '': {
+        _acu_storage_version: 2,
+        storageFrame: {
+          version: 2,
+          checkpoint: {
+            kind: 'full',
+            createdAt: 20,
+            reason: 'compaction',
+            data: staleBoundaryData,
+          },
+          logEntries: [],
+        },
+      },
+    };
+    chat[28].TavernDB_ACU_IsolatedData = {
+      '': {
+        _acu_storage_version: 2,
+        storageFrame: {
+          version: 2,
+          checkpoint: {
+            kind: 'full',
+            createdAt: 29,
+            reason: 'manual',
+            data: fullRefillData,
+          },
+          logEntries: [],
+        },
+      },
+    };
+    chat[29].TavernDB_ACU_IsolatedData = {
+      '': {
+        _acu_storage_version: 2,
+        storageFrame: {
+          version: 2,
+          logEntries: [{
+            seq: 1,
+            entryId: 'manual-refill-progress-final',
+            createdAt: 30,
+            source: 'group_fill',
+            targetMessageIndex: 29,
+            aiFloor: 30,
+            filledSheetKeys: ['sheet_summary', 'sheet_outline'],
+            changedSheetKeys: ['sheet_summary', 'sheet_outline'],
+            groupKeys: [],
+            operations: [{ kind: 'data_replace', data: fullRefillData, reason: 'checkpoint_fallback' }],
+          }],
+        },
+      },
+    };
+    chat.splice(29, 1);
+
+    const result = await loadTableStateFromFramesV2_ACU(chat, '');
+
+    expect(result?.sheet_summary.content).toHaveLength(31);
+    expect(result?.sheet_summary.content[30]).toEqual(['30', '第30层事件']);
+    expect(result?.sheet_outline.content[30]).toEqual(['30', '第30层大纲']);
+  });
 });
