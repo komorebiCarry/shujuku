@@ -1464,6 +1464,29 @@ describe('orchestrateManualUpdate_ACU', () => {
     expect(_set_isAutoUpdatingCard_ACU).toHaveBeenCalledWith(false);
   });
 
+  it('事务式手动重填过程中跳过写入前 retained buffer boundary checkpoint，避免预清理后被维护性 checkpoint 中断', async () => {
+    const { getChatArray_ACU, clearManualRefillIncrementalDataInRange_ACU } = await import('../../../src/service/chat/chat-service');
+    vi.mocked(getChatArray_ACU).mockReturnValue([
+      { is_user: true },
+      { is_user: false, mes: 'AI回复' },
+    ]);
+    mockCurrentJsonTableData = {
+      sheet_0: { name: '测试表A', updateConfig: {}, content: [['row_id', '值A'], ['1', '旧A']] },
+    };
+    mockCallCustomOpenAI.mockResolvedValue('<tableEdit>sheet_0</tableEdit>');
+    mockShouldRotateBoundaryCheckpoint.mockReturnValue(true);
+    mockEnsureBoundaryCheckpoint.mockResolvedValue({ success: false, error: 'boundary checkpoint failed' });
+
+    const result = await orchestrateManualUpdate_ACU(['sheet_0'], vi.fn().mockResolvedValue({ success: true }), mockRefreshData, { clearBeforeUpdate: true });
+
+    expect(result.success).toBe(true);
+    expect(result.checkpointWarning).toContain('boundary checkpoint failed');
+    expect(clearManualRefillIncrementalDataInRange_ACU).toHaveBeenCalledWith([1], ['sheet_0']);
+    expect(mockPersistTablesToChatMessage).toHaveBeenCalledTimes(1);
+    expect(mockEnsureBoundaryCheckpoint).toHaveBeenCalledTimes(1);
+    expect(mockEnsureBoundaryCheckpoint).toHaveBeenCalledWith({ reason: 'manual_refill', save: true });
+  });
+
   it('手动更新整体成功后建立 retained buffer boundary checkpoint', async () => {
     const { getChatArray_ACU } = await import('../../../src/service/chat/chat-service');
     vi.mocked(getChatArray_ACU).mockReturnValue([

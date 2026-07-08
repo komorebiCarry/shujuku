@@ -320,7 +320,7 @@ describe('purgeOldLayerData_ACU', () => {
     expect(mockSaveChatToHost).not.toHaveBeenCalled();
   });
 
-  it('anchor 前缺 full checkpoint 但保留区已有 compaction checkpoint 时不应中止清理', async () => {
+  it('anchor 前缺 full checkpoint 时即使保留区已有 compaction checkpoint 也必须中止清理', async () => {
     mockSettings.retainRecentLayers = 2;
     mockLoadTableStateFromFramesV2.mockResolvedValueOnce(null);
 
@@ -364,14 +364,14 @@ describe('purgeOldLayerData_ACU', () => {
     await purgeOldLayerData_ACU();
 
     expect(mockLoadTableStateFromFramesV2).toHaveBeenCalledWith(chat, '', { maxMessageIndex: 23 });
-    expect(chat[0].TavernDB_ACU_IsolatedData).toBeUndefined();
-    expect(chat[22].TavernDB_ACU_IsolatedData).toBeUndefined();
+    expect(chat[0].TavernDB_ACU_IsolatedData).toBeDefined();
+    expect(chat[22].TavernDB_ACU_IsolatedData).toBeDefined();
     expect(chat[23].TavernDB_ACU_IsolatedData[''].storageFrame.checkpoint).toBeUndefined();
     expect(chat[24].TavernDB_ACU_IsolatedData[''].storageFrame.checkpoint).toEqual(expect.objectContaining({
       kind: 'full',
       reason: 'compaction',
     }));
-    expect(mockSaveChatToHost).toHaveBeenCalled();
+    expect(mockSaveChatToHost).not.toHaveBeenCalled();
   });
 
   it('user 消息不参与 AI 楼层计数，purge anchor 仍落在第 21 个 AI 楼层', async () => {

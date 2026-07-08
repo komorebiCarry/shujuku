@@ -2018,7 +2018,7 @@ export async function orchestrateManualUpdate_ACU(
             });
             try {
                 await loadAllChatMessages_ACU();
-                if (shouldRotateV2BoundaryCheckpointForRetainedBuffer_ACU()) {
+                if (!manualRefillEnabled && shouldRotateV2BoundaryCheckpointForRetainedBuffer_ACU()) {
                     const boundaryCheckpoint = await ensureV2BoundaryCheckpointForRetainedBuffer_ACU({ reason: 'manual_refill', save: true });
                     if (!boundaryCheckpoint.success) {
                         failedGroups.push({
