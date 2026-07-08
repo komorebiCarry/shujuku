@@ -72,6 +72,7 @@ const mockParseAndApplyTableEdits = vi.fn();
 const mockParseAndApplyTableEditsToData = vi.fn();
 const mockApplySqlEditsToTableDataSnapshot = vi.fn();
 const mockPrepareAIInput = vi.fn();
+const mockReloadStorageProvider = vi.hoisted(() => vi.fn().mockResolvedValue(undefined));
 
 vi.mock('../../../src/service/ai/prompt-builder', () => ({
   callCustomOpenAI_ACU: (...args: any[]) => mockCallCustomOpenAI(...args),
@@ -168,6 +169,14 @@ vi.mock('../../../src/service/table/storage-mode', () => {
   };
 });
 
+vi.mock('../../../src/service/table/table-storage-strategy', async (importOriginal) => {
+  const actual: any = await importOriginal();
+  return {
+    ...actual,
+    reloadStorageProvider: (...args: any[]) => mockReloadStorageProvider(...args),
+  };
+});
+
 vi.mock('../../../src/service/table/sql-table-service', async (importOriginal) => {
   const actual: any = await importOriginal();
   return {
@@ -233,6 +242,7 @@ beforeEach(() => {
   mockClearManualRefillIncrementalDataInRange.mockResolvedValue(0);
   mockEnsureBoundaryCheckpoint.mockResolvedValue({ success: true, changed: false, skipped: true });
   mockPurgeSheetKeysFromChatHistoryHard.mockResolvedValue({ changed: true, changedCount: 1 });
+  mockReloadStorageProvider.mockResolvedValue(undefined);
 });
 
 // ═══════════════════════════════════════════════════════════════
@@ -1158,6 +1168,30 @@ describe('orchestrateManualUpdate_ACU', () => {
     expect(mockPurgeSheetKeysFromChatHistoryHard).not.toHaveBeenCalled();
   });
 
+  it('事务式手动重填清理后刷新 SQLite 运行时快照，再进入 AI prompt 准备', async () => {
+    const { getChatArray_ACU, clearManualRefillIncrementalDataInRange_ACU } = await import('../../../src/service/chat/chat-service');
+    const { isSqliteMode } = await import('../../../src/service/table/storage-mode');
+    vi.mocked(isSqliteMode).mockReturnValue(true);
+    vi.mocked(getChatArray_ACU).mockReturnValue([
+      { is_user: true },
+      { is_user: false, mes: 'AI回复1' },
+      { is_user: true },
+      { is_user: false, mes: 'AI回复2' },
+    ]);
+    mockCurrentJsonTableData = {
+      sheet_0: { name: '纪要表', updateConfig: {}, content: [['row_id', '事件'], ['old', '清理前旧 chronicle']] },
+    };
+    mockCallCustomOpenAI.mockResolvedValue('<tableEdit>sheet_0</tableEdit>');
+
+    const result = await orchestrateManualUpdate_ACU(['sheet_0'], vi.fn().mockResolvedValue({ success: true }), mockRefreshData, { clearBeforeUpdate: true });
+
+    expect(result.success).toBe(true);
+    expect(clearManualRefillIncrementalDataInRange_ACU).toHaveBeenCalledWith([1, 3], ['sheet_0']);
+    expect(mockReloadStorageProvider).toHaveBeenCalledTimes(1);
+    expect(mockPrepareAIInput).toHaveBeenCalled();
+    expect(mockReloadStorageProvider.mock.invocationCallOrder[0]).toBeLessThan(mockPrepareAIInput.mock.invocationCallOrder[0]);
+  });
+
   it('事务式手动重填启动前清理选中表失败时中止，避免继续使用污染基底', async () => {
     const { getChatArray_ACU, clearManualRefillIncrementalDataInRange_ACU } = await import('../../../src/service/chat/chat-service');
     vi.mocked(getChatArray_ACU).mockReturnValue([
@@ -1177,6 +1211,29 @@ describe('orchestrateManualUpdate_ACU', () => {
     expect(result.success).toBe(false);
     expect(result.error).toContain('purge failed');
     expect(mockPurgeSheetKeysFromChatHistoryHard).not.toHaveBeenCalled();
+    expect(mockPersistTablesToChatMessage).not.toHaveBeenCalled();
+    expect(mockReloadStorageProvider).not.toHaveBeenCalled();
+  });
+
+  it('事务式手动重填清理后刷新运行时快照失败时中止，避免继续使用污染基底', async () => {
+    const { getChatArray_ACU, clearManualRefillIncrementalDataInRange_ACU } = await import('../../../src/service/chat/chat-service');
+    vi.mocked(getChatArray_ACU).mockReturnValue([
+      { is_user: true },
+      { is_user: false, mes: 'AI回复1' },
+      { is_user: true },
+      { is_user: false, mes: 'AI回复2' },
+    ]);
+    mockCurrentJsonTableData = {
+      sheet_0: { name: '测试表A', updateConfig: {}, content: [['row_id', '值A'], ['1', '旧A']] },
+    };
+    mockReloadStorageProvider.mockRejectedValueOnce(new Error('reload failed'));
+
+    const result = await orchestrateManualUpdate_ACU(['sheet_0'], vi.fn().mockResolvedValue({ success: true }), mockRefreshData, { clearBeforeUpdate: true });
+
+    expect(result.success).toBe(false);
+    expect(result.error).toContain('reload failed');
+    expect(clearManualRefillIncrementalDataInRange_ACU).toHaveBeenCalledWith([1, 3], ['sheet_0']);
+    expect(mockPrepareAIInput).not.toHaveBeenCalled();
     expect(mockPersistTablesToChatMessage).not.toHaveBeenCalled();
   });
 

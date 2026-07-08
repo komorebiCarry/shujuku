@@ -1976,7 +1976,16 @@ export async function orchestrateManualUpdate_ACU(
                 logError_ACU('[Manual Refill] 启动前清理选中表增量数据失败:', error);
                 return { success: false, error: error?.message || '手动重填启动前清理选中表增量数据失败。' };
             }
-            logDebug_ACU(`[Manual Refill] 已清理选中表旧增量数据，将按普通手动填写路径重写 ${contextScopeIndices[0]}..${contextScopeIndices[contextScopeIndices.length - 1]}。`);
+
+            try {
+                // 清理历史 V2 数据后必须刷新 SQLite/runtime 快照，
+                // 否则 AI prompt 基底会继续读到清理前的旧 chronicle 行（test6.8 类事故）。
+                await reloadStorageProvider();
+            } catch (error: any) {
+                logError_ACU('[Manual Refill] 清理后刷新运行时快照失败:', error);
+                return { success: false, error: error?.message || '手动重填清理后刷新运行时快照失败。' };
+            }
+            logDebug_ACU(`[Manual Refill] 已清理选中表旧增量数据并刷新运行时快照，将按普通手动填写路径重写 ${contextScopeIndices[0]}..${contextScopeIndices[contextScopeIndices.length - 1]}。`);
         }
 
         _set_isAutoUpdatingCard_ACU(true);
