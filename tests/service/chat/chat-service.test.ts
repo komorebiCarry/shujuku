@@ -320,6 +320,60 @@ describe('purgeOldLayerData_ACU', () => {
     expect(mockSaveChatToHost).not.toHaveBeenCalled();
   });
 
+  it('anchor 前缺 full checkpoint 但保留区已有 compaction checkpoint 时不应中止清理', async () => {
+    mockSettings.retainRecentLayers = 2;
+    mockLoadTableStateFromFramesV2.mockResolvedValueOnce(null);
+
+    const chat = Array.from({ length: 25 }, (_, index) => ({
+      is_user: false,
+      TavernDB_ACU_IsolatedData: {
+        '': {
+          storageFrame: {
+            version: 2,
+            ...(index === 24
+              ? {
+                  checkpoint: {
+                    kind: 'full',
+                    createdAt: 24,
+                    reason: 'compaction',
+                    data: { sheet_0: { name: '物品表', content: [['row_id', '物品名'], ['1', '盾']] } },
+                  },
+                }
+              : {}),
+            logEntries: index === 24
+              ? []
+              : [{
+                  seq: 1,
+                  entryId: `v2_log_${index}`,
+                  createdAt: index,
+                  source: 'auto_fill',
+                  targetMessageIndex: index,
+                  aiFloor: index + 1,
+                  filledSheetKeys: ['sheet_0'],
+                  changedSheetKeys: ['sheet_0'],
+                  operations: [],
+                  writeSet: [{ kind: 'all' }],
+                }],
+          },
+          _acu_storage_version: 2,
+        },
+      },
+    }));
+    mockGetChatArray.mockReturnValue(chat);
+
+    await purgeOldLayerData_ACU();
+
+    expect(mockLoadTableStateFromFramesV2).toHaveBeenCalledWith(chat, '', { maxMessageIndex: 23 });
+    expect(chat[0].TavernDB_ACU_IsolatedData).toBeUndefined();
+    expect(chat[22].TavernDB_ACU_IsolatedData).toBeUndefined();
+    expect(chat[23].TavernDB_ACU_IsolatedData[''].storageFrame.checkpoint).toBeUndefined();
+    expect(chat[24].TavernDB_ACU_IsolatedData[''].storageFrame.checkpoint).toEqual(expect.objectContaining({
+      kind: 'full',
+      reason: 'compaction',
+    }));
+    expect(mockSaveChatToHost).toHaveBeenCalled();
+  });
+
   it('user 消息不参与 AI 楼层计数，purge anchor 仍落在第 21 个 AI 楼层', async () => {
     mockSettings.retainRecentLayers = 2;
     const chat: any[] = [];

@@ -170,6 +170,24 @@ function hasV2CompactionCheckpointAtIndex_ACU(chat: any[], isolationKey: string,
         && tagData.storageFrame.checkpoint.reason === 'compaction';
 }
 
+// 仅用于 retained-buffer 清理：anchor 前无法重建 checkpoint 时，确认 anchor 之后的保留区
+// 是否已经存在可承接恢复链的 compaction full checkpoint；不得用于历史上界 replay。
+function findV2CompactionCheckpointAtOrAfterIndex_ACU(chat: any[], isolationKey: string, messageIndex: number): number | null {
+    if (!Array.isArray(chat) || messageIndex < 0) return null;
+
+    for (let i = messageIndex; i < chat.length; i += 1) {
+        const msg = chat[i];
+        if (!msg || msg.is_user) continue;
+        const tagData = msg.TavernDB_ACU_IsolatedData?.[isolationKey];
+        if (isV2TagData_ACU(tagData)
+            && tagData.storageFrame.checkpoint?.kind === 'full'
+            && tagData.storageFrame.checkpoint.reason === 'compaction') {
+            return i;
+        }
+    }
+    return null;
+}
+
 function resolveRetainedCheckpointBoundary_ACU(chat: any[], retainCount: number): RetainedCheckpointBoundary_ACU {
     const aiMessageIndices: number[] = [];
     const dataMessageIndices: number[] = [];
@@ -525,6 +543,12 @@ async function writeV2BoundaryCheckpointBeforePurge_ACU(
 
         const data = await loadTableStateFromFramesV2_ACU(chat, isolationKey, { maxMessageIndex: boundaryAnchorIndex });
         if (!data) {
+            const retainedCompactionIndex = findV2CompactionCheckpointAtOrAfterIndex_ACU(chat, isolationKey, boundaryAnchorIndex);
+            if (retainedCompactionIndex !== null) {
+                logDebug_ACU(`[V2 Compaction] AI 保留边界楼层 #${boundaryAnchorIndex} 前无法恢复 isolationKey=[${isolationKey || '无标签'}] 的 V2 数据，但保留区楼层 #${retainedCompactionIndex} 已存在 compaction full checkpoint，跳过重建。`);
+                continue;
+            }
+
             throw new Error(`边界 checkpoint 写入失败：无法在 boundaryAnchorIndex=${boundaryAnchorIndex} 前恢复 isolationKey=[${isolationKey || '无标签'}] 的 V2 数据。`);
         }
 
