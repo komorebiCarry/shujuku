@@ -1259,6 +1259,63 @@ describe('clearManualRefillIncrementalDataInRange_ACU', () => {
     expect(mockSaveChatToHost).toHaveBeenCalledTimes(1);
   });
 
+  it('清理旧版 patches.data_replace 与 entry.manualRefillProgress 中的目标 sheet 残留', async () => {
+    const chat = [
+      {
+        is_user: false,
+        mes: 'AI目标层',
+        TavernDB_ACU_IsolatedData: {
+          '': {
+            _acu_storage_version: 2,
+            storageFrame: {
+              version: 2,
+              logEntries: [
+                {
+                  seq: 1,
+                  patches: [
+                    {
+                      kind: 'data_replace',
+                      data: {
+                        sheet_target: { name: '旧目标表' },
+                        sheet_keep: { name: '保留表' },
+                      },
+                    },
+                  ],
+                  manualRefillProgress: {
+                    kind: 'manual_refill',
+                    selectedSheetKeys: ['sheet_target', 'sheet_keep'],
+                    completedSheetMessageIndexByKey: { sheet_target: 2, sheet_keep: 3 },
+                  },
+                  filledSheetKeys: ['sheet_target', 'sheet_keep'],
+                  changedSheetKeys: ['sheet_target', 'sheet_keep'],
+                  groupKeys: ['sheet_target', 'sheet_keep'],
+                  writeSet: [{ kind: 'sheet', sheetKey: 'sheet_target' }, { kind: 'sheet', sheetKey: 'sheet_keep' }],
+                },
+              ],
+            },
+          },
+        },
+      },
+    ];
+    mockGetChatArray.mockReturnValue(chat);
+
+    const count = await clearManualRefillIncrementalDataInRange_ACU([0], ['sheet_target']);
+
+    expect(count).toBe(1);
+    const entry = chat[0].TavernDB_ACU_IsolatedData[''].storageFrame.logEntries[0];
+    expect(entry.patches).toEqual([
+      { kind: 'data_replace', data: { sheet_keep: { name: '保留表' } } },
+    ]);
+    expect(entry.manualRefillProgress.selectedSheetKeys).toEqual(['sheet_keep']);
+    expect(entry.manualRefillProgress.completedSheetMessageIndexByKey).toEqual({ sheet_keep: 3 });
+    expect(entry.filledSheetKeys).toEqual(['sheet_keep']);
+    expect(entry.changedSheetKeys).toEqual(['sheet_keep']);
+    expect(entry.groupKeys).toEqual(['sheet_keep']);
+    expect(entry.writeSet).toEqual([{ kind: 'sheet', sheetKey: 'sheet_keep' }]);
+    expect(mockSaveChatToHost).toHaveBeenCalledTimes(1);
+  });
+
+
   it('目标表不存在时不修改消息且不保存', async () => {
     const chat = [
       {

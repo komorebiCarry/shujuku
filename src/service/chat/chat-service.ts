@@ -22,7 +22,7 @@ import { logDebug_ACU, logError_ACU, logWarn_ACU, isSummaryOrOutlineTable_ACU } 
 import { getLastOptimizationBase_ACU, setLastOptimizationBase_ACU } from '../optimization/content-optimization';
 import { settings_ACU, currentJsonTableData_ACU, getCurrentIsolationKey_ACU } from '../runtime/state-manager';
 import { sanitizeSheetForStorage_ACU } from '../template/chat-scope';
-import { clearTableFieldsForIsolation_ACU, purgeManualRefillIncrementalSheetKeysFromMessage_ACU, purgeSheetKeysFromMessage_ACU } from '../../data/repositories/chat-message-data-repo';
+import { clearTableFieldsForIsolation_ACU, purgeManualRefillIncrementalSheetKeysFromMessage_ACU, purgeSheetKeysFromMessage_ACU, purgeSheetKeysFromMessageForIsolation_ACU } from '../../data/repositories/chat-message-data-repo';
 import { MAX_CHECKPOINT_RISK_DETAILS_ACU, scanTargetKeysResidue_ACU } from '../../data/repositories/target-keys-diagnostics';
 import { runTableUpdateCommit_ACU } from '../table/table-update-commit';
 import { getLatestAiMessageIndexFromChat_ACU, resolveTableHistoryStateFromChat_ACU } from '../table/table-history';
@@ -1429,6 +1429,62 @@ export async function clearManualRefillIncrementalDataInRange_ACU(targetMessageI
         writeSet,
         maintenanceMode: 'exclusive',
     }, () => clearManualRefillIncrementalDataInRangeCore_ACU(targetMessageIndices, targetSheetKeys));
+}
+
+async function clearManualRefillSheetDataInRangeCore_ACU(targetMessageIndices: number[], targetSheetKeys: string[] | null = null): Promise<number> {
+    if (!targetMessageIndices || targetMessageIndices.length === 0) return 0;
+    if (!Array.isArray(targetSheetKeys) || targetSheetKeys.length === 0) {
+        throw new Error('手动重填范围清理必须指定目标表。');
+    }
+
+    const chat = getChatArray_ACU();
+    if (!chat || chat.length === 0) return 0;
+
+    const isolationKey = getCurrentIsolationKey_ACU();
+    const clearsSummaryOrOutline = tableListContainsSummaryOrOutline_ACU(targetSheetKeys);
+    let clearedCount = 0;
+
+    for (const idx of targetMessageIndices) {
+        if (idx < 0 || idx >= chat.length) continue;
+        const msg = chat[idx];
+        if (!msg || msg.is_user) continue;
+
+        const changed = purgeSheetKeysFromMessageForIsolation_ACU(msg, isolationKey, targetSheetKeys);
+        if (clearsSummaryOrOutline) {
+            const isolatedData = msg?.TavernDB_ACU_IsolatedData;
+            const tagData = isolatedData && typeof isolatedData === 'object' && !Array.isArray(isolatedData)
+                ? isolatedData[isolationKey]
+                : null;
+            if (await deleteVectorIndexManifestFromTagData_ACU(tagData)) {
+                logDebug_ACU(`[手动重填预清理] 已删除消息索引 ${idx} 上的交火向量索引外置文件引用。`);
+            }
+        }
+        if (changed) {
+            clearedCount++;
+            logDebug_ACU(`[手动重填预清理] 已清理消息索引 ${idx} 上选中表的范围内旧数据 (标签: ${isolationKey || '无'})`);
+        }
+    }
+
+    if (clearedCount > 0) {
+        await saveChatToHost_ACU();
+        logDebug_ACU(`[手动重填预清理] 共清理 ${clearedCount} 条消息的选中表范围内旧数据，聊天已保存。`);
+    }
+
+    return clearedCount;
+}
+
+export async function clearManualRefillSheetDataInRange_ACU(targetMessageIndices: number[], targetSheetKeys: string[] | null = null): Promise<number> {
+    if (!Array.isArray(targetSheetKeys) || targetSheetKeys.length === 0) {
+        throw new Error('手动重填范围清理必须指定目标表。');
+    }
+    const writeSet = targetSheetKeys.map(sheetKey => ({ kind: 'sheet' as const, sheetKey }));
+    return runTableWriteTransaction_ACU({
+        source: 'system_cleanup',
+        reason: 'clearManualRefillSheetDataInRange',
+        isolationKey: getCurrentIsolationKey_ACU(),
+        writeSet,
+        maintenanceMode: 'exclusive',
+    }, () => clearManualRefillSheetDataInRangeCore_ACU(targetMessageIndices, targetSheetKeys));
 }
 
 function purgeTargetSheetKeysFromMessage_ACU(msg: any, targetSheetKeys: string[]): boolean {

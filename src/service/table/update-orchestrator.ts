@@ -6,7 +6,7 @@
 
 import { isAutoUpdatingCard_ACU, pendingFinalGenerationGreenlights_ACU, wasStoppedByUser_ACU, _set_isAutoUpdatingCard_ACU, _set_manualExtraHint_ACU, _set_wasStoppedByUser_ACU } from '../runtime/state-manager';
 import { callCustomOpenAI_ACU } from '../ai/prompt-builder';
-import { clearManualRefillIncrementalDataInRange_ACU, ensureV2BoundaryCheckpointForRetainedBuffer_ACU, getChatArray_ACU, shouldRotateV2BoundaryCheckpointForRetainedBuffer_ACU } from '../chat/chat-service';
+import { clearManualRefillSheetDataInRange_ACU, ensureV2BoundaryCheckpointForRetainedBuffer_ACU, getChatArray_ACU, shouldRotateV2BoundaryCheckpointForRetainedBuffer_ACU } from '../chat/chat-service';
 import { coreApisAreReady_ACU, currentJsonTableData_ACU, getCurrentIsolationKey_ACU, settings_ACU, _set_currentJsonTableData_ACU } from '../runtime/state-manager';
 import { checkAutoMergeTrigger_ACU, prepareAutoMergeBatches_ACU, executeAutoMergeBatch_ACU, finalizeAutoMerge_ACU } from '../summary/merge-logic';
 import { ensureStableRowIdsForSheetContent_ACU, getChatSheetGuideDataForIsolationKey_ACU, getEffectiveSeedRowsForSheet_ACU, shouldUseInitialSeedRows_ACU } from '../template/chat-scope';
@@ -157,6 +157,7 @@ export interface GroupedRuntimeUpdateGroup_ACU {
     sheetKeys: string[];
     requestOptions: Record<string, any> | null;
     mergeBaseMaxMessageIndex?: number;
+    useLatestRuntimeMergeBase?: boolean;
 }
 
 interface PlannedGroupedRuntimeJob_ACU {
@@ -524,6 +525,19 @@ export async function buildBatchMergeBase_ACU(
     options: { maxMessageIndex?: number } = {},
 ): Promise<{ data: Record<string, any> | null; error: string | null }> {
     try {
+        const hasBoundedScope = Number.isInteger(options.maxMessageIndex);
+        if (hasBoundedScope) {
+            const v2ReplayResult = await loadV2ReplayMergeBase_ACU(batchNumber, options);
+            if (v2ReplayResult.data) return { data: v2ReplayResult.data, error: null };
+            // 有历史边界时不能让 SQLite latest runtime 越过 maxMessageIndex；
+            // 若当前聊天已进入 V2 replay 语义但边界内无可用基底，同样不能退回最新 runtime，
+            // 否则会把目标范围之后的未来表格状态带回 prompt。只有非 SQLite 且未命中 V2 replay
+            // 的旧路径才允许沿用 runtime fallback，以保留连续 bucket 的既有行为。
+            if (isSqliteMode() || v2ReplayResult.attempted) {
+                return buildGuideOrTemplateMergeBase_ACU(batchNumber);
+            }
+        }
+
         const runtimeData = getRuntimeTableDataSnapshot_ACU();
         if (runtimeData && isSqliteMode()) {
             logDebug_ACU(`[Batch ${batchNumber}] Using SQLite runtime storage snapshot as merge base.`);
@@ -535,7 +549,7 @@ export async function buildBatchMergeBase_ACU(
 
         // 指定了历史边界时，若当前聊天是 V2 但边界前没有可重放 checkpoint，不能退回“最新运行时快照”，
         // 否则会把目标楼之后的表格数据喂给本批次；此时应按空指导表/模板从零开始。
-        if (!isSqliteMode() && v2ReplayResult.attempted && Number.isInteger(options.maxMessageIndex)) {
+        if (!isSqliteMode() && v2ReplayResult.attempted && hasBoundedScope) {
             return buildGuideOrTemplateMergeBase_ACU(batchNumber);
         }
 
@@ -1172,10 +1186,23 @@ export async function processGroupedRuntimeChunk_ACU(
                 firstError = firstError || '同一提交批次包含不一致的表格基底边界，已中止以避免重填数据污染。';
                 break;
             }
-            const mergeBaseMaxMessageIndex = explicitMergeBaseBounds.length === 1
-                ? explicitMergeBaseBounds[0]
-                : bucketFirstMessageIndex - 1;
-            const baseResult: { data: Record<string, any> | null; error: string | null } = await buildBatchMergeBase_ACU(bucket.batchNumber, { maxMessageIndex: mergeBaseMaxMessageIndex });
+            const latestRuntimeBaseRequested = bucket.plannedJobs.some(job => job.group.useLatestRuntimeMergeBase === true);
+            if (latestRuntimeBaseRequested && explicitMergeBaseBounds.length > 0) {
+                bucket.plannedJobs.forEach(job => failedGroups.add(job.group.key));
+                firstError = firstError || '同一提交批次同时要求最新运行时基底与历史边界基底，已中止以避免重填数据污染。';
+                break;
+            }
+            const allJobsUseLatestRuntimeBase = latestRuntimeBaseRequested
+                && bucket.plannedJobs.every(job => job.group.useLatestRuntimeMergeBase === true);
+            if (latestRuntimeBaseRequested && !allJobsUseLatestRuntimeBase) {
+                bucket.plannedJobs.forEach(job => failedGroups.add(job.group.key));
+                firstError = firstError || '同一提交批次混用了最新运行时基底与默认历史边界基底，已中止以避免重填数据污染。';
+                break;
+            }
+            const mergeBaseMaxMessageIndex = explicitMergeBaseBounds.length === 1 ? explicitMergeBaseBounds[0] : bucketFirstMessageIndex - 1;
+            const baseResult: { data: Record<string, any> | null; error: string | null } = allJobsUseLatestRuntimeBase
+                ? await buildBatchMergeBase_ACU(bucket.batchNumber)
+                : await buildBatchMergeBase_ACU(bucket.batchNumber, { maxMessageIndex: mergeBaseMaxMessageIndex });
             if (!baseResult.data) {
                 bucket.plannedJobs.forEach(job => failedGroups.add(job.group.key));
                 firstError = firstError || baseResult.error || '无法构建合并基底，操作已终止。';
@@ -1963,7 +1990,9 @@ export async function orchestrateManualUpdate_ACU(
         const groupKeys = Object.keys(updateGroups);
 
         const manualRefillEnabled = options.clearBeforeUpdate === true;
-        const manualRefillMergeBaseMaxMessageIndex = manualRefillEnabled ? contextScopeIndices[0] - 1 : undefined;
+        const lastEffectiveAiIndex = effectiveAiIndices[effectiveAiIndices.length - 1];
+        const manualRefillUsesLatestRuntimeBase = manualRefillEnabled && uiSkip === 0 && contextScopeIndices[contextScopeIndices.length - 1] === lastEffectiveAiIndex;
+        const manualRefillMergeBaseMaxMessageIndex = manualRefillEnabled && !manualRefillUsesLatestRuntimeBase ? contextScopeIndices[0] - 1 : undefined;
         if (manualRefillEnabled) {
             const replayBoundaryCheck = await ensureManualRefillV2ReplayBoundary_ACU(liveChat, getCurrentIsolationKey_ACU(), contextScopeIndices[0]);
             if (replayBoundaryCheck.success === false) {
@@ -1971,10 +2000,10 @@ export async function orchestrateManualUpdate_ACU(
             }
 
             try {
-                await clearManualRefillIncrementalDataInRange_ACU(contextScopeIndices, targetKeys);
+                await clearManualRefillSheetDataInRange_ACU(contextScopeIndices, targetKeys);
             } catch (error: any) {
-                logError_ACU('[Manual Refill] 启动前清理选中表增量数据失败:', error);
-                return { success: false, error: error?.message || '手动重填启动前清理选中表增量数据失败。' };
+                logError_ACU('[Manual Refill] 启动前清理选中表范围内旧数据失败:', error);
+                return { success: false, error: error?.message || '手动重填启动前清理选中表范围内旧数据失败。' };
             }
 
             try {
@@ -1985,7 +2014,10 @@ export async function orchestrateManualUpdate_ACU(
                 logError_ACU('[Manual Refill] 清理后刷新运行时快照失败:', error);
                 return { success: false, error: error?.message || '手动重填清理后刷新运行时快照失败。' };
             }
-            logDebug_ACU(`[Manual Refill] 已清理选中表旧增量数据并刷新运行时快照，将按普通手动填写路径重写 ${contextScopeIndices[0]}..${contextScopeIndices[contextScopeIndices.length - 1]}。`);
+            logDebug_ACU(`[Manual Refill] 已清理选中表范围内旧数据并刷新运行时快照，将按普通手动填写路径重写 ${contextScopeIndices[0]}..${contextScopeIndices[contextScopeIndices.length - 1]}。`);
+            if (!manualRefillUsesLatestRuntimeBase) {
+                logDebug_ACU(`[Manual Refill] 当前重填范围不是有效 AI 尾部，将使用 <=${manualRefillMergeBaseMaxMessageIndex} 的 bounded replay 基底，避免未来楼层污染 prompt。`);
+            }
         }
 
         _set_isAutoUpdatingCard_ACU(true);
@@ -2018,6 +2050,7 @@ export async function orchestrateManualUpdate_ACU(
                     sheetKeys: group.sheetKeys,
                     requestOptions: effectiveRequestOptions,
                     mergeBaseMaxMessageIndex: manualRefillMergeBaseMaxMessageIndex,
+                    useLatestRuntimeMergeBase: manualRefillUsesLatestRuntimeBase,
                 };
             });
             logDebug_ACU(`[Manual Update] 并发处理第 ${chunkIndex}/${totalChunks} 批，当前 ${groupedChunk.length} 组：${groupedChunk.map(group => `${group.key}(${group.sheetKeys.join(',')})`).join('; ')}`);
