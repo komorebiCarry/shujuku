@@ -105,6 +105,34 @@ function purgeEventSheetKeysV2_ACU(eventLike: any, sheetKeys: Set<string>): bool
     return changed;
 }
 
+const RUNTIME_REVISION_SNAPSHOT_PREFIX_V2_ACU = 'runtime-v1:';
+
+function purgeRuntimeRevisionSnapshotSheetKeysV2_ACU(value: any, sheetKeys: Set<string>): { value: any; changed: boolean } {
+    if (typeof value !== 'string' || !value.startsWith(RUNTIME_REVISION_SNAPSHOT_PREFIX_V2_ACU)) {
+        return { value, changed: false };
+    }
+
+    let snapshot: any;
+    try {
+        snapshot = JSON.parse(value.slice(RUNTIME_REVISION_SNAPSHOT_PREFIX_V2_ACU.length));
+    } catch {
+        return { value, changed: false };
+    }
+
+    if (!isObjectRecord_ACU(snapshot) || !isObjectRecord_ACU(snapshot.sheets)) {
+        return { value, changed: false };
+    }
+
+    if (!deleteSheetKeysFromRecord_ACU(snapshot.sheets, sheetKeys)) {
+        return { value, changed: false };
+    }
+
+    return {
+        value: `${RUNTIME_REVISION_SNAPSHOT_PREFIX_V2_ACU}${JSON.stringify(snapshot)}`,
+        changed: true,
+    };
+}
+
 function purgeManualRefillProgressV2_ACU(progress: any, sheetKeys: Set<string>): boolean {
     if (!isObjectRecord_ACU(progress)) return false;
     let changed = false;
@@ -237,6 +265,16 @@ function purgeSheetKeysFromStorageFrameV2_ACU(frame: any, sheetKeys: Set<string>
                 entry.writeSet = writeSet.writeSet;
                 changed = true;
             }
+            const baseRevision = purgeRuntimeRevisionSnapshotSheetKeysV2_ACU(entry.baseRevision, sheetKeys);
+            if (baseRevision.changed) {
+                entry.baseRevision = baseRevision.value;
+                changed = true;
+            }
+            const parentRevision = purgeRuntimeRevisionSnapshotSheetKeysV2_ACU(entry.parentRevision, sheetKeys);
+            if (parentRevision.changed) {
+                entry.parentRevision = parentRevision.value;
+                changed = true;
+            }
         });
     }
 
@@ -277,6 +315,16 @@ function purgeManualRefillIncrementalSheetKeysFromStorageFrameV2_ACU(frame: any,
             const writeSet = purgeWriteSetV2_ACU(entry.writeSet, sheetKeys);
             if (writeSet.changed) {
                 entry.writeSet = writeSet.writeSet;
+                entryChanged = true;
+            }
+            const baseRevision = purgeRuntimeRevisionSnapshotSheetKeysV2_ACU(entry.baseRevision, sheetKeys);
+            if (baseRevision.changed) {
+                entry.baseRevision = baseRevision.value;
+                entryChanged = true;
+            }
+            const parentRevision = purgeRuntimeRevisionSnapshotSheetKeysV2_ACU(entry.parentRevision, sheetKeys);
+            if (parentRevision.changed) {
+                entry.parentRevision = parentRevision.value;
                 entryChanged = true;
             }
             if (entryChanged) changed = true;

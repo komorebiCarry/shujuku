@@ -1156,8 +1156,8 @@ describe('orchestrateManualUpdate_ACU', () => {
       { is_user: false, mes: 'AI回复2' },
     ]);
     mockCurrentJsonTableData = {
-      sheet_0: { name: '测试表A', updateConfig: {}, content: [['row_id', '值A'], ['1', '旧A']] },
-      sheet_1: { name: '测试表B', updateConfig: {}, content: [['row_id', '值B'], ['1', '旧B']] },
+      sheet_0: { name: '测试表A', updateConfig: {} },
+      sheet_1: { name: '测试表B', updateConfig: {} },
     };
     mockCallCustomOpenAI.mockResolvedValue('<tableEdit>sheet_0</tableEdit>');
 
@@ -1166,15 +1166,9 @@ describe('orchestrateManualUpdate_ACU', () => {
     expect(clearManualRefillIncrementalDataInRange_ACU).toHaveBeenCalledWith([1, 3], ['sheet_0']);
     expect(clearTableDataAtFloors_ACU).not.toHaveBeenCalled();
     expect(mockPurgeSheetKeysFromChatHistoryHard).not.toHaveBeenCalled();
-    const emptyBasePersist = mockPersistTablesToChatMessage.mock.calls.find(call => call[0]?.operations?.[0]?.kind === 'sheet_replace')?.[0];
-    expect(emptyBasePersist).toBeDefined();
-    expect(emptyBasePersist.targetMessageIndex).toBe(1);
-    expect(emptyBasePersist.targetSheetKeys).toEqual(['sheet_0']);
-    expect(emptyBasePersist.tableData.sheet_0.content).toEqual([['row_id', '值A']]);
-    expect(emptyBasePersist.tableData.sheet_1.content).toEqual([['row_id', '值B'], ['1', '旧B']]);
   });
 
-  it('事务式手动重填清理后提交目标表空基底并刷新 SQLite 运行时快照，再进入 AI prompt 准备', async () => {
+  it('事务式手动重填清理后刷新 SQLite 运行时快照，再进入 AI prompt 准备', async () => {
     const { getChatArray_ACU, clearManualRefillIncrementalDataInRange_ACU } = await import('../../../src/service/chat/chat-service');
     const { isSqliteMode } = await import('../../../src/service/table/storage-mode');
     vi.mocked(isSqliteMode).mockReturnValue(true);
@@ -1193,19 +1187,8 @@ describe('orchestrateManualUpdate_ACU', () => {
 
     expect(result.success).toBe(true);
     expect(clearManualRefillIncrementalDataInRange_ACU).toHaveBeenCalledWith([1, 3], ['sheet_0']);
-    const emptyBasePersist = mockPersistTablesToChatMessage.mock.calls.find(call => call[0]?.operations?.[0]?.kind === 'sheet_replace')?.[0];
-    expect(emptyBasePersist).toBeDefined();
-    expect(emptyBasePersist.targetMessageIndex).toBe(1);
-    expect(emptyBasePersist.operations).toEqual([
-      { kind: 'sheet_replace', sheetKey: 'sheet_0', sheet: { name: '纪要表', updateConfig: {}, content: [['row_id', '事件']] }, reason: 'manual_crud' },
-    ]);
-    expect(emptyBasePersist.tableData.sheet_0.content).toEqual([['row_id', '事件']]);
     expect(mockReloadStorageProvider).toHaveBeenCalledTimes(1);
     expect(mockPrepareAIInput).toHaveBeenCalled();
-    const prepareOptions = mockPrepareAIInput.mock.calls[0][3];
-    expect(prepareOptions.tableData.sheet_0.content).toEqual([['row_id', '事件']]);
-    expect(JSON.stringify(prepareOptions.tableData)).not.toContain('清理前旧 chronicle');
-    expect(mockPersistTablesToChatMessage.mock.invocationCallOrder[0]).toBeLessThan(mockReloadStorageProvider.mock.invocationCallOrder[0]);
     expect(mockReloadStorageProvider.mock.invocationCallOrder[0]).toBeLessThan(mockPrepareAIInput.mock.invocationCallOrder[0]);
   });
 
@@ -1251,11 +1234,7 @@ describe('orchestrateManualUpdate_ACU', () => {
     expect(result.error).toContain('reload failed');
     expect(clearManualRefillIncrementalDataInRange_ACU).toHaveBeenCalledWith([1, 3], ['sheet_0']);
     expect(mockPrepareAIInput).not.toHaveBeenCalled();
-    expect(mockPersistTablesToChatMessage).toHaveBeenCalledTimes(1);
-    expect(mockPersistTablesToChatMessage).toHaveBeenCalledWith(expect.objectContaining({
-      targetMessageIndex: 1,
-      operations: [{ kind: 'sheet_replace', sheetKey: 'sheet_0', sheet: { name: '测试表A', updateConfig: {}, content: [['row_id', '值A']] }, reason: 'manual_crud' }],
-    }));
+    expect(mockPersistTablesToChatMessage).not.toHaveBeenCalled();
   });
 
   it('事务式手动重填启动前不清理范围外历史基底，保护 V2 replay 初始数据', async () => {
@@ -1560,8 +1539,7 @@ describe('orchestrateManualUpdate_ACU', () => {
     expect(result.success).toBe(true);
     expect(result.checkpointWarning).toContain('boundary checkpoint failed');
     expect(clearManualRefillIncrementalDataInRange_ACU).toHaveBeenCalledWith([1], ['sheet_0']);
-    expect(mockPersistTablesToChatMessage).toHaveBeenCalledTimes(2);
-    expect(mockPersistTablesToChatMessage.mock.calls[0][0].operations[0].kind).toBe('sheet_replace');
+    expect(mockPersistTablesToChatMessage).toHaveBeenCalledTimes(1);
     expect(mockEnsureBoundaryCheckpoint).toHaveBeenCalledTimes(1);
     expect(mockEnsureBoundaryCheckpoint).toHaveBeenCalledWith({ reason: 'manual_refill', save: true });
   });

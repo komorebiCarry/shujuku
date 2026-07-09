@@ -23,6 +23,7 @@ import { getLastOptimizationBase_ACU, setLastOptimizationBase_ACU } from '../opt
 import { settings_ACU, currentJsonTableData_ACU, getCurrentIsolationKey_ACU } from '../runtime/state-manager';
 import { sanitizeSheetForStorage_ACU } from '../template/chat-scope';
 import { clearTableFieldsForIsolation_ACU, purgeManualRefillIncrementalSheetKeysFromMessage_ACU, purgeSheetKeysFromMessage_ACU } from '../../data/repositories/chat-message-data-repo';
+import { MAX_CHECKPOINT_RISK_DETAILS_ACU, scanTargetKeysResidue_ACU } from '../../data/repositories/target-keys-diagnostics';
 import { runTableUpdateCommit_ACU } from '../table/table-update-commit';
 import { getLatestAiMessageIndexFromChat_ACU, resolveTableHistoryStateFromChat_ACU } from '../table/table-history';
 import { deleteSummaryVectorIndexExternal_ACU } from '../vector/summary-vector-index-storage-service';
@@ -1364,6 +1365,50 @@ async function clearManualRefillIncrementalDataInRangeCore_ACU(targetMessageIndi
         }
     }
 
+    const residueSummary = {
+        exactHits: 0,
+        runtimeV1Hits: 0,
+        substringOnlyPathCount: 0,
+        checkpointDataRiskCount: 0,
+        scheduleSummaryRiskCount: 0,
+        checkpointDataRiskDetailCount: 0,
+        checkpointDataRiskDetails: [] as Array<{
+            messageIndex: number;
+            tagKey: string;
+            targetKey: string;
+            reason?: string;
+            createdAt?: number;
+        }>,
+    };
+    for (const idx of targetMessageIndices) {
+        if (idx < 0 || idx >= chat.length) continue;
+        const msg = chat[idx];
+        if (!msg || msg.is_user) continue;
+        const report = scanTargetKeysResidue_ACU(msg, isolationKey, targetSheetKeys, idx);
+        residueSummary.exactHits += report.exactHits;
+        residueSummary.runtimeV1Hits += report.runtimeV1Hits;
+        residueSummary.substringOnlyPathCount += report.substringOnlyPaths.length;
+        if (report.checkpointDataRisk) residueSummary.checkpointDataRiskCount++;
+        if (report.scheduleSummaryRisk) residueSummary.scheduleSummaryRiskCount++;
+        residueSummary.checkpointDataRiskDetailCount += report.checkpointDataRisks.length;
+        const remainingDetailSlots = MAX_CHECKPOINT_RISK_DETAILS_ACU - residueSummary.checkpointDataRiskDetails.length;
+        if (remainingDetailSlots > 0) {
+            residueSummary.checkpointDataRiskDetails.push(...report.checkpointDataRisks.slice(0, remainingDetailSlots));
+        }
+    }
+    const hasResidue = residueSummary.exactHits > 0
+        || residueSummary.runtimeV1Hits > 0
+        || residueSummary.substringOnlyPathCount > 0
+        || residueSummary.checkpointDataRiskCount > 0
+        || residueSummary.scheduleSummaryRiskCount > 0;
+    if (hasResidue) {
+        logDebug_ACU('[手动重填诊断] 选中表清理后残留摘要', {
+            clearedCount,
+            targetKeys: targetSheetKeys,
+            fields: ['event', 'operations', 'patches', 'writeSet', 'revision', 'progress'],
+            residue: residueSummary,
+        });
+    }
     if (clearedCount > 0) {
         await saveChatToHost_ACU();
         logDebug_ACU(`[手动重填预清理] 共清理 ${clearedCount} 条消息的选中表增量数据，聊天已保存。`);

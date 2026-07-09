@@ -1,7 +1,8 @@
 // update-process.ts — 表格更新 UI 壳（presentation 层：负责 UI 交互）
 // service 层只返回结果，presentation 层根据返回值自行决定 UI 操作。
 
-import { _set_isAutoUpdatingCard_ACU, _set_wasStoppedByUser_ACU } from '../../service/runtime/state-manager';
+import { _set_isAutoUpdatingCard_ACU, _set_wasStoppedByUser_ACU, currentJsonTableData_ACU, getCurrentIsolationKey_ACU, settings_ACU } from '../../service/runtime/state-manager';
+import { getChatArray_ACU } from '../../service/chat/chat-service';
 import { getManualSelectionFromUI_ACU } from '../components/table-selector';
 import { showToastr_ACU } from '../theme/toast';
 import { showCustomConfirm_ACU } from '../theme/custom-confirm';
@@ -27,6 +28,7 @@ import {
     type CardUpdateProgressEvent,
     type BatchUpdateProgressContext,
 } from '../../service/table/update-orchestrator';
+import { collectV2CheckpointFloorsFromChat_ACU } from '../../service/table/table-history';
 
 // ============================================================
 // UI 辅助函数
@@ -53,6 +55,62 @@ function buildBatchProgressLabel(event: Partial<CardUpdateProgressEvent>): strin
         return `第 ${event.currentBatch}/${event.totalBatches} 批`;
     }
     return '当前批次';
+}
+
+function formatLegacyCheckpointReasonLabel_ACU(reason?: string): string {
+    switch (reason) {
+        case 'init':
+            return '初始基线';
+        case 'migration':
+            return '迁移基线';
+        case 'compaction':
+            return '保留边界基线';
+        case 'manual':
+            return '历史手动基线';
+        case 'periodic':
+            return '历史周期基线';
+        default:
+            return reason ? `旧基线:${reason}` : '旧基线';
+    }
+}
+
+function formatLegacyAiFloorRange_ACU(startAiFloor: number, endAiFloor: number): string {
+    return startAiFloor === endAiFloor ? `AI 第 ${startAiFloor} 层` : `AI 第 ${startAiFloor}~${endAiFloor} 层`;
+}
+
+function buildLegacySelectedSheetSummary_ACU(targetKeys: string[]): string {
+    const tables = currentJsonTableData_ACU && typeof currentJsonTableData_ACU === 'object' ? currentJsonTableData_ACU as Record<string, any> : null;
+    return targetKeys.map(key => `${String(tables?.[key]?.name || key)}（${key}）`).join('、');
+}
+
+function buildLegacyCheckpointFloorsLabel_ACU(): string {
+    try {
+        const checkpoints = collectV2CheckpointFloorsFromChat_ACU(getChatArray_ACU(), getCurrentIsolationKey_ACU());
+        return checkpoints.length > 0
+            ? checkpoints.map(item => `AI 第 ${item.aiFloor} 层（${formatLegacyCheckpointReasonLabel_ACU(item.reason)}）`).join('、')
+            : '当前隔离标签暂无 full checkpoint';
+    } catch {
+        return '当前隔离标签暂无 full checkpoint';
+    }
+}
+
+function buildLegacyManualRefillRangeLabel_ACU(): string {
+    try {
+        const chat = getChatArray_ACU();
+        if (!Array.isArray(chat) || chat.length === 0) return '暂无可重填 AI 楼层';
+        const aiItems = chat
+            .map((msg: any, index: number) => msg && !msg.is_user ? { index, aiFloor: 0 } : null)
+            .filter((item): item is { index: number; aiFloor: number } => item !== null);
+        aiItems.forEach((item, index) => { item.aiFloor = index + 1; });
+        const skip = Number.isFinite(Number(settings_ACU.skipUpdateFloors)) ? Math.max(0, Math.floor(Number(settings_ACU.skipUpdateFloors))) : 0;
+        const manualDepth = Number.isFinite(Number(settings_ACU.manualUpdateContextDepth)) && Number(settings_ACU.manualUpdateContextDepth) > 0 ? Math.floor(Number(settings_ACU.manualUpdateContextDepth)) : aiItems.length;
+        const effectiveAiItems = skip > 0 ? aiItems.slice(0, -skip) : aiItems.slice();
+        const contextItems = manualDepth > 0 ? effectiveAiItems.slice(-manualDepth) : effectiveAiItems;
+        if (!contextItems.length) return '暂无可重填 AI 楼层';
+        return formatLegacyAiFloorRange_ACU(contextItems[0].aiFloor, contextItems[contextItems.length - 1].aiFloor);
+    } catch {
+        return '暂无可重填 AI 楼层';
+    }
 }
 
 function buildProgressMessage(event: CardUpdateProgressEvent): string {
@@ -259,11 +317,15 @@ export async function handleManualUpdate_ACU() {
             return;
         }
 
+        const selectedSheetSummary = buildLegacySelectedSheetSummary_ACU(targetKeys);
+        const checkpointFloorsLabel = buildLegacyCheckpointFloorsLabel_ACU();
+        const manualRefillRangeLabel = buildLegacyManualRefillRangeLabel_ACU();
         // 弹出确认框：手动填表将使用事务式重填，失败不会改动聊天记录中的旧数据
         const confirmed = await showCustomConfirm_ACU(
             '手动填表确认',
-            '即将执行手动填表。\n\n' +
+            `即将执行手动填表。\n\n当前 full checkpoint：${checkpointFloorsLabel}\n本次重填范围：${manualRefillRangeLabel}\n选中表：${selectedSheetSummary}\n\n` +
             '系统会在内存中按当前上下文和批处理设置重填当前选中的表，全部成功后才写入手动重填进度记录。\n' +
+            '执行前会先清理选中表在本次重填范围内的 V2 增量日志与 revision 指纹；不会默认删除 checkpoint 基底。若清理后诊断日志仍提示 checkpoint 风险，旧表可能来自 checkpoint 基底。\n' +
             '保留边界 checkpoint 会按 AI 回复楼层计数，在达到保留窗口和 20 个 AI 楼层缓冲后自动滚动建立。\n' +
             '如果重填起点之前找不到可回放的 checkpoint，选中表的本次内存重建基底会从表头空基底开始；未选中的表会保持当前最新数据。\n\n' +
             '失败、终止或从中断处继续时，都不会清空聊天记录中的旧表格数据。',

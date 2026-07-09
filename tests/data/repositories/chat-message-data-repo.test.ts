@@ -776,6 +776,84 @@ describe('purgeManualRefillIncrementalSheetKeysFromMessage_ACU', () => {
     expect(frame.checkpoint.data.sheet_0).toEqual({ name: 'checkpoint旧表' });
   });
 
+
+  it('清理 V2 增量日志中的 runtime-v1 baseRevision 与 parentRevision 目标 sheet 指纹', () => {
+    const baseSnapshot = {
+      scopeKey: 'chat::tag1::runtime',
+      all: false,
+      global: 28,
+      allRevision: 2,
+      sheets: { sheet_0: 28, sheet_1: 12 },
+    };
+    const parentSnapshot = {
+      scopeKey: 'chat::tag1::runtime',
+      all: false,
+      global: 29,
+      allRevision: 3,
+      sheets: { sheet_0: 29, sheet_2: 8 },
+    };
+    const msg: any = {
+      TavernDB_ACU_IsolatedData: {
+        tag1: {
+          storageFrame: {
+            version: 2,
+            logEntries: [
+              {
+                seq: 1,
+                baseRevision: `runtime-v1:${JSON.stringify(baseSnapshot)}`,
+                parentRevision: `runtime-v1:${JSON.stringify(parentSnapshot)}`,
+                filledSheetKeys: ['sheet_1'],
+                changedSheetKeys: ['sheet_1'],
+                operations: [{ kind: 'row_upsert', sheetKey: 'sheet_1', rowId: 'r1', cells: ['r1'] }],
+                writeSet: [{ kind: 'sheet', sheetKey: 'sheet_1' }],
+              },
+            ],
+          },
+        },
+      },
+    };
+
+    expect(purgeManualRefillIncrementalSheetKeysFromMessage_ACU(msg, 'tag1', ['sheet_0'])).toBe(true);
+
+    const entry = msg.TavernDB_ACU_IsolatedData.tag1.storageFrame.logEntries[0];
+    const nextBaseSnapshot = JSON.parse(entry.baseRevision.slice('runtime-v1:'.length));
+    const nextParentSnapshot = JSON.parse(entry.parentRevision.slice('runtime-v1:'.length));
+    expect(nextBaseSnapshot.sheets).toEqual({ sheet_1: 12 });
+    expect(nextParentSnapshot.sheets).toEqual({ sheet_2: 8 });
+    expect(entry.filledSheetKeys).toEqual(['sheet_1']);
+    expect(entry.changedSheetKeys).toEqual(['sheet_1']);
+    expect(entry.operations).toEqual([{ kind: 'row_upsert', sheetKey: 'sheet_1', rowId: 'r1', cells: ['r1'] }]);
+    expect(entry.writeSet).toEqual([{ kind: 'sheet', sheetKey: 'sheet_1' }]);
+  });
+
+
+  it('清理只剩 runtime-v1 revision 指纹的 V2 空壳 entry 时删除该 entry', () => {
+    const msg: any = {
+      TavernDB_ACU_IsolatedData: {
+        tag1: {
+          storageFrame: {
+            version: 2,
+            logEntries: [
+              {
+                seq: 1,
+                baseRevision: `runtime-v1:${JSON.stringify({
+                  scopeKey: 'chat::tag1::runtime',
+                  all: false,
+                  global: 28,
+                  allRevision: 2,
+                  sheets: { sheet_0: 28, sheet_1: 12 },
+                })}`,
+              },
+            ],
+          },
+        },
+      },
+    };
+
+    expect(purgeManualRefillIncrementalSheetKeysFromMessage_ACU(msg, 'tag1', ['sheet_0'])).toBe(true);
+    expect(msg.TavernDB_ACU_IsolatedData.tag1.storageFrame.logEntries).toEqual([]);
+  });
+
   it('目标 sheet 不存在于 V2 增量日志时不触发变更', () => {
     const msg: any = {
       TavernDB_ACU_IsolatedData: {

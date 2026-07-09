@@ -670,6 +670,7 @@ describe('FormFillPage · 手动填表面板', () => {
     expect(text).toContain('当前 full checkpoint');
     expect(text).toContain('AI 第 1 层（初始基线）');
     expect(text).toContain('AI 第 3 层（历史周期基线）');
+    expect(text).toContain('选中表：角色状态（sheet_a）、事件记录（sheet_b）');
     expect(text).toContain('执行手动填表');
     expect(panel.querySelector('.acu-v2-form-fill-page__manual-extra .acu-toggle')).toBeNull();
     expect(panel.querySelector('.acu-v2-form-fill-page__manual-extra textarea')).not.toBeNull();
@@ -775,10 +776,13 @@ describe('FormFillPage · 手动填表面板', () => {
     expect(dialogText).toContain('即将执行手动填表');
     expect(dialogText).toContain('当前 full checkpoint：AI 第 1 层（初始基线）、AI 第 3 层（历史周期基线）');
     expect(dialogText).toContain('本次重填范围：AI 第 1~3 层');
-    expect(dialogText).toContain('系统会先对当前选中的表提交仅保留表头的空基底');
-    expect(dialogText).toContain('不会继续把旧数据送入 AI prompt');
+    expect(dialogText).toContain('选中表：角色状态（sheet_a）、事件记录（sheet_b）');
+    expect(dialogText).toContain('系统会在内存中按当前上下文和批处理设置重填当前选中的表');
+    expect(dialogText).toContain('执行前会先清理选中表在本次重填范围内的 V2 增量日志与 revision 指纹');
+    expect(dialogText).toContain('不会默认删除 checkpoint 基底');
+    expect(dialogText).toContain('旧表可能来自 checkpoint 基底');
+    expect(dialogText).toContain('失败、终止或从中断处继续时，都不会清空聊天记录中的旧表格数据');
     expect(dialogText).toContain('表头空基底');
-    expect(dialogText).not.toContain('失败、终止或从中断处继续时，都不会清空聊天记录中的旧表格数据');
     expect(dialogText).not.toContain('空白结构');
     expect(dialogText).toContain('确认并继续');
     expect(dialogText).not.toContain('直接填表');

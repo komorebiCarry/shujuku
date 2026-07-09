@@ -123,6 +123,7 @@
 
         <AcuMessage kind="info">
           当前 full checkpoint：{{ manualUpdate.checkpointFloorsLabel.value }}；按当前设置预计处理范围：{{ manualUpdate.manualRefillRangeLabel.value }}。
+          选中表：{{ manualUpdate.selectedSheetSummary.value }}。
         </AcuMessage>
 
         <TableSelector
