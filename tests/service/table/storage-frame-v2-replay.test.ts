@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { loadTableStateFromFramesV2_ACU } from '../../../src/service/table/storage-frame-v2-replay';
+import { collectScheduleSummaryFromFramesV2_ACU, loadTableStateFromFramesV2_ACU } from '../../../src/service/table/storage-frame-v2-replay';
 
 function makeCheckpointData() {
   return {
@@ -505,5 +505,133 @@ describe('loadTableStateFromFramesV2_ACU', () => {
     expect(result?.sheet_summary.content).toHaveLength(31);
     expect(result?.sheet_summary.content[30]).toEqual(['30', '第30层事件']);
     expect(result?.sheet_outline.content[30]).toEqual(['30', '第30层大纲']);
+  });
+
+  it('通用读取跳过未收尾的手动重填临时 checkpoint，避免把空白 baseline 当成数据库真相', async () => {
+    const stableCheckpointData = {
+      mate: { type: 'acu', version: 1 },
+      sheet_0: {
+        name: '物品表',
+        content: [['row_id', '物品名'], ['1', '旧剑']],
+      },
+    } as any;
+    const temporaryBaselineData = {
+      mate: { type: 'acu', version: 1 },
+      sheet_0: {
+        name: '物品表',
+        content: [['row_id', '物品名']],
+      },
+    } as any;
+    const chat = [
+      {
+        is_user: false,
+        TavernDB_ACU_IsolatedData: {
+          '': {
+            _acu_storage_version: 2,
+            storageFrame: {
+              version: 2,
+              checkpoint: {
+                kind: 'full',
+                createdAt: 1,
+                reason: 'manual',
+                data: stableCheckpointData,
+              },
+              logEntries: [],
+            },
+          },
+        },
+      },
+      {
+        is_user: false,
+        TavernDB_ACU_IsolatedData: {
+          '': {
+            _acu_storage_version: 2,
+            storageFrame: {
+              version: 2,
+              checkpoint: {
+                kind: 'full',
+                createdAt: 2,
+                reason: 'manual_refill_temporary_empty_baseline',
+                source: 'manual_refill_override',
+                cleanupToken: 'cleanup-test',
+                selectedSheetKeys: ['sheet_0'],
+                rangeStartIndex: 1,
+                rangeEndIndex: 2,
+                contextMessageIndices: [1, 2],
+                originalCheckpoint: { hadCheckpoint: false },
+                data: temporaryBaselineData,
+              },
+              logEntries: [],
+            },
+          },
+        },
+      },
+      {
+        is_user: false,
+        TavernDB_ACU_IsolatedData: {
+          '': {
+            _acu_storage_version: 2,
+            storageFrame: {
+              version: 2,
+              logEntries: [{
+                seq: 1,
+                entryId: 'after-temporary-checkpoint',
+                createdAt: 3,
+                source: 'manual_fill',
+                targetMessageIndex: 2,
+                aiFloor: 3,
+                filledSheetKeys: ['sheet_0'],
+                changedSheetKeys: ['sheet_0'],
+                groupKeys: [],
+                operations: [{ kind: 'row_upsert', sheetKey: 'sheet_0', rowId: '2', cells: ['2', '药水'] }],
+              }],
+            },
+          },
+        },
+      },
+    ];
+
+    const result = await loadTableStateFromFramesV2_ACU(chat, '');
+
+    expect(result?.sheet_0.content).toEqual([
+      ['row_id', '物品名'],
+      ['1', '旧剑'],
+      ['2', '药水'],
+    ]);
+  });
+
+  it('schedule summary 收集同样跳过手动重填临时 checkpoint', () => {
+    const chat = [
+      {
+        is_user: false,
+        TavernDB_ACU_IsolatedData: {
+          '': {
+            _acu_storage_version: 2,
+            storageFrame: {
+              version: 2,
+              checkpoint: { kind: 'full', createdAt: 1, reason: 'manual', data: makeCheckpointData(), scheduleSummary: { sheet_0: { lastFilledAiFloor: 1 } } },
+              logEntries: [],
+            },
+          },
+        },
+      },
+      {
+        is_user: false,
+        TavernDB_ACU_IsolatedData: {
+          '': {
+            _acu_storage_version: 2,
+            storageFrame: {
+              version: 2,
+              checkpoint: { kind: 'full', createdAt: 2, reason: 'manual_refill_temporary_empty_baseline', data: makeCheckpointData(), scheduleSummary: { sheet_0: { lastFilledAiFloor: 99 } } },
+              logEntries: [],
+            },
+          },
+        },
+      },
+    ];
+
+    const summary = collectScheduleSummaryFromFramesV2_ACU(chat, '');
+
+    expect(summary.sheet_0.lastFilledAiFloor).toBe(1);
   });
 });
