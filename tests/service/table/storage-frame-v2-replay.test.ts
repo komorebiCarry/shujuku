@@ -318,6 +318,91 @@ describe('loadTableStateFromFramesV2_ACU', () => {
     expect(result).toBeNull();
   });
 
+  it('按日志顺序混合回放旧 data_replace、新 sheet_replace 与 row_upsert', async () => {
+    const checkpointData = {
+      mate: { type: 'acu', version: 1 },
+      sheet_0: {
+        name: '表A',
+        content: [['row_id', '值'], ['1', 'checkpoint-a']],
+      },
+      sheet_1: {
+        name: '表B',
+        content: [['row_id', '值'], ['1', 'checkpoint-b']],
+      },
+    } as any;
+    const legacyDataReplace = {
+      mate: { type: 'acu', version: 1 },
+      sheet_0: {
+        name: '表A',
+        content: [['row_id', '值'], ['1', 'legacy-a']],
+      },
+      sheet_1: {
+        name: '表B',
+        content: [['row_id', '值'], ['1', 'legacy-b']],
+      },
+    } as any;
+    const chat = [{
+      is_user: false,
+      TavernDB_ACU_IsolatedData: {
+        '': {
+          _acu_storage_version: 2,
+          storageFrame: {
+            version: 2,
+            checkpoint: {
+              kind: 'full',
+              createdAt: 1,
+              reason: 'init',
+              data: checkpointData,
+            },
+            logEntries: [
+              {
+                seq: 1,
+                entryId: 'legacy-data-replace',
+                createdAt: 2,
+                source: 'group_fill',
+                targetMessageIndex: 0,
+                aiFloor: 1,
+                filledSheetKeys: ['sheet_0', 'sheet_1'],
+                changedSheetKeys: ['sheet_0', 'sheet_1'],
+                groupKeys: [],
+                operations: [{ kind: 'data_replace', data: legacyDataReplace, reason: 'system' }],
+              },
+              {
+                seq: 2,
+                entryId: 'single-sheet-replace',
+                createdAt: 3,
+                source: 'group_fill',
+                targetMessageIndex: 0,
+                aiFloor: 1,
+                filledSheetKeys: ['sheet_0'],
+                changedSheetKeys: ['sheet_0'],
+                groupKeys: [],
+                operations: [{ kind: 'sheet_replace', sheetKey: 'sheet_0', sheet: { name: '表A', content: [['row_id', '值'], ['1', 'sheet-replace-a']] }, reason: 'system' }],
+              },
+              {
+                seq: 3,
+                entryId: 'row-upsert-after-replace',
+                createdAt: 4,
+                source: 'group_fill',
+                targetMessageIndex: 0,
+                aiFloor: 1,
+                filledSheetKeys: ['sheet_1'],
+                changedSheetKeys: ['sheet_1'],
+                groupKeys: [],
+                operations: [{ kind: 'row_upsert', sheetKey: 'sheet_1', rowId: '2', cells: ['2', 'row-upsert-b'] }],
+              },
+            ],
+          },
+        },
+      },
+    }];
+
+    const result = await loadTableStateFromFramesV2_ACU(chat, '');
+
+    expect(result?.sheet_0.content).toEqual([['row_id', '值'], ['1', 'sheet-replace-a']]);
+    expect(result?.sheet_1.content).toEqual([['row_id', '值'], ['1', 'legacy-b'], ['2', 'row-upsert-b']]);
+  });
+
   it('从 boundary compaction checkpoint 开始回放降级旧 full 的 data_replace 与后续日志', async () => {
     const boundaryData = {
       mate: { type: 'acu', version: 1 },

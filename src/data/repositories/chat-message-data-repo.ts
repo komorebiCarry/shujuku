@@ -107,6 +107,86 @@ function purgeEventSheetKeysV2_ACU(eventLike: any, sheetKeys: Set<string>): bool
 
 const RUNTIME_REVISION_SNAPSHOT_PREFIX_V2_ACU = 'runtime-v1:';
 
+function normalizeSqlIdentifierForPurge_ACU(value: any): string {
+    return typeof value === 'string' ? value.trim().replace(/^[`"\[]|[`"\]]$/g, '').toLowerCase() : '';
+}
+
+function parseSqlDDLTableNameForPurge_ACU(ddl: any): string {
+    if (typeof ddl !== 'string') return '';
+    const match = ddl.match(/\bCREATE\s+TABLE\s+(?:IF\s+NOT\s+EXISTS\s+)?(?:`([^`]+)`|"([^"]+)"|\[([^\]]+)\]|([A-Za-z_][A-Za-z0-9_]*))/i);
+    return normalizeSqlIdentifierForPurge_ACU(match?.slice(1).find(Boolean));
+}
+
+function collectSqlTableNameCandidatesFromSheetForPurge_ACU(sheetKey: string, sheet: any, targetNames: Set<string>): void {
+    const sheetKeyName = normalizeSqlIdentifierForPurge_ACU(sheetKey);
+    if (sheetKeyName) targetNames.add(sheetKeyName);
+    if (!isObjectRecord_ACU(sheet)) return;
+    const uid = normalizeSqlIdentifierForPurge_ACU(sheet.uid);
+    const name = normalizeSqlIdentifierForPurge_ACU(sheet.name);
+    const ddlName = parseSqlDDLTableNameForPurge_ACU(sheet.sourceData?.ddl);
+    if (uid) targetNames.add(uid);
+    if (name) targetNames.add(name);
+    if (ddlName) targetNames.add(ddlName);
+}
+
+function collectSqlTargetTableNamesFromRecordForPurge_ACU(record: any, sheetKeys: Set<string>, targetNames: Set<string>): void {
+    if (!isObjectRecord_ACU(record)) return;
+    sheetKeys.forEach(sheetKey => {
+        if (Object.prototype.hasOwnProperty.call(record, sheetKey)) {
+            collectSqlTableNameCandidatesFromSheetForPurge_ACU(sheetKey, record[sheetKey], targetNames);
+        }
+    });
+}
+
+function collectSqlTargetTableNamesFromOperationForPurge_ACU(operation: any, sheetKeys: Set<string>, targetNames: Set<string>): void {
+    if (!isObjectRecord_ACU(operation)) return;
+    if (operation.kind === 'sheet_replace' && sheetKeys.has(operation.sheetKey)) {
+        collectSqlTableNameCandidatesFromSheetForPurge_ACU(operation.sheetKey, operation.sheet, targetNames);
+        return;
+    }
+    if (operation.kind === 'data_replace') {
+        collectSqlTargetTableNamesFromRecordForPurge_ACU(operation.data, sheetKeys, targetNames);
+    }
+}
+
+function collectSqlTargetTableNamesFromStorageFrameV2_ACU(frame: any, sheetKeys: Set<string>): Set<string> {
+    const targetNames = new Set<string>();
+    sheetKeys.forEach(sheetKey => {
+        const normalizedSheetKey = normalizeSqlIdentifierForPurge_ACU(sheetKey);
+        if (normalizedSheetKey) targetNames.add(normalizedSheetKey);
+    });
+    collectSqlTargetTableNamesFromRecordForPurge_ACU(frame?.checkpoint?.data, sheetKeys, targetNames);
+    if (Array.isArray(frame?.logEntries)) {
+        frame.logEntries.forEach((entry: any) => {
+            if (!isObjectRecord_ACU(entry)) return;
+            if (Array.isArray(entry.operations)) {
+                entry.operations.forEach(operation => collectSqlTargetTableNamesFromOperationForPurge_ACU(operation, sheetKeys, targetNames));
+            }
+            if (Array.isArray(entry.patches)) {
+                entry.patches.forEach(patch => collectSqlTargetTableNamesFromOperationForPurge_ACU(patch, sheetKeys, targetNames));
+            }
+        });
+    }
+    return targetNames;
+}
+
+function extractMutatedSqlTableNamesForPurge_ACU(statement: any): string[] {
+    if (typeof statement !== 'string') return [];
+    const patterns = [
+        /\bINSERT\s+(?:OR\s+\w+\s+)?INTO\s+(?:`([^`]+)`|"([^"]+)"|\[([^\]]+)\]|([A-Za-z_][A-Za-z0-9_]*))/i,
+        /\bREPLACE\s+INTO\s+(?:`([^`]+)`|"([^"]+)"|\[([^\]]+)\]|([A-Za-z_][A-Za-z0-9_]*))/i,
+        /\bUPDATE\s+(?:OR\s+\w+\s+)?(?:`([^`]+)`|"([^"]+)"|\[([^\]]+)\]|([A-Za-z_][A-Za-z0-9_]*))/i,
+        /\bDELETE\s+FROM\s+(?:`([^`]+)`|"([^"]+)"|\[([^\]]+)\]|([A-Za-z_][A-Za-z0-9_]*))/i,
+        /\bALTER\s+TABLE\s+(?:`([^`]+)`|"([^"]+)"|\[([^\]]+)\]|([A-Za-z_][A-Za-z0-9_]*))/i,
+    ];
+    for (const pattern of patterns) {
+        const match = statement.match(pattern);
+        const tableName = normalizeSqlIdentifierForPurge_ACU(match?.slice(1).find(Boolean));
+        if (tableName) return [tableName];
+    }
+    return [];
+}
+
 function purgeRuntimeRevisionSnapshotSheetKeysV2_ACU(value: any, sheetKeys: Set<string>): { value: any; changed: boolean } {
     if (typeof value !== 'string' || !value.startsWith(RUNTIME_REVISION_SNAPSHOT_PREFIX_V2_ACU)) {
         return { value, changed: false };
@@ -151,7 +231,29 @@ function hasRemainingDataReplacePayload_ACU(data: any): boolean {
     return isObjectRecord_ACU(data) && Object.keys(data).length > 0;
 }
 
-function purgeOperationV2_ACU(operation: any, sheetKeys: Set<string>): { operation: any | null; changed: boolean } {
+function purgeSqlBatchOperationV2_ACU(operation: any, targetSqlTableNames: Set<string>): { operation: any | null; changed: boolean } {
+    if (!Array.isArray(operation.statements) || targetSqlTableNames.size === 0) {
+        return { operation, changed: false };
+    }
+    const keepIndices: number[] = [];
+    operation.statements.forEach((statement: any, index: number) => {
+        const mutatedTables = extractMutatedSqlTableNamesForPurge_ACU(statement);
+        const touchesTarget = mutatedTables.some(tableName => targetSqlTableNames.has(tableName));
+        if (!touchesTarget) keepIndices.push(index);
+    });
+    if (keepIndices.length === operation.statements.length) return { operation, changed: false };
+    if (keepIndices.length === 0) return { operation: null, changed: true };
+    const nextOperation: any = {
+        ...operation,
+        statements: keepIndices.map(index => operation.statements[index]),
+    };
+    if (Array.isArray(operation.params)) {
+        nextOperation.params = keepIndices.map(index => operation.params[index]);
+    }
+    return { operation: nextOperation, changed: true };
+}
+
+function purgeOperationV2_ACU(operation: any, sheetKeys: Set<string>, targetSqlTableNames: Set<string>): { operation: any | null; changed: boolean } {
     if (!isObjectRecord_ACU(operation)) return { operation, changed: false };
 
     if (
@@ -173,10 +275,14 @@ function purgeOperationV2_ACU(operation: any, sheetKeys: Set<string>): { operati
         };
     }
 
+    if (operation.kind === 'sql_batch') {
+        return purgeSqlBatchOperationV2_ACU(operation, targetSqlTableNames);
+    }
+
     return { operation, changed: false };
 }
 
-function purgePatchV2_ACU(patch: any, sheetKeys: Set<string>): { patch: any | null; changed: boolean } {
+function purgePatchV2_ACU(patch: any, sheetKeys: Set<string>, targetSqlTableNames: Set<string>): { patch: any | null; changed: boolean } {
     if (!isObjectRecord_ACU(patch)) return { patch, changed: false };
     if (
         (patch.kind === 'sheet_replace'
@@ -197,6 +303,10 @@ function purgePatchV2_ACU(patch: any, sheetKeys: Set<string>): { patch: any | nu
         };
     }
 
+    if (patch.kind === 'sql_batch') {
+        const result = purgeSqlBatchOperationV2_ACU(patch, targetSqlTableNames);
+        return { patch: result.operation, changed: result.changed };
+    }
     return { patch, changed: false };
 }
 
@@ -210,12 +320,12 @@ function purgeWriteSetV2_ACU(writeSet: any, sheetKeys: Set<string>): { writeSet:
     return { writeSet: next, changed: next.length !== writeSet.length };
 }
 
-function purgeOperationArrayV2_ACU(operations: any, sheetKeys: Set<string>): { value: any; changed: boolean } {
+function purgeOperationArrayV2_ACU(operations: any, sheetKeys: Set<string>, targetSqlTableNames: Set<string>): { value: any; changed: boolean } {
     if (!Array.isArray(operations)) return { value: operations, changed: false };
     let changed = false;
     const next: any[] = [];
     operations.forEach(operation => {
-        const result = purgeOperationV2_ACU(operation, sheetKeys);
+        const result = purgeOperationV2_ACU(operation, sheetKeys, targetSqlTableNames);
         if (result.changed) changed = true;
         if (result.operation) next.push(result.operation);
     });
@@ -230,12 +340,12 @@ function hasMeaningfulManualRefillLogPayloadV2_ACU(entry: any): boolean {
     return hasNonEmptyArray_ACU(entry?.operations) || hasNonEmptyArray_ACU(entry?.patches) || hasNonEmptyArray_ACU(entry?.filledSheetKeys) || hasNonEmptyArray_ACU(entry?.changedSheetKeys) || hasNonEmptyArray_ACU(entry?.groupKeys) || hasNonEmptyArray_ACU(entry?.event?.filledSheetKeys) || hasNonEmptyArray_ACU(entry?.event?.changedSheetKeys) || hasNonEmptyArray_ACU(entry?.event?.groupKeys) || (Array.isArray(entry?.writeSet) && entry.writeSet.some((unit: any) => isObjectRecord_ACU(unit) && unit.kind !== 'all')) || hasNonEmptyArray_ACU(entry?.manualRefillProgress?.selectedSheetKeys) || (isObjectRecord_ACU(entry?.manualRefillProgress?.completedSheetMessageIndexByKey) && Object.keys(entry.manualRefillProgress.completedSheetMessageIndexByKey).length > 0);
 }
 
-function purgePatchArrayV2_ACU(patches: any, sheetKeys: Set<string>): { value: any; changed: boolean } {
+function purgePatchArrayV2_ACU(patches: any, sheetKeys: Set<string>, targetSqlTableNames: Set<string>): { value: any; changed: boolean } {
     if (!Array.isArray(patches)) return { value: patches, changed: false };
     let changed = false;
     const next: any[] = [];
     patches.forEach(patch => {
-        const result = purgePatchV2_ACU(patch, sheetKeys);
+        const result = purgePatchV2_ACU(patch, sheetKeys, targetSqlTableNames);
         if (result.changed) changed = true;
         if (result.patch) next.push(result.patch);
     });
@@ -245,6 +355,7 @@ function purgePatchArrayV2_ACU(patches: any, sheetKeys: Set<string>): { value: a
 function purgeSheetKeysFromStorageFrameV2_ACU(frame: any, sheetKeys: Set<string>): boolean {
     if (!isObjectRecord_ACU(frame)) return false;
     let changed = false;
+    const targetSqlTableNames = collectSqlTargetTableNamesFromStorageFrameV2_ACU(frame, sheetKeys);
 
     const checkpoint = frame.checkpoint;
     if (isObjectRecord_ACU(checkpoint)) {
@@ -262,12 +373,12 @@ function purgeSheetKeysFromStorageFrameV2_ACU(frame: any, sheetKeys: Set<string>
         frame.logEntries.forEach((entry: any) => {
             if (!isObjectRecord_ACU(entry)) return;
             if (purgeEventSheetKeysV2_ACU(entry, sheetKeys)) changed = true;
-            const operations = purgeOperationArrayV2_ACU(entry.operations, sheetKeys);
+            const operations = purgeOperationArrayV2_ACU(entry.operations, sheetKeys, targetSqlTableNames);
             if (operations.changed) {
                 entry.operations = operations.value;
                 changed = true;
             }
-            const patches = purgePatchArrayV2_ACU(entry.patches, sheetKeys);
+            const patches = purgePatchArrayV2_ACU(entry.patches, sheetKeys, targetSqlTableNames);
             if (patches.changed) {
                 entry.patches = patches.value;
                 changed = true;
@@ -297,6 +408,7 @@ function purgeSheetKeysFromStorageFrameV2_ACU(frame: any, sheetKeys: Set<string>
 function purgeManualRefillIncrementalSheetKeysFromStorageFrameV2_ACU(frame: any, sheetKeys: Set<string>): boolean {
     if (!isObjectRecord_ACU(frame)) return false;
     let changed = false;
+    const targetSqlTableNames = collectSqlTargetTableNamesFromStorageFrameV2_ACU(frame, sheetKeys);
 
     const checkpoint = frame.checkpoint;
     if (isObjectRecord_ACU(checkpoint)) {
@@ -317,12 +429,12 @@ function purgeManualRefillIncrementalSheetKeysFromStorageFrameV2_ACU(frame: any,
             let entryChanged = false;
             if (purgeEventSheetKeysV2_ACU(entry, sheetKeys)) entryChanged = true;
             if (purgeEventSheetKeysV2_ACU(entry.event, sheetKeys)) entryChanged = true;
-            const operations = purgeOperationArrayV2_ACU(entry.operations, sheetKeys);
+            const operations = purgeOperationArrayV2_ACU(entry.operations, sheetKeys, targetSqlTableNames);
             if (operations.changed) {
                 entry.operations = operations.value;
                 entryChanged = true;
             }
-            const patches = purgePatchArrayV2_ACU(entry.patches, sheetKeys);
+            const patches = purgePatchArrayV2_ACU(entry.patches, sheetKeys, targetSqlTableNames);
             if (patches.changed) {
                 entry.patches = patches.value;
                 entryChanged = true;

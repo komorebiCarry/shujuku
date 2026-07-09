@@ -854,6 +854,117 @@ describe('purgeManualRefillIncrementalSheetKeysFromMessage_ACU', () => {
     expect(msg.TavernDB_ACU_IsolatedData.tag1.storageFrame.logEntries).toEqual([]);
   });
 
+  it('SQL 模式增量预清理会删除目标表 sql_batch 语句并同步裁剪 params', () => {
+    const msg: any = {
+      TavernDB_ACU_IsolatedData: {
+        tag1: {
+          storageFrame: {
+            version: 2,
+            checkpoint: {
+              kind: 'full',
+              data: {
+                sheet_0: { uid: 'inventory', name: '背包表', sourceData: { ddl: 'CREATE TABLE inventory (row_id TEXT)' } },
+                sheet_1: { uid: 'quest_log', name: '任务表', sourceData: { ddl: 'CREATE TABLE quest_log (row_id TEXT)' } },
+              },
+            },
+            logEntries: [{
+              operations: [{
+                kind: 'sql_batch',
+                statements: [
+                  "INSERT INTO inventory VALUES ('old')",
+                  "UPDATE quest_log SET value = 'keep' WHERE row_id = 'q1'",
+                  "DELETE FROM inventory WHERE row_id = 'old'",
+                ],
+                params: [['insert-target'], ['keep-other'], ['delete-target']],
+              }],
+            }],
+          },
+        },
+      },
+    };
+
+    expect(purgeManualRefillIncrementalSheetKeysFromMessage_ACU(msg, 'tag1', ['sheet_0'])).toBe(true);
+
+    expect(msg.TavernDB_ACU_IsolatedData.tag1.storageFrame.logEntries[0].operations).toEqual([{
+      kind: 'sql_batch',
+      statements: ["UPDATE quest_log SET value = 'keep' WHERE row_id = 'q1'"],
+      params: [['keep-other']],
+    }]);
+  });
+
+  it('SQL 模式增量预清理在 sql_batch 全部命中目标表时删除 operation 和空壳 entry', () => {
+    const msg: any = {
+      TavernDB_ACU_IsolatedData: {
+        tag1: {
+          storageFrame: {
+            version: 2,
+            checkpoint: {
+              kind: 'full',
+              data: {
+                sheet_0: { uid: 'inventory', name: '背包表', sourceData: { ddl: 'CREATE TABLE inventory (row_id TEXT)' } },
+              },
+            },
+            logEntries: [{
+              filledSheetKeys: ['sheet_0'],
+              changedSheetKeys: ['sheet_0'],
+              groupKeys: ['sheet_0'],
+              operations: [{
+                kind: 'sql_batch',
+                statements: [
+                  "INSERT INTO inventory VALUES ('old')",
+                  "REPLACE INTO inventory VALUES ('new')",
+                ],
+              }],
+              writeSet: [{ kind: 'sheet', sheetKey: 'sheet_0' }],
+            }],
+          },
+        },
+      },
+    };
+
+    expect(purgeManualRefillIncrementalSheetKeysFromMessage_ACU(msg, 'tag1', ['sheet_0'])).toBe(true);
+
+    expect(msg.TavernDB_ACU_IsolatedData.tag1.storageFrame.logEntries).toEqual([]);
+    expect(msg.TavernDB_ACU_IsolatedData.tag1.storageFrame.checkpoint.data.sheet_0).toEqual({
+      uid: 'inventory',
+      name: '背包表',
+      sourceData: { ddl: 'CREATE TABLE inventory (row_id TEXT)' },
+    });
+  });
+
+  it('SQL 模式增量预清理遇到无法识别的 sql_batch 语句时保留原 operation', () => {
+    const msg: any = {
+      TavernDB_ACU_IsolatedData: {
+        tag1: {
+          storageFrame: {
+            version: 2,
+            checkpoint: {
+              kind: 'full',
+              data: {
+                sheet_0: { uid: 'inventory', name: '背包表', sourceData: { ddl: 'CREATE TABLE inventory (row_id TEXT)' } },
+              },
+            },
+            logEntries: [{
+              operations: [{
+                kind: 'sql_batch',
+                statements: [
+                  'SELECT * FROM inventory',
+                  'CREATE TABLE inventory_backup (row_id TEXT)',
+                ],
+              }],
+            }],
+          },
+        },
+      },
+    };
+
+    expect(purgeManualRefillIncrementalSheetKeysFromMessage_ACU(msg, 'tag1', ['sheet_0'])).toBe(false);
+    expect(msg.TavernDB_ACU_IsolatedData.tag1.storageFrame.logEntries[0].operations).toEqual([{
+      kind: 'sql_batch',
+      statements: ['SELECT * FROM inventory', 'CREATE TABLE inventory_backup (row_id TEXT)'],
+    }]);
+  });
+
   it('目标 sheet 不存在于 V2 增量日志时不触发变更', () => {
     const msg: any = {
       TavernDB_ACU_IsolatedData: {

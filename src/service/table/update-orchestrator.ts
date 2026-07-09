@@ -6,7 +6,7 @@
 
 import { isAutoUpdatingCard_ACU, pendingFinalGenerationGreenlights_ACU, wasStoppedByUser_ACU, _set_isAutoUpdatingCard_ACU, _set_manualExtraHint_ACU, _set_wasStoppedByUser_ACU } from '../runtime/state-manager';
 import { callCustomOpenAI_ACU } from '../ai/prompt-builder';
-import { clearManualRefillSheetDataInRange_ACU, ensureV2BoundaryCheckpointForRetainedBuffer_ACU, getChatArray_ACU, shouldRotateV2BoundaryCheckpointForRetainedBuffer_ACU } from '../chat/chat-service';
+import { clearManualRefillIncrementalDataInRange_ACU, ensureV2BoundaryCheckpointForRetainedBuffer_ACU, getChatArray_ACU, shouldRotateV2BoundaryCheckpointForRetainedBuffer_ACU } from '../chat/chat-service';
 import { coreApisAreReady_ACU, currentJsonTableData_ACU, getCurrentIsolationKey_ACU, settings_ACU, _set_currentJsonTableData_ACU } from '../runtime/state-manager';
 import { checkAutoMergeTrigger_ACU, prepareAutoMergeBatches_ACU, executeAutoMergeBatch_ACU, finalizeAutoMerge_ACU } from '../summary/merge-logic';
 import { ensureStableRowIdsForSheetContent_ACU, getChatSheetGuideDataForIsolationKey_ACU, getEffectiveSeedRowsForSheet_ACU, shouldUseInitialSeedRows_ACU } from '../template/chat-scope';
@@ -360,6 +360,24 @@ function hasSheetContentRows_ACU(sheet: any): boolean {
 function buildSqlBatchOperationsFromText_ACU(sqlText: string): TableMutationOperationV2_ACU[] {
     const statements = normalizeSqlStatementsForRuntimeLog_ACU(sqlText);
     return statements.length > 0 ? [{ kind: 'sql_batch', statements }] : [];
+}
+
+function buildSheetReplaceOperationsFromData_ACU(
+    afterData: Record<string, any> | null | undefined,
+    sheetKeys: string[] | null | undefined,
+    reason: 'manual_crud' | 'import' | 'system',
+): TableMutationOperationV2_ACU[] {
+    if (!afterData || typeof afterData !== 'object' || !Array.isArray(sheetKeys) || sheetKeys.length === 0) return [];
+    const seen = new Set<string>();
+    const operations: TableMutationOperationV2_ACU[] = [];
+    sheetKeys.forEach(sheetKey => {
+        if (typeof sheetKey !== 'string' || !sheetKey.startsWith('sheet_') || seen.has(sheetKey)) return;
+        const sheet = afterData[sheetKey];
+        if (!sheet || typeof sheet !== 'object') return;
+        seen.add(sheetKey);
+        operations.push({ kind: 'sheet_replace', sheetKey, sheet: JSON.parse(JSON.stringify(sheet)), reason });
+    });
+    return operations;
 }
 
 function getTouchedSheetKeysFromSqlText_ACU(sqlText: string, tableData: Record<string, any>): string[] {
@@ -1007,9 +1025,6 @@ export async function applyUnifiedGroupFillResponses_ACU(
             }
         } else {
             parseResult = parseAndApplyTableEditsToData_ACU(response.aiResponse!, workingTableData, options.updateMode, options.isImportMode);
-            if (parseResult && typeof parseResult === 'object' && parseResult.success !== false && response.tableEditText) {
-                operations.push({ kind: 'table_edit_dsl', text: response.tableEditText, updateMode: options.updateMode });
-            }
         }
         const parseResultObject = typeof parseResult === 'object' && parseResult !== null ? parseResult : null;
         const parseSuccess = parseResultObject ? parseResultObject.success : !!parseResult;
@@ -1057,6 +1072,7 @@ export async function applyUnifiedGroupFillResponses_ACU(
         const fillAttemptKeys = [...allTargetSheetKeySet]
             .filter(sheetKey => Boolean((workingTableData as any)?.[sheetKey]))
             .sort();
+        const snapshotOperations = buildSheetReplaceOperationsFromData_ACU(workingTableData, keysToSave, 'system');
         const revisionWriteSet = modifiedKeys.map(sheetKey => ({ kind: 'sheet' as const, sheetKey }));
         const commitResult = await runTableUpdateCommit_ACU<{ modifiedKeys: string[] }>({
             source: 'group_fill',
@@ -1071,7 +1087,7 @@ export async function applyUnifiedGroupFillResponses_ACU(
             updateGroupKeys: fillAttemptKeys,
             trackingSheetKeys: keysToTrack,
             trackAsUpdate: true,
-            operations,
+            operations: [...operations, ...snapshotOperations],
         }, () => ({
             success: true,
             value: { modifiedKeys },
@@ -1576,11 +1592,7 @@ export async function executeCardUpdateCore_ACU(
                     skipChatSave: isImportMode,
                 }, async ({ workingData }) => {
                     let workingTableData = (workingData || {}) as Record<string, any>;
-                    const operations: TableMutationOperationV2_ACU[] = [];
                     const parseResult: any = parseAndApplyTableEditsToData_ACU(aiResponse, workingTableData, updateMode, isImportMode);
-                    if (typeof collectResult.tableEditText === 'string' && collectResult.tableEditText.trim()) {
-                        operations.push({ kind: 'table_edit_dsl', text: collectResult.tableEditText, updateMode });
-                    }
 
                     let parseSuccess = false;
                     let parsedKeys: string[] = [];
@@ -1646,7 +1658,7 @@ export async function executeCardUpdateCore_ACU(
                             success: true,
                             value: { success: true, modifiedKeys: parsedKeys },
                             tableData: workingTableData as any,
-                            persist: { targetSheetKeys: [], updateGroupKeys: [], trackingSheetKeys: [], trackAsUpdate: false, operations, revisionWriteSet },
+                            persist: { targetSheetKeys: [], updateGroupKeys: [], trackingSheetKeys: [], trackAsUpdate: false, operations: [], revisionWriteSet },
                         };
                     }
 
@@ -1663,6 +1675,7 @@ export async function executeCardUpdateCore_ACU(
                             return keysToTrackAsUpdated.includes(sheetKey);
                         })
                         : fillAttemptKeys;
+                    const operations = buildSheetReplaceOperationsFromData_ACU(workingTableData, keysToActuallySave, 'system');
 
                     return {
                         success: true,
@@ -2000,7 +2013,7 @@ export async function orchestrateManualUpdate_ACU(
             }
 
             try {
-                await clearManualRefillSheetDataInRange_ACU(contextScopeIndices, targetKeys);
+                await clearManualRefillIncrementalDataInRange_ACU(contextScopeIndices, targetKeys);
             } catch (error: any) {
                 logError_ACU('[Manual Refill] 启动前清理选中表范围内旧数据失败:', error);
                 return { success: false, error: error?.message || '手动重填启动前清理选中表范围内旧数据失败。' };
