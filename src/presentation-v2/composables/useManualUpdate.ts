@@ -102,9 +102,10 @@ function applyManualSettingsForOrchestrator(): () => void {
   const previousAutoUpdateThreshold = settings_ACU.autoUpdateThreshold;
   const previousUpdateBatchSize = settings_ACU.updateBatchSize;
 
-  // orchestrateManualUpdate_ACU still reads the legacy automatic settings.
-  // Keep the temporary bridge local to this UI action so the independent
-  // manual fields do not persist back into automatic update configuration.
+  // Legacy bridge: orchestrateManualUpdate_ACU still reads automatic settings for manual refill.
+  // The manual_override_auto_equivalent path must consume manual settings explicitly and remove
+  // this mutation bridge; keeping it scoped here prevents manual UI fields from persisting back
+  // into automatic update configuration while the legacy orchestration is being replaced.
   settings_ACU.autoUpdateThreshold = manualDepthForOrchestrator_ACU(
     settings_ACU.manualUpdateContextDepth,
     previousAutoUpdateThreshold,
@@ -332,9 +333,9 @@ export function useManualUpdate(): ManualUpdateState {
     if (checkpoints.length === 0 || !range) return '';
     const checkpointIndexSet = new Set(range.indices);
     const coveredCheckpoints = checkpoints.filter(item => checkpointIndexSet.has(item.messageIndex));
-    if (coveredCheckpoints.length !== checkpoints.length) return '';
+    if (coveredCheckpoints.length === 0) return '';
     const coveredFloors = coveredCheckpoints.map(item => `AI 第 ${item.aiFloor} 层`).join('、');
-    return `危险：当前聊天的所有 full checkpoint 都在即将执行的重填范围内（${coveredFloors}）。确认执行后，重填起点前将没有可回放 checkpoint，选中表的本次内存重建基底可能只能从表头空基底开始；同时会删除本次重填范围内选中表的旧数据，但不会删除范围外 checkpoint、范围外聊天记录表格数据或未选中的表。是否是预期行为？`;
+    return `危险：即将执行的重填范围包含 full checkpoint（${coveredFloors}）。确认执行后，会删除这些 checkpoint 中选中表的旧基底及范围内对应增量数据；范围外 checkpoint、范围外聊天记录表格数据和未选中的表不会被删除。后续将按 checkpoint 覆盖重建流程继续处理。是否确认继续？`;
   });
 
   const vectorIndexWarning = computed<boolean>(() => {
@@ -445,7 +446,11 @@ export function useManualUpdate(): ManualUpdateState {
           selectedManualTableKeys.value,
           runProcessBatch,
           async () => { await refreshMergedDataAndNotify_ACU(); },
-          { clearBeforeUpdate, onProgress: handleProgress },
+          {
+            clearBeforeUpdate,
+            confirmedCheckpointOverwrite: !!checkpointRiskMessage.value,
+            onProgress: handleProgress,
+          },
         );
       } finally {
         restoreAutoUpdateSettings();

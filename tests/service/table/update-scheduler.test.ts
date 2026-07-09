@@ -26,6 +26,7 @@ vi.mock('../../../src/service/template/chat-scope', () => ({
 
 import {
   buildAutoUpdatePlan_ACU,
+  buildManualAutoEquivalentUpdatePlan_ACU,
   checkAutoUpdatePreConditions_ACU,
   handleFloorIncreaseDelay_ACU,
   executeAutoUpdatePlan_ACU,
@@ -338,6 +339,117 @@ describe('buildAutoUpdatePlan_ACU', () => {
       // contextDepth=1 只看最近1条 AI 消息
       expect(plan.tablesToUpdate[0].indices.length).toBeLessThanOrEqual(1);
     }
+  });
+});
+
+// ═══════════════════════════════════════════════════════════════
+// buildManualAutoEquivalentUpdatePlan_ACU
+// ═══════════════════════════════════════════════════════════════
+describe('buildManualAutoEquivalentUpdatePlan_ACU', () => {
+  const baseSettings = {
+    autoUpdateFrequency: 9,
+    skipUpdateFloors: 0,
+    autoUpdateThreshold: 2,
+    updateBatchSize: 1,
+    dataIsolationEnabled: false,
+    dataIsolationCode: '',
+  };
+
+  it('只使用公用调度参数，模板中除 groupId 外的自动参数不会影响手动计划', () => {
+    const liveChat = [
+      { is_user: true },
+      { is_user: false },
+      { is_user: true },
+      { is_user: false },
+      { is_user: true },
+      { is_user: false },
+    ];
+    const tableData = {
+      sheet_0: {
+        name: '表A',
+        updateConfig: {
+          contextDepth: 99,
+          updateFrequency: 99,
+          skipFloors: 99,
+          batchSize: 99,
+          groupId: 7,
+        },
+      },
+      sheet_1: {
+        name: '表B',
+        updateConfig: {
+          contextDepth: 99,
+          updateFrequency: 99,
+          skipFloors: 99,
+          batchSize: 99,
+          groupId: 7,
+        },
+      },
+    };
+
+    const plan = buildManualAutoEquivalentUpdatePlan_ACU(liveChat, tableData, baseSettings, '', ['sheet_0', 'sheet_1']);
+
+    expect(plan.tablesToUpdate).toHaveLength(2);
+    expect(plan.tablesToUpdate.map(item => item.sheetKey).sort()).toEqual(['sheet_0', 'sheet_1']);
+    expect(plan.tablesToUpdate.every(item => item.groupId === 7)).toBe(true);
+    expect(plan.tablesToUpdate.every(item => item.batchSize === 1)).toBe(true);
+    expect(plan.tablesToUpdate.every(item => item.indices.join(',') === '3,5')).toBe(true);
+    expect(Object.keys(plan.updateGroups)).toHaveLength(1);
+    expect(Object.values(plan.updateGroups)[0].sheetKeys.sort()).toEqual(['sheet_0', 'sheet_1']);
+  });
+
+  it('只为 selectedSheetKeys 构建计划，不把未选表混入手动重填', () => {
+    const liveChat = [
+      { is_user: true },
+      { is_user: false },
+    ];
+    const tableData = {
+      sheet_0: { name: '表A', updateConfig: { groupId: 1 } },
+      sheet_1: { name: '表B', updateConfig: { groupId: 2 } },
+    };
+
+    const plan = buildManualAutoEquivalentUpdatePlan_ACU(liveChat, tableData, baseSettings, '', ['sheet_1']);
+
+    expect(plan.tablesToUpdate).toHaveLength(1);
+    expect(plan.tablesToUpdate[0].sheetKey).toBe('sheet_1');
+    expect(plan.tablesToUpdate[0].groupId).toBe(2);
+    expect(Object.values(plan.updateGroups)[0].sheetKeys).toEqual(['sheet_1']);
+  });
+
+  it('复用自动历史状态，已有 selected sheet 追踪键的楼层不会重复进入手动计划', () => {
+    const liveChat = [
+      { is_user: true },
+      {
+        is_user: false,
+        TavernDB_ACU_IsolatedData: {
+          '': {
+            independentData: { sheet_0: { name: '表A' } },
+            modifiedKeys: ['sheet_0'],
+            updateGroupKeys: ['sheet_0'],
+          },
+        },
+      },
+      { is_user: true },
+      { is_user: false },
+    ];
+    const tableData = {
+      sheet_0: { name: '表A', updateConfig: { groupId: 1 } },
+    };
+
+    const plan = buildManualAutoEquivalentUpdatePlan_ACU(liveChat, tableData, baseSettings, '', ['sheet_0']);
+
+    expect(plan.tablesToUpdate).toHaveLength(1);
+    expect(plan.tablesToUpdate[0].indices).toEqual([3]);
+  });
+
+  it('selectedSheetKeys 为空时返回空计划', () => {
+    const liveChat = [{ is_user: true }, { is_user: false }];
+    const tableData = { sheet_0: { name: '表A', updateConfig: { groupId: 1 } } };
+
+    const plan = buildManualAutoEquivalentUpdatePlan_ACU(liveChat, tableData, baseSettings, '', []);
+
+    expect(plan.tablesToUpdate).toHaveLength(0);
+    expect(plan.updateGroups).toEqual({});
   });
 });
 

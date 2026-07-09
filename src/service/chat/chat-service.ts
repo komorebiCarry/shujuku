@@ -32,6 +32,7 @@ import { isV2TagData_ACU, resolveTableStorageStrategy_ACU } from '../table/stora
 import { collectScheduleSummaryFromFramesV2_ACU, loadTableStateFromFramesV2_ACU } from '../table/storage-frame-v2-replay';
 import { runTableWriteTransaction_ACU } from '../table/table-write-transaction';
 import type { TableMutationLogEntryV2_ACU, TableMutationOperationV2_ACU, TableStorageFrameV2_ACU } from '../table/storage-frame-v2-types';
+import { reloadStorageProvider } from '../table/table-storage-strategy';
 
 // ─── 业务逻辑函数（从 presentation 层搬迁） ───
 
@@ -81,6 +82,46 @@ export interface ManualRefillInitialBaselineEnsureOptions_ACU {
     isolationKey: string;
     targetMessageIndex: number;
     data: Record<string, any>;
+    save?: boolean;
+}
+
+export interface ManualRefillTemporaryEmptyCheckpointResult_ACU {
+    success: boolean;
+    changed: boolean;
+    error?: string;
+    targetMessageIndex?: number;
+    cleanupToken?: string;
+}
+
+export interface ManualRefillTemporaryEmptyCheckpointOptions_ACU {
+    isolationKey: string;
+    targetMessageIndex: number;
+    selectedSheetKeys: string[];
+    baseData: Record<string, any>;
+    rangeStartIndex: number;
+    rangeEndIndex: number;
+    contextMessageIndices: number[];
+    save?: boolean;
+}
+
+export interface ManualRefillTemporaryCheckpointFinalizeResult_ACU {
+    success: boolean;
+    changed: boolean;
+    error?: string;
+    targetMessageIndex?: number;
+    restoredCheckpoint?: boolean;
+    downgradedTemporaryCheckpoint?: boolean;
+    finalizedNormalCheckpointIndices?: number[];
+}
+
+export interface ManualRefillTemporaryCheckpointFinalizeOptions_ACU {
+    isolationKey: string;
+    temporaryCheckpointIndex: number;
+    cleanupToken: string;
+    selectedSheetKeys: string[];
+    rangeStartIndex: number;
+    rangeEndIndex: number;
+    contextMessageIndices: number[];
     save?: boolean;
 }
 
@@ -404,6 +445,244 @@ export async function ensureV2BoundaryCheckpointForRetainedBuffer_ACU(
             logDebug_ACU(`[V2 Compaction] AI 楼层总数(${boundary.aiMessageIndices.length}) < 滚动触发层数(${boundary.effectiveRetainCount}=保留${retainCount}+缓冲${RETAIN_RECENT_CHECKPOINT_BUFFER_LAYERS_ACU})，无需建立边界 checkpoint。`);
         }
         return ensureV2BoundaryCheckpointForRetainedBufferCore_ACU(chat, boundary, options);
+    });
+}
+
+function cloneManualRefillTemporaryBaselineData_ACU(baseData: Record<string, any>, selectedSheetKeys: string[]): Record<string, any> {
+    const data = JSON.parse(JSON.stringify(baseData || {}));
+    selectedSheetKeys.forEach(sheetKey => {
+        const sheet = data[sheetKey];
+        if (!sheet || typeof sheet !== 'object') return;
+        const content = Array.isArray(sheet.content) ? sheet.content : [];
+        const header = Array.isArray(content[0]) ? JSON.parse(JSON.stringify(content[0])) : [];
+        data[sheetKey] = {
+            ...sheet,
+            content: header.length > 0 ? [header] : [],
+        };
+    });
+    return data;
+}
+
+export async function createManualRefillTemporaryEmptyCheckpoint_ACU(
+    options: ManualRefillTemporaryEmptyCheckpointOptions_ACU,
+): Promise<ManualRefillTemporaryEmptyCheckpointResult_ACU> {
+    return runTableWriteTransaction_ACU({
+        source: 'system_cleanup',
+        reason: 'manual_refill_temporary_empty_baseline',
+        isolationKey: options.isolationKey,
+        writeSet: [{ kind: 'all' }],
+        maintenanceMode: 'exclusive',
+    }, async () => {
+        try {
+            const chat = getChatArray_ACU();
+            if (!Array.isArray(chat) || chat.length === 0) {
+                return { success: false, changed: false, error: '聊天记录为空，无法建立手动重填临时空白 checkpoint。' };
+            }
+
+            const targetIndex = options.targetMessageIndex;
+            const targetMsg = chat[targetIndex];
+            if (!targetMsg || targetMsg.is_user) {
+                return { success: false, changed: false, error: `手动重填临时空白 checkpoint 建立失败：targetMessageIndex=${targetIndex} 不是有效 AI 楼层。`, targetMessageIndex: targetIndex };
+            }
+
+            const selectedSheetKeys = Array.from(new Set((options.selectedSheetKeys || []).filter(key => typeof key === 'string' && key.trim()).map(key => key.trim())));
+            if (selectedSheetKeys.length === 0) {
+                return { success: false, changed: false, error: '手动重填临时空白 checkpoint 建立失败：未提供选中表。', targetMessageIndex: targetIndex };
+            }
+
+            if (!targetMsg.TavernDB_ACU_IsolatedData || typeof targetMsg.TavernDB_ACU_IsolatedData !== 'object' || Array.isArray(targetMsg.TavernDB_ACU_IsolatedData)) {
+                targetMsg.TavernDB_ACU_IsolatedData = {};
+            }
+
+            const existingTagData = targetMsg.TavernDB_ACU_IsolatedData[options.isolationKey];
+            const originalCheckpoint = existingTagData?.storageFrame?.checkpoint?.kind === 'full'
+                ? {
+                    hadCheckpoint: true,
+                    reason: existingTagData.storageFrame.checkpoint.reason,
+                    createdAt: existingTagData.storageFrame.checkpoint.createdAt,
+                }
+                : { hadCheckpoint: false };
+            const data = cloneManualRefillTemporaryBaselineData_ACU(options.baseData || {}, selectedSheetKeys);
+            const cleanupToken = `manual_refill_empty_${targetIndex}_${Date.now()}`;
+            const contextMessageIndices = Array.from(new Set((options.contextMessageIndices || []).filter(index => Number.isInteger(index))));
+
+            targetMsg.TavernDB_ACU_IsolatedData[options.isolationKey] = {
+                ...(existingTagData?.summaryVectorIndexState !== undefined ? { summaryVectorIndexState: existingTagData.summaryVectorIndexState } : {}),
+                ...(existingTagData?.summaryVectorIndexManifest !== undefined ? { summaryVectorIndexManifest: existingTagData.summaryVectorIndexManifest } : {}),
+                storageFrame: {
+                    version: 2,
+                    checkpoint: {
+                        kind: 'full',
+                        createdAt: Date.now(),
+                        reason: 'manual_refill_temporary_empty_baseline',
+                        source: 'manual_refill_override',
+                        cleanupToken,
+                        selectedSheetKeys,
+                        rangeStartIndex: options.rangeStartIndex,
+                        rangeEndIndex: options.rangeEndIndex,
+                        contextMessageIndices,
+                        originalCheckpoint,
+                        data,
+                        scheduleSummary: collectScheduleSummaryFromFramesV2_ACU(chat, options.isolationKey, { maxMessageIndex: targetIndex }),
+                    },
+                    logEntries: [],
+                },
+                _acu_storage_version: 2,
+            };
+
+            if (options.save !== false) await saveChatToHost_ACU();
+            return { success: true, changed: true, targetMessageIndex: targetIndex, cleanupToken };
+        } catch (error: any) {
+            return { success: false, changed: false, error: error?.message || String(error || '手动重填临时空白 checkpoint 建立失败。') };
+        }
+    });
+}
+
+export async function finalizeManualRefillTemporaryCheckpoint_ACU(
+    options: ManualRefillTemporaryCheckpointFinalizeOptions_ACU,
+): Promise<ManualRefillTemporaryCheckpointFinalizeResult_ACU> {
+    return runTableWriteTransaction_ACU({
+        source: 'system_cleanup',
+        reason: 'manual_refill_temporary_empty_baseline',
+        isolationKey: options.isolationKey,
+        writeSet: [{ kind: 'all' }],
+        maintenanceMode: 'exclusive',
+    }, async () => {
+        try {
+            const chat = getChatArray_ACU();
+            if (!Array.isArray(chat) || chat.length === 0) {
+                return { success: false, changed: false, error: '聊天记录为空，无法完成手动重填临时 checkpoint 收尾。' };
+            }
+
+            const targetIndex = options.temporaryCheckpointIndex;
+            const targetMsg = chat[targetIndex];
+            if (!targetMsg || targetMsg.is_user) {
+                return { success: false, changed: false, error: `手动重填临时 checkpoint 收尾失败：temporaryCheckpointIndex=${targetIndex} 不是有效 AI 楼层。`, targetMessageIndex: targetIndex };
+            }
+
+            const tagData = targetMsg.TavernDB_ACU_IsolatedData?.[options.isolationKey];
+            if (!isV2TagData_ACU(tagData)) {
+                return { success: false, changed: false, error: `手动重填临时 checkpoint 收尾失败：temporaryCheckpointIndex=${targetIndex} 未找到 V2 存储帧。`, targetMessageIndex: targetIndex };
+            }
+
+            const frame = tagData.storageFrame;
+            const checkpoint = frame.checkpoint;
+            if (checkpoint?.kind !== 'full' || checkpoint.reason !== 'manual_refill_temporary_empty_baseline') {
+                return { success: false, changed: false, error: `手动重填临时 checkpoint 收尾失败：temporaryCheckpointIndex=${targetIndex} 不是临时空白 checkpoint。`, targetMessageIndex: targetIndex };
+            }
+            if (!options.cleanupToken || checkpoint.cleanupToken !== options.cleanupToken) {
+                return { success: false, changed: false, error: '手动重填临时 checkpoint 收尾失败：cleanupToken 不匹配，拒绝处理可能过期或并发污染的临时状态。', targetMessageIndex: targetIndex };
+            }
+
+            const selectedSheetKeys = Array.from(new Set((checkpoint.selectedSheetKeys || [])
+                .filter(key => typeof key === 'string' && key.trim())
+                .map(key => key.trim())));
+            if (selectedSheetKeys.length === 0) {
+                return { success: false, changed: false, error: '手动重填临时 checkpoint 收尾失败：临时 checkpoint 缺少 selectedSheetKeys。', targetMessageIndex: targetIndex };
+            }
+
+            const expectedSelectedSheetKeys = Array.from(new Set((options.selectedSheetKeys || [])
+                .filter(key => typeof key === 'string' && key.trim())
+                .map(key => key.trim())));
+            if (expectedSelectedSheetKeys.length === 0) {
+                return { success: false, changed: false, error: '手动重填临时 checkpoint 收尾失败：调用方未提供 selectedSheetKeys。', targetMessageIndex: targetIndex };
+            }
+            const sortedCheckpointSheetKeys = [...selectedSheetKeys].sort();
+            const sortedExpectedSheetKeys = [...expectedSelectedSheetKeys].sort();
+            if (JSON.stringify(sortedCheckpointSheetKeys) !== JSON.stringify(sortedExpectedSheetKeys)) {
+                return { success: false, changed: false, error: '手动重填临时 checkpoint 收尾失败：selectedSheetKeys 与临时 checkpoint 元数据不一致。', targetMessageIndex: targetIndex };
+            }
+            const expectedContextMessageIndices = Array.from(new Set((options.contextMessageIndices || []).filter(index => Number.isInteger(index))));
+            const checkpointContextMessageIndices = Array.from(new Set((checkpoint.contextMessageIndices || []).filter(index => Number.isInteger(index))));
+            if (JSON.stringify(expectedContextMessageIndices) !== JSON.stringify(checkpointContextMessageIndices)) {
+                return { success: false, changed: false, error: '手动重填临时 checkpoint 收尾失败：contextMessageIndices 与临时 checkpoint 元数据不一致。', targetMessageIndex: targetIndex };
+            }
+            if (checkpoint.rangeStartIndex !== options.rangeStartIndex || checkpoint.rangeEndIndex !== options.rangeEndIndex) {
+                return { success: false, changed: false, error: '手动重填临时 checkpoint 收尾失败：重填范围与临时 checkpoint 元数据不一致。', targetMessageIndex: targetIndex };
+            }
+
+            const finalizedNormalCheckpointIndices: number[] = [];
+            const rangeStartIndex = Math.max(0, Math.min(options.rangeStartIndex, options.rangeEndIndex));
+            const rangeEndIndex = Math.min(chat.length - 1, Math.max(options.rangeStartIndex, options.rangeEndIndex));
+            for (let messageIndex = rangeStartIndex; messageIndex <= rangeEndIndex; messageIndex += 1) {
+                if (messageIndex === targetIndex) continue;
+                const msg = chat[messageIndex];
+                if (!msg || msg.is_user) continue;
+                const currentTagData = msg.TavernDB_ACU_IsolatedData?.[options.isolationKey];
+                if (!isV2TagData_ACU(currentTagData)) continue;
+                const currentFrame = currentTagData.storageFrame;
+                const normalCheckpoint = currentFrame.checkpoint;
+                if (normalCheckpoint?.kind !== 'full' || normalCheckpoint.reason === 'manual_refill_temporary_empty_baseline') continue;
+
+                const originalLogEntries = Array.isArray(currentFrame.logEntries) ? currentFrame.logEntries : [];
+                let checkpointReplayData: Record<string, any> | null;
+                let checkpointScheduleSummary: ReturnType<typeof collectScheduleSummaryFromFramesV2_ACU>;
+                try {
+                    delete currentFrame.checkpoint;
+                    currentFrame.logEntries = [];
+                    checkpointReplayData = await loadTableStateFromFramesV2_ACU(chat, options.isolationKey, { maxMessageIndex: messageIndex }) as Record<string, any> | null;
+                    checkpointScheduleSummary = collectScheduleSummaryFromFramesV2_ACU(chat, options.isolationKey, { maxMessageIndex: messageIndex });
+                } finally {
+                    currentFrame.checkpoint = normalCheckpoint;
+                    currentFrame.logEntries = originalLogEntries;
+                }
+                if (!checkpointReplayData || typeof checkpointReplayData !== 'object') {
+                    return { success: false, changed: false, error: `手动重填临时 checkpoint 收尾失败：无法恢复 messageIndex=${messageIndex} 前的 V2 数据以补全正常 checkpoint。`, targetMessageIndex: targetIndex };
+                }
+
+                const completedCheckpointData = JSON.parse(JSON.stringify(normalCheckpoint.data || {}));
+                for (const sheetKey of selectedSheetKeys) {
+                    if (Object.prototype.hasOwnProperty.call(checkpointReplayData, sheetKey)) {
+                        completedCheckpointData[sheetKey] = JSON.parse(JSON.stringify((checkpointReplayData as Record<string, any>)[sheetKey]));
+                    } else {
+                        delete completedCheckpointData[sheetKey];
+                    }
+                }
+                normalCheckpoint.data = completedCheckpointData;
+                normalCheckpoint.scheduleSummary = checkpointScheduleSummary!;
+                finalizedNormalCheckpointIndices.push(messageIndex);
+            }
+
+            const finalizedData = JSON.parse(JSON.stringify(checkpoint.data || {}));
+
+            const originalCheckpoint = checkpoint.originalCheckpoint || { hadCheckpoint: false };
+            const originalTargetLogEntries = Array.isArray(frame.logEntries) ? frame.logEntries : [];
+            let finalScheduleSummary: ReturnType<typeof collectScheduleSummaryFromFramesV2_ACU>;
+            try {
+                frame.logEntries = [];
+                finalScheduleSummary = collectScheduleSummaryFromFramesV2_ACU(chat, options.isolationKey, { maxMessageIndex: targetIndex });
+            } finally {
+                frame.logEntries = originalTargetLogEntries;
+            }
+            if (originalCheckpoint.hadCheckpoint === true) {
+                frame.checkpoint = {
+                    kind: 'full',
+                    createdAt: Number.isFinite(originalCheckpoint.createdAt) ? originalCheckpoint.createdAt as number : Date.now(),
+                    reason: originalCheckpoint.reason || 'manual',
+                    data: finalizedData,
+                    scheduleSummary: finalScheduleSummary,
+                };
+                if (options.save !== false) {
+                    await saveChatToHost_ACU();
+                    await reloadStorageProvider();
+                }
+                return { success: true, changed: true, targetMessageIndex: targetIndex, restoredCheckpoint: true, finalizedNormalCheckpointIndices };
+            }
+
+            checkpoint.data = finalizedData;
+            checkpoint.scheduleSummary = finalScheduleSummary;
+            const downgraded = downgradeV2FullCheckpointAtIndex_ACU(chat, options.isolationKey, targetIndex);
+            if (!downgraded) {
+                return { success: false, changed: false, error: `手动重填临时 checkpoint 收尾失败：temporaryCheckpointIndex=${targetIndex} 无法降级临时 full checkpoint。`, targetMessageIndex: targetIndex };
+            }
+            if (options.save !== false) {
+                await saveChatToHost_ACU();
+                await reloadStorageProvider();
+            }
+            return { success: true, changed: true, targetMessageIndex: targetIndex, downgradedTemporaryCheckpoint: true, finalizedNormalCheckpointIndices };
+        } catch (error: any) {
+            return { success: false, changed: false, error: error?.message || String(error || '手动重填临时 checkpoint 收尾失败。') };
+        }
     });
 }
 

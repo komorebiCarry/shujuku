@@ -39,14 +39,31 @@ export interface ManualRefillProgressV2_ACU {
   updatedAt: number;
 }
 
+export type TableCheckpointReasonV2_ACU =
+  | 'init'
+  | 'periodic'
+  | 'manual'
+  | 'schema_change'
+  | 'compaction'
+  | 'import'
+  | 'migration'
+  | 'manual_refill_temporary_empty_baseline';
+
 export interface TableCheckpointV2_ACU {
   kind: 'full';
   createdAt: number;
-  reason: 'init' | 'periodic' | 'manual' | 'schema_change' | 'compaction' | 'import' | 'migration';
+  reason: TableCheckpointReasonV2_ACU;
   data: TableDataObject_ACU;
   scheduleSummary?: Record<string, TableCheckpointScheduleSummaryV2_ACU>;
   event?: TableMutationEventV2_ACU;
   manualRefillProgress?: ManualRefillProgressV2_ACU;
+  source?: 'manual_refill_override';
+  cleanupToken?: string;
+  selectedSheetKeys?: string[];
+  rangeStartIndex?: number;
+  rangeEndIndex?: number;
+  contextMessageIndices?: number[];
+  originalCheckpoint?: { hadCheckpoint: boolean; reason?: TableCheckpointReasonV2_ACU; createdAt?: number };
 }
 
 export type TableMutationOperationV2_ACU =

@@ -84,7 +84,7 @@ vi.mock('../../../src/service/ai/prompt-builder', () => ({
   prepareAIInput_ACU: (...args: any[]) => mockPrepareAIInput(...args),
 }));
 
-const { mockChatArrayForSeedStage, mockIndependentTableStates, mockGetChatArray_ACU, mockClearManualRefillIncrementalDataInRange, mockClearManualRefillSheetDataInRange, mockEnsureBoundaryCheckpoint, mockShouldRotateBoundaryCheckpoint, mockPurgeSheetKeysFromChatHistoryHard } = vi.hoisted(() => {
+const { mockChatArrayForSeedStage, mockIndependentTableStates, mockGetChatArray_ACU, mockClearManualRefillIncrementalDataInRange, mockClearManualRefillSheetDataInRange, mockCreateManualRefillTemporaryEmptyCheckpoint, mockFinalizeManualRefillTemporaryCheckpoint, mockEnsureBoundaryCheckpoint, mockShouldRotateBoundaryCheckpoint, mockPurgeSheetKeysFromChatHistoryHard } = vi.hoisted(() => {
   const chatArray: any[] = [];
   const independentTableStates: Record<string, any> = {};
   return {
@@ -93,6 +93,8 @@ const { mockChatArrayForSeedStage, mockIndependentTableStates, mockGetChatArray_
     mockGetChatArray_ACU: vi.fn(() => chatArray),
     mockClearManualRefillIncrementalDataInRange: vi.fn().mockResolvedValue(0),
     mockClearManualRefillSheetDataInRange: vi.fn().mockResolvedValue(0),
+    mockCreateManualRefillTemporaryEmptyCheckpoint: vi.fn().mockResolvedValue({ success: true, changed: true, targetMessageIndex: 1, cleanupToken: 'cleanup-test' }),
+    mockFinalizeManualRefillTemporaryCheckpoint: vi.fn().mockResolvedValue({ success: true, changed: true, targetMessageIndex: 1, restoredCheckpoint: true }),
     mockEnsureBoundaryCheckpoint: vi.fn().mockResolvedValue({ success: true, changed: false, skipped: true }),
     mockShouldRotateBoundaryCheckpoint: vi.fn(() => false),
     mockPurgeSheetKeysFromChatHistoryHard: vi.fn().mockResolvedValue({ changed: true, changedCount: 1 }),
@@ -103,6 +105,8 @@ vi.mock('../../../src/service/chat/chat-service', () => ({
   clearTableDataAtFloors_ACU: vi.fn().mockResolvedValue(0),
   clearManualRefillIncrementalDataInRange_ACU: mockClearManualRefillIncrementalDataInRange,
   clearManualRefillSheetDataInRange_ACU: mockClearManualRefillSheetDataInRange,
+  createManualRefillTemporaryEmptyCheckpoint_ACU: mockCreateManualRefillTemporaryEmptyCheckpoint,
+  finalizeManualRefillTemporaryCheckpoint_ACU: mockFinalizeManualRefillTemporaryCheckpoint,
   ensureV2BoundaryCheckpointForRetainedBuffer_ACU: mockEnsureBoundaryCheckpoint,
   shouldRotateV2BoundaryCheckpointForRetainedBuffer_ACU: mockShouldRotateBoundaryCheckpoint,
 }));
@@ -242,6 +246,9 @@ beforeEach(() => {
   Object.keys(mockIndependentTableStates).forEach(key => delete mockIndependentTableStates[key]);
   mockGetChatArray_ACU.mockImplementation(() => mockChatArrayForSeedStage);
   mockClearManualRefillIncrementalDataInRange.mockResolvedValue(0);
+  mockClearManualRefillSheetDataInRange.mockResolvedValue(0);
+  mockCreateManualRefillTemporaryEmptyCheckpoint.mockResolvedValue({ success: true, changed: true, targetMessageIndex: 1, cleanupToken: 'cleanup-test' });
+  mockFinalizeManualRefillTemporaryCheckpoint.mockResolvedValue({ success: true, changed: true, targetMessageIndex: 1, restoredCheckpoint: true });
   mockEnsureBoundaryCheckpoint.mockResolvedValue({ success: true, changed: false, skipped: true });
   mockPurgeSheetKeysFromChatHistoryHard.mockResolvedValue({ changed: true, changedCount: 1 });
   mockReloadStorageProvider.mockResolvedValue(undefined);
@@ -1270,6 +1277,103 @@ describe('orchestrateManualUpdate_ACU', () => {
     expect(mockPersistTablesToChatMessage).toHaveBeenCalledTimes(1);
   });
 
+  it('事务式手动重填范围包含 full checkpoint 且未确认时中止，避免静默删除 checkpoint 基底', async () => {
+    const { getChatArray_ACU, clearManualRefillSheetDataInRange_ACU, createManualRefillTemporaryEmptyCheckpoint_ACU } = await import('../../../src/service/chat/chat-service');
+    vi.mocked(getChatArray_ACU).mockReturnValue([
+      { is_user: true },
+      {
+        is_user: false,
+        mes: 'AI回复1',
+        TavernDB_ACU_IsolatedData: {
+          '': {
+            _acu_storage_version: 2,
+            storageFrame: {
+              version: 2,
+              logEntries: [],
+              checkpoint: { kind: 'full', reason: 'init', createdAt: 1, data: { sheet_0: { name: '测试表A', content: [['row_id', '值A'], ['old', '旧基底']] } } },
+            },
+          },
+        },
+      },
+      { is_user: true },
+      { is_user: false, mes: 'AI回复2' },
+    ]);
+    mockCurrentJsonTableData = { sheet_0: { name: '测试表A', updateConfig: {}, content: [['row_id', '值A']] } };
+
+    const processBatch = vi.fn().mockResolvedValue({ success: true });
+    const result = await orchestrateManualUpdate_ACU(['sheet_0'], processBatch, mockRefreshData, { clearBeforeUpdate: true });
+
+    expect(result.success).toBe(false);
+    expect(result.error).toContain('手动重填范围包含 full checkpoint');
+    expect(result.error).toContain('AI 第 1 层');
+    expect(createManualRefillTemporaryEmptyCheckpoint_ACU).not.toHaveBeenCalled();
+    expect(clearManualRefillSheetDataInRange_ACU).not.toHaveBeenCalled();
+    expect(mockReloadStorageProvider).not.toHaveBeenCalled();
+    expect(processBatch).not.toHaveBeenCalled();
+    expect(mockPersistTablesToChatMessage).not.toHaveBeenCalled();
+  });
+
+  it('事务式手动重填范围包含 full checkpoint 且已确认时允许继续预处理', async () => {
+    const { getChatArray_ACU, clearManualRefillSheetDataInRange_ACU, createManualRefillTemporaryEmptyCheckpoint_ACU, finalizeManualRefillTemporaryCheckpoint_ACU } = await import('../../../src/service/chat/chat-service');
+    vi.mocked(getChatArray_ACU).mockReturnValue([
+      { is_user: true },
+      { is_user: false, mes: 'AI回复1' },
+      { is_user: true },
+      { is_user: false, mes: 'AI回复2', TavernDB_ACU_IsolatedData: { '': { _acu_storage_version: 2, storageFrame: { version: 2, logEntries: [], checkpoint: { kind: 'full', reason: 'manual', createdAt: 2, data: { sheet_0: { name: '测试表A', content: [['row_id', '值A'], ['old', '旧基底']] } } } } } } },
+    ]);
+    const baseDataBeforeUpdate = { sheet_0: { name: '测试表A', updateConfig: {}, content: [['row_id', '值A']] } };
+    mockCurrentJsonTableData = baseDataBeforeUpdate;
+    mockCallCustomOpenAI.mockResolvedValue('<tableEdit>sheet_0</tableEdit>');
+
+    const result = await orchestrateManualUpdate_ACU(['sheet_0'], vi.fn().mockResolvedValue({ success: true }), mockRefreshData, { clearBeforeUpdate: true, confirmedCheckpointOverwrite: true });
+
+    expect(result.success).toBe(true);
+    expect(result.temporaryCheckpointIndex).toBe(1);
+    expect(result.temporaryCheckpointCleanupToken).toBe('cleanup-test');
+    expect(createManualRefillTemporaryEmptyCheckpoint_ACU).toHaveBeenCalledWith({
+      isolationKey: '',
+      targetMessageIndex: 1,
+      selectedSheetKeys: ['sheet_0'],
+      baseData: baseDataBeforeUpdate,
+      rangeStartIndex: 1,
+      rangeEndIndex: 3,
+      contextMessageIndices: [1, 3],
+    });
+    expect(finalizeManualRefillTemporaryCheckpoint_ACU).toHaveBeenCalledWith({
+      isolationKey: '',
+      temporaryCheckpointIndex: 1,
+      cleanupToken: 'cleanup-test',
+      selectedSheetKeys: ['sheet_0'],
+      rangeStartIndex: 1,
+      rangeEndIndex: 3,
+      contextMessageIndices: [1, 3],
+    });
+    expect(clearManualRefillSheetDataInRange_ACU).toHaveBeenCalledWith([1, 3], ['sheet_0']);
+    expect(mockReloadStorageProvider).toHaveBeenCalledTimes(1);
+    expect(mockClearManualRefillSheetDataInRange.mock.invocationCallOrder[0]).toBeLessThan(mockCreateManualRefillTemporaryEmptyCheckpoint.mock.invocationCallOrder[0]);
+    expect(mockCreateManualRefillTemporaryEmptyCheckpoint.mock.invocationCallOrder[0]).toBeLessThan(mockReloadStorageProvider.mock.invocationCallOrder[0]);
+    expect(mockFinalizeManualRefillTemporaryCheckpoint.mock.invocationCallOrder[0]).toBeLessThan(mockEnsureBoundaryCheckpoint.mock.invocationCallOrder[0]);
+  });
+
+  it('事务式手动重填临时空白 checkpoint 建立失败时中止，不刷新运行时快照', async () => {
+    const { getChatArray_ACU, clearManualRefillSheetDataInRange_ACU, createManualRefillTemporaryEmptyCheckpoint_ACU } = await import('../../../src/service/chat/chat-service');
+    vi.mocked(getChatArray_ACU).mockReturnValue([
+      { is_user: true },
+      { is_user: false, mes: 'AI回复1', TavernDB_ACU_IsolatedData: { '': { _acu_storage_version: 2, storageFrame: { version: 2, logEntries: [], checkpoint: { kind: 'full', reason: 'manual', createdAt: 2, data: { sheet_0: { name: '测试表A', content: [['row_id', '值A'], ['old', '旧基底']] } } } } } } },
+      { is_user: true },
+      { is_user: false, mes: 'AI回复2' },
+    ]);
+    mockCurrentJsonTableData = { sheet_0: { name: '测试表A', updateConfig: {}, content: [['row_id', '值A']] } };
+    vi.mocked(createManualRefillTemporaryEmptyCheckpoint_ACU).mockResolvedValueOnce({ success: false, changed: false, error: 'temporary checkpoint failed' });
+
+    const result = await orchestrateManualUpdate_ACU(['sheet_0'], vi.fn().mockResolvedValue({ success: true }), mockRefreshData, { clearBeforeUpdate: true, confirmedCheckpointOverwrite: true });
+
+    expect(result.success).toBe(false);
+    expect(result.error).toContain('temporary checkpoint failed');
+    expect(clearManualRefillSheetDataInRange_ACU).toHaveBeenCalledWith([1, 3], ['sheet_0']);
+    expect(mockReloadStorageProvider).not.toHaveBeenCalled();
+  });
+
   it('事务式手动重填启动前仅清空重填范围内选中表历史数据', async () => {
     const { getChatArray_ACU, clearManualRefillSheetDataInRange_ACU, clearTableDataAtFloors_ACU } = await import('../../../src/service/chat/chat-service');
     vi.mocked(getChatArray_ACU).mockReturnValue([
@@ -1433,7 +1537,7 @@ describe('orchestrateManualUpdate_ACU', () => {
 
 
   it('已有 V2 增量但无 full checkpoint 时手动重填中止，避免静默空表', async () => {
-    const { getChatArray_ACU } = await import('../../../src/service/chat/chat-service');
+    const { getChatArray_ACU, clearManualRefillSheetDataInRange_ACU } = await import('../../../src/service/chat/chat-service');
     const { parseTableTemplateJson_ACU } = await import('../../../src/shared/utils');
     vi.mocked(parseTableTemplateJson_ACU).mockReturnValue({
       mate: { type: 'acu' },
@@ -1480,6 +1584,8 @@ describe('orchestrateManualUpdate_ACU', () => {
 
     expect(result.success).toBe(false);
     expect(result.error).toContain('找不到可用 full checkpoint');
+    expect(clearManualRefillSheetDataInRange_ACU).not.toHaveBeenCalled();
+    expect(mockReloadStorageProvider).not.toHaveBeenCalled();
     expect(processBatch).not.toHaveBeenCalled();
     expect(mockPersistTablesToChatMessage).not.toHaveBeenCalled();
   });
@@ -1541,7 +1647,7 @@ describe('orchestrateManualUpdate_ACU', () => {
     mockCurrentJsonTableData = { sheet_0: { name: '测试表A', updateConfig: {}, content: [['row_id', '值A'], ['1', '旧A']] } };
 
     const processBatch = vi.fn().mockResolvedValue({ success: true });
-    const result = await orchestrateManualUpdate_ACU(['sheet_0'], processBatch, mockRefreshData, { clearBeforeUpdate: true });
+    const result = await orchestrateManualUpdate_ACU(['sheet_0'], processBatch, mockRefreshData, { clearBeforeUpdate: true, confirmedCheckpointOverwrite: true });
 
     expect(result.success).toBe(false);
     expect(result.error).toContain('找不到可用 full checkpoint');
@@ -1550,7 +1656,7 @@ describe('orchestrateManualUpdate_ACU', () => {
   });
 
   it('存在其他 isolationKey 的 V2 checkpoint 时手动重填中止，避免把隔离键不匹配误判为空表', async () => {
-    const { getChatArray_ACU } = await import('../../../src/service/chat/chat-service');
+    const { getChatArray_ACU, clearManualRefillSheetDataInRange_ACU } = await import('../../../src/service/chat/chat-service');
     const { parseTableTemplateJson_ACU } = await import('../../../src/shared/utils');
     vi.mocked(parseTableTemplateJson_ACU).mockReturnValue({
       mate: { type: 'acu' },
@@ -1586,6 +1692,8 @@ describe('orchestrateManualUpdate_ACU', () => {
 
     expect(result.success).toBe(false);
     expect(result.error).toContain('isolationKey 不匹配');
+    expect(clearManualRefillSheetDataInRange_ACU).not.toHaveBeenCalled();
+    expect(mockReloadStorageProvider).not.toHaveBeenCalled();
     expect(processBatch).not.toHaveBeenCalled();
     expect(mockPersistTablesToChatMessage).not.toHaveBeenCalled();
   });
@@ -1717,6 +1825,41 @@ describe('orchestrateManualUpdate_ACU', () => {
     expect(result.checkpointWarning).toContain('边界 checkpoint 写入失败');
     expect(mockEnsureBoundaryCheckpoint).toHaveBeenCalledTimes(1);
   });
+
+  it('事务式手动重填 finalize 与 boundary 都失败时合并 checkpointWarning', async () => {
+    const { getChatArray_ACU } = await import('../../../src/service/chat/chat-service');
+    vi.mocked(getChatArray_ACU).mockReturnValue([
+      { is_user: true },
+      {
+        is_user: false,
+        mes: 'AI回复',
+        TavernDB_ACU_IsolatedData: {
+          '': {
+            _acu_storage_version: 2,
+            storageFrame: {
+              version: 2,
+              logEntries: [],
+              checkpoint: { kind: 'full', reason: 'manual', createdAt: 2, data: { sheet_0: { name: '测试表', content: [['row_id', '值'], ['old', '旧值']] } } },
+            },
+          },
+        },
+      },
+    ]);
+    mockCurrentJsonTableData = { sheet_0: { name: '测试表', updateConfig: {}, content: [['row_id', '值']] } };
+    mockCallCustomOpenAI.mockResolvedValue('<tableEdit>sheet_0</tableEdit>');
+    mockFinalizeManualRefillTemporaryCheckpoint.mockResolvedValueOnce({ success: false, changed: false, error: 'finalize failed' });
+    mockEnsureBoundaryCheckpoint.mockResolvedValueOnce({ success: false, changed: false, error: 'boundary failed' });
+
+    const result = await orchestrateManualUpdate_ACU(['sheet_0'], vi.fn().mockResolvedValue({ success: true }), mockRefreshData, { clearBeforeUpdate: true, confirmedCheckpointOverwrite: true });
+
+    expect(result.success).toBe(true);
+    expect(result.checkpointWarning).toContain('finalize failed');
+    expect(result.checkpointWarning).toContain('boundary failed');
+    expect(mockFinalizeManualRefillTemporaryCheckpoint).toHaveBeenCalledTimes(1);
+    expect(mockEnsureBoundaryCheckpoint).toHaveBeenCalledTimes(1);
+    expect(mockFinalizeManualRefillTemporaryCheckpoint.mock.invocationCallOrder[0]).toBeLessThan(mockEnsureBoundaryCheckpoint.mock.invocationCallOrder[0]);
+  });
+
 
   it('boundary checkpoint 建立抛异常时保留成功结果、返回 checkpointWarning 并记录异常详情', async () => {
     const { getChatArray_ACU } = await import('../../../src/service/chat/chat-service');
