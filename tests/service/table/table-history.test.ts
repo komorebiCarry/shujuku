@@ -318,6 +318,38 @@ describe('resolveTableHistoryStateFromChat_ACU', () => {
     expect(getLatestTableAppendMessageIndexFromChat_ACU(chat, '', settings)).toBe(3);
   });
 
+
+  it('识别 perSheet checkpoint 的单表数据与压缩填表楼层', () => {
+    const chat = [
+      v2Message({
+        version: 2,
+        perSheetCheckpoints: {
+          sheet_0: {
+            kind: 'sheet_full',
+            createdAt: 1,
+            reason: 'manual',
+            sheetKey: 'sheet_0',
+            data: { name: '表A', content: [['row_id'], ['1']] },
+            scheduleSummary: { lastFilledAiFloor: 6 },
+          },
+        },
+        logEntries: [],
+      }),
+    ];
+
+    const state = resolveTableHistoryStateFromChat_ACU(chat, {
+      sheetKey: 'sheet_0',
+      isSummaryTable: false,
+      isolationKey: '',
+      settings,
+    });
+
+    expect(state.hasAnyData).toBe(true);
+    expect(state.hasTrackedUpdate).toBe(true);
+    expect(state.latestDataAiFloor).toBe(1);
+    expect(state.lastTrackedUpdateAiFloor).toBe(6);
+  });
+
   it('收集当前隔离标签的 V2 full checkpoint AI 楼层', () => {
     const chat = [
       { is_user: true },

@@ -160,4 +160,42 @@ describe('scanTargetKeysResidue_ACU', () => {
       'logEntries[7].note',
     ]);
   });
+
+  it('把目标 perSheet checkpoint 纳入既有 checkpoint 风险报告', () => {
+    const msg: any = {
+      TavernDB_ACU_IsolatedData: {
+        tag1: {
+          storageFrame: {
+            perSheetCheckpoints: {
+              sheet_x: {
+                kind: 'sheet_full',
+                createdAt: 456,
+                reason: 'manual',
+                sheetKey: 'sheet_x',
+                data: { name: '目标表' },
+                scheduleSummary: { lastFilledAiFloor: 7 },
+                event: { filledSheetKeys: ['sheet_x'], changedSheetKeys: [], groupKeys: [] },
+              },
+            },
+            logEntries: [],
+          },
+        },
+      },
+    };
+
+    const report = scanTargetKeysResidue_ACU(msg, 'tag1', ['sheet_x'], 9);
+
+    expect(report.checkpointDataRisk).toBe(true);
+    expect(report.scheduleSummaryRisk).toBe(true);
+    expect(report.exactHits).toBe(1);
+    expect(report.checkpointDataRisks).toEqual([{
+      messageIndex: 9,
+      tagKey: 'tag1',
+      targetKey: 'sheet_x',
+      kind: 'sheet_full',
+      reason: 'manual',
+      createdAt: 456,
+    }]);
+  });
+
 });

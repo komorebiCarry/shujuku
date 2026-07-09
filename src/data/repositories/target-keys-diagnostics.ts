@@ -17,6 +17,7 @@ export interface TargetKeysCheckpointDataRisk_ACU {
     targetKey: string;
     reason?: string;
     createdAt?: number;
+    kind?: 'full' | 'sheet_full';
 }
 
 export interface TargetKeysResidueReport_ACU {
@@ -177,6 +178,27 @@ export function scanTargetKeysResidue_ACU(msg: any, isolationKey: string, target
         report.checkpointDataRisks = collectCheckpointDataRisks_ACU(checkpoint, targetKeys, isolationKey || '', messageIndex);
         report.exactHits += scanEventLike_ACU(checkpoint.event, targetKeys);
         report.exactHits += scanManualRefillProgress_ACU(checkpoint.manualRefillProgress, targetKeys);
+    }
+
+    const perSheetCheckpoints = frame.perSheetCheckpoints;
+    if (isObjectRecord_ACU(perSheetCheckpoints)) {
+        targetKeys.forEach(targetKey => {
+            const sheetCheckpoint = perSheetCheckpoints[targetKey];
+            if (!isObjectRecord_ACU(sheetCheckpoint) || sheetCheckpoint.kind !== 'sheet_full') return;
+            report.checkpointDataRisk = true;
+            if (isObjectRecord_ACU(sheetCheckpoint.scheduleSummary)) report.scheduleSummaryRisk = true;
+            const risk: TargetKeysCheckpointDataRisk_ACU = {
+                messageIndex,
+                tagKey: isolationKey || '',
+                targetKey,
+                kind: 'sheet_full',
+            };
+            if (typeof sheetCheckpoint.reason === 'string') risk.reason = sheetCheckpoint.reason;
+            if (typeof sheetCheckpoint.createdAt === 'number') risk.createdAt = sheetCheckpoint.createdAt;
+            report.checkpointDataRisks.push(risk);
+            report.exactHits += scanEventLike_ACU(sheetCheckpoint.event, targetKeys);
+            report.exactHits += scanManualRefillProgress_ACU(sheetCheckpoint.manualRefillProgress, targetKeys);
+        });
     }
 
     report.exactHits += scanManualRefillProgress_ACU(frame.manualRefillProgress, targetKeys);

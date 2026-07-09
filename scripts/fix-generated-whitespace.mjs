@@ -37,6 +37,7 @@ function updateState(line, state) {
 export function normalizeGeneratedWhitespace_ACU(input) {
   let fixedIndentLineCount = 0;
   let fixedClosingLineCount = 0;
+  let fixedTrailingWhitespaceLineCount = 0;
   let state = 'code';
   const lines = String(input).split(/(\r?\n)/);
   for (let i = 0; i < lines.length; i += 2) {
@@ -51,6 +52,10 @@ export function normalizeGeneratedWhitespace_ACU(input) {
         fixedClosingLineCount += 1;
         return code;
       });
+      line = line.replace(/[\t ]+$/, match => {
+        fixedTrailingWhitespaceLineCount += 1;
+        return '';
+      });
     }
     lines[i] = line;
     state = updateState(originalLine, state);
@@ -59,21 +64,28 @@ export function normalizeGeneratedWhitespace_ACU(input) {
     text: lines.join(''),
     fixedIndentLineCount,
     fixedClosingLineCount,
+    fixedTrailingWhitespaceLineCount,
   };
 }
 
 function runCli() {
   let fixedIndentLineCount = 0;
   let fixedClosingLineCount = 0;
+  let fixedTrailingWhitespaceLineCount = 0;
   for (const artifactPath of artifactPaths) {
     if (!fs.existsSync(artifactPath)) continue;
     const original = fs.readFileSync(artifactPath, 'utf8');
     const result = normalizeGeneratedWhitespace_ACU(original);
     fixedIndentLineCount += result.fixedIndentLineCount;
     fixedClosingLineCount += result.fixedClosingLineCount;
+    fixedTrailingWhitespaceLineCount += result.fixedTrailingWhitespaceLineCount;
     if (result.text !== original) fs.writeFileSync(artifactPath, result.text, 'utf8');
   }
-  console.log(`[fix-generated-whitespace] normalized ${fixedIndentLineCount} generated indentation line(s), ${fixedClosingLineCount} generated closing line(s).`);
+  console.log(
+    `[fix-generated-whitespace] normalized ${fixedIndentLineCount} generated indentation line(s), `
+    + `${fixedClosingLineCount} generated closing line(s), `
+    + `${fixedTrailingWhitespaceLineCount} generated trailing-whitespace line(s).`,
+  );
 }
 
 if (process.argv[1] === fileURLToPath(import.meta.url)) runCli();

@@ -50,8 +50,11 @@ function v2EventTracksFill_ACU(event: any, sheetKey: string): boolean {
 }
 
 function v2ScheduleFilledFloor_ACU(tagData: any, sheetKey: string): number {
-    const value = tagData?.storageFrame?.checkpoint?.scheduleSummary?.[sheetKey]?.lastFilledAiFloor;
-    return Number.isFinite(value) && value > 0 ? Number(value) : 0;
+    const fullValue = tagData?.storageFrame?.checkpoint?.scheduleSummary?.[sheetKey]?.lastFilledAiFloor;
+    const sheetValue = tagData?.storageFrame?.perSheetCheckpoints?.[sheetKey]?.scheduleSummary?.lastFilledAiFloor;
+    const fullFloor = Number.isFinite(fullValue) && fullValue > 0 ? Number(fullValue) : 0;
+    const sheetFloor = Number.isFinite(sheetValue) && sheetValue > 0 ? Number(sheetValue) : 0;
+    return Math.max(fullFloor, sheetFloor);
 }
 
 function v2EntryAiFloor_ACU(entry: any, fallbackAiFloor: number): number {
@@ -72,6 +75,9 @@ function v2FrameHasSheetData_ACU(tagData: any, sheetKey: string): boolean {
     if (tagData.storageFrame.checkpoint?.kind === 'full' && tagData.storageFrame.checkpoint.data?.[sheetKey]) {
         return true;
     }
+    if (tagData.storageFrame.perSheetCheckpoints?.[sheetKey]?.kind === 'sheet_full') {
+        return true;
+    }
     return (tagData.storageFrame.logEntries || []).some((entry: any) =>
         v2EventTouchesSheetData_ACU(entry, sheetKey)
         || (Array.isArray(entry.operations) && entry.operations.some((operation: any) => v2OperationTouchesSheet_ACU(operation, sheetKey)))
@@ -83,6 +89,10 @@ function v2FrameTrackedUpdateFloor_ACU(tagData: any, sheetKey: string, messageAi
     let latestFloor = v2ScheduleFilledFloor_ACU(tagData, sheetKey);
     const checkpointEvent = tagData.storageFrame.checkpoint?.event;
     if (v2EventTracksFill_ACU(checkpointEvent, sheetKey)) {
+        latestFloor = Math.max(latestFloor, messageAiFloor);
+    }
+    const sheetCheckpointEvent = tagData.storageFrame.perSheetCheckpoints?.[sheetKey]?.event;
+    if (v2EventTracksFill_ACU(sheetCheckpointEvent, sheetKey)) {
         latestFloor = Math.max(latestFloor, messageAiFloor);
     }
     for (const entry of tagData.storageFrame.logEntries || []) {

@@ -1,9 +1,9 @@
 import { getChatArray_ACU, saveChatToHost_ACU } from '../../data/gateways/chat-gateway';
 import { cloneIsolatedData_ACU, writeMessageIdentity_ACU } from '../../data/repositories/chat-message-data-repo';
-import type { TableDataObject_ACU } from '../../shared/models/table-data';
+import type { Sheet_ACU, TableDataObject_ACU } from '../../shared/models/table-data';
 import { logDebug_ACU, logWarn_ACU } from '../../shared/utils';
 import { getCurrentIsolationKey_ACU, settings_ACU } from '../runtime/state-manager';
-import type { ManualRefillProgressV2_ACU, TableMutationLogEntryV2_ACU, TableMutationSourceV2_ACU, TableStorageFrameV2_ACU, TableCheckpointV2_ACU, TableMutationWriteSetV2_ACU, TableMutationOperationV2_ACU } from './storage-frame-v2-types';
+import type { ManualRefillProgressV2_ACU, TableMutationEventV2_ACU, TableMutationLogEntryV2_ACU, TableMutationSourceV2_ACU, TableStorageFrameV2_ACU, TableCheckpointV2_ACU, TableMutationWriteSetV2_ACU, TableMutationOperationV2_ACU, TableSheetCheckpointV2_ACU } from './storage-frame-v2-types';
 import { isV2TagData_ACU } from './storage-strategy-resolver';
 import { collectScheduleSummaryFromFramesV2_ACU } from './storage-frame-v2-replay';
 import type { TableWriteTransactionContext_ACU } from './table-write-transaction';
@@ -49,6 +49,21 @@ export interface PersistTableMutationV2Options_ACU {
   parentRevision?: string | null;
   writeSet?: TableMutationWriteSetV2_ACU;
   revisionWriteSet?: TableMutationWriteSetV2_ACU;
+  /** 调用方已处于 transactionContext.runCommit 临界区内时使用，避免嵌套 commit 锁。 */
+  assumeCommitLock?: boolean;
+  transactionContext?: Pick<TableWriteTransactionContext_ACU, 'runCommit' | 'baseRevision' | 'writeSet' | 'assertFresh'>;
+}
+
+export interface PersistTableSheetCheckpointV2Options_ACU {
+  targetMessageIndex?: number;
+  sheetKey: string;
+  sheetData: Sheet_ACU;
+  reason?: TableCheckpointV2_ACU['reason'];
+  createdAt?: number;
+  event?: TableMutationEventV2_ACU;
+  manualRefillProgress?: ManualRefillProgressV2_ACU;
+  isolationKey?: string;
+  baseRevision?: string | null;
   /** 调用方已处于 transactionContext.runCommit 临界区内时使用，避免嵌套 commit 锁。 */
   assumeCommitLock?: boolean;
   transactionContext?: Pick<TableWriteTransactionContext_ACU, 'runCommit' | 'baseRevision' | 'writeSet' | 'assertFresh'>;
@@ -262,6 +277,46 @@ function getOrInitV2Frame_ACU(isolatedData: Record<string, any>, isolationKey: s
   return nextTagData.storageFrame;
 }
 
+function isObjectRecord_ACU(value: unknown): value is Record<string, any> {
+  return value !== null && typeof value === 'object' && !Array.isArray(value);
+}
+
+function logEntryConflictsWithSheetCheckpoint_ACU(entry: TableMutationLogEntryV2_ACU, sheetKey: string): boolean {
+  if ([...(entry.filledSheetKeys || []), ...(entry.changedSheetKeys || []), ...(entry.groupKeys || [])].includes(sheetKey)) {
+    return true;
+  }
+
+  for (const operation of entry.operations || []) {
+    if (operation.kind === 'data_replace' || operation.kind === 'sql_batch' || operation.kind === 'table_edit_dsl') {
+      return true;
+    }
+    if ('sheetKey' in operation && operation.sheetKey === sheetKey) {
+      return true;
+    }
+  }
+
+  return (entry.patches || []).some(patch => patch.sheetKey === sheetKey);
+}
+
+function validateSheetCheckpointInput_ACU(
+  options: PersistTableSheetCheckpointV2Options_ACU,
+): { createdAt: number; reason: TableCheckpointV2_ACU['reason'] } | { error: string } {
+  if (typeof options.sheetKey !== 'string' || !options.sheetKey.startsWith('sheet_')) {
+    return { error: 'V2 sheet checkpoint requires a sheetKey beginning with "sheet_".' };
+  }
+  if (!isObjectRecord_ACU(options.sheetData)) {
+    return { error: `V2 sheet checkpoint requires object sheetData for ${options.sheetKey}.` };
+  }
+  if (!options.reason) {
+    return { error: 'V2 sheet checkpoint requires an explicit checkpoint reason.' };
+  }
+  const createdAt = options.createdAt ?? Date.now();
+  if (!Number.isFinite(createdAt) || createdAt < 0) {
+    return { error: 'V2 sheet checkpoint requires a finite non-negative createdAt.' };
+  }
+  return { createdAt, reason: options.reason };
+}
+
 async function persistTableMutationLogV2Core_ACU(
   options: PersistTableMutationV2Options_ACU,
 ): Promise<{ saved: boolean; messageIndex?: number; entry?: TableMutationLogEntryV2_ACU; error?: string }> {
@@ -393,4 +448,108 @@ export async function persistTableMutationLogV2_ACU(
     return persistTableMutationLogV2Core_ACU(options);
   }
   return options.transactionContext.runCommit(() => persistTableMutationLogV2Core_ACU(options), options.revisionWriteSet);
+}
+
+async function persistTableSheetCheckpointV2Core_ACU(
+  options: PersistTableSheetCheckpointV2Options_ACU,
+): Promise<{ saved: boolean; messageIndex?: number; checkpoint?: TableSheetCheckpointV2_ACU; error?: string }> {
+  const validation = validateSheetCheckpointInput_ACU(options);
+  if ('error' in validation) return { saved: false, error: validation.error };
+
+  const chat = getChatArray_ACU();
+  if (!chat || chat.length === 0) {
+    return { saved: false, error: 'chat history is empty' };
+  }
+  const isolationKey = options.isolationKey ?? getCurrentIsolationKey_ACU();
+  const latestFullCheckpoint = findLatestFullCheckpoint_ACU(chat, isolationKey);
+  if (!latestFullCheckpoint) {
+    return { saved: false, error: 'V2 sheet checkpoint requires an existing full checkpoint anchor.' };
+  }
+
+  const target = findTargetAiMessage_ACU(chat, options.targetMessageIndex);
+  if (!target) {
+    return { saved: false, error: 'no AI message found' };
+  }
+  if (target.index < latestFullCheckpoint.index) {
+    return { saved: false, error: `V2 sheet checkpoint target precedes the latest full checkpoint and would never replay: targetMessageIndex=${target.index}, latestFullCheckpointIndex=${latestFullCheckpoint.index}.` };
+  }
+
+  options.transactionContext?.assertFresh?.('persistTableSheetCheckpointV2:before_persist');
+  if (!chat[target.index] || chat[target.index] !== target.message || target.message.is_user) {
+    return { saved: false, error: 'target AI message changed before persist; abort stale sheet checkpoint write.' };
+  }
+
+  const isolatedData = cloneIsolatedData_ACU(target.message) as Record<string, any>;
+  const frame = getOrInitV2Frame_ACU(isolatedData, isolationKey);
+  const conflictingEntry = (frame.logEntries || []).find(entry => logEntryConflictsWithSheetCheckpoint_ACU(entry, options.sheetKey));
+  if (conflictingEntry) {
+    return {
+      saved: false,
+      error: `V2 sheet checkpoint cannot be inserted before an existing target-sheet log entry: sheetKey=${options.sheetKey}, entryId=${conflictingEntry.entryId}.`,
+    };
+  }
+
+  const existingCheckpoint = frame.perSheetCheckpoints?.[options.sheetKey];
+  if (existingCheckpoint && Number(existingCheckpoint.createdAt) > validation.createdAt) {
+    return {
+      saved: false,
+      error: `V2 sheet checkpoint cannot replace a newer checkpoint: sheetKey=${options.sheetKey}, existingCreatedAt=${existingCheckpoint.createdAt}, requestedCreatedAt=${validation.createdAt}.`,
+    };
+  }
+
+  const scheduleSummary = collectScheduleSummaryFromFramesV2_ACU(chat, isolationKey, { maxMessageIndex: target.index })[options.sheetKey];
+  const checkpoint: TableSheetCheckpointV2_ACU = {
+    kind: 'sheet_full',
+    createdAt: validation.createdAt,
+    reason: validation.reason,
+    sheetKey: options.sheetKey,
+    data: deepClone_ACU(options.sheetData),
+    ...(scheduleSummary ? { scheduleSummary: deepClone_ACU(scheduleSummary) } : {}),
+    ...(options.event ? { event: deepClone_ACU(options.event) } : {}),
+    ...(options.manualRefillProgress ? { manualRefillProgress: deepClone_ACU(options.manualRefillProgress) } : {}),
+    ...(options.baseRevision !== undefined || options.transactionContext?.baseRevision !== undefined
+      ? { baseRevision: options.baseRevision !== undefined ? options.baseRevision : options.transactionContext?.baseRevision }
+      : {}),
+  };
+
+  const hadIsolatedData = Object.prototype.hasOwnProperty.call(target.message, 'TavernDB_ACU_IsolatedData');
+  const previousIsolatedData = target.message.TavernDB_ACU_IsolatedData;
+  const hadIdentity = Object.prototype.hasOwnProperty.call(target.message, 'TavernDB_ACU_Identity');
+  const previousIdentity = target.message.TavernDB_ACU_Identity;
+  frame.perSheetCheckpoints = {
+    ...(frame.perSheetCheckpoints || {}),
+    [options.sheetKey]: checkpoint,
+  };
+  try {
+    target.message.TavernDB_ACU_IsolatedData = isolatedData;
+    writeMessageIdentity_ACU(target.message, {
+      enabled: settings_ACU.dataIsolationEnabled,
+      code: settings_ACU.dataIsolationCode,
+    });
+    await saveChatToHost_ACU();
+  } catch (error) {
+    if (hadIsolatedData) {
+      target.message.TavernDB_ACU_IsolatedData = previousIsolatedData;
+    } else {
+      delete target.message.TavernDB_ACU_IsolatedData;
+    }
+    if (hadIdentity) {
+      target.message.TavernDB_ACU_Identity = previousIdentity;
+    } else {
+      delete target.message.TavernDB_ACU_Identity;
+    }
+    throw error;
+  }
+  logDebug_ACU(`[V2 Persist] 写入单表 checkpoint: messageIndex=${target.index}, sheetKey=${options.sheetKey}, createdAt=${checkpoint.createdAt}`);
+  return { saved: true, messageIndex: target.index, checkpoint };
+}
+
+export async function persistTableSheetCheckpointV2_ACU(
+  options: PersistTableSheetCheckpointV2Options_ACU,
+): Promise<{ saved: boolean; messageIndex?: number; checkpoint?: TableSheetCheckpointV2_ACU; error?: string }> {
+  if (!options.transactionContext) {
+    return { saved: false, error: 'V2 sheet checkpoint write requires TableWriteTransactionContext; direct unsafe writes are not allowed.' };
+  }
+  if (options.assumeCommitLock) return persistTableSheetCheckpointV2Core_ACU(options);
+  return options.transactionContext.runCommit(() => persistTableSheetCheckpointV2Core_ACU(options), []);
 }

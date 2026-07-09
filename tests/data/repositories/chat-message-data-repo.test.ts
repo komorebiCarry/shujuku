@@ -612,6 +612,32 @@ describe('purgeSheetKeysFromMessage_ACU', () => {
 
     expect(purgeSheetKeysFromMessage_ACU(msg, ['sheet_0'])).toBe(false);
   });
+
+  it('完整清理会删除目标 perSheet checkpoint，并保留其他表 shard', () => {
+    const keepShard = {
+      kind: 'sheet_full', createdAt: 2, reason: 'manual', sheetKey: 'sheet_1',
+      data: { name: '保留表' }, scheduleSummary: { lastFilledAiFloor: 3 },
+    };
+    const msg: any = {
+      TavernDB_ACU_IsolatedData: {
+        tag1: {
+          storageFrame: {
+            version: 2,
+            perSheetCheckpoints: {
+              sheet_0: { kind: 'sheet_full', createdAt: 1, reason: 'manual', sheetKey: 'sheet_0', data: { name: '被删表' } },
+              sheet_1: keepShard,
+            },
+            logEntries: [],
+          },
+        },
+      },
+    };
+
+    expect(purgeSheetKeysFromMessage_ACU(msg, ['sheet_0'])).toBe(true);
+    expect(msg.TavernDB_ACU_IsolatedData.tag1.storageFrame.perSheetCheckpoints.sheet_0).toBeUndefined();
+    expect(msg.TavernDB_ACU_IsolatedData.tag1.storageFrame.perSheetCheckpoints.sheet_1).toEqual(keepShard);
+  });
+
 });
 
 
@@ -1080,6 +1106,39 @@ describe('purgeManualRefillIncrementalSheetKeysFromMessage_ACU', () => {
     expect(msg.TavernDB_ACU_IsolatedData.tag2.storageFrame.logEntries[0].operations).toEqual([
       { kind: 'sheet_replace', sheetKey: 'sheet_0', sheet: { name: 'tag2 不应被清理' }, reason: 'manual_crud' },
     ]);
+  });
+
+  it('增量预清除保留目标 perSheet checkpoint，只删除目标日志', () => {
+    const shard = {
+      kind: 'sheet_full',
+      createdAt: 1,
+      reason: 'manual',
+      sheetKey: 'sheet_0',
+      data: { name: '新基底' },
+      scheduleSummary: { lastFilledAiFloor: 5 },
+      event: { filledSheetKeys: ['sheet_0'], changedSheetKeys: ['sheet_0'], groupKeys: [] },
+    };
+    const msg: any = {
+      TavernDB_ACU_IsolatedData: {
+        tag1: {
+          storageFrame: {
+            version: 2,
+            perSheetCheckpoints: { sheet_0: shard },
+            logEntries: [{
+              seq: 1,
+              filledSheetKeys: ['sheet_0'],
+              changedSheetKeys: ['sheet_0'],
+              operations: [{ kind: 'sheet_replace', sheetKey: 'sheet_0', sheet: { name: '旧增量' }, reason: 'manual_crud' }],
+            }],
+          },
+        },
+      },
+    };
+    const before = JSON.parse(JSON.stringify(shard));
+
+    expect(purgeManualRefillIncrementalSheetKeysFromMessage_ACU(msg, 'tag1', ['sheet_0'])).toBe(true);
+    expect(msg.TavernDB_ACU_IsolatedData.tag1.storageFrame.perSheetCheckpoints.sheet_0).toEqual(before);
+    expect(msg.TavernDB_ACU_IsolatedData.tag1.storageFrame.logEntries).toEqual([]);
   });
 });
 

@@ -49,6 +49,19 @@ export interface TableCheckpointV2_ACU {
   manualRefillProgress?: ManualRefillProgressV2_ACU;
 }
 
+/** 同一 V2 frame 内的单表恢复基底；不承担 mate 或其他根级元数据。 */
+export interface TableSheetCheckpointV2_ACU {
+  kind: 'sheet_full';
+  createdAt: number;
+  reason: TableCheckpointV2_ACU['reason'];
+  sheetKey: string;
+  data: Sheet_ACU;
+  scheduleSummary?: TableCheckpointScheduleSummaryV2_ACU;
+  event?: TableMutationEventV2_ACU;
+  manualRefillProgress?: ManualRefillProgressV2_ACU;
+  baseRevision?: string | null;
+}
+
 export type TableMutationOperationV2_ACU =
   | TableSqlBatchOperationV2_ACU
   | TableSqlSheetBatchOperationV2_ACU
@@ -161,6 +174,7 @@ export interface TableStorageFrameV2_ACU {
   version: 2;
   headRevision?: string | null;
   checkpoint?: TableCheckpointV2_ACU;
+  perSheetCheckpoints?: Record<string, TableSheetCheckpointV2_ACU>;
   manualRefillProgress?: ManualRefillProgressV2_ACU;
   logEntries: TableMutationLogEntryV2_ACU[];
 }

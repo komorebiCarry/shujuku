@@ -371,6 +371,14 @@ function purgeSheetKeysFromStorageFrameV2_ACU(frame: any, sheetKeys: Set<string>
 
     if (purgeManualRefillProgressV2_ACU(frame.manualRefillProgress, sheetKeys)) changed = true;
 
+    if (isObjectRecord_ACU(frame.perSheetCheckpoints)) {
+        sheetKeys.forEach(sheetKey => {
+            if (!Object.prototype.hasOwnProperty.call(frame.perSheetCheckpoints, sheetKey)) return;
+            delete frame.perSheetCheckpoints[sheetKey];
+            changed = true;
+        });
+    }
+
     if (Array.isArray(frame.logEntries)) {
         frame.logEntries.forEach((entry: any) => {
             if (!isObjectRecord_ACU(entry)) return;
@@ -409,6 +417,8 @@ function purgeSheetKeysFromStorageFrameV2_ACU(frame: any, sheetKeys: Set<string>
 
 function purgeManualRefillIncrementalSheetKeysFromStorageFrameV2_ACU(frame: any, sheetKeys: Set<string>): boolean {
     if (!isObjectRecord_ACU(frame)) return false;
+    // 单表 checkpoint 是重放基底；增量预清除只裁剪日志和重填进度，不能删除或改写 shard。
+    // 需要替换基底时必须走完整的 purgeSheetKeysFromStorageFrameV2_ACU 流程。
     let changed = false;
     const targetSqlTableNames = collectSqlTargetTableNamesFromStorageFrameV2_ACU(frame, sheetKeys);
 

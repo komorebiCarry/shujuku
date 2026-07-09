@@ -24,6 +24,7 @@ import {
   getChatLength_ACU,
   getLastMessageIndex_ACU,
   saveChatToHost_ACU,
+  saveChatToHostStrict_ACU,
   stopGeneration_ACU,
   deleteLastMessage_ACU,
   setChatMessages_ACU,
@@ -79,6 +80,20 @@ describe('saveChatToHost_ACU', () => {
     mockSillyTavern.saveChat = vi.fn().mockResolvedValue(undefined);
     await saveChatToHost_ACU();
     expect(mockSillyTavern.saveChat).toHaveBeenCalled();
+  });
+});
+
+describe('saveChatToHostStrict_ACU', () => {
+  it('saveChat 不可用时抛错，不把未提交误认为保存成功', async () => {
+    await expect(saveChatToHostStrict_ACU()).rejects.toThrow('宿主 saveChat 不可用');
+  });
+
+  it('saveChat 可用时执行真实保存', async () => {
+    mockSillyTavern.saveChat = vi.fn().mockResolvedValue(undefined);
+
+    await saveChatToHostStrict_ACU();
+
+    expect(mockSillyTavern.saveChat).toHaveBeenCalledTimes(1);
   });
 });
 

@@ -453,6 +453,170 @@ describe('loadTableStateFromFramesV2_ACU', () => {
     expect(result?.sheet_1.content).toEqual([['row_id', '值'], ['1', 'legacy-b'], ['2', 'row-upsert-b']]);
   });
 
+  it('按跨 frame 时间线回放旧 SQL、单表 checkpoint、新 SQL 与后续替换操作', async () => {
+    const rootData = {
+      mate: { type: 'acu', version: 1 },
+      sheet_inventory: {
+        uid: 'inventory',
+        name: '背包',
+        content: [['row_id', 'name'], ['1', '铁剑']],
+        sourceData: { ddl: 'CREATE TABLE inventory (row_id INTEGER PRIMARY KEY, name TEXT);' },
+        updateConfig: {},
+        exportConfig: {},
+        orderNo: 0,
+      },
+      sheet_equipment: {
+        uid: 'equipment',
+        name: '装备',
+        content: [['row_id', 'name'], ['1', '布甲']],
+        sourceData: { ddl: 'CREATE TABLE equipment (row_id INTEGER PRIMARY KEY, name TEXT);' },
+        updateConfig: {},
+        exportConfig: {},
+        orderNo: 1,
+      },
+    } as any;
+    const shardData = {
+      ...rootData.sheet_inventory,
+      content: [['row_id', 'name'], ['1', '分片剑']],
+    };
+    const replacementData = {
+      mate: { type: 'acu', version: 1 },
+      sheet_inventory: {
+        ...rootData.sheet_inventory,
+        content: [['row_id', 'name'], ['1', '替换前剑']],
+      },
+      sheet_equipment: {
+        ...rootData.sheet_equipment,
+        content: [['row_id', 'name'], ['1', '替换后布甲']],
+      },
+    } as any;
+    const entry = (seq: number, entryId: string, operations: any[]) => ({
+      seq,
+      entryId,
+      createdAt: seq + 1,
+      source: 'manual_crud',
+      targetMessageIndex: 0,
+      aiFloor: 1,
+      filledSheetKeys: [],
+      changedSheetKeys: [],
+      groupKeys: [],
+      operations,
+    });
+    const chat: any[] = [
+      {
+        is_user: false,
+        TavernDB_ACU_IsolatedData: {
+          '': {
+            _acu_storage_version: 2,
+            storageFrame: {
+              version: 2,
+              checkpoint: { kind: 'full', createdAt: 1, reason: 'init', data: rootData },
+              logEntries: [entry(1, 'legacy-cross-sheet-sql', [{
+                kind: 'sql_batch',
+                statements: [
+                  "UPDATE inventory SET name = '旧 SQL 剑' WHERE row_id = 1",
+                  "UPDATE equipment SET name = '旧 SQL 甲' WHERE row_id = 1",
+                ],
+              }])],
+            },
+          },
+        },
+      },
+      {
+        is_user: false,
+        TavernDB_ACU_IsolatedData: {
+          '': {
+            _acu_storage_version: 2,
+            storageFrame: {
+              version: 2,
+              perSheetCheckpoints: {
+                sheet_inventory: {
+                  kind: 'sheet_full',
+                  createdAt: 3,
+                  reason: 'manual',
+                  sheetKey: 'sheet_inventory',
+                  data: shardData,
+                },
+              },
+              logEntries: [],
+            },
+          },
+        },
+      },
+      {
+        is_user: false,
+        TavernDB_ACU_IsolatedData: {
+          '': {
+            _acu_storage_version: 2,
+            storageFrame: {
+              version: 2,
+              logEntries: [entry(2, 'sheet-sql-after-shard', [{
+                kind: 'sql_sheet_batch',
+                sheetKey: 'sheet_inventory',
+                tableName: 'inventory',
+                statements: ["UPDATE inventory SET name = '分片后 SQL 剑' WHERE row_id = 1"],
+                reason: 'manual',
+              }])],
+            },
+          },
+        },
+      },
+      {
+        is_user: false,
+        TavernDB_ACU_IsolatedData: {
+          '': {
+            _acu_storage_version: 2,
+            storageFrame: {
+              version: 2,
+              logEntries: [entry(3, 'whole-state-replace', [{
+                kind: 'data_replace',
+                data: replacementData,
+                reason: 'checkpoint_fallback',
+              }])],
+            },
+          },
+        },
+      },
+      {
+        is_user: false,
+        TavernDB_ACU_IsolatedData: {
+          '': {
+            _acu_storage_version: 2,
+            storageFrame: {
+              version: 2,
+              logEntries: [
+                entry(4, 'sheet-replace-after-data-replace', [{
+                  kind: 'sheet_replace',
+                  sheetKey: 'sheet_inventory',
+                  sheet: {
+                    ...rootData.sheet_inventory,
+                    content: [['row_id', 'name'], ['1', 'sheet_replace 剑']],
+                  },
+                  reason: 'manual',
+                }]),
+                entry(5, 'row-upsert-after-sheet-replace', [{
+                  kind: 'row_upsert',
+                  sheetKey: 'sheet_inventory',
+                  rowId: '1',
+                  cells: ['1', '最终剑'],
+                }]),
+              ],
+            },
+          },
+        },
+      },
+    ];
+
+    const afterShardAndSql = await loadTableStateFromFramesV2_ACU(chat.slice(0, 3), '');
+    expect(afterShardAndSql?.sheet_inventory.content).toEqual([['row_id', 'name'], ['1', '分片后 SQL 剑']]);
+    expect(afterShardAndSql?.sheet_equipment.content).toEqual([['row_id', 'name'], ['1', '旧 SQL 甲']]);
+
+    const result = await loadTableStateFromFramesV2_ACU(chat, '');
+
+    expect(result?.sheet_inventory.content).toEqual([['row_id', 'name'], ['1', '最终剑']]);
+    expect(result?.sheet_equipment.content).toEqual([['row_id', 'name'], ['1', '替换后布甲']]);
+  });
+
   it('从 boundary compaction checkpoint 开始回放降级旧 full 的 data_replace 与后续日志', async () => {
     const boundaryData = {
       mate: { type: 'acu', version: 1 },
@@ -641,4 +805,232 @@ describe('loadTableStateFromFramesV2_ACU', () => {
     expect(result?.sheet_summary.content[30]).toEqual(['30', '第30层事件']);
     expect(result?.sheet_outline.content[30]).toEqual(['30', '第30层大纲']);
   });
+
+  it('按消息时间线用单表 checkpoint 覆盖旧 full 中的目标表，同时保留根数据与非目标表', async () => {
+    const rootData = makeDslCheckpointData();
+    const rebuiltSummarySheet = {
+      ...rootData.sheet_b,
+      content: [['row_id', '时间跨度', '地点', '纪要', '概要'], ['20', '新 1-20 层纪要']],
+    };
+    const chat = [
+      {
+        is_user: false,
+        TavernDB_ACU_IsolatedData: {
+          '': {
+            _acu_storage_version: 2,
+            storageFrame: {
+              version: 2,
+              checkpoint: { kind: 'full', createdAt: 1, reason: 'init', data: rootData },
+              logEntries: [],
+            },
+          },
+        },
+      },
+      {
+        is_user: false,
+        TavernDB_ACU_IsolatedData: {
+          '': {
+            _acu_storage_version: 2,
+            storageFrame: {
+              version: 2,
+              perSheetCheckpoints: {
+                sheet_b: {
+                  kind: 'sheet_full',
+                  createdAt: 2,
+                  reason: 'manual',
+                  sheetKey: 'sheet_b',
+                  data: rebuiltSummarySheet,
+                },
+              },
+              logEntries: [],
+            },
+          },
+        },
+      },
+    ];
+
+    const result = await loadTableStateFromFramesV2_ACU(chat, '');
+
+    expect(result?.mate).toEqual(rootData.mate);
+    expect(result?.sheet_a).toEqual(rootData.sheet_a);
+    expect(result?.sheet_b).toEqual(rebuiltSummarySheet);
+  });
+
+  it('同一 frame 内先应用单表 checkpoint，再按 seq 回放该 frame 的日志', async () => {
+    const rootData = makeDslCheckpointData();
+    const rebuiltSummarySheet = {
+      ...rootData.sheet_b,
+      content: [['row_id', '时间跨度', '地点', '纪要', '概要'], ['20', '新 1-20 层纪要']],
+    };
+    const chat = [
+      {
+        is_user: false,
+        TavernDB_ACU_IsolatedData: {
+          '': {
+            _acu_storage_version: 2,
+            storageFrame: {
+              version: 2,
+              checkpoint: { kind: 'full', createdAt: 1, reason: 'init', data: rootData },
+              logEntries: [],
+            },
+          },
+        },
+      },
+      {
+        is_user: false,
+        TavernDB_ACU_IsolatedData: {
+          '': {
+            _acu_storage_version: 2,
+            storageFrame: {
+              version: 2,
+              perSheetCheckpoints: {
+                sheet_b: {
+                  kind: 'sheet_full',
+                  createdAt: 2,
+                  reason: 'manual',
+                  sheetKey: 'sheet_b',
+                  data: rebuiltSummarySheet,
+                },
+              },
+              logEntries: [{
+                seq: 1,
+                entryId: 'after-sheet-checkpoint',
+                createdAt: 3,
+                source: 'manual_fill',
+                targetMessageIndex: 1,
+                aiFloor: 2,
+                filledSheetKeys: ['sheet_b'],
+                changedSheetKeys: ['sheet_b'],
+                groupKeys: [],
+                operations: [{
+                  kind: 'row_upsert',
+                  sheetKey: 'sheet_b',
+                  rowId: '21',
+                  cells: ['21', '21-30', '新地点', '新第21层纪要', '新概要'],
+                }],
+              }],
+            },
+          },
+        },
+      },
+    ];
+
+    const result = await loadTableStateFromFramesV2_ACU(chat, '');
+
+    expect(result?.sheet_b.content).toEqual([
+      ['row_id', '时间跨度', '地点', '纪要', '概要'],
+      ['20', '新 1-20 层纪要'],
+      ['21', '21-30', '新地点', '新第21层纪要', '新概要'],
+    ]);
+  });
+
+  it('同一 frame 内 data_replace 会整体替换先应用的单表 checkpoint', async () => {
+    const rootData = makeDslCheckpointData();
+    const shardData = {
+      ...rootData.sheet_b,
+      content: [['row_id', '时间跨度', '地点', '纪要', '概要'], ['20', '分片纪要']],
+    };
+    const replacementData = {
+      mate: { type: 'acu', version: 2 },
+      sheet_a: {
+        ...rootData.sheet_a,
+        content: [['row_id', '地点'], ['1', '全量替换地点']],
+      },
+      sheet_b: {
+        ...rootData.sheet_b,
+        content: [['row_id', '时间跨度', '地点', '纪要', '概要'], ['20', '全量替换纪要']],
+      },
+    } as any;
+    const chat = [
+      {
+        is_user: false,
+        TavernDB_ACU_IsolatedData: {
+          '': {
+            _acu_storage_version: 2,
+            storageFrame: {
+              version: 2,
+              checkpoint: { kind: 'full', createdAt: 1, reason: 'init', data: rootData },
+              logEntries: [],
+            },
+          },
+        },
+      },
+      {
+        is_user: false,
+        TavernDB_ACU_IsolatedData: {
+          '': {
+            _acu_storage_version: 2,
+            storageFrame: {
+              version: 2,
+              perSheetCheckpoints: {
+                sheet_b: {
+                  kind: 'sheet_full',
+                  createdAt: 2,
+                  reason: 'manual',
+                  sheetKey: 'sheet_b',
+                  data: shardData,
+                },
+              },
+              logEntries: [{
+                seq: 1,
+                entryId: 'same-frame-whole-state-replace',
+                createdAt: 3,
+                source: 'manual_fill',
+                targetMessageIndex: 1,
+                aiFloor: 2,
+                filledSheetKeys: ['sheet_a', 'sheet_b'],
+                changedSheetKeys: ['sheet_a', 'sheet_b'],
+                groupKeys: [],
+                operations: [{
+                  kind: 'data_replace',
+                  data: replacementData,
+                  reason: 'checkpoint_fallback',
+                }],
+              }],
+            },
+          },
+        },
+      },
+    ];
+
+    const result = await loadTableStateFromFramesV2_ACU(chat, '');
+
+    expect(result?.sheet_b.content).toEqual([
+      ['row_id', '时间跨度', '地点', '纪要', '概要'],
+      ['20', '全量替换纪要'],
+    ]);
+    expect(result?.sheet_a.content).toEqual([
+      ['row_id', '地点'],
+      ['1', '全量替换地点'],
+    ]);
+    expect(result?.sheet_b.content.flat()).not.toContain('分片纪要');
+  });
+
+  it('只有单表 checkpoint 而没有整库 full 时拒绝恢复', async () => {
+    const rootData = makeDslCheckpointData();
+    const chat = [{
+      is_user: false,
+      TavernDB_ACU_IsolatedData: {
+        '': {
+          _acu_storage_version: 2,
+          storageFrame: {
+            version: 2,
+            perSheetCheckpoints: {
+              sheet_b: {
+                kind: 'sheet_full',
+                createdAt: 1,
+                reason: 'manual',
+                sheetKey: 'sheet_b',
+                data: rootData.sheet_b,
+              },
+            },
+            logEntries: [],
+          },
+        },
+      },
+    }];
+
+    await expect(loadTableStateFromFramesV2_ACU(chat, '')).resolves.toBeNull();
+  });
+
 });

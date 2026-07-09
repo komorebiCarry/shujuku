@@ -47,6 +47,17 @@ export async function saveChatToHost_ACU(): Promise<void> {
     await SillyTavern_API_ACU.saveChat();
 }
 
+/**
+ * 执行必须真实提交到宿主的聊天保存。
+ * 仅适用于后续会触发不可逆外置副作用的事务；宿主保存能力缺失时必须失败，不能静默跳过。
+ */
+export async function saveChatToHostStrict_ACU(): Promise<void> {
+    if (typeof SillyTavern_API_ACU?.saveChat !== 'function') {
+        throw new Error('宿主 saveChat 不可用，无法提交破坏性聊天数据变更。');
+    }
+    await SillyTavern_API_ACU.saveChat();
+}
+
 // ═══ 宿主动作 ═══
 
 /**

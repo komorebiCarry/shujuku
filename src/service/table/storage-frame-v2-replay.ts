@@ -6,7 +6,7 @@ import { logError_ACU, logWarn_ACU } from '../../shared/utils';
 import { SqliteEngine } from '../../data/sqlite/sqlite-engine';
 import { SyncBridge } from '../../data/sqlite/sync-bridge';
 import { normalizeSqlStructure, normalizeStatementValues } from '../../data/sqlite/sql-normalizer';
-import type { TableCheckpointV2_ACU, TableMutationLogEntryV2_ACU, TableMutationOperationV2_ACU, TablePatchV2_ACU, TableStorageFrameV2_ACU } from './storage-frame-v2-types';
+import type { TableCheckpointV2_ACU, TableMutationLogEntryV2_ACU, TableMutationOperationV2_ACU, TablePatchV2_ACU, TableSheetCheckpointV2_ACU, TableStorageFrameV2_ACU } from './storage-frame-v2-types';
 import { isV2TagData_ACU } from './storage-strategy-resolver';
 import { readIsolatedTagData_ACU } from '../../data/repositories/chat-message-data-repo';
 import { getSortedSheetKeys_ACU, materializeDataFromSheetGuide_ACU } from '../template/chat-scope';
@@ -84,6 +84,30 @@ function replayCheckpointSchedule_ACU(checkpoint: TableCheckpointV2_ACU, fallbac
 function replaceState_ACU(state: TableDataObject_ACU, next: TableDataObject_ACU): void {
   Object.keys(state).forEach(key => delete (state as any)[key]);
   Object.assign(state, deepClone_ACU(next));
+}
+
+function getValidatedSheetCheckpoints_ACU(frame: TableStorageFrameV2_ACU): TableSheetCheckpointV2_ACU[] {
+  const checkpoints = frame.perSheetCheckpoints;
+  if (checkpoints === undefined) return [];
+  if (!checkpoints || typeof checkpoints !== 'object' || Array.isArray(checkpoints)) {
+    throw new Error('perSheetCheckpoints 必须是按 sheetKey 索引的对象');
+  }
+
+  return Object.entries(checkpoints).map(([recordKey, checkpoint]) => {
+    if (!recordKey.startsWith('sheet_')) {
+      throw new Error(`perSheetCheckpoints 包含非法键: ${recordKey}`);
+    }
+    if (!checkpoint || checkpoint.kind !== 'sheet_full') {
+      throw new Error(`perSheetCheckpoints.${recordKey} 缺少有效的 sheet_full checkpoint`);
+    }
+    if (checkpoint.sheetKey !== recordKey) {
+      throw new Error(`perSheetCheckpoints.${recordKey} 的 sheetKey 不一致: ${checkpoint.sheetKey}`);
+    }
+    if (!checkpoint.data || typeof checkpoint.data !== 'object' || Array.isArray(checkpoint.data)) {
+      throw new Error(`perSheetCheckpoints.${recordKey} 缺少有效的单表 data`);
+    }
+    return checkpoint;
+  });
 }
 
 function getReplayGuideData_ACU(chat: any[], isolationKey: string): Record<string, any> | null {
@@ -209,6 +233,22 @@ async function reloadSqlReplayRuntime_ACU(runtime: SqlReplayRuntime_ACU, state: 
   runtime.engine.dispose();
   runtime.loaded = false;
   await ensureSqlReplayRuntime_ACU(runtime, state);
+}
+
+async function applySheetCheckpointsForReplay_ACU(
+  state: TableDataObject_ACU,
+  frame: TableStorageFrameV2_ACU,
+  runtime: SqlReplayRuntime_ACU,
+  guideData: Record<string, any> | null,
+): Promise<void> {
+  const checkpoints = getValidatedSheetCheckpoints_ACU(frame);
+  if (checkpoints.length === 0) return;
+  if (runtime.loaded) exportSqlReplayRuntime_ACU(runtime, state);
+  for (const checkpoint of checkpoints) {
+    state[checkpoint.sheetKey] = deepClone_ACU(checkpoint.data);
+  }
+  applyGuideStructureBeforeReplay_ACU(state, guideData);
+  if (runtime.loaded) await reloadSqlReplayRuntime_ACU(runtime, state);
 }
 
 async function applySqlBatchOperationV2_ACU(
@@ -439,6 +479,14 @@ export function collectScheduleSummaryFromFramesV2_ACU(
 
   for (const ref of frameRefs) {
     if (checkpointRef && ref.messageIndex < checkpointRef.messageIndex) continue;
+    for (const sheetCheckpoint of getValidatedSheetCheckpoints_ACU(ref.frame)) {
+      summary[sheetCheckpoint.sheetKey] = deepClone_ACU(sheetCheckpoint.scheduleSummary || {});
+      applyEventToScheduleSummary_ACU(
+        summary,
+        sheetCheckpoint.event,
+        ref.aiFloor,
+      );
+    }
     const entries = [...(ref.frame.logEntries || [])].sort((a, b) => a.seq - b.seq);
     for (const entry of entries) {
       applyEventToScheduleSummary_ACU(summary, entry, ref.aiFloor);
@@ -485,6 +533,7 @@ export async function loadTableStateFromFramesV2_ACU(
   try {
     for (const ref of frameRefs) {
       if (ref.messageIndex < replayStartMessageIndex) continue;
+      await applySheetCheckpointsForReplay_ACU(state, ref.frame, runtime, replayGuideData);
       const entries = [...(ref.frame.logEntries || [])].sort((a, b) => a.seq - b.seq);
       for (const entry of entries) {
         try {
