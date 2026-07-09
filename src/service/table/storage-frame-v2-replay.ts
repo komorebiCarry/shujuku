@@ -86,10 +86,6 @@ function replaceState_ACU(state: TableDataObject_ACU, next: TableDataObject_ACU)
   Object.assign(state, deepClone_ACU(next));
 }
 
-function isManualRefillTemporaryCheckpoint_ACU(checkpoint: TableCheckpointV2_ACU | undefined): boolean {
-  return checkpoint?.kind === 'full' && checkpoint.reason === 'manual_refill_temporary_empty_baseline';
-}
-
 function getReplayGuideData_ACU(chat: any[], isolationKey: string): Record<string, any> | null {
   const container = getChatSheetGuideContainer_ACU(chat as any);
   const slot = container?.tags && typeof container.tags === 'object'
@@ -432,7 +428,7 @@ export function collectScheduleSummaryFromFramesV2_ACU(
 
   const frameRefs = getV2FrameRefs_ACU(chat, isolationKey)
     .filter(ref => options.maxMessageIndex === undefined || ref.messageIndex <= options.maxMessageIndex);
-  const checkpointRef = [...frameRefs].reverse().find(ref => ref.frame.checkpoint?.kind === 'full' && !isManualRefillTemporaryCheckpoint_ACU(ref.frame.checkpoint));
+  const checkpointRef = [...frameRefs].reverse().find(ref => ref.frame.checkpoint?.kind === 'full');
 
   const summary: TableScheduleSummaryV2_ACU = checkpointRef?.frame.checkpoint
     ? deepClone_ACU(checkpointRef.frame.checkpoint.scheduleSummary || {})
@@ -463,7 +459,7 @@ export async function loadTableStateFromFramesV2_ACU(
   const isolationKey = isolationKeyArg ?? getCurrentIsolationKey_ACU();
   const frameRefs = getV2FrameRefs_ACU(chat, isolationKey)
     .filter(ref => options.maxMessageIndex === undefined || ref.messageIndex <= options.maxMessageIndex);
-  const checkpointRef = [...frameRefs].reverse().find(ref => ref.frame.checkpoint?.kind === 'full' && !isManualRefillTemporaryCheckpoint_ACU(ref.frame.checkpoint));
+  const checkpointRef = [...frameRefs].reverse().find(ref => ref.frame.checkpoint?.kind === 'full');
 
   if (!checkpointRef?.frame.checkpoint) {
     logWarn_ACU('[V2 Replay] 未找到 full checkpoint，拒绝从 log-only/data_replace 恢复不完整 V2 表格数据。');

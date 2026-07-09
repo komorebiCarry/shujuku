@@ -32,97 +32,53 @@ export interface AutoUpdatePlan {
     updateGroups: Record<string, UpdateGroup>;
 }
 
-export type UpdateParameterPolicy_ACU = 'template_with_global_fallback' | 'global_only_except_group';
-
-export interface AutoEquivalentPlanOptions_ACU {
-    mode: 'auto' | 'manual_override';
-    selectedSheetKeys?: string[];
-    parameterPolicy?: UpdateParameterPolicy_ACU;
-    forceFrequency?: number;
-}
-
-export interface UpdateSchedulingConfig_ACU {
-    threshold: number;
-    frequency: number;
-    skipFloors: number;
-    groupId: number;
-    batchSize: number;
-    scheduleSignature: string;
-}
-
-export function resolveUpdateSchedulingConfig_ACU(
-    table: any,
-    settings: any,
-    policy: UpdateParameterPolicy_ACU = 'template_with_global_fallback',
-    forceFrequency?: number,
-): UpdateSchedulingConfig_ACU {
-    const tableConfig = table?.updateConfig || {};
-    const rawGroupId = Number.isFinite(tableConfig.groupId) ? Math.trunc(tableConfig.groupId) : -1;
-
-    if (policy === 'global_only_except_group') {
-        const threshold = settings.autoUpdateThreshold || 3;
-        const frequency = Number.isFinite(forceFrequency) ? Math.max(0, Math.trunc(forceFrequency as number)) : 1;
-        const skipFloors = Math.max(0, settings.skipUpdateFloors || 0);
-        const batchSize = Number.isFinite(settings.updateBatchSize) && settings.updateBatchSize > 0
-            ? Math.trunc(settings.updateBatchSize)
-            : 3;
-        return {
-            threshold,
-            frequency,
-            skipFloors,
-            groupId: rawGroupId,
-            batchSize,
-            scheduleSignature: [rawGroupId, threshold, frequency, skipFloors, 'global'].join('|'),
-        };
-    }
-
-    const globalFrequency = settings.autoUpdateFrequency || 1;
-    const globalSkip = settings.skipUpdateFloors || 0;
-
-    const rawDepth = Number.isFinite(tableConfig.contextDepth) ? tableConfig.contextDepth : -1;
-    const rawFreq = Number.isFinite(tableConfig.updateFrequency) ? tableConfig.updateFrequency : -1;
-    const rawSkip = Number.isFinite(tableConfig.skipFloors) ? tableConfig.skipFloors : -1;
-    const rawBatch = Number.isFinite(tableConfig.batchSize) ? tableConfig.batchSize : -1;
-
-    const threshold = (rawDepth === -1 || rawDepth === 0) ? (settings.autoUpdateThreshold || 3) : Math.max(0, rawDepth);
-    const frequency = (rawFreq === -1) ? globalFrequency : rawFreq;
-    const skipFloors = Math.max(0, (rawSkip === -1) ? globalSkip : rawSkip);
-    const batchSize = (rawBatch === -1) ? (settings.updateBatchSize || 3) : ((rawBatch > 0) ? rawBatch : (settings.updateBatchSize || 3));
-
-    return {
-        threshold,
-        frequency,
-        skipFloors,
-        groupId: rawGroupId,
-        batchSize,
-        scheduleSignature: [rawGroupId, threshold, frequency, skipFloors, rawBatch].join('|'),
-    };
-}
-
-function buildUpdatePlanCore_ACU(
+/**
+ * 构建自动更新计划：遍历所有表格，检查每个表的独立更新条件，返回需要更新的表列表和分组
+ * 
+ * @param liveChat - 当前聊天记录数组
+ * @param tableData - 当前表格数据（currentJsonTableData_ACU）
+ * @param settings - 当前设置
+ * @param isolationKey - 当前隔离标签键名
+ * @returns AutoUpdatePlan 包含 tablesToUpdate 和 updateGroups
+ */
+export function buildAutoUpdatePlan_ACU(
     liveChat: any[],
     tableData: Record<string, any>,
     settings: any,
-    isolationKey: string,
-    options: AutoEquivalentPlanOptions_ACU,
+    isolationKey: string
 ): AutoUpdatePlan {
     const tablesToUpdate: TableUpdateItem[] = [];
-    const selectedSheetKeySet = options.selectedSheetKeys ? new Set(options.selectedSheetKeys) : null;
-    const sheetKeys = getSortedSheetKeys_ACU(tableData).filter((sheetKey: string) => !selectedSheetKeySet || selectedSheetKeySet.has(sheetKey));
+    const sheetKeys = getSortedSheetKeys_ACU(tableData);
 
+    // 预计算所有 AI 消息索引
     const allAiMessageIndices = liveChat
         .map((msg: any, index: number) => !msg.is_user ? index : -1)
         .filter((index: number) => index !== -1);
 
     const totalAiMessages = allAiMessageIndices.length;
-    const parameterPolicy = options.parameterPolicy || (options.mode === 'manual_override' ? 'global_only_except_group' : 'template_with_global_fallback');
+
+    // 统一的全局默认参数
+    const globalFrequency = settings.autoUpdateFrequency || 1;
+    const globalSkip = settings.skipUpdateFloors || 0;
 
     for (const sheetKey of sheetKeys) {
         const table = tableData[sheetKey];
         if (!table) continue;
 
+        const tableConfig = table.updateConfig || {};
         const isSummary = isSummaryOrOutlineTable_ACU(table.name);
-        const config = resolveUpdateSchedulingConfig_ACU(table, settings, parameterPolicy, options.forceFrequency);
+
+        // 获取该表的更新配置 (优先使用表内配置，否则使用全局默认)
+        const rawDepth = Number.isFinite(tableConfig.contextDepth) ? tableConfig.contextDepth : -1;
+        const rawFreq = Number.isFinite(tableConfig.updateFrequency) ? tableConfig.updateFrequency : -1;
+        const rawSkip = Number.isFinite(tableConfig.skipFloors) ? tableConfig.skipFloors : -1;
+        const rawBatch = Number.isFinite(tableConfig.batchSize) ? tableConfig.batchSize : -1;
+        const rawGroupId = Number.isFinite(tableConfig.groupId) ? Math.trunc(tableConfig.groupId) : -1;
+
+        const threshold = (rawDepth === -1 || rawDepth === 0) ? (settings.autoUpdateThreshold || 3) : Math.max(0, rawDepth);
+        const frequency = (rawFreq === -1) ? globalFrequency : rawFreq;
+        const skipFloors = Math.max(0, (rawSkip === -1) ? globalSkip : rawSkip);
+        const groupId = rawGroupId;
 
         const history = resolveTableHistoryStateFromChat_ACU(liveChat, {
             sheetKey,
@@ -132,13 +88,15 @@ function buildUpdatePlanCore_ACU(
         });
         const lastUpdatedAiFloor = history.lastTrackedUpdateAiFloor;
 
-        const effectiveUnrecordedFloors = Math.max(0, (totalAiMessages - config.skipFloors) - lastUpdatedAiFloor);
+        // 计算未记录楼层数
+        const effectiveUnrecordedFloors = Math.max(0, (totalAiMessages - skipFloors) - lastUpdatedAiFloor);
 
-        logDebug_ACU(`[Trigger Check] Table: ${table.name}, TotalAI: ${totalAiMessages}, Skip: ${config.skipFloors}, LastUpdated: ${lastUpdatedAiFloor}, Unrecorded: ${effectiveUnrecordedFloors}, Freq: ${config.frequency}`);
+        logDebug_ACU(`[Trigger Check] Table: ${table.name}, TotalAI: ${totalAiMessages}, Skip: ${skipFloors}, LastUpdated: ${lastUpdatedAiFloor}, Unrecorded: ${effectiveUnrecordedFloors}, Freq: ${frequency}`);
 
-        if (config.frequency > 0 && effectiveUnrecordedFloors >= config.frequency && config.threshold > 0) {
-            const effectiveAiIndices = config.skipFloors > 0
-                ? allAiMessageIndices.slice(0, -config.skipFloors)
+        // updateFrequency=0：该表不参与自动更新
+        if (frequency > 0 && effectiveUnrecordedFloors >= frequency && threshold > 0) {
+            const effectiveAiIndices = skipFloors > 0
+                ? allAiMessageIndices.slice(0, -skipFloors)
                 : allAiMessageIndices;
 
             const startIndexInAiArray = lastUpdatedAiFloor;
@@ -147,7 +105,7 @@ function buildUpdatePlanCore_ACU(
 
             if (startIndexInAiArray < effectiveAiIndices.length) {
                 const unupdatedAiIndices = effectiveAiIndices.slice(startIndexInAiArray);
-                const contextScopeIndices = effectiveAiIndices.slice(-config.threshold);
+                const contextScopeIndices = effectiveAiIndices.slice(-threshold);
                 const contextScopeSet = new Set(contextScopeIndices);
 
                 logDebug_ACU(`[Trigger Check] Unupdated: ${unupdatedAiIndices.length}, ContextScope: ${contextScopeIndices.length}`);
@@ -159,15 +117,16 @@ function buildUpdatePlanCore_ACU(
                         sheetKey,
                         sheetName: table.name,
                         indices: indicesToUpdate,
-                        groupId: config.groupId,
-                        batchSize: config.batchSize,
-                        scheduleSignature: config.scheduleSignature,
+                        groupId,
+                        batchSize: (rawBatch === -1) ? (settings.updateBatchSize || 3) : ((rawBatch > 0) ? rawBatch : (settings.updateBatchSize || 3)),
+                        scheduleSignature: [groupId, threshold, frequency, skipFloors, rawBatch].join('|'),
                     });
                 }
             }
         }
     }
 
+    // 分组：将待更新的表按 (groupId + indices + batchSize) 进行分组
     const updateGroups: Record<string, UpdateGroup> = {};
 
     tablesToUpdate.forEach(item => {
@@ -187,45 +146,6 @@ function buildUpdatePlanCore_ACU(
     });
 
     return { tablesToUpdate, updateGroups };
-}
-
-/**
- * 构建自动更新计划：遍历所有表格，检查每个表的独立更新条件，返回需要更新的表列表和分组
- * 
- * @param liveChat - 当前聊天记录数组
- * @param tableData - 当前表格数据（currentJsonTableData_ACU）
- * @param settings - 当前设置
- * @param isolationKey - 当前隔离标签键名
- * @returns AutoUpdatePlan 包含 tablesToUpdate 和 updateGroups
- */
-export function buildAutoUpdatePlan_ACU(
-    liveChat: any[],
-    tableData: Record<string, any>,
-    settings: any,
-    isolationKey: string
-): AutoUpdatePlan {
-    return buildUpdatePlanCore_ACU(liveChat, tableData, settings, isolationKey, {
-        mode: 'auto',
-        parameterPolicy: 'template_with_global_fallback',
-    });
-}
-
-export function buildManualAutoEquivalentUpdatePlan_ACU(
-    liveChat: any[],
-    tableData: Record<string, any>,
-    settings: any,
-    isolationKey: string,
-    selectedSheetKeys: string[],
-): AutoUpdatePlan {
-    if (!Array.isArray(selectedSheetKeys) || selectedSheetKeys.length === 0) {
-        return { tablesToUpdate: [], updateGroups: {} };
-    }
-    return buildUpdatePlanCore_ACU(liveChat, tableData, settings, isolationKey, {
-        mode: 'manual_override',
-        selectedSheetKeys,
-        parameterPolicy: 'global_only_except_group',
-        forceFrequency: 1,
-    });
 }
 
 // ============================================================

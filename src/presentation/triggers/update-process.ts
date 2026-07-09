@@ -375,7 +375,6 @@ export async function handleManualUpdate_ACU() {
             // [新增] 传入用户确认后的预清空选项
             {
                 clearBeforeUpdate: true,
-                confirmedCheckpointOverwrite: true,
                 onProgress: event => handleProgressEvent(event, false, manualProgressToast),
             }
         );

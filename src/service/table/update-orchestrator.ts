@@ -6,7 +6,7 @@
 
 import { isAutoUpdatingCard_ACU, pendingFinalGenerationGreenlights_ACU, wasStoppedByUser_ACU, _set_isAutoUpdatingCard_ACU, _set_manualExtraHint_ACU, _set_wasStoppedByUser_ACU } from '../runtime/state-manager';
 import { callCustomOpenAI_ACU } from '../ai/prompt-builder';
-import { clearManualRefillSheetDataInRange_ACU, createManualRefillTemporaryEmptyCheckpoint_ACU, ensureV2BoundaryCheckpointForRetainedBuffer_ACU, finalizeManualRefillTemporaryCheckpoint_ACU, getChatArray_ACU, shouldRotateV2BoundaryCheckpointForRetainedBuffer_ACU } from '../chat/chat-service';
+import { clearManualRefillSheetDataInRange_ACU, ensureV2BoundaryCheckpointForRetainedBuffer_ACU, getChatArray_ACU, shouldRotateV2BoundaryCheckpointForRetainedBuffer_ACU } from '../chat/chat-service';
 import { coreApisAreReady_ACU, currentJsonTableData_ACU, getCurrentIsolationKey_ACU, settings_ACU, _set_currentJsonTableData_ACU } from '../runtime/state-manager';
 import { checkAutoMergeTrigger_ACU, prepareAutoMergeBatches_ACU, executeAutoMergeBatch_ACU, finalizeAutoMerge_ACU } from '../summary/merge-logic';
 import { ensureStableRowIdsForSheetContent_ACU, getChatSheetGuideDataForIsolationKey_ACU, getEffectiveSeedRowsForSheet_ACU, shouldUseInitialSeedRows_ACU } from '../template/chat-scope';
@@ -16,7 +16,6 @@ import { getCurrentWorldbookConfig_ACU } from '../settings/settings-readers';
 
 import { isSummaryOrOutlineTable_ACU, logDebug_ACU, logError_ACU, logWarn_ACU, parseTableTemplateJson_ACU } from '../../shared/utils';
 
-import { collectV2CheckpointFloorsFromChat_ACU, type TableCheckpointFloor_ACU } from './table-history';
 import { applyTableDelta_ACU, isDeltaTagData_ACU } from './table-delta';
 /**
  * 表名标准化：trim 后空串视为无效键
@@ -109,8 +108,6 @@ export interface ManualUpdateResult {
     autoMergeTriggered?: boolean;
     autoMergeSuccess?: boolean;
     checkpointWarning?: string;
-    temporaryCheckpointIndex?: number;
-    temporaryCheckpointCleanupToken?: string;
 }
 
 export interface GroupFillJob_ACU {
@@ -161,21 +158,6 @@ export interface GroupedRuntimeUpdateGroup_ACU {
     requestOptions: Record<string, any> | null;
     mergeBaseMaxMessageIndex?: number;
     useLatestRuntimeMergeBase?: boolean;
-}
-
-interface ManualOverridePreprocessResult_ACU {
-    success: boolean;
-    error?: string;
-    clearedCount?: number;
-    mergeBaseMaxMessageIndex?: number;
-    useLatestRuntimeMergeBase: boolean;
-    temporaryCheckpointIndex?: number;
-    temporaryCheckpointCleanupToken?: string;
-}
-
-interface ManualCheckpointOverwriteRisk_ACU {
-    checkpoints: TableCheckpointFloor_ACU[];
-    message: string;
 }
 
 interface PlannedGroupedRuntimeJob_ACU {
@@ -1917,86 +1899,6 @@ export async function processUpdatesBatch_ACU(
     }
 }
 
-function resolveManualCheckpointOverwriteRisk_ACU(
-    liveChat: any[],
-    contextScopeIndices: number[],
-): ManualCheckpointOverwriteRisk_ACU | null {
-    const checkpointIndexSet = new Set(contextScopeIndices);
-    const checkpoints = collectV2CheckpointFloorsFromChat_ACU(liveChat, getCurrentIsolationKey_ACU())
-        .filter(checkpoint => checkpointIndexSet.has(checkpoint.messageIndex));
-    if (checkpoints.length === 0) return null;
-
-    const checkpointFloors = checkpoints.map(checkpoint => `AI 第 ${checkpoint.aiFloor} 层`).join('、');
-    return { checkpoints, message: `手动重填范围包含 full checkpoint（${checkpointFloors}）。请先在界面确认 checkpoint 覆盖风险后再继续。` };
-}
-
-async function preprocessManualOverrideAutoEquivalent_ACU(options: {
-    liveChat: any[];
-    contextScopeIndices: number[];
-    effectiveAiIndices: number[];
-    targetKeys: string[];
-    uiSkip: number;
-    createTemporaryCheckpoint: boolean;
-}): Promise<ManualOverridePreprocessResult_ACU> {
-    const { liveChat, contextScopeIndices, effectiveAiIndices, targetKeys, uiSkip, createTemporaryCheckpoint } = options;
-    const lastEffectiveAiIndex = effectiveAiIndices[effectiveAiIndices.length - 1];
-    const useLatestRuntimeMergeBase = uiSkip === 0 && contextScopeIndices[contextScopeIndices.length - 1] === lastEffectiveAiIndex;
-    const mergeBaseMaxMessageIndex = !useLatestRuntimeMergeBase ? contextScopeIndices[0] - 1 : undefined;
-
-    const replayBoundaryCheck = await ensureManualRefillV2ReplayBoundary_ACU(liveChat, getCurrentIsolationKey_ACU(), contextScopeIndices[0]);
-    if (replayBoundaryCheck.success === false) {
-        return { success: false, error: replayBoundaryCheck.error, useLatestRuntimeMergeBase };
-    }
-
-    let clearedCount = 0;
-    try {
-        clearedCount = await clearManualRefillSheetDataInRange_ACU(contextScopeIndices, targetKeys);
-    } catch (error: any) {
-        logError_ACU('[Manual Refill] 启动前清理选中表范围内旧数据失败:', error);
-        return { success: false, error: error?.message || '手动重填启动前清理选中表范围内旧数据失败。', useLatestRuntimeMergeBase };
-    }
-
-    let temporaryCheckpointIndex: number | undefined;
-    let temporaryCheckpointCleanupToken: string | undefined;
-    if (createTemporaryCheckpoint) {
-        const rangeStartIndex = contextScopeIndices[0];
-        const rangeEndIndex = contextScopeIndices[contextScopeIndices.length - 1];
-        const temporaryCheckpoint = await createManualRefillTemporaryEmptyCheckpoint_ACU({
-            isolationKey: getCurrentIsolationKey_ACU(),
-            targetMessageIndex: rangeStartIndex,
-            selectedSheetKeys: targetKeys,
-            baseData: currentJsonTableData_ACU || {},
-            rangeStartIndex,
-            rangeEndIndex,
-            contextMessageIndices: contextScopeIndices,
-        });
-        if (!temporaryCheckpoint.success) {
-            return { success: false, error: temporaryCheckpoint.error || '手动重填临时空白 checkpoint 建立失败。', useLatestRuntimeMergeBase };
-        }
-        temporaryCheckpointIndex = temporaryCheckpoint.targetMessageIndex;
-        temporaryCheckpointCleanupToken = temporaryCheckpoint.cleanupToken;
-    }
-
-    try {
-        // 清理历史 V2 数据后必须刷新 SQLite/runtime 快照，
-        // 否则 AI prompt 基底会继续读到清理前的旧 chronicle 行（test6.8 类事故）。
-        await reloadStorageProvider();
-    } catch (error: any) {
-        logError_ACU('[Manual Refill] 清理后刷新运行时快照失败:', error);
-        return { success: false, error: error?.message || '手动重填清理后刷新运行时快照失败。', useLatestRuntimeMergeBase };
-    }
-
-    return {
-        success: true,
-        clearedCount,
-        mergeBaseMaxMessageIndex,
-        useLatestRuntimeMergeBase,
-        temporaryCheckpointIndex,
-        temporaryCheckpointCleanupToken,
-    };
-}
-
-
 /**
  * 手动更新编排（纯业务逻辑）
  * 从 handleManualUpdate_ACU 提取。不驱动 UI，只返回结果。
@@ -2007,10 +1909,6 @@ async function preprocessManualOverrideAutoEquivalent_ACU(options: {
  * @param refreshData 数据刷新回调
  * @param options 可选参数：
  *   - clearBeforeUpdate: 兼容旧调用名；启用事务式手动重填。首次重填会清理目标范围内选中表本地数据，匹配续跑进度时不预清理。
- *
- * Legacy boundary: this function still contains the manual_refill legacy orchestration
- * that calculates ranges, pre-clears data, and builds grouped chunks locally. The
- * manual_override_auto_equivalent path must replace that orchestration instead of adding more branches here.
  */
 export async function orchestrateManualUpdate_ACU(
     targetKeys: string[],
@@ -2018,7 +1916,6 @@ export async function orchestrateManualUpdate_ACU(
     refreshData: () => Promise<void>,
     options: {
         clearBeforeUpdate?: boolean;
-        confirmedCheckpointOverwrite?: boolean;
         onProgress?: (event: CardUpdateProgressEvent) => void;
     } = {},
 ): Promise<ManualUpdateResult> {
@@ -2093,30 +1990,30 @@ export async function orchestrateManualUpdate_ACU(
         const groupKeys = Object.keys(updateGroups);
 
         const manualRefillEnabled = options.clearBeforeUpdate === true;
-        let manualRefillUsesLatestRuntimeBase = false;
-        let manualRefillMergeBaseMaxMessageIndex: number | undefined;
-        let manualRefillTemporaryCheckpointIndex: number | undefined;
-        let manualRefillTemporaryCheckpointCleanupToken: string | undefined;
+        const lastEffectiveAiIndex = effectiveAiIndices[effectiveAiIndices.length - 1];
+        const manualRefillUsesLatestRuntimeBase = manualRefillEnabled && uiSkip === 0 && contextScopeIndices[contextScopeIndices.length - 1] === lastEffectiveAiIndex;
+        const manualRefillMergeBaseMaxMessageIndex = manualRefillEnabled && !manualRefillUsesLatestRuntimeBase ? contextScopeIndices[0] - 1 : undefined;
         if (manualRefillEnabled) {
-            const checkpointOverwriteRisk = resolveManualCheckpointOverwriteRisk_ACU(liveChat, contextScopeIndices);
-            if (checkpointOverwriteRisk && options.confirmedCheckpointOverwrite !== true) {
-                return { success: false, error: checkpointOverwriteRisk.message };
+            const replayBoundaryCheck = await ensureManualRefillV2ReplayBoundary_ACU(liveChat, getCurrentIsolationKey_ACU(), contextScopeIndices[0]);
+            if (replayBoundaryCheck.success === false) {
+                return { success: false, error: replayBoundaryCheck.error };
             }
-            const preprocess = await preprocessManualOverrideAutoEquivalent_ACU({
-                liveChat,
-                contextScopeIndices,
-                effectiveAiIndices,
-                targetKeys,
-                uiSkip,
-                createTemporaryCheckpoint: !!checkpointOverwriteRisk,
-            });
-            if (!preprocess.success) {
-                return { success: false, error: preprocess.error };
+
+            try {
+                await clearManualRefillSheetDataInRange_ACU(contextScopeIndices, targetKeys);
+            } catch (error: any) {
+                logError_ACU('[Manual Refill] 启动前清理选中表范围内旧数据失败:', error);
+                return { success: false, error: error?.message || '手动重填启动前清理选中表范围内旧数据失败。' };
             }
-            manualRefillUsesLatestRuntimeBase = preprocess.useLatestRuntimeMergeBase;
-            manualRefillMergeBaseMaxMessageIndex = preprocess.mergeBaseMaxMessageIndex;
-            manualRefillTemporaryCheckpointIndex = preprocess.temporaryCheckpointIndex;
-            manualRefillTemporaryCheckpointCleanupToken = preprocess.temporaryCheckpointCleanupToken;
+
+            try {
+                // 清理历史 V2 数据后必须刷新 SQLite/runtime 快照，
+                // 否则 AI prompt 基底会继续读到清理前的旧 chronicle 行（test6.8 类事故）。
+                await reloadStorageProvider();
+            } catch (error: any) {
+                logError_ACU('[Manual Refill] 清理后刷新运行时快照失败:', error);
+                return { success: false, error: error?.message || '手动重填清理后刷新运行时快照失败。' };
+            }
             logDebug_ACU(`[Manual Refill] 已清理选中表范围内旧数据并刷新运行时快照，将按普通手动填写路径重写 ${contextScopeIndices[0]}..${contextScopeIndices[contextScopeIndices.length - 1]}。`);
             if (!manualRefillUsesLatestRuntimeBase) {
                 logDebug_ACU(`[Manual Refill] 当前重填范围不是有效 AI 尾部，将使用 <=${manualRefillMergeBaseMaxMessageIndex} 的 bounded replay 基底，避免未来楼层污染 prompt。`);
@@ -2220,39 +2117,15 @@ export async function orchestrateManualUpdate_ACU(
         }
 
         let checkpointWarning: string | undefined;
-        if (manualRefillTemporaryCheckpointIndex !== undefined) {
-            try {
-                await loadAllChatMessages_ACU();
-                const finalizeResult = await finalizeManualRefillTemporaryCheckpoint_ACU({
-                    isolationKey: getCurrentIsolationKey_ACU(),
-                    temporaryCheckpointIndex: manualRefillTemporaryCheckpointIndex,
-                    cleanupToken: manualRefillTemporaryCheckpointCleanupToken || '',
-                    selectedSheetKeys: targetKeys,
-                    rangeStartIndex: contextScopeIndices[0],
-                    rangeEndIndex: contextScopeIndices[contextScopeIndices.length - 1],
-                    contextMessageIndices: contextScopeIndices,
-                });
-                if (!finalizeResult.success) {
-                    checkpointWarning = finalizeResult.error || '手动重填临时 checkpoint 收尾失败。';
-                    logWarn_ACU(`[Manual Update] 手动填表完成，但临时 checkpoint 收尾失败: ${checkpointWarning}`);
-                }
-            } catch (error: any) {
-                checkpointWarning = error?.message || String(error || '手动重填临时 checkpoint 收尾异常。');
-                logWarn_ACU(`[Manual Update] 手动填表完成，但临时 checkpoint 收尾异常: ${checkpointWarning}`);
-                logError_ACU('[Manual Update] 临时 checkpoint 收尾异常详情:', error);
-            }
-        }
-
         try {
             await loadAllChatMessages_ACU();
             const boundaryCheckpoint = await ensureV2BoundaryCheckpointForRetainedBuffer_ACU({ reason: 'manual_refill', save: true });
             if (!boundaryCheckpoint.success) {
-                checkpointWarning = checkpointWarning ? `${checkpointWarning}；${boundaryCheckpoint.error || '边界 checkpoint 建立失败。'}` : boundaryCheckpoint.error || '边界 checkpoint 建立失败。';
+                checkpointWarning = boundaryCheckpoint.error || '边界 checkpoint 建立失败。';
                 logWarn_ACU(`[Manual Update] 手动填表完成，但边界 checkpoint 建立失败: ${checkpointWarning}`);
             }
         } catch (error: any) {
-            const boundaryWarning = error?.message || String(error || '边界 checkpoint 建立异常。');
-            checkpointWarning = checkpointWarning ? `${checkpointWarning}；${boundaryWarning}` : boundaryWarning;
+            checkpointWarning = error?.message || String(error || '边界 checkpoint 建立异常。');
             logWarn_ACU(`[Manual Update] 手动填表完成，但边界 checkpoint 建立异常: ${checkpointWarning}`);
             logError_ACU('[Manual Update] 边界 checkpoint 建立异常详情:', error);
         }
@@ -2280,14 +2153,7 @@ export async function orchestrateManualUpdate_ACU(
             logWarn_ACU('自动合并总结检测失败:', e);
         }
 
-        return {
-            success: true,
-            autoMergeTriggered,
-            autoMergeSuccess,
-            checkpointWarning,
-            ...(manualRefillTemporaryCheckpointIndex !== undefined ? { temporaryCheckpointIndex: manualRefillTemporaryCheckpointIndex } : {}),
-            ...(manualRefillTemporaryCheckpointCleanupToken ? { temporaryCheckpointCleanupToken: manualRefillTemporaryCheckpointCleanupToken } : {}),
-        };
+        return { success: true, autoMergeTriggered, autoMergeSuccess, checkpointWarning };
     } finally {
         _set_manualExtraHint_ACU('');
         _set_isAutoUpdatingCard_ACU(false);
