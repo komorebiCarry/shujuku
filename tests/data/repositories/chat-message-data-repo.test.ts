@@ -932,6 +932,59 @@ describe('purgeManualRefillIncrementalSheetKeysFromMessage_ACU', () => {
     });
   });
 
+  it('SQL 模式增量预清理会按 sheetKey 直接删除 sql_sheet_batch 且保留其他表 operation', () => {
+    const msg: any = {
+      TavernDB_ACU_IsolatedData: {
+        tag1: {
+          storageFrame: {
+            version: 2,
+            checkpoint: {
+              kind: 'full',
+              data: {
+                sheet_0: { uid: 'inventory', name: '背包表', sourceData: { ddl: 'CREATE TABLE inventory (row_id TEXT)' } },
+                sheet_1: { uid: 'quest_log', name: '任务表', sourceData: { ddl: 'CREATE TABLE quest_log (row_id TEXT)' } },
+              },
+            },
+            logEntries: [{
+              filledSheetKeys: ['sheet_0', 'sheet_1'],
+              changedSheetKeys: ['sheet_0', 'sheet_1'],
+              groupKeys: ['sheet_0', 'sheet_1'],
+              operations: [
+                {
+                  kind: 'sql_sheet_batch',
+                  sheetKey: 'sheet_0',
+                  statements: ["INSERT INTO inventory VALUES ('old')"],
+                  tableName: 'inventory',
+                  reason: 'system',
+                },
+                {
+                  kind: 'sql_sheet_batch',
+                  sheetKey: 'sheet_1',
+                  statements: ["INSERT INTO quest_log VALUES ('keep')"],
+                  tableName: 'quest_log',
+                  reason: 'system',
+                },
+              ],
+            }],
+          },
+        },
+      },
+    };
+
+    expect(purgeManualRefillIncrementalSheetKeysFromMessage_ACU(msg, 'tag1', ['sheet_0'])).toBe(true);
+
+    expect(msg.TavernDB_ACU_IsolatedData.tag1.storageFrame.logEntries[0].filledSheetKeys).toEqual(['sheet_1']);
+    expect(msg.TavernDB_ACU_IsolatedData.tag1.storageFrame.logEntries[0].changedSheetKeys).toEqual(['sheet_1']);
+    expect(msg.TavernDB_ACU_IsolatedData.tag1.storageFrame.logEntries[0].groupKeys).toEqual(['sheet_1']);
+    expect(msg.TavernDB_ACU_IsolatedData.tag1.storageFrame.logEntries[0].operations).toEqual([{
+      kind: 'sql_sheet_batch',
+      sheetKey: 'sheet_1',
+      statements: ["INSERT INTO quest_log VALUES ('keep')"],
+      tableName: 'quest_log',
+      reason: 'system',
+    }]);
+  });
+
   it('SQL 模式增量预清理遇到无法识别的 sql_batch 语句时保留原 operation', () => {
     const msg: any = {
       TavernDB_ACU_IsolatedData: {

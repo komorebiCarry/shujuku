@@ -64,7 +64,7 @@ function safeJsonByteLength_ACU(value: unknown): number {
 
 function countOperationUnits_ACU(operations: unknown[]): number {
   return operations.reduce<number>((sum, operation: any) => {
-    if (operation?.kind === 'sql_batch' && Array.isArray(operation.statements)) return sum + operation.statements.length;
+    if ((operation?.kind === 'sql_batch' || operation?.kind === 'sql_sheet_batch') && Array.isArray(operation.statements)) return sum + operation.statements.length;
     if (operation?.kind === 'data_replace' || operation?.kind === 'sheet_replace') return sum + 1;
     return sum + 1;
   }, 0);

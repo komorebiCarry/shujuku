@@ -15,7 +15,7 @@ import type {
   ApplyEditsResult,
 } from '../../shared/table-storage-provider';
 import type { TableDataObject_ACU, Mate_ACU } from '../../shared/models/table-data';
-import type { TableMutationOperationV2_ACU } from './storage-frame-v2-types';
+import type { TableMutationOperationV2_ACU, TableSqlBindValueV2_ACU } from './storage-frame-v2-types';
 import { SqliteEngine } from '../../data/sqlite/sqlite-engine';
 import { SyncBridge } from '../../data/sqlite/sync-bridge';
 import {
@@ -35,6 +35,28 @@ export interface SnapshotSqlApplyResult_ACU extends ApplyEditsResult {
   workingData?: TableDataObject_ACU;
   changes?: number;
   operations?: TableMutationOperationV2_ACU[];
+}
+
+export interface SqlSheetBatchBuildResult_ACU {
+  operations: TableMutationOperationV2_ACU[];
+  classifiedSheetKeys: string[];
+  unknownStatements: string[];
+  ambiguousStatements: string[];
+}
+
+export interface SqlSheetBatchBuildOptions_ACU {
+  params?: TableSqlBindValueV2_ACU[][];
+  fallbackTargetSheetKeys?: string[];
+  allowSingleTargetFallback?: boolean;
+  keepLegacyForUnclassified?: boolean;
+  reason?: 'manual_crud' | 'import' | 'system';
+}
+
+export interface SnapshotSqlOperationOptions_ACU {
+  targetSheetKeys?: string[];
+  requireSheetScopedOperations?: boolean;
+  allowSingleTargetFallback?: boolean;
+  keepLegacyForUnclassified?: boolean;
 }
 
 const DEFAULT_MATE_ACU: Mate_ACU = {
@@ -81,6 +103,103 @@ export function mapSqlTableNamesToSheetKeys_ACU(tableData: TableDataObject_ACU |
     }
   }
   return [...matchedKeys];
+}
+
+function appendSqlSheetBatchOperation_ACU(
+  operations: TableMutationOperationV2_ACU[],
+  sheetKey: string,
+  statement: string,
+  param: TableSqlBindValueV2_ACU[] | undefined,
+  reason: 'manual_crud' | 'import' | 'system',
+  tableName?: string,
+): void {
+  const last = operations[operations.length - 1] as any;
+  if (last?.kind === 'sql_sheet_batch' && last.sheetKey === sheetKey) {
+    last.statements.push(statement);
+    if (param !== undefined || Array.isArray(last.params)) {
+      if (!Array.isArray(last.params)) last.params = [];
+      last.params.push(param || []);
+    }
+    return;
+  }
+  operations.push({
+    kind: 'sql_sheet_batch',
+    sheetKey,
+    statements: [statement],
+    ...(param !== undefined ? { params: [param] } : {}),
+    ...(tableName ? { tableName } : {}),
+    reason,
+  });
+}
+
+function appendLegacySqlBatchOperation_ACU(
+  operations: TableMutationOperationV2_ACU[],
+  statement: string,
+  param: TableSqlBindValueV2_ACU[] | undefined,
+): void {
+  const last = operations[operations.length - 1] as any;
+  if (last?.kind === 'sql_batch') {
+    last.statements.push(statement);
+    if (param !== undefined || Array.isArray(last.params)) {
+      if (!Array.isArray(last.params)) last.params = [];
+      last.params.push(param || []);
+    }
+    return;
+  }
+  operations.push({
+    kind: 'sql_batch',
+    statements: [statement],
+    ...(param !== undefined ? { params: [param] } : {}),
+  });
+}
+
+export function buildSqlSheetBatchOperations_ACU(
+  statements: string[],
+  tableData: TableDataObject_ACU,
+  options: SqlSheetBatchBuildOptions_ACU = {},
+): SqlSheetBatchBuildResult_ACU {
+  const operations: TableMutationOperationV2_ACU[] = [];
+  const classifiedSheetKeys = new Set<string>();
+  const unknownStatements: string[] = [];
+  const ambiguousStatements: string[] = [];
+  const fallbackTargetSheetKeys = Array.isArray(options.fallbackTargetSheetKeys)
+    ? options.fallbackTargetSheetKeys.filter(key => typeof key === 'string' && key.startsWith('sheet_'))
+    : [];
+  const allowFallback = options.allowSingleTargetFallback === true && fallbackTargetSheetKeys.length === 1;
+  const keepLegacy = options.keepLegacyForUnclassified === true;
+  const reason = options.reason || 'system';
+
+  (Array.isArray(statements) ? statements : []).forEach((statement, index) => {
+    if (typeof statement !== 'string' || !statement.trim()) return;
+    const param = Array.isArray(options.params) ? options.params[index] : undefined;
+    const tableNames = extractTableNamesFromStatements([statement]);
+    const sheetKeys = mapSqlTableNamesToSheetKeys_ACU(tableData, tableNames);
+    if (sheetKeys.length === 1) {
+      classifiedSheetKeys.add(sheetKeys[0]);
+      appendSqlSheetBatchOperation_ACU(operations, sheetKeys[0], statement, param, reason, tableNames[0]);
+      return;
+    }
+    if (sheetKeys.length === 0 && allowFallback) {
+      const sheetKey = fallbackTargetSheetKeys[0];
+      classifiedSheetKeys.add(sheetKey);
+      unknownStatements.push(statement);
+      appendSqlSheetBatchOperation_ACU(operations, sheetKey, statement, param, reason);
+      return;
+    }
+    if (sheetKeys.length > 1) {
+      ambiguousStatements.push(statement);
+    } else {
+      unknownStatements.push(statement);
+    }
+    if (keepLegacy) appendLegacySqlBatchOperation_ACU(operations, statement, param);
+  });
+
+  return {
+    operations,
+    classifiedSheetKeys: [...classifiedSheetKeys],
+    unknownStatements,
+    ambiguousStatements,
+  };
 }
 
 export class SqlTableService implements ITableStorageProvider {
@@ -691,6 +810,7 @@ export async function applyParameterizedSqlMutationToTableDataSnapshot_ACU(
   sql: string,
   params: (string | number | null)[] | undefined,
   tableData: TableDataObject_ACU,
+  operationOptions: SnapshotSqlOperationOptions_ACU = {},
 ): Promise<SnapshotSqlApplyResult_ACU> {
   const engine = new SqliteEngine();
   const syncBridge = new SyncBridge(engine);
@@ -703,6 +823,22 @@ export async function applyParameterizedSqlMutationToTableDataSnapshot_ACU(
     const workingData = syncBridge.exportToTableData(resolveSnapshotMate_ACU(snapshotCopy));
     const modifiedTableNames = extractTableNamesFromStatements([normalizedSql]);
     const modifiedKeys = mapSqlTableNamesToSheetKeys_ACU(workingData, modifiedTableNames);
+    const normalizedParams = Array.isArray(params) && params.length > 0 ? params.map(value => value ?? null) : undefined;
+    const operationBuild = buildSqlSheetBatchOperations_ACU([normalizedSql], workingData, {
+      params: normalizedParams ? [normalizedParams] : undefined,
+      fallbackTargetSheetKeys: operationOptions.targetSheetKeys,
+      allowSingleTargetFallback: operationOptions.allowSingleTargetFallback === true,
+      keepLegacyForUnclassified: operationOptions.keepLegacyForUnclassified === true || operationOptions.requireSheetScopedOperations !== true,
+      reason: 'system',
+    });
+
+    if (operationOptions.requireSheetScopedOperations === true && (
+      operationBuild.operations.some(operation => operation.kind === 'sql_batch')
+      || operationBuild.unknownStatements.length > 0
+      || operationBuild.ambiguousStatements.length > 0
+    )) {
+      return { success: false, modifiedKeys: [], appliedEdits: 0, changes: 0, error: 'SQL 语句无法归属到单表日志，拒绝写入不可预清理的 SQL 增量。' };
+    }
 
     logDebug_ACU(`[SqlTableService] 参数化快照 SQL 执行成功: changes=${result.changes}, modifiedKeys=${modifiedKeys.join(',')}`);
     return {
@@ -711,11 +847,7 @@ export async function applyParameterizedSqlMutationToTableDataSnapshot_ACU(
       appliedEdits: 1,
       changes: result.changes,
       workingData,
-      operations: [{
-        kind: 'sql_batch',
-        statements: [normalizedSql],
-        ...(Array.isArray(params) && params.length > 0 ? { params: [params.map(value => value ?? null)] } : {}),
-      }],
+      operations: operationBuild.operations,
     };
   } catch (e: any) {
     const errMsg = e?.message || String(e);
@@ -730,6 +862,7 @@ export async function applySqlEditsToTableDataSnapshot_ACU(
   sqlStatements: string,
   tableData: TableDataObject_ACU,
   _updateMode?: string,
+  operationOptions: SnapshotSqlOperationOptions_ACU = {},
 ): Promise<SnapshotSqlApplyResult_ACU> {
   const engine = new SqliteEngine();
   const syncBridge = new SyncBridge(engine);
@@ -753,6 +886,21 @@ export async function applySqlEditsToTableDataSnapshot_ACU(
     const workingData = syncBridge.exportToTableData(resolveSnapshotMate_ACU(snapshotCopy));
     const modifiedTableNames = extractTableNamesFromStatements(statements);
     const modifiedKeys = mapSqlTableNamesToSheetKeys_ACU(workingData, modifiedTableNames);
+    const operationBuild = buildSqlSheetBatchOperations_ACU(statements, workingData, {
+      fallbackTargetSheetKeys: operationOptions.targetSheetKeys,
+      allowSingleTargetFallback: operationOptions.allowSingleTargetFallback === true,
+      keepLegacyForUnclassified: operationOptions.keepLegacyForUnclassified === true || operationOptions.requireSheetScopedOperations !== true,
+      reason: 'system',
+    });
+
+    if (operationOptions.requireSheetScopedOperations === true && (
+      operationBuild.operations.some(operation => operation.kind === 'sql_batch')
+      || operationBuild.unknownStatements.length > 0
+      || operationBuild.ambiguousStatements.length > 0
+    )) {
+      return { success: false, modifiedKeys: [], appliedEdits: 0, error: 'SQL 语句无法归属到单表日志，拒绝写入不可预清理的 SQL 增量。' };
+    }
+
 
     logDebug_ACU(`[SqlTableService] 快照 SQL 执行成功: ${statements.length} 条语句, modifiedKeys=${modifiedKeys.join(',')}`);
     return {
@@ -760,7 +908,7 @@ export async function applySqlEditsToTableDataSnapshot_ACU(
       modifiedKeys,
       appliedEdits: statements.length,
       workingData,
-      operations: [{ kind: 'sql_batch', statements }],
+      operations: operationBuild.operations,
     };
   } catch (e: any) {
     const errMsg = e?.message || String(e);

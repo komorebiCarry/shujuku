@@ -51,6 +51,7 @@ export interface TableCheckpointV2_ACU {
 
 export type TableMutationOperationV2_ACU =
   | TableSqlBatchOperationV2_ACU
+  | TableSqlSheetBatchOperationV2_ACU
   | TableEditDslOperationV2_ACU
   | TableRowUpsertPatchV2_ACU
   | TableRowDeletePatchV2_ACU
@@ -60,11 +61,23 @@ export type TableMutationOperationV2_ACU =
 
 export type TableSqlBindValueV2_ACU = string | number | null;
 
+/** 旧整批 SQL 结构：用于历史兼容和 raw/cross-table SQL；新填表写入应优先使用 sql_sheet_batch。 */
 export interface TableSqlBatchOperationV2_ACU {
   kind: 'sql_batch';
   statements: string[];
   /** 与 statements 同索引的参数绑定；无参数语句可省略对应项或传空数组。 */
   params?: TableSqlBindValueV2_ACU[][];
+}
+
+/** 新单表 SQL 结构：保留 SQL replay 语义，同时提供可按 sheetKey 清理的结构化归属。 */
+export interface TableSqlSheetBatchOperationV2_ACU {
+  kind: 'sql_sheet_batch';
+  sheetKey: string;
+  statements: string[];
+  /** 与 statements 同索引的参数绑定；无参数语句可省略对应项或传空数组。 */
+  params?: TableSqlBindValueV2_ACU[][];
+  tableName?: string;
+  reason?: 'manual_crud' | 'import' | 'system';
 }
 
 export interface TableEditDslOperationV2_ACU {

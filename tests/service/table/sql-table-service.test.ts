@@ -102,6 +102,7 @@ vi.mock('../../../src/shared/json-helpers', () => ({
 // 现在 import 被测模块
 import {
   applySqlEditsToTableDataSnapshot_ACU,
+  buildSqlSheetBatchOperations_ACU,
   SqlTableService,
   splitSqlStatements,
   extractTableNamesFromStatements,
@@ -311,6 +312,74 @@ describe('applySqlEditsToTableDataSnapshot_ACU', () => {
     expect(result.error).toContain('missing_col');
     expect(inputSnapshot.sheet_0.content).toEqual([['row_id', 'item_name', 'quantity'], ['1', '铁剑', '3']]);
     expect(mockCurrentJsonTableData).toBeNull();
+  });
+
+  it('严格单表日志模式下返回 sql_sheet_batch 而不是旧 sql_batch', async () => {
+    const inputSnapshot = JSON.parse(JSON.stringify(snapshotTableData));
+    const result = await applySqlEditsToTableDataSnapshot_ACU(
+      "UPDATE inventory SET quantity = 9 WHERE row_id = 1; INSERT INTO inventory VALUES (2, '治疗药水', 5);",
+      inputSnapshot,
+      'auto_standard',
+      { targetSheetKeys: ['sheet_0'], requireSheetScopedOperations: true, allowSingleTargetFallback: true },
+    );
+
+    expect(result.success).toBe(true);
+    expect(result.operations).toEqual([{
+      kind: 'sql_sheet_batch',
+      sheetKey: 'sheet_0',
+      statements: [
+        'UPDATE inventory SET quantity = 9 WHERE row_id = 1',
+        "INSERT INTO inventory VALUES (2, '治疗药水', 5)",
+      ],
+      tableName: 'inventory',
+      reason: 'system',
+    }]);
+  });
+
+  it('严格单表日志模式下拒绝无法归属到单表的 SQL', async () => {
+    const inputSnapshot = JSON.parse(JSON.stringify(snapshotTableData));
+    const result = await applySqlEditsToTableDataSnapshot_ACU(
+      'CREATE TABLE temp_table (row_id INTEGER PRIMARY KEY);',
+      inputSnapshot,
+      'auto_standard',
+      { targetSheetKeys: ['sheet_0'], requireSheetScopedOperations: true, allowSingleTargetFallback: false },
+    );
+
+    expect(result.success).toBe(false);
+    expect(result.error).toContain('SQL 语句无法归属到单表日志');
+  });
+});
+
+describe('buildSqlSheetBatchOperations_ACU', () => {
+  const tableData: any = {
+    sheet_0: { uid: 'inventory', name: '背包表', sourceData: { ddl: 'CREATE TABLE inventory (row_id INTEGER PRIMARY KEY, value TEXT);' } },
+    sheet_1: { uid: 'quest_log', name: '任务表', sourceData: { ddl: 'CREATE TABLE quest_log (row_id INTEGER PRIMARY KEY, value TEXT);' } },
+  };
+
+  it('按 SQL 表名归类为单表 sql_sheet_batch，并按相邻同表合并', () => {
+    const result = buildSqlSheetBatchOperations_ACU([
+      "INSERT INTO inventory VALUES (1, 'a')",
+      "UPDATE inventory SET value = 'b' WHERE row_id = 1",
+      "INSERT INTO quest_log VALUES (1, 'q')",
+    ], tableData, { reason: 'system' });
+
+    expect(result.operations).toEqual([
+      { kind: 'sql_sheet_batch', sheetKey: 'sheet_0', statements: ["INSERT INTO inventory VALUES (1, 'a')", "UPDATE inventory SET value = 'b' WHERE row_id = 1"], tableName: 'inventory', reason: 'system' },
+      { kind: 'sql_sheet_batch', sheetKey: 'sheet_1', statements: ["INSERT INTO quest_log VALUES (1, 'q')"], tableName: 'quest_log', reason: 'system' },
+    ]);
+    expect(result.unknownStatements).toEqual([]);
+    expect(result.ambiguousStatements).toEqual([]);
+  });
+
+  it('单目标 fallback 只在显式允许时把未知 SQL 归入目标 sheet', () => {
+    const result = buildSqlSheetBatchOperations_ACU(
+      ['CREATE TABLE temp_table (row_id INTEGER PRIMARY KEY)'],
+      tableData,
+      { fallbackTargetSheetKeys: ['sheet_0'], allowSingleTargetFallback: true, reason: 'system' },
+    );
+
+    expect(result.operations).toEqual([{ kind: 'sql_sheet_batch', sheetKey: 'sheet_0', statements: ['CREATE TABLE temp_table (row_id INTEGER PRIMARY KEY)'], reason: 'system' }]);
+    expect(result.unknownStatements).toEqual(['CREATE TABLE temp_table (row_id INTEGER PRIMARY KEY)']);
   });
 });
 

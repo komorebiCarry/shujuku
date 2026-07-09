@@ -44,7 +44,7 @@ import { isSqlContent } from '../ai/prompt-builder/table-edit-parser';
 import { buildGuidedBaseDataFromSheetGuide_ACU, getSortedSheetKeys_ACU } from '../template/chat-scope';
 import { isSqliteMode } from './storage-mode';
 import type { TableMutationOperationV2_ACU } from './storage-frame-v2-types';
-import { applySqlEditsToTableDataSnapshot_ACU, extractTableNamesFromStatements, mapSqlTableNamesToSheetKeys_ACU, normalizeSqlStatementsForRuntimeLog_ACU } from './sql-table-service';
+import { applySqlEditsToTableDataSnapshot_ACU, buildSqlSheetBatchOperations_ACU, extractTableNamesFromStatements, mapSqlTableNamesToSheetKeys_ACU, normalizeSqlStatementsForRuntimeLog_ACU } from './sql-table-service';
 import { loadTableStateFromFramesV2_ACU } from './storage-frame-v2-replay';
 import { ensureStorageProviderReady_ACU, getStorageProvider, reloadStorageProvider } from './table-storage-strategy';
 import { applySpecialIndexSequenceToSummaryTables_ACU } from '../runtime/helpers-remaining';
@@ -357,9 +357,26 @@ function hasSheetContentRows_ACU(sheet: any): boolean {
 }
 
 
-function buildSqlBatchOperationsFromText_ACU(sqlText: string): TableMutationOperationV2_ACU[] {
+function buildSqlSheetBatchOperationsFromText_ACU(
+    sqlText: string,
+    tableData: Record<string, any>,
+    targetSheetKeys: string[] | null | undefined,
+): { success: true; operations: TableMutationOperationV2_ACU[] } | { success: false; error: string } {
     const statements = normalizeSqlStatementsForRuntimeLog_ACU(sqlText);
-    return statements.length > 0 ? [{ kind: 'sql_batch', statements }] : [];
+    if (statements.length === 0) return { success: true, operations: [] };
+    const buildResult = buildSqlSheetBatchOperations_ACU(statements, tableData as any, {
+        fallbackTargetSheetKeys: Array.isArray(targetSheetKeys) ? targetSheetKeys : [],
+        allowSingleTargetFallback: true,
+        keepLegacyForUnclassified: false,
+        reason: 'system',
+    });
+    const hasUnclassified = buildResult.unknownStatements.length > 0
+        || buildResult.ambiguousStatements.length > 0
+        || buildResult.operations.some(operation => operation.kind === 'sql_batch');
+    if (hasUnclassified) {
+        return { success: false, error: 'SQL 语句无法归属到单表日志，拒绝写入不可预清理的 SQL 增量。' };
+    }
+    return { success: true, operations: buildResult.operations };
 }
 
 function buildSheetReplaceOperationsFromData_ACU(
@@ -917,7 +934,6 @@ export async function applyUnifiedGroupFillResponses_ACU(
                 }
             }
             sqlTexts.push(sqlText);
-            operations.push(...buildSqlBatchOperationsFromText_ACU(sqlText));
         }
 
         const commitResult = await runTableUpdateCommit_ACU<{ modifiedKeys: string[] }>({
@@ -958,6 +974,14 @@ export async function applyUnifiedGroupFillResponses_ACU(
             }
 
             const runtimeData = provider.getCurrentData() || currentJsonTableData_ACU || baseSnapshot;
+            operations.length = 0;
+            sortedResponses.forEach((response, index) => {
+                const operationBuild = buildSqlSheetBatchOperationsFromText_ACU(sqlTexts[index] || '', runtimeData, response.job.targetSheetKeys);
+                if (operationBuild.success === false) {
+                    throw new Error(`统一提交失败：group ${response.job.groupKey} ${operationBuild.error}`);
+                }
+                operations.push(...operationBuild.operations);
+            });
             const parsedModifiedKeys: string[] = Array.isArray(parseResult.modifiedKeys)
                 ? parseResult.modifiedKeys.filter((key: unknown): key is string => typeof key === 'string')
                 : [];
@@ -1018,6 +1042,11 @@ export async function applyUnifiedGroupFillResponses_ACU(
                 response.tableEditText,
                 workingTableData,
                 options.updateMode,
+                {
+                    targetSheetKeys: response.job.targetSheetKeys,
+                    requireSheetScopedOperations: true,
+                    allowSingleTargetFallback: true,
+                },
             );
             if (parseResult?.success && parseResult.workingData) {
                 workingTableData = parseResult.workingData;
@@ -1460,7 +1489,6 @@ export async function executeCardUpdateCore_ACU(
                 const isSqlTableEdit = isSqliteMode() && typeof collectResult.tableEditText === 'string' && isSqlContent(collectResult.tableEditText);
 
                 if (isSqlTableEdit) {
-                    const operations = buildSqlBatchOperationsFromText_ACU(collectResult.tableEditText || '');
                     const writeSet = Array.isArray(targetSheetKeys) && targetSheetKeys.length > 0
                         ? targetSheetKeys.map(sheetKey => ({ kind: 'sheet' as const, sheetKey }))
                         : [{ kind: 'all' as const }];
@@ -1492,6 +1520,11 @@ export async function executeCardUpdateCore_ACU(
                         }
 
                         const runtimeData = (provider.getCurrentData() || currentJsonTableData_ACU || rawBaseSnapshot) as Record<string, any>;
+                        const operationBuild = buildSqlSheetBatchOperationsFromText_ACU(collectResult.tableEditText || '', runtimeData, targetSheetKeys);
+                        if (operationBuild.success === false) {
+                            return { success: false, error: operationBuild.error };
+                        }
+                        const operations = operationBuild.operations;
                         applySpecialIndexSequenceToSummaryTables_ACU(runtimeData);
 
                         if (isImportMode) {

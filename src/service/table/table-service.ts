@@ -546,6 +546,7 @@ export async function checkIfFirstTimeInit_ACU(): Promise<boolean> {
           if (operation?.kind === 'sheet_replace') return typeof operation.sheetKey === 'string' && operation.sheetKey.startsWith('sheet_');
           if (operation?.kind === 'row_upsert' || operation?.kind === 'row_delete' || operation?.kind === 'meta_update') return typeof operation.sheetKey === 'string' && operation.sheetKey.startsWith('sheet_');
           if (operation?.kind === 'data_replace') return operation.data && Object.keys(operation.data).some((k: string) => k.startsWith('sheet_'));
+          if (operation?.kind === 'sql_sheet_batch') return typeof operation.sheetKey === 'string' && operation.sheetKey.startsWith('sheet_') && Array.isArray(operation.statements) && operation.statements.length > 0;
           if (operation?.kind === 'sql_batch') return Array.isArray(operation.statements) && operation.statements.length > 0;
           return false;
         })

@@ -260,7 +260,8 @@ function purgeOperationV2_ACU(operation: any, sheetKeys: Set<string>, targetSqlT
         (operation.kind === 'sheet_replace'
             || operation.kind === 'row_upsert'
             || operation.kind === 'row_delete'
-            || operation.kind === 'meta_update')
+            || operation.kind === 'meta_update'
+            || operation.kind === 'sql_sheet_batch')
         && sheetKeys.has(operation.sheetKey)
     ) {
         return { operation: null, changed: true };
@@ -288,7 +289,8 @@ function purgePatchV2_ACU(patch: any, sheetKeys: Set<string>, targetSqlTableName
         (patch.kind === 'sheet_replace'
             || patch.kind === 'row_upsert'
             || patch.kind === 'row_delete'
-            || patch.kind === 'meta_update')
+            || patch.kind === 'meta_update'
+            || patch.kind === 'sql_sheet_batch')
         && sheetKeys.has(patch.sheetKey)
     ) {
         return { patch: null, changed: true };

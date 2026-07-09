@@ -150,6 +150,56 @@ describe('loadTableStateFromFramesV2_ACU', () => {
     expect(result?.sheet_0.content[1]).toEqual(['1', '钢剑']);
   });
 
+  it('回放带 sheetKey 的 sql_sheet_batch，并保留 SQL runtime 语义', async () => {
+    const chat = [
+      {
+        is_user: false,
+        TavernDB_ACU_IsolatedData: {
+          '': {
+            _acu_storage_version: 2,
+            storageFrame: {
+              version: 2,
+              checkpoint: {
+                kind: 'full',
+                createdAt: 1,
+                reason: 'init',
+                data: makeCheckpointData(),
+                event: { filledSheetKeys: [], changedSheetKeys: [], groupKeys: [] },
+              },
+              logEntries: [{
+                seq: 1,
+                entryId: 'v2_sql_sheet_batch_1',
+                createdAt: 2,
+                source: 'manual_crud',
+                targetMessageIndex: 0,
+                aiFloor: 1,
+                filledSheetKeys: ['sheet_0'],
+                changedSheetKeys: ['sheet_0'],
+                groupKeys: [],
+                operations: [{
+                  kind: 'sql_sheet_batch',
+                  sheetKey: 'sheet_0',
+                  statements: ['UPDATE inventory SET name = ? WHERE row_id = ?', 'INSERT INTO inventory VALUES (?, ?)'],
+                  params: [['钢剑', 1], [2, '药水']],
+                  tableName: 'inventory',
+                  reason: 'system',
+                }],
+              }],
+            },
+          },
+        },
+      },
+    ];
+
+    const result = await loadTableStateFromFramesV2_ACU(chat, '');
+
+    expect(result?.sheet_0.content).toEqual([
+      ['row_id', 'name'],
+      ['1', '钢剑'],
+      ['2', '药水'],
+    ]);
+  });
+
   it('回放 sql_batch 前先套用当前聊天 guide 的新 DDL/CHECK', async () => {
     const oldData = {
       mate: { type: 'acu', version: 1 },

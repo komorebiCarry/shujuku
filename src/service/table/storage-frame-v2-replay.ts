@@ -213,7 +213,7 @@ async function reloadSqlReplayRuntime_ACU(runtime: SqlReplayRuntime_ACU, state: 
 
 async function applySqlBatchOperationV2_ACU(
   state: TableDataObject_ACU,
-  operation: Extract<TableMutationOperationV2_ACU, { kind: 'sql_batch' }>,
+  operation: Extract<TableMutationOperationV2_ACU, { kind: 'sql_batch' | 'sql_sheet_batch' }>,
   runtime: SqlReplayRuntime_ACU,
 ): Promise<void> {
   const statements = normalizeSqlStatementsForReplay_ACU(operation.statements || []);
@@ -378,7 +378,7 @@ export async function applyTableOperationV2_ACU(
   runtime?: SqlReplayRuntime_ACU,
 ): Promise<void> {
   if (!operation) return;
-  const ownedRuntime = !runtime && operation.kind === 'sql_batch'
+  const ownedRuntime = !runtime && (operation.kind === 'sql_batch' || operation.kind === 'sql_sheet_batch')
     ? { engine: new SqliteEngine(), syncBridge: null as unknown as SyncBridge, loaded: false }
     : null;
   if (ownedRuntime) ownedRuntime.syncBridge = new SyncBridge(ownedRuntime.engine);
@@ -391,8 +391,8 @@ export async function applyTableOperationV2_ACU(
       if (effectiveRuntime?.loaded) await reloadSqlReplayRuntime_ACU(effectiveRuntime, state);
       return;
     }
-    if (operation.kind === 'sql_batch') {
-      if (!effectiveRuntime) throw new Error('sql_batch replay requires runtime');
+    if (operation.kind === 'sql_batch' || operation.kind === 'sql_sheet_batch') {
+      if (!effectiveRuntime) throw new Error(`${operation.kind} replay requires runtime`);
       await applySqlBatchOperationV2_ACU(state, operation, effectiveRuntime);
       return;
     }

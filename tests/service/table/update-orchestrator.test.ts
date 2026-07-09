@@ -1963,13 +1963,15 @@ describe('executeCardUpdateCore_ACU — SQL 错误反馈重试', () => {
       autoUpdateTokenThreshold: 0,
       importPromptExcludeImportedWorldbookEntries: true,
     };
-    mockCurrentJsonTableData = { sheet_0: { name: '测试表', content: [['row_id'], ['1']] } };
+    mockCurrentJsonTableData = {
+      mate: { type: 'acu', version: 1 },
+      sheet_0: { uid: 'test', name: '测试表', sourceData: { ddl: 'CREATE TABLE test (row_id INTEGER PRIMARY KEY);' }, content: [['row_id']], updateConfig: {}, exportConfig: {}, orderNo: 0 },
+    };
     mockPersistTablesToChatMessage.mockResolvedValue({ saved: true, messageIndex: 0 });
     vi.mocked(parseTableTemplateJson_ACU).mockReturnValue({
-      mate: { type: 'acu' },
-      sheet_0: { name: '测试表', updateConfig: { groupId: 0 }, content: [['row_id', '值']] },
+      mate: { type: 'acu', version: 1 },
+      sheet_0: { uid: 'test', name: '测试表', sourceData: { ddl: 'CREATE TABLE test (row_id INTEGER PRIMARY KEY);' }, updateConfig: { groupId: 0 }, content: [['row_id']] },
     });
-    mockApplySqlEditsToTableDataSnapshot.mockImplementation(() => mockParseAndApplyTableEdits());
   });
 
   afterEach(() => {
@@ -2002,10 +2004,6 @@ describe('executeCardUpdateCore_ACU — SQL 错误反馈重试', () => {
       return '<tableEdit>ok</tableEdit>';
     });
 
-    mockParseAndApplyTableEdits
-      .mockImplementationOnce(() => { throw new Error('SQL 语法错误: no such table'); })
-      .mockReturnValueOnce({ success: true, modifiedKeys: ['sheet_0'] });
-
     mockCheckIfFirstTimeInit.mockResolvedValue(false);
     mockSaveIndependentTable.mockResolvedValue({ saved: true });
 
@@ -2018,7 +2016,7 @@ describe('executeCardUpdateCore_ACU — SQL 错误反馈重试', () => {
 
     const result = await resultPromise;
 
-    expect(result.success).toBe(true);
+    expect(result.success, result.error).toBe(true);
     expect(callCount).toBe(2);
 
     vi.mocked(isSqliteMode).mockReturnValue(false);
@@ -2057,6 +2055,7 @@ describe('executeCardUpdateCore_ACU — SQL 错误反馈重试', () => {
 
   it('SQL 模式下多次重试时错误信息被替换（不累积）', async () => {
     const { isSqliteMode } = await import('../../../src/service/table/storage-mode');
+    const { parseTableTemplateJson_ACU } = await import('../../../src/shared/utils');
     vi.mocked(isSqliteMode).mockReturnValue(true);
     mockSettings.tableMaxRetries = 3;
 
@@ -2065,6 +2064,10 @@ describe('executeCardUpdateCore_ACU — SQL 错误反馈重试', () => {
       mate: { type: 'acu', version: 1 },
       sheet_0: { uid: 't', name: '测试表', sourceData: { ddl: 'CREATE TABLE t (row_id INTEGER PRIMARY KEY);' }, content: [['row_id']], updateConfig: {}, exportConfig: {}, orderNo: 0 },
     };
+    vi.mocked(parseTableTemplateJson_ACU).mockReturnValue({
+      mate: { type: 'acu', version: 1 },
+      sheet_0: { uid: 't', name: '测试表', sourceData: { ddl: 'CREATE TABLE t (row_id INTEGER PRIMARY KEY);' }, updateConfig: { groupId: 0 }, content: [['row_id']] },
+    } as any);
 
     let callCount = 0;
     const capturedTableDataTexts: string[] = [];
@@ -2087,7 +2090,7 @@ describe('executeCardUpdateCore_ACU — SQL 错误反馈重试', () => {
 
     const result = await resultPromise;
 
-    expect(result.success).toBe(true);
+    expect(result.success, result.error).toBe(true);
     expect(callCount).toBe(3);
 
     // 第二次调用时应包含第一次的错误信息
@@ -2510,8 +2513,8 @@ describe('applyUnifiedGroupFillResponses_ACU', () => {
     expect(mockCurrentJsonTableData.sheet_0.content).toEqual([['row_id', 'value'], ['1', 'base-a'], ['2', 'sql-a']]);
     expect(mockCurrentJsonTableData.sheet_1.content).toEqual([['row_id', 'value'], ['1', 'base-b'], ['2', 'sql-b']]);
     expect(mockPersistTablesToChatMessage.mock.calls[0][0].operations).toEqual([
-      { kind: 'sql_batch', statements: ["INSERT INTO inventory VALUES (2, 'sql-a')"] },
-      { kind: 'sql_batch', statements: ["INSERT INTO quest_log VALUES (2, 'sql-b')"] },
+      { kind: 'sql_sheet_batch', sheetKey: 'sheet_0', statements: ["INSERT INTO inventory VALUES (2, 'sql-a')"], tableName: 'inventory', reason: 'system' },
+      { kind: 'sql_sheet_batch', sheetKey: 'sheet_1', statements: ["INSERT INTO quest_log VALUES (2, 'sql-b')"], tableName: 'quest_log', reason: 'system' },
     ]);
     vi.mocked(isSqliteMode).mockReturnValue(false);
   });
