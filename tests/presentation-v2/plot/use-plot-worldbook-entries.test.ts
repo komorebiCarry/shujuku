@@ -133,8 +133,50 @@ describe('usePlotWorldbookEntries', () => {
       { uid: 8, state: 'native' },
       { uid: 9, state: 'native' },
     ]);
-    expect(c.groups.value[0].entries.filter(e => e.isConstant).map(e => e.uid)).toEqual([7, 8, 9]);
+    expect(c.groups.value[0].entries.filter(e => e.isConstant).map(e => e.uid)).toEqual([8, 9]);
     expect(settings.plotSettings.plotWorldbookConfig.enabledEntries.MyBook).toEqual([1, 7, 8, 9]);
+  });
+
+  it('loadEntries 按接管前状态使 live disabled 受控条目可选', async () => {
+    mockGetAgentSnapshot.mockReturnValue({
+      active: true,
+      selectionSignature: 'test-selection',
+      createdAt: 1,
+      books: {
+        MyBook: [
+          { uid: 1, previousEnabled: true, previousKeys: ['旧关键词'], previousType: 'selective' },
+          { uid: 2, previousEnabled: false, previousKeys: ['关闭关键词'], previousType: 'constant' },
+        ],
+      },
+    });
+    mockGetEntries.mockResolvedValue({
+      MyBook: [
+        { uid: 1, comment: '受控条目', name: '受控条目', enabled: false, type: 'selective', keys: [] },
+        { uid: 2, comment: '原本关闭的受控条目', name: '原本关闭的受控条目', enabled: false, type: 'selective', keys: [] },
+        makeEntry(3, 'TavernDB-ACU-应隐藏'),
+        makeEntry(4, '外部导入-TavernDB-ACU-应显示'),
+        makeEntry(5, 'ACU-[scope]-外部导入-TavernDB-ACU-应显示'),
+        makeEntry(6, '普通规则条目'),
+      ],
+    });
+
+    const c = await getComposable();
+    await c.loadEntries(['MyBook']);
+
+    expect(c.groups.value[0].entries.map(entry => ({
+      uid: entry.uid,
+      disabled: entry.disabled,
+      isConstant: entry.isConstant,
+      agentTakeoverState: entry.agentTakeoverState,
+      checked: entry.checked,
+    }))).toEqual([
+      { uid: 1, disabled: false, isConstant: false, agentTakeoverState: 'taken_over', checked: true },
+      { uid: 2, disabled: true, isConstant: true, agentTakeoverState: 'taken_over', checked: true },
+      { uid: 4, disabled: false, isConstant: false, agentTakeoverState: 'native', checked: true },
+      { uid: 5, disabled: false, isConstant: false, agentTakeoverState: 'native', checked: true },
+    ]);
+    c.selectAll();
+    expect(settings.plotSettings.plotWorldbookConfig.enabledEntries.MyBook).toEqual([1, 4, 5]);
   });
 
   it('loadEntries 显示并默认启用非 snapshot 命中的 constant 条目', async () => {

@@ -20,10 +20,11 @@ function createWorldbookConfig() {
 let worldbookConfig: ReturnType<typeof createWorldbookConfig>;
 const mockSaveSettings = vi.fn();
 const mockGetEntries = vi.fn();
+const mockGetAgentSnapshot = vi.fn(() => ({ active: false, selectionSignature: '', createdAt: 0, books: {} }));
 
-async function getComposable() {
+async function getComposable(presetConfig?: ReturnType<typeof createWorldbookConfig>) {
   vi.resetModules();
-  worldbookConfig = createWorldbookConfig();
+  worldbookConfig = presetConfig || createWorldbookConfig();
 
   vi.doMock('../../../src/service/settings/settings-readers', () => ({
     getCurrentWorldbookConfig_ACU: () => worldbookConfig,
@@ -34,6 +35,15 @@ async function getComposable() {
   vi.doMock('../../../src/service/worldbook/pipeline', () => ({
     getLorebookEntriesByNames_ACU: mockGetEntries,
   }));
+  vi.doMock('../../../src/service/agent/agent-worldbook-takeover', () => ({
+    getPlotAgentWorldbookSnapshot_ACU: mockGetAgentSnapshot,
+  }));
+  vi.doMock('../../../src/service/agent/agent-worldbook-skill-meta', () => ({
+    parseWorldbookSkillMetaFromComment_ACU: (comment: unknown) => String(comment || '').includes('ACU_SKILL_META_START')
+      ? { description: '已 Skill 化', triggerWhen: '测试触发', tk: 0, updatedBy: 'manual', updatedAt: 1 }
+      : null,
+    stripWorldbookSkillMetaBlock_ACU: (comment: unknown) => String(comment || '').replace(/\n?<!--\s*ACU_SKILL_META_START\s*\n[\s\S]*?\nACU_SKILL_META_END\s*-->\n?/g, '').trim(),
+  }));
 
   const mod = await import('../../../src/presentation-v2/composables/useFormFillWorldbookEntries');
   return mod.useFormFillWorldbookEntries();
@@ -43,6 +53,7 @@ beforeEach(() => {
   vi.restoreAllMocks();
   mockSaveSettings.mockClear();
   mockGetEntries.mockClear();
+  mockGetAgentSnapshot.mockReturnValue({ active: false, selectionSignature: '', createdAt: 0, books: {} });
 });
 
 describe('useFormFillWorldbookEntries', () => {
@@ -84,5 +95,47 @@ describe('useFormFillWorldbookEntries', () => {
       { uid: 3, checked: true, disabled: true, isConstant: true },
     ]);
     expect(worldbookConfig.enabledEntries.CharBook).toEqual([1, 2, 3]);
+  });
+
+  it('按接管前状态展示受控条目，并与剧情页面共用可见性规则', async () => {
+    mockGetAgentSnapshot.mockReturnValue({
+      active: true,
+      selectionSignature: 'test-selection',
+      createdAt: 1,
+      books: {
+        CharBook: [
+          { uid: 1, previousEnabled: true, previousKeys: ['旧关键词'], previousType: 'selective' },
+          { uid: 2, previousEnabled: false, previousKeys: ['关闭关键词'], previousType: 'constant' },
+        ],
+      },
+    });
+    mockGetEntries.mockResolvedValue({
+      CharBook: [
+        { uid: 1, comment: '受控条目', name: '受控条目', enabled: false, type: 'selective', keys: [] },
+        { uid: 2, comment: '原本关闭的受控条目', name: '原本关闭的受控条目', enabled: false, type: 'selective', keys: [] },
+        makeEntry(3, 'TavernDB-ACU-应隐藏'),
+        makeEntry(4, '外部导入-TavernDB-ACU-应显示'),
+        makeEntry(5, 'ACU-[scope]-外部导入-TavernDB-ACU-应显示'),
+        makeEntry(6, '普通规则条目'),
+      ],
+    });
+
+    const c = await getComposable();
+    await c.loadEntries(['CharBook']);
+
+    expect(c.groups.value[0].entries.map(entry => ({
+      uid: entry.uid,
+      disabled: entry.disabled,
+      isConstant: entry.isConstant,
+      agentTakeoverState: entry.agentTakeoverState,
+      checked: entry.checked,
+    }))).toEqual([
+      { uid: 1, disabled: false, isConstant: false, agentTakeoverState: 'taken_over', checked: true },
+      { uid: 2, disabled: true, isConstant: true, agentTakeoverState: 'taken_over', checked: true },
+      { uid: 4, disabled: false, isConstant: false, agentTakeoverState: 'native', checked: true },
+      { uid: 5, disabled: false, isConstant: false, agentTakeoverState: 'native', checked: true },
+    ]);
+    c.selectAll();
+    expect(worldbookConfig.enabledEntries.CharBook).toEqual([1, 4, 5]);
   });
 });

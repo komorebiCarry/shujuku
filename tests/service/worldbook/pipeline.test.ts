@@ -982,6 +982,115 @@ describe('getCombinedWorldbookContent_ACU', () => {
     expect(result).not.toContain('# TavernDB-ACU-AgentGreenlight');
   });
 
+  it('pre_takeover 让已接管条目按 previousKeys 命中，但不修改 live 条目', async () => {
+    mockGetCurrentWorldbookConfig.mockReturnValue({
+      source: 'manual',
+      manualSelection: ['书A'],
+      enabledEntries: { 书A: [1] },
+    });
+    const liveEntry = {
+      uid: 1,
+      comment: '受控关键词条目',
+      content: '接管前关键词命中正文',
+      enabled: false,
+      type: 'constant',
+      key: [],
+      keys: [],
+    };
+    mockGwGetLorebookEntries.mockResolvedValue([liveEntry]);
+
+    const result = await getCombinedWorldbookContent_ACU('旧关键词', {
+      entryStateView: 'pre_takeover',
+      entryStateSnapshotSignature: 'scope-signature',
+      entryStateSnapshot: {
+        active: true,
+        selectionSignature: 'scope-signature',
+        createdAt: 1,
+        books: {
+          书A: [{ uid: 1, previousEnabled: true, previousKeys: ['旧关键词'], previousType: 'selective' }],
+        },
+      },
+    });
+
+    expect(result).toContain('# 受控关键词条目\n接管前关键词命中正文');
+    expect(liveEntry).toEqual({
+      uid: 1,
+      comment: '受控关键词条目',
+      content: '接管前关键词命中正文',
+      enabled: false,
+      type: 'constant',
+      key: [],
+      keys: [],
+    });
+  });
+
+  it('pre_takeover 下未勾选或 previousKeys 未命中的受控条目不注入', async () => {
+    mockGetCurrentWorldbookConfig.mockReturnValue({
+      source: 'manual',
+      manualSelection: ['书A'],
+      enabledEntries: { 书A: [] },
+    });
+    mockGwGetLorebookEntries.mockResolvedValue([{
+      uid: 1,
+      comment: '受控关键词条目',
+      content: '不应注入的正文',
+      enabled: false,
+      type: 'constant',
+      key: [],
+      keys: [],
+    }]);
+    const snapshot = {
+      active: true,
+      selectionSignature: 'scope-signature',
+      createdAt: 1,
+      books: {
+        书A: [{ uid: 1, previousEnabled: true, previousKeys: ['旧关键词'], previousType: 'selective' }],
+      },
+    };
+
+    const uncheckedResult = await getCombinedWorldbookContent_ACU('旧关键词', {
+      entryStateView: 'pre_takeover',
+      entryStateSnapshotSignature: 'scope-signature',
+      entryStateSnapshot: snapshot,
+    });
+    expect(uncheckedResult).toBe('');
+
+    mockGetCurrentWorldbookConfig.mockReturnValue({
+      source: 'manual',
+      manualSelection: ['书A'],
+      enabledEntries: { 书A: [1] },
+    });
+    const unmatchedResult = await getCombinedWorldbookContent_ACU('没有匹配的文本', {
+      entryStateView: 'pre_takeover',
+      entryStateSnapshotSignature: 'scope-signature',
+      entryStateSnapshot: snapshot,
+    });
+    expect(unmatchedResult).toBe('');
+  });
+
+  it('pre_takeover 不复活 previousEnabled=false 的受控条目', async () => {
+    mockGetCurrentWorldbookConfig.mockReturnValue({
+      source: 'manual',
+      manualSelection: ['书A'],
+      enabledEntries: { 书A: [1] },
+    });
+    mockGwGetLorebookEntries.mockResolvedValue([{
+      uid: 1, comment: '原本关闭条目', content: '不应注入的正文', enabled: true, type: 'constant', key: [], keys: [],
+    }]);
+
+    const result = await getCombinedWorldbookContent_ACU('旧关键词', {
+      entryStateView: 'pre_takeover',
+      entryStateSnapshotSignature: 'scope-signature',
+      entryStateSnapshot: {
+        active: true,
+        selectionSignature: 'scope-signature',
+        createdAt: 1,
+        books: { 书A: [{ uid: 1, previousEnabled: false, previousKeys: ['旧关键词'], previousType: 'selective' }] },
+      },
+    });
+    expect(result).toBe('');
+  });
+
   it('异常时返回空字符串', async () => {
     mockGetCurrentWorldbookConfig.mockReturnValue({ source: 'character', enabledEntries: {} });
     mockGetCharLorebooks.mockRejectedValue(new Error('网络错误'));

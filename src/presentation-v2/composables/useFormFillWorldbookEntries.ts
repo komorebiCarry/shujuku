@@ -12,8 +12,19 @@ import { ref, shallowRef } from 'vue';
 import { getLorebookEntriesByNames_ACU } from '../../service/worldbook/pipeline';
 import { getCurrentWorldbookConfig_ACU } from '../../service/settings/settings-readers';
 import { saveSettings_ACU } from '../../service/settings/settings-service';
+import { getPlotAgentWorldbookSnapshot_ACU } from '../../service/agent/agent-worldbook-takeover';
+import {
+  parseWorldbookSkillMetaFromComment_ACU,
+  stripWorldbookSkillMetaBlock_ACU,
+} from '../../service/agent/agent-worldbook-skill-meta';
 import { logError_ACU } from '../../shared/utils';
-import type {
+import {
+  buildWorldbookEntryDisplayView_ACU,
+  buildWorldbookSnapshotEntryIndexByBook_ACU,
+  getWorldbookSnapshotEntryForDisplay_ACU,
+  isWorldbookEntryVisibleForPageUI_ACU,
+  resolveWorldbookEntryTakeoverState_ACU,
+  type
   WorldbookEntryDisplayGroup_ACU,
   WorldbookEntryDisplayItem_ACU,
 } from './worldbook-entry-display';
@@ -23,39 +34,6 @@ export type FormFillWorldbookEntryItem = WorldbookEntryDisplayItem_ACU;
 export type FormFillWorldbookEntryGroup = WorldbookEntryDisplayGroup_ACU;
 
 export type FormFillEntryLoadStatus = 'idle' | 'loading' | 'success' | 'error';
-
-const BLOCKED_KEYWORDS = [
-  '规则', '思维链', 'cot', 'MVU', 'mvu', '变量', '状态',
-  'Status', 'Rule', 'rule', '检定', '判断', '叙事', '文风',
-  'InitVar', '格式',
-];
-
-function isDbGenerated(comment: string): boolean {
-  const normalized = comment
-    .replace(/^ACU-\[[^\]]+\]-/, '')
-    .replace(/^外部导入-(?:[^-]+-)?/, '');
-  if (normalized.startsWith('TavernDB-ACU-OutlineTable')) return true;
-  if (normalized.startsWith('TavernDB-ACU-')) return true;
-  if (normalized.startsWith('重要人物条目')) return true;
-  if (normalized.startsWith('总结条目')) return true;
-  if (normalized.startsWith('小总结条目')) return true;
-  return false;
-}
-
-function isBlocked(comment: string): boolean {
-  return BLOCKED_KEYWORDS.some(kw => comment.includes(kw));
-}
-
-function isConstantWorldbookEntry_ACU(entry: any): boolean {
-  return String(entry?.type || '').trim().toLowerCase() === 'constant';
-}
-
-function isEntryVisibleForUI(entry: any): boolean {
-  const comment = String(entry?.comment || entry?.name || '');
-  if (isDbGenerated(comment)) return false;
-  if (isBlocked(comment)) return false;
-  return true;
-}
 
 function ensureEnabledEntries(): Record<string, number[]> {
   const cfg = getCurrentWorldbookConfig_ACU() as any;
@@ -84,16 +62,16 @@ export function useFormFillWorldbookEntries() {
     try {
       const enabledEntries = ensureEnabledEntries();
       const entriesMap = await getLorebookEntriesByNames_ACU(unique) as Record<string, any[]>;
+      const snapshotEntryIndexByBook = buildWorldbookSnapshotEntryIndexByBook_ACU(getPlotAgentWorldbookSnapshot_ACU());
       let settingsChanged = false;
       const result: FormFillWorldbookEntryGroup[] = [];
 
       for (const bookName of unique) {
         const bookEntries = Array.isArray(entriesMap[bookName]) ? entriesMap[bookName] : [];
+        const visibleBookEntries = bookEntries.filter((entry: any) => isWorldbookEntryVisibleForPageUI_ACU(bookName, entry, snapshotEntryIndexByBook));
 
         if (typeof enabledEntries[bookName] === 'undefined') {
-          enabledEntries[bookName] = bookEntries
-            .filter(isEntryVisibleForUI)
-            .map((e: any) => e.uid);
+          enabledEntries[bookName] = visibleBookEntries.map((entry: any) => entry.uid);
           settingsChanged = true;
         }
 
@@ -101,25 +79,26 @@ export function useFormFillWorldbookEntries() {
           ? enabledEntries[bookName]
           : [];
 
-        const visible: FormFillWorldbookEntryItem[] = [];
-        for (const entry of bookEntries) {
-          if (!isEntryVisibleForUI(entry)) continue;
+        const visible: FormFillWorldbookEntryItem[] = visibleBookEntries.map((entry: any) => {
           const comment = String(entry?.comment || entry?.name || '');
-          visible.push({
+          const skillMeta = parseWorldbookSkillMetaFromComment_ACU(comment);
+          const snapshotEntry = getWorldbookSnapshotEntryForDisplay_ACU(snapshotEntryIndexByBook, bookName, entry);
+          const displayView = buildWorldbookEntryDisplayView_ACU(entry, snapshotEntry);
+          return {
             uid: entry.uid,
             bookName,
-            label: comment || `条目 ${entry.uid}`,
+            label: stripWorldbookSkillMetaBlock_ACU(comment).trim() || `条目 ${entry.uid}`,
             comment,
-            skillMeta: null,
-            hasSkill: false,
-            agentTakeoverState: entry.enabled === false ? 'initial_disabled' : 'native',
+            skillMeta,
+            hasSkill: !!skillMeta,
+            agentTakeoverState: resolveWorldbookEntryTakeoverState_ACU(entry, !!skillMeta, snapshotEntry),
             checked: enabledList.includes(entry.uid),
             skillifySelected: false,
             skillifySelectable: false,
-            isConstant: isConstantWorldbookEntry_ACU(entry),
-            disabled: entry.enabled === false,
-          });
-        }
+            isConstant: displayView.isConstant,
+            disabled: displayView.disabled,
+          };
+        });
 
         if (visible.length > 0) {
           result.push({ bookName, entries: visible, expanded: false });
