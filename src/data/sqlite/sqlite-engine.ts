@@ -29,6 +29,11 @@ export interface QueryResult {
   values: SqlJsValueType[][];
 }
 
+/** 查询执行诊断选项 */
+export interface SqliteQueryOptions_ACU {
+  suppressErrorLog?: boolean;
+}
+
 /** INSERT/UPDATE/DELETE 执行结果 */
 export interface MutationResult {
   changes: number;
@@ -95,7 +100,7 @@ export class SqliteEngine {
    * @returns 查询结果（columns + values）
    * @throws 数据库未初始化或 SQL 语法错误时抛出
    */
-  query(sql: string, params?: SqlJsBindParams): QueryResult {
+  query(sql: string, params?: SqlJsBindParams, options: SqliteQueryOptions_ACU = {}): QueryResult {
     this._ensureDb();
     try {
       const results = this.db!.exec(sql, params);
@@ -108,7 +113,9 @@ export class SqliteEngine {
         values: results[0].values,
       };
     } catch (e: any) {
-      logError_ACU('[SQLite引擎] query 执行失败:', sql.substring(0, 200), '| 错误:', e?.message || String(e));
+      if (options.suppressErrorLog !== true) {
+        logError_ACU('[SQLite引擎] query 执行失败:', sql.substring(0, 200), '| 错误:', e?.message || String(e));
+      }
       throw e;
     }
   }

@@ -115,6 +115,7 @@ describe('agent worldbook skillify candidate filtering', () => {
   it('keeps disabled and constant checks while allowing entries without keywords', () => {
     expect(isWorldbookEntrySkillifyCandidate_ACU({ comment: '用户自定义地点', keys: ['酒馆'], enabled: false })).toBe(false);
     expect(isWorldbookEntrySkillifyCandidate_ACU({ comment: '用户自定义地点', keys: ['酒馆'], type: 'constant' })).toBe(false);
+    expect(isWorldbookEntrySkillifyCandidate_ACU({ comment: '用户自定义地点', keys: ['酒馆'], type: ' CONSTANT ' })).toBe(false);
     expect(isWorldbookEntrySkillifyCandidate_ACU({ comment: '用户自定义地点', keys: [] })).toBe(true);
   });
 
@@ -389,6 +390,7 @@ describe('agent worldbook skillify candidate filtering', () => {
     const result = await skillifyWorldbookEntries_ACU(['剧情书'], { maxAiRetries: 2, onProgress: progress });
 
     expect(mockCallAIWithPreset).toHaveBeenCalledTimes(2);
+    expect(mockCallAIWithPreset.mock.calls[1][0]).toBe(mockCallAIWithPreset.mock.calls[0][0]);
     expect(mockSaveWorldbookEntrySkillMeta).toHaveBeenCalledWith('剧情书', 'retry', { description: '新描述', triggerWhen: '新触发', tk: 9 }, 'agent-skillify');
     expect(progress).toHaveBeenCalledWith(expect.objectContaining({ phase: 'retry', attempt: 1, maxAttempts: 2, uid: 'retry' }));
     expect(result).toMatchObject({ totalCandidates: 1, updated: 1, skipped: 0, failed: 0 });

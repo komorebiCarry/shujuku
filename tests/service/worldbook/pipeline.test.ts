@@ -222,6 +222,7 @@ import {
   loadAllChatMessages_ACU,
   deleteAllGeneratedEntries_ACU,
   refreshMergedDataAndNotify_ACU,
+  collectCombinedWorldbookEntriesByStrategy_ACU,
   buildCombinedWorldbookContentByStrategy_ACU,
   getCombinedWorldbookContent_ACU,
   updateReadableLorebookEntry_ACU,
@@ -759,6 +760,96 @@ describe('updateReadableLorebookEntry_ACU', () => {
     expect(mockUpdateOutlineTableEntry).toHaveBeenCalledWith(expect.any(Object), true, 'target-book');
     expect(mockUpdateCustomTableExports).toHaveBeenCalledWith(expect.any(Object), true, 'target-book');
     expect(mockGwGetLorebookEntries).toHaveBeenCalledWith('target-book');
+  });
+});
+
+describe('collectCombinedWorldbookEntriesByStrategy_ACU entryStateView', () => {
+  it('pre_takeover 使用快照恢复 enabled、keys 和 type，且不修改 gateway 原对象', async () => {
+    const liveEntry = { uid: 1, comment: '受控条目', content: '命中内容', enabled: false, type: 'constant', key: [], keys: [] };
+    mockGwGetLorebookEntries.mockResolvedValue([liveEntry]);
+
+    const result = await collectCombinedWorldbookEntriesByStrategy_ACU({
+      bookNames: ['书A'],
+      baseScanText: '旧关键词',
+      entryStateView: 'pre_takeover',
+      entryStateSnapshotSignature: 'scope-signature',
+      entryStateSnapshot: {
+        active: true,
+        selectionSignature: 'scope-signature',
+        createdAt: 1,
+        books: {
+          书A: [{ uid: 1, previousEnabled: true, previousKeys: ['旧关键词'], previousType: 'keyword' }],
+        },
+      },
+      sortEntries: null,
+    });
+
+    expect(result).toHaveLength(1);
+    expect(result[0]).toEqual(expect.objectContaining({ enabled: true, key: ['旧关键词'], keys: ['旧关键词'], type: 'keyword' }));
+    expect(liveEntry).toEqual({ uid: 1, comment: '受控条目', content: '命中内容', enabled: false, type: 'constant', key: [], keys: [] });
+  });
+
+  it('pre_takeover 保留 previousEnabled=false，不让 live 常量状态复活条目', async () => {
+    mockGwGetLorebookEntries.mockResolvedValue([
+      { uid: 2, comment: '接管后常量', content: '不应出现', enabled: true, type: 'constant', key: [], keys: [] },
+    ]);
+
+    const result = await collectCombinedWorldbookEntriesByStrategy_ACU({
+      bookNames: ['书A'],
+      entryStateView: 'pre_takeover',
+      entryStateSnapshotSignature: 'scope-signature',
+      entryStateSnapshot: {
+        active: true,
+        selectionSignature: 'scope-signature',
+        createdAt: 1,
+        books: {
+          书A: [{ uid: 2, previousEnabled: false, previousKeys: [], previousType: undefined }],
+        },
+      },
+    });
+
+    expect(result).toEqual([]);
+  });
+
+  it('签名不匹配时退化为 live 并记录警告', async () => {
+    mockGwGetLorebookEntries.mockResolvedValue([
+      { uid: 3, comment: 'live 条目', content: 'live 内容', enabled: true, type: 'constant', key: [], keys: [] },
+    ]);
+
+    const result = await collectCombinedWorldbookEntriesByStrategy_ACU({
+      bookNames: ['书A'],
+      entryStateView: 'pre_takeover',
+      entryStateSnapshotSignature: 'expected-signature',
+      entryStateSnapshot: {
+        active: true,
+        selectionSignature: 'stale-signature',
+        createdAt: 1,
+        books: { 书A: [{ uid: 3, previousEnabled: false, previousKeys: [], previousType: 'keyword' }] },
+      },
+    });
+
+    expect(result).toHaveLength(1);
+    expect(result[0]).toEqual(expect.objectContaining({ enabled: true, type: 'constant' }));
+    expect(mockLogWarn).toHaveBeenCalledWith(expect.stringContaining('pre_takeover snapshot unavailable or signature mismatch'));
+  });
+
+  it('live 默认视图不读取快照状态', async () => {
+    mockGwGetLorebookEntries.mockResolvedValue([
+      { uid: 4, comment: 'live 禁用条目', content: '不应出现', enabled: false, type: 'constant', key: [], keys: [] },
+    ]);
+
+    const result = await collectCombinedWorldbookEntriesByStrategy_ACU({
+      bookNames: ['书A'],
+      entryStateSnapshotSignature: 'scope-signature',
+      entryStateSnapshot: {
+        active: true,
+        selectionSignature: 'scope-signature',
+        createdAt: 1,
+        books: { 书A: [{ uid: 4, previousEnabled: true, previousKeys: [], previousType: 'constant' }] },
+      },
+    });
+
+    expect(result).toEqual([]);
   });
 });
 

@@ -14,6 +14,7 @@ import FormFillPage from '../pages/FormFillPage.vue';
 import TablePage from '../pages/TablePage.vue';
 import ApiPage from '../pages/ApiPage.vue';
 import PlotPage from '../pages/PlotPage.vue';
+import AgentPage from '../pages/AgentPage.vue';
 import ContinuationPage from '../pages/ContinuationPage.vue';
 import ImportPage from '../pages/ImportPage.vue';
 import VectorIndexPage from '../pages/VectorIndexPage.vue';
@@ -45,6 +46,7 @@ export const ACU_V2_PAGE_REGISTRY: readonly AcuV2Page[] = Object.freeze([
   { id: 'form-fill', title: '填表工作台', group: 'config', component: markRaw(FormFillPage) },
   { id: 'table', title: '填表规则', group: 'config', component: markRaw(TablePage) },
   { id: 'plot', title: '剧情推进', group: 'config', component: markRaw(PlotPage), featureGate: FEATURE_GATE_PLOT },
+  { id: 'agent', title: 'Agent', group: 'config', component: markRaw(AgentPage) },
   { id: 'api', title: 'API', group: 'config', component: markRaw(ApiPage) },
 
   // 功能

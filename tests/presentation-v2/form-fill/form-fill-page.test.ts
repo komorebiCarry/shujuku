@@ -777,14 +777,12 @@ describe('FormFillPage · 手动填表面板', () => {
     expect(dialogText).toContain('当前 full checkpoint：AI 第 1 层（初始基线）、AI 第 3 层（历史周期基线）');
     expect(dialogText).toContain('本次重填范围：AI 第 1~3 层');
     expect(dialogText).toContain('选中表：角色状态（sheet_a）、事件记录（sheet_b）');
-    expect(dialogText).toContain('系统会在内存中按当前上下文和批处理设置重填当前选中的表');
-    expect(dialogText).toContain('执行前会先删除选中表在本次重填范围内的旧表格数据，包括范围内 V2 增量日志、revision 指纹以及范围内 checkpoint 中的选中表基底');
-    expect(dialogText).toContain('范围外 checkpoint 和未选中的表不会被删除');
-    expect(dialogText).toContain('清理后会重新生成运行时快照');
-    expect(dialogText).toContain('若范围后仍有跳过的 AI 楼层，则会按重填起点前的边界回放生成基底，避免未来楼层污染 prompt');
+    expect(dialogText).toContain('系统会先在 service 层做重填边界检查，并在内存中按当前上下文和批处理设置准备重填当前选中的表');
+    expect(dialogText).toContain('常规路径只会在确认可回放边界后清理本次范围内选中表的 V2 增量日志与 revision 指纹');
+    expect(dialogText).toContain('如果边界检查确认重填起点前没有可回放 checkpoint，系统会停止并弹出第二次破坏性确认');
+    expect(dialogText).toContain('不会清理本次重填范围之外的聊天记录表格数据');
+    expect(dialogText).toContain('不会在未二次确认时替换 checkpoint 基底');
     expect(dialogText).toContain('失败、终止或从中断处继续时，不会清理本次重填范围之外的聊天记录表格数据');
-    expect(dialogText).toContain('表头空基底');
-    expect(dialogText).not.toContain('空白结构');
     expect(dialogText).toContain('确认并继续');
     expect(dialogText).not.toContain('直接填表');
     expect(document.querySelector('.acu-toast-viewport')?.textContent || '')
@@ -830,10 +828,10 @@ describe('FormFillPage · 手动填表面板', () => {
     const danger = document.querySelector<HTMLElement>('.acu-dialog__danger-message');
     expect(danger).not.toBeNull();
     const dangerText = danger!.textContent || '';
-    expect(dangerText).toContain('所有 full checkpoint 都在即将执行的重填范围内');
-    expect(dangerText).toContain('确认执行后，重填起点前将没有可回放 checkpoint');
-    expect(dangerText).toContain('会删除本次重填范围内选中表的旧数据');
-    expect(dangerText).toContain('不会删除范围外 checkpoint、范围外聊天记录表格数据或未选中的表');
+    expect(dangerText).toContain('所有 full checkpoint 都在本次重填范围内');
+    expect(dangerText).toContain('系统首次执行时只会做边界检查');
+    expect(dangerText).toContain('在下一步要求你单独确认是否替换本次范围内选中表的基底');
+    expect(dangerText).not.toContain('首次确认后会立即替换 checkpoint 基底');
     expect(dangerText).not.toContain('空白结构');
     const confirmButton = Array.from(document.querySelectorAll<HTMLButtonElement>('.acu-dialog-layer button'))
       .find(btn => btn.textContent?.includes('确认并继续'))!;

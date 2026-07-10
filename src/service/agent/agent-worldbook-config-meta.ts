@@ -1,6 +1,7 @@
 import type {
   AgentWorldbookCardConfigMeta_ACU,
   AgentWorldbookControl_ACU,
+  AgentWorldbookScope_ACU,
   AgentWorldbookStateIdentity_ACU,
   AgentWorldbookControlMode_ACU,
   AgentWorldbookControlSnapshot_ACU,
@@ -20,6 +21,7 @@ import {
   buildDefaultAgentWorldbookControl_ACU,
   buildDefaultAgentWorldbookControlSnapshot_ACU,
 } from '../../shared/defaults';
+import { restoreAgentWorldbookSnapshotEntries_ACU } from './agent-worldbook-snapshot-restore';
 import { settings_ACU } from '../runtime/state-manager';
 import {
   getDefaultAgentDecisionPromptSegments_ACU,
@@ -109,6 +111,38 @@ function normalizeControlPatch_ACU(value: unknown): Record<string, any> {
   return value && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, any> : {};
 }
 
+function normalizeAgentWorldbookScope_ACU(value: unknown, fallback: AgentWorldbookScope_ACU): AgentWorldbookScope_ACU {
+  const source = normalizeControlPatch_ACU(value);
+  if (!Object.prototype.hasOwnProperty.call(source, 'source')) {
+    return {
+      source: fallback.source,
+      manualSelection: [...fallback.manualSelection],
+    };
+  }
+  if (source.source !== 'manual') return { source: 'character', manualSelection: [] };
+  return {
+    source: 'manual',
+    manualSelection: normalizeBookNameList_ACU(source.manualSelection),
+  };
+}
+
+function getLegacyAgentWorldbookScope_ACU(): AgentWorldbookScope_ACU {
+  const cfg = getPlotWorldbookConfig_ACU();
+  return cfg.source === 'manual'
+    ? { source: 'manual', manualSelection: normalizeBookNameList_ACU(cfg.manualSelection) }
+    : { source: 'character', manualSelection: [] };
+}
+
+function isSameAgentWorldbookScope_ACU(left: AgentWorldbookScope_ACU, right: AgentWorldbookScope_ACU): boolean {
+  return left.source === right.source
+    && left.manualSelection.length === right.manualSelection.length
+    && left.manualSelection.every((bookName, index) => bookName === right.manualSelection[index]);
+}
+
+function hasExplicitWorldbookScope_ACU(value: unknown): boolean {
+  return Object.prototype.hasOwnProperty.call(normalizeControlPatch_ACU(value), 'worldbookScope');
+}
+
 
 function normalizeAgentWorldbookControlForCardConfig_ACU(value: unknown): AgentWorldbookControl_ACU {
   const defaults = cloneDefaultAgentControl_ACU();
@@ -124,6 +158,7 @@ function normalizeAgentWorldbookControlForCardConfig_ACU(value: unknown): AgentW
     mode,
     agentPlotExecutionMode,
     scopeMode: 'follow_worldbook_page_selection',
+    worldbookScope: normalizeAgentWorldbookScope_ACU(source.worldbookScope, getLegacyAgentWorldbookScope_ACU()),
     agentApiPreset: typeof source.agentApiPreset === 'string' ? source.agentApiPreset.trim() : defaults.agentApiPreset,
     agentSkillApiPreset: typeof source.agentSkillApiPreset === 'string' ? source.agentSkillApiPreset.trim() : defaults.agentSkillApiPreset,
     skillMetadataPolicy: 'comment_block',
@@ -358,9 +393,8 @@ function getManualPlotWorldbookNames_ACU(): string[] {
   return normalizeBookNameList_ACU(cfg.manualSelection);
 }
 
-export async function resolveAgentWorldbookConfigBookNames_ACU(): Promise<string[]> {
-  const cfg = getPlotWorldbookConfig_ACU();
-  if (cfg.source === 'manual') return getManualPlotWorldbookNames_ACU();
+async function resolveAgentWorldbookScopeBookNamesFromScope_ACU(scope: AgentWorldbookScope_ACU): Promise<string[]> {
+  if (scope.source === 'manual') return normalizeBookNameList_ACU(scope.manualSelection);
 
   const names: string[] = [];
   try {
@@ -375,15 +409,36 @@ export async function resolveAgentWorldbookConfigBookNames_ACU(): Promise<string
   return normalizeBookNameList_ACU(names);
 }
 
-export async function resolveAgentWorldbookConfigHostBook_ACU(): Promise<string> {
+export async function resolveAgentWorldbookScopeBookNames_ACU(scope?: AgentWorldbookScope_ACU): Promise<string[]> {
+  const resolvedScope = scope || (await readAgentWorldbookStateFromWorldbooks_ACU()).control.worldbookScope;
+  return resolveAgentWorldbookScopeBookNamesFromScope_ACU(resolvedScope);
+}
+
+async function resolveAgentWorldbookBootstrapBookNames_ACU(): Promise<string[]> {
+  const names: string[] = [
+    await resolveCurrentCharPrimaryBookName_ACU(),
+    ...getManualPlotWorldbookNames_ACU(),
+  ];
+  try {
+    const charLorebooks = await getCharLorebooks_ACU({ type: 'all' });
+    names.push(String(charLorebooks?.primary || '').trim());
+    names.push(...normalizeBookNameList_ACU(charLorebooks?.additional));
+  } catch {
+    // 当前角色主书和 legacy 剧情手动范围已足够构成兼容扫描边界。
+  }
+  return normalizeBookNameList_ACU(names);
+}
+
+async function resolveAgentWorldbookHostBookForScope_ACU(scope: AgentWorldbookScope_ACU): Promise<string> {
   const primary = await resolveCurrentCharPrimaryBookName_ACU();
   if (primary) return primary;
-
-  const cfg = getPlotWorldbookConfig_ACU();
-  if (cfg.source === 'manual') {
-    return getManualPlotWorldbookNames_ACU()[0] || '';
-  }
+  if (scope.source === 'manual') return scope.manualSelection[0] || '';
   return '';
+}
+
+export async function resolveAgentWorldbookConfigHostBook_ACU(): Promise<string> {
+  const state = await readAgentWorldbookStateFromWorldbooks_ACU();
+  return state.bookName || resolveAgentWorldbookHostBookForScope_ACU(state.control.worldbookScope);
 }
 
 function getLegacyAgentWorldbookControl_ACU(): AgentWorldbookControl_ACU | null {
@@ -415,9 +470,9 @@ async function readWorldbookConfigEntry_ACU(bookName: string): Promise<{
 }
 
 export async function readAgentWorldbookStateFromWorldbooks_ACU(): Promise<AgentWorldbookStateReadResult_ACU> {
-  const writableBookName = await resolveAgentWorldbookConfigHostBook_ACU();
-  const bookNames = await resolveAgentWorldbookConfigBookNames_ACU();
-  const scanBookNames = normalizeBookNameList_ACU(writableBookName ? [writableBookName, ...bookNames] : bookNames);
+  const scanBookNames = await resolveAgentWorldbookBootstrapBookNames_ACU();
+  const defaultScope = getLegacyAgentWorldbookScope_ACU();
+  const writableBookName = await resolveAgentWorldbookHostBookForScope_ACU(defaultScope);
 
   for (const bookName of scanBookNames) {
     const result = await readWorldbookConfigEntry_ACU(bookName);
@@ -474,15 +529,35 @@ export async function writeAgentWorldbookStateToWorldbook_ACU(patch: {
   control?: Partial<AgentWorldbookControl_ACU>;
   snapshot?: AgentWorldbookControlSnapshot_ACU;
 }): Promise<AgentWorldbookStateWriteResult_ACU> {
-  const hostBookName = await resolveAgentWorldbookConfigHostBook_ACU();
   const current = await readAgentWorldbookStateFromWorldbooks_ACU();
   const nextControl = normalizeAgentWorldbookControlForCardConfig_ACU({
     ...current.control,
     ...normalizeControlPatch_ACU(patch?.control),
   });
-  const nextSnapshot = patch?.snapshot === undefined
+  let nextSnapshot = patch?.snapshot === undefined
     ? normalizeAgentWorldbookSnapshotForCardState_ACU(current.snapshot)
     : normalizeAgentWorldbookSnapshotForCardState_ACU(patch.snapshot);
+  const changesScope = patch?.control !== undefined
+    && hasExplicitWorldbookScope_ACU(patch.control)
+    && !isSameAgentWorldbookScope_ACU(current.control.worldbookScope, nextControl.worldbookScope);
+
+  if (changesScope && current.snapshot.active === true) {
+    const oldBookNames = await resolveAgentWorldbookScopeBookNamesFromScope_ACU(current.control.worldbookScope);
+    const restore = await restoreAgentWorldbookSnapshotEntries_ACU(current.snapshot, oldBookNames);
+    if (!restore.signatureMatched || restore.skipped > 0 || restore.failed > 0) {
+      return {
+        updated: false,
+        bookName: current.bookName,
+        entryUid: current.entryUid,
+        reason: !restore.signatureMatched ? 'scope_restore_signature_mismatch' : 'scope_restore_incomplete',
+        control: current.control,
+        snapshot: current.snapshot,
+      };
+    }
+    nextSnapshot = cloneDefaultAgentSnapshot_ACU();
+  }
+
+  const hostBookName = current.bookName || await resolveAgentWorldbookHostBookForScope_ACU(nextControl.worldbookScope);
 
   if (!hostBookName) {
     return {
@@ -536,7 +611,7 @@ async function resolveAgentWorldbookStateCleanupBookNames_ACU(explicitBookName: 
 
   const names: string[] = [
     await resolveAgentWorldbookConfigHostBook_ACU(),
-    ...(await resolveAgentWorldbookConfigBookNames_ACU()),
+    ...(await resolveAgentWorldbookScopeBookNames_ACU()),
     ...getManualPlotWorldbookNames_ACU(),
   ];
 

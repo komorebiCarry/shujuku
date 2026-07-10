@@ -25,7 +25,10 @@ vi.mock('../../../src/service/agent/agent-worldbook-takeover', () => ({
 vi.mock('../../../src/service/agent/agent-skillify-service', () => ({
   collectWorldbookSkillifyCandidates_ACU: vi.fn(async () => []),
   getWorldbookEntryKeywordsForSkillify_ACU: vi.fn((entry: any) => Array.isArray(entry?.keys) ? entry.keys : []),
-  resolvePlotWorldbookSkillifyBookNames_ACU: vi.fn(async () => []),
+}));
+
+vi.mock('../../../src/service/agent/agent-worldbook-config-meta', () => ({
+  resolveAgentWorldbookScopeBookNames_ACU: vi.fn(async () => []),
 }));
 
 import { runAgentDecisionForPlot_ACU } from '../../../src/service/agent/agent-decision-engine';

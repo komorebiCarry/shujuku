@@ -16,6 +16,8 @@ const mockAttachSeedRows = vi.fn();
 const mockReplaceDbSqlVariables = vi.fn((content: string) => content);
 let mockCurrentJsonTableData: any = null;
 let mockSettings: any = {};
+let mockAgentWorldbookSnapshot: any = { active: false, selectionSignature: '', createdAt: 0, books: {} };
+const mockResolveAgentWorldbookScopeBookNames = vi.fn(async () => ['Agent书']);
 
 vi.mock('../../../src/service/template/chat-scope', () => ({
   getEffectiveSeedRowsForSheet_ACU: (...args: any[]) => mockGetEffectiveSeedRows(...args),
@@ -45,6 +47,18 @@ vi.mock('../../../src/data/gateways/host-state-gateway', () => ({
 
 vi.mock('../../../src/service/worldbook/pipeline', () => ({
   getCombinedWorldbookContent_ACU: vi.fn().mockResolvedValue(''),
+}));
+
+vi.mock('../../../src/service/agent/agent-worldbook-snapshot-state', () => ({
+  getAgentWorldbookSnapshotState_ACU: () => mockAgentWorldbookSnapshot,
+}));
+
+vi.mock('../../../src/service/agent/agent-worldbook-config-meta', () => ({
+  resolveAgentWorldbookScopeBookNames_ACU: (...args: any[]) => mockResolveAgentWorldbookScopeBookNames(...args),
+}));
+
+vi.mock('../../../src/shared/agent-worldbook-snapshot', () => ({
+  buildAgentWorldbookSnapshotSelectionSignature_ACU: (bookNames: unknown) => `signature:${JSON.stringify(bookNames)}`,
 }));
 
 vi.mock('../../../src/service/runtime/helpers-remaining', () => ({
@@ -83,6 +97,8 @@ describe('formatTableForSqliteMode', () => {
     mockRuntimeProvider.getCurrentData.mockImplementation(() => mockCurrentJsonTableData);
     mockIsSqliteMode = true;
     mockCurrentJsonTableData = null;
+    mockAgentWorldbookSnapshot = { active: false, selectionSignature: '', createdAt: 0, books: {} };
+    mockResolveAgentWorldbookScopeBookNames.mockResolvedValue(['Agent书']);
     mockSettings = {
       tableContextExtractTags: '',
       tableContextExcludeTags: '',
@@ -388,7 +404,7 @@ describe('prepareAIInput_ACU — 显式 tableData 模式', () => {
     expect(mockCurrentJsonTableData.sheet_0.seedRows).toBeUndefined();
   });
 
-  it('传入 Agent 绿灯时只透传给世界书读取，不在填表入口把绿灯当作全局白名单', async () => {
+  it('传入 Agent 绿灯时透传绿灯，并固定使用 pre_takeover 读取视图', async () => {
     const explicitTableData = {
       sheet_0: {
         uid: 'sheet_0',
@@ -410,7 +426,69 @@ describe('prepareAIInput_ACU — 显式 tableData 模式', () => {
 
     expect(getCombinedWorldbookContent_ACU).toHaveBeenCalledWith(
       expect.stringContaining('用户: 用户触发普通关键词'),
-      expect.objectContaining({ agentGreenlights }),
+      expect.objectContaining({
+        agentGreenlights,
+        entryStateView: 'pre_takeover',
+        entryStateSnapshot: expect.objectContaining({ active: false }),
+        entryStateSnapshotSignature: '',
+      }),
+    );
+  });
+
+  it('active snapshot 使用 Agent 独立范围签名，不使用填表世界书范围自证', async () => {
+    const explicitTableData = {
+      sheet_0: {
+        uid: 'sheet_0',
+        name: '显式表',
+        content: [['row_id', 'name'], ['1', '显式值']],
+        updateConfig: {},
+      },
+    };
+    mockAgentWorldbookSnapshot = {
+      active: true,
+      selectionSignature: 'signature:["Agent书"]',
+      createdAt: 1,
+      books: {},
+    };
+
+    await prepareAIInput_ACU([], 'standard', null, { tableData: explicitTableData });
+
+    expect(getCombinedWorldbookContent_ACU).toHaveBeenCalledWith(
+      expect.any(String),
+      expect.objectContaining({
+        entryStateView: 'pre_takeover',
+        entryStateSnapshot: mockAgentWorldbookSnapshot,
+        entryStateSnapshotSignature: 'signature:["Agent书"]',
+      }),
+    );
+  });
+
+  it('解析 Agent 范围失败时继续准备填表输入，并以空签名让管线退化 live', async () => {
+    const explicitTableData = {
+      sheet_0: {
+        uid: 'sheet_0',
+        name: '显式表',
+        content: [['row_id', 'name'], ['1', '显式值']],
+        updateConfig: {},
+      },
+    };
+    mockAgentWorldbookSnapshot = {
+      active: true,
+      selectionSignature: 'stale-signature',
+      createdAt: 1,
+      books: {},
+    };
+    mockResolveAgentWorldbookScopeBookNames.mockRejectedValue(new Error('scope unavailable'));
+
+    await expect(prepareAIInput_ACU([], 'standard', null, { tableData: explicitTableData })).resolves.toBeTruthy();
+
+    expect(getCombinedWorldbookContent_ACU).toHaveBeenCalledWith(
+      expect.any(String),
+      expect.objectContaining({
+        entryStateView: 'pre_takeover',
+        entryStateSnapshot: mockAgentWorldbookSnapshot,
+        entryStateSnapshotSignature: '',
+      }),
     );
   });
 });

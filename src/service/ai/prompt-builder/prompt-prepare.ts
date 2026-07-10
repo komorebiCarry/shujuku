@@ -8,6 +8,9 @@ import { currentJsonTableData_ACU, settings_ACU } from '../../runtime/state-mana
 import { getUserName_ACU } from '../../../data/gateways/host-state-gateway';
 import { attachSeedRowsToCurrentDataFromGuide_ACU, ensureChatSheetGuideSeeded_ACU, getEffectiveSeedRowsForSheet_ACU, getSortedSheetKeys_ACU } from '../../template/chat-scope';
 import { getCombinedWorldbookContent_ACU } from '../../worldbook/pipeline';
+import { getAgentWorldbookSnapshotState_ACU } from '../../agent/agent-worldbook-snapshot-state';
+import { resolveAgentWorldbookScopeBookNames_ACU } from '../../agent/agent-worldbook-config-meta';
+import { buildAgentWorldbookSnapshotSelectionSignature_ACU } from '../../../shared/agent-worldbook-snapshot';
 import { isSummaryOrOutlineTable_ACU, logDebug_ACU, logError_ACU, logWarn_ACU, normalizeExcludeRules_ACU, normalizeExtractRules_ACU } from '../../../shared/utils';
 import { applyContextTagFilters_ACU } from '../../runtime/helpers-remaining';
 import { isSqliteMode } from '../../table/storage-mode';
@@ -207,8 +210,20 @@ import { replaceDbSqlVariables } from '../../runtime/template-vars/sql-query-var
 
     const worldbookScanText = messagesText;
     const excludeImportTaggedWorldbookEntries = options?.excludeImportTaggedWorldbookEntries === true;
+    const entryStateSnapshot = getAgentWorldbookSnapshotState_ACU();
+    let entryStateSnapshotSignature = '';
+    if (entryStateSnapshot.active === true) {
+        try {
+            entryStateSnapshotSignature = buildAgentWorldbookSnapshotSelectionSignature_ACU(await resolveAgentWorldbookScopeBookNames_ACU());
+        } catch (error) {
+            logWarn_ACU('[Worldbook] 无法解析 Agent 世界书范围，填表世界书将使用 live 状态。', error);
+        }
+    }
     const worldbookContent = await getCombinedWorldbookContent_ACU(worldbookScanText, {
         excludeImportTaggedEntries: excludeImportTaggedWorldbookEntries,
+        entryStateView: 'pre_takeover',
+        entryStateSnapshot,
+        entryStateSnapshotSignature,
         agentGreenlights: options?.agentGreenlights,
     });
     const manualExtraHintText = manualExtraHint_ACU || '';

@@ -99,6 +99,10 @@ export function buildDefaultAgentWorldbookControl_ACU() {
     enabled: false,
     mode: 'disabled' as const,
     agentPlotExecutionMode: 'concurrent' as const,
+    worldbookScope: {
+      source: 'character' as const,
+      manualSelection: [] as string[],
+    },
     scopeMode: 'follow_worldbook_page_selection' as const,
     agentApiPreset: '',
     agentSkillApiPreset: '',

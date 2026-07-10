@@ -18,8 +18,8 @@ import {
 import {
   collectWorldbookSkillifyCandidates_ACU,
   getWorldbookEntryKeywordsForSkillify_ACU,
-  resolvePlotWorldbookSkillifyBookNames_ACU,
 } from './agent-skillify-service';
+import { resolveAgentWorldbookScopeBookNames_ACU } from './agent-worldbook-config-meta';
 
 export interface AgentWorldbookRef_ACU {
   bookName: string;
@@ -253,7 +253,7 @@ async function collectWorldbookSummariesFromSnapshot_ACU(
     return { summaries, allowedKeys };
   }
 
-  const bookNames = await resolvePlotWorldbookSkillifyBookNames_ACU();
+  const bookNames = await resolveAgentWorldbookScopeBookNames_ACU();
   const candidates = await collectWorldbookSkillifyCandidates_ACU(bookNames, { maxEntries: contextSettings.decisionWorldbookCandidateLimit });
   for (const candidate of candidates) {
     const meta = candidate.existingSkillMeta;
@@ -524,11 +524,12 @@ function buildAgentDecisionPrompt_ACU(params: {
   const messages = renderAgentPromptSegments_ACU(
     control.agentDecisionPromptSegments || getDefaultAgentDecisionPromptSegments_ACU(),
     placeholders,
+    { enableSqlRender: true, promptKind: 'decision' },
   );
 
   return messages.length > 0
     ? messages
-    : renderAgentPromptSegments_ACU(getDefaultAgentDecisionPromptSegments_ACU(), placeholders);
+    : renderAgentPromptSegments_ACU(getDefaultAgentDecisionPromptSegments_ACU(), placeholders, { enableSqlRender: true, promptKind: 'decision' });
 }
 
 function normalizePlotGreenlights_ACU(
@@ -575,15 +576,15 @@ export async function runAgentDecisionForPlot_ACU(params: {
     let rawResponse = '';
     let parsed: ReturnType<typeof parseAgentDecisionResponse_ACU> = null;
     let lastFailureReason = 'empty_agent_response';
+    const messages = buildAgentDecisionPrompt_ACU({
+      plotSettings: effectivePlotSettings,
+      userMessage: params.userMessage,
+      sharedContext: params.sharedContext,
+      enabledTasks: agentDecidableTasks,
+      worldbookSummaries: summaries,
+      contextSettings,
+    });
     for (let attempt = 1; attempt <= maxAiAttempts; attempt++) {
-      const messages = buildAgentDecisionPrompt_ACU({
-        plotSettings: effectivePlotSettings,
-        userMessage: params.userMessage,
-        sharedContext: params.sharedContext,
-        enabledTasks: agentDecidableTasks,
-        worldbookSummaries: summaries,
-        contextSettings,
-      });
       rawResponse = await callAIWithPreset_ACU(messages, presetName);
       if (!rawResponse) {
         lastFailureReason = 'empty_agent_response';

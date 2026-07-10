@@ -20,6 +20,11 @@ export interface SqlQueryResult {
   rowCount: number;
 }
 
+/** SQL 查询执行选项 */
+export interface SqlQueryExecutionOptions_ACU {
+  suppressErrorLog?: boolean;
+}
+
 /** SQL 变更结果（INSERT/UPDATE/DELETE） */
 export interface SqlMutationResult {
   /** 受影响的行数 */
@@ -116,7 +121,11 @@ export interface ITableStorageProvider {
    * 执行 SQL 查询（仅 sqlite 模式支持）
    * native 模式调用时抛出 Error
    */
-  executeQuery(sql: string, params?: (string | number | null)[]): SqlQueryResult;
+  executeQuery(
+    sql: string,
+    params?: (string | number | null)[],
+    options?: SqlQueryExecutionOptions_ACU,
+  ): SqlQueryResult;
 
   /**
    * 执行 SQL 变更语句（仅 sqlite 模式支持）

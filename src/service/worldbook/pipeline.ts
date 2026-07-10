@@ -1,3 +1,4 @@
+import type { AgentWorldbookControlSnapshot_ACU, AgentWorldbookControlSnapshotEntry_ACU } from '../../shared/models/agent-worldbook-model';
 import { getCurrentWorldbookConfig_ACU } from '../settings/settings-readers';
 import { allChatMessages_ACU, coreApisAreReady_ACU, currentChatFileIdentifier_ACU, currentJsonTableData_ACU, getCurrentIsolationKey_ACU, settings_ACU, _set_currentJsonTableData_ACU, _set_allChatMessages_ACU} from '../runtime/state-manager';
 import { getLorebookEntries_ACU as gwGetLorebookEntries_ACU, setLorebookEntries_ACU as gwSetLorebookEntries_ACU, createLorebookEntries_ACU as gwCreateLorebookEntries_ACU, deleteLorebookEntries_ACU as gwDeleteLorebookEntries_ACU, listLorebooks_ACU, getWorldBooks_ACU as gwGetWorldBooks_ACU, isWorldbookApiAvailable_ACU } from '../../data/gateways/worldbook-gateway';
@@ -772,6 +773,48 @@ export   function compareWorldbookEntriesForPlaceholder_ACU(a: Record<string, an
   }
 
 
+export type WorldbookEntryStateView_ACU = 'live' | 'pre_takeover';
+
+function buildPreTakeoverSnapshotEntryMap_ACU(
+    snapshot: AgentWorldbookControlSnapshot_ACU | null | undefined,
+    expectedSignature: string,
+): Map<string, Map<string, AgentWorldbookControlSnapshotEntry_ACU>> | null {
+    if (snapshot?.active !== true) return null;
+    if (!expectedSignature || snapshot.selectionSignature !== expectedSignature) return null;
+    const result = new Map<string, Map<string, AgentWorldbookControlSnapshotEntry_ACU>>();
+    for (const [bookName, entries] of Object.entries(snapshot.books || {})) {
+        if (!Array.isArray(entries)) continue;
+        const byUid = new Map<string, AgentWorldbookControlSnapshotEntry_ACU>();
+        for (const entry of entries) {
+            const uid = String(entry?.uid ?? '').trim();
+            if (uid) byUid.set(uid, entry);
+        }
+        if (byUid.size > 0) result.set(bookName, byUid);
+    }
+    return result;
+}
+
+function decorateWorldbookEntryStateView_ACU(
+    entry: Record<string, any>,
+    bookName: string,
+    snapshotEntries: Map<string, Map<string, AgentWorldbookControlSnapshotEntry_ACU>> | null,
+): { entry: Record<string, any>; snapshotHit: boolean } {
+    const snapshotEntry = snapshotEntries?.get(bookName)?.get(String(entry?.uid ?? ''));
+    if (!snapshotEntry) return { entry: { ...entry }, snapshotHit: false };
+    const previousKeys = Array.isArray(snapshotEntry.previousKeys) ? [...snapshotEntry.previousKeys] : [];
+    return {
+        entry: {
+            ...entry,
+            enabled: snapshotEntry.previousEnabled !== false,
+            key: previousKeys,
+            keys: [...previousKeys],
+            type: snapshotEntry.previousType,
+        },
+        snapshotHit: true,
+    };
+}
+
+
 export   async function collectCombinedWorldbookEntriesByStrategy_ACU(options: any = {}) {
       const logPrefix = String(options?.logPrefix || '[Worldbook]');
       const bookNames: string[] = [...new Set<string>((Array.isArray(options?.bookNames) ? options.bookNames : []).map((name: any) => String(name || '').trim()).filter(Boolean))];
@@ -781,6 +824,13 @@ export   async function collectCombinedWorldbookEntriesByStrategy_ACU(options: a
       const excludeDisabledEntries = options?.excludeDisabledEntries !== false;
       const includeConstantEntriesInBaseScan = options?.includeConstantEntriesInBaseScan === true;
       const sortEntries = typeof options?.sortEntries === 'function' ? options.sortEntries : compareWorldbookEntriesForPlaceholder_ACU;
+      const entryStateView: WorldbookEntryStateView_ACU = options?.entryStateView === 'pre_takeover' ? 'pre_takeover' : 'live';
+      const snapshotEntries = entryStateView === 'pre_takeover'
+          ? buildPreTakeoverSnapshotEntryMap_ACU(options?.entryStateSnapshot, String(options?.entryStateSnapshotSignature || '').trim())
+          : null;
+      let snapshotHitCount = 0;
+      let snapshotMissCount = 0;
+      let entryCount = 0;
 
       if (bookNames.length === 0) {
           logWarn_ACU(`${logPrefix} 没有找到任何世界书，内容将为空`);
@@ -794,9 +844,14 @@ export   async function collectCombinedWorldbookEntriesByStrategy_ACU(options: a
           const bookEntries = Array.isArray(entriesMap[bookName]) ? entriesMap[bookName] : [];
           logDebug_ACU(`${logPrefix} 世界书 "${bookName}" 条目数量:`, bookEntries.length);
           bookEntries.forEach(entry => {
-              const { rawComment, normalizedComment } = getWorldbookCommentInfo_ACU(entry);
+              entryCount++;
+              const stateViewResult = entryStateView === 'pre_takeover'
+                  ? decorateWorldbookEntryStateView_ACU(entry, bookName, snapshotEntries)
+                  : { entry: { ...entry }, snapshotHit: false };
+              if (entryStateView === 'pre_takeover') stateViewResult.snapshotHit ? snapshotHitCount++ : snapshotMissCount++;
+              const { rawComment, normalizedComment } = getWorldbookCommentInfo_ACU(stateViewResult.entry);
               const decoratedEntry = {
-                  ...entry,
+                  ...stateViewResult.entry,
                   bookName,
                   rawComment,
                   normalizedComment,
@@ -805,6 +860,10 @@ export   async function collectCombinedWorldbookEntriesByStrategy_ACU(options: a
               if (includeEntry(decoratedEntry) === false) return;
               allEntries.push(decoratedEntry);
           });
+      }
+      logDebug_ACU(`${logPrefix} view=${entryStateView}; entries=${entryCount}; snapshotValid=${snapshotEntries !== null}; snapshotHits=${snapshotHitCount}; snapshotMisses=${snapshotMissCount}`);
+      if (entryStateView === 'pre_takeover' && snapshotEntries === null) {
+          logWarn_ACU(`${logPrefix} pre_takeover snapshot unavailable or signature mismatch; using live entry state.`);
       }
 
       if (typeof options?.onEntriesFiltered === 'function') {
@@ -960,6 +1019,7 @@ export   async function getCombinedWorldbookContent_ACU(initialScanTextOverride 
 
         const enabledEntriesMap = worldbookConfig?.enabledEntries;
         const hasAnySelection = enabledEntriesMap && typeof enabledEntriesMap === 'object' && Object.keys(enabledEntriesMap).length > 0;
+        const entryStateView: WorldbookEntryStateView_ACU = options?.entryStateView === 'pre_takeover' ? 'pre_takeover' : 'live';
         return await buildCombinedWorldbookContentByStrategy_ACU({
             logPrefix: '[Worldbook]',
             bookNames,
@@ -970,6 +1030,9 @@ export   async function getCombinedWorldbookContent_ACU(initialScanTextOverride 
             },
             baseScanText: (typeof initialScanTextOverride === 'string' && initialScanTextOverride.trim()) ? initialScanTextOverride : '',
             fallbackScanText: allChatMessages_ACU.map(message => message.message).join('\n'),
+            entryStateView,
+            entryStateSnapshot: options?.entryStateSnapshot,
+            entryStateSnapshotSignature: String(options?.entryStateSnapshotSignature || '').trim(),
             includeEntry: (entry: any) => {
                 const comment = entry.comment || '';
                 const isAgentGreenlight = agentGreenlightKeySet.has(`${String(entry.bookName || '').trim()}\u0000${String(entry.uid || '').trim()}`);

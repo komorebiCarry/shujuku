@@ -50,6 +50,7 @@ function createSettings() {
         agentApiPreset: '',
         agentSkillApiPreset: '',
         maxSkillifyConcurrency: 3,
+        worldbookScope: { source: 'character', manualSelection: [] },
         contextSettings: { agentAiMaxRetries: 2 },
         agentDecisionPromptSegments: [],
         agentSkillifyPromptSegments: [],

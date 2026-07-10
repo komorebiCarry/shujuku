@@ -45,11 +45,19 @@ export interface WorldbookSkillMeta_ACU {
   updatedBy: WorldbookSkillMetaUpdatedBy_ACU;
 }
 
+/** Agent 独立管理的世界书范围；不复用剧情或填表范围。 */
+export interface AgentWorldbookScope_ACU {
+  source: 'character' | 'manual';
+  manualSelection: string[];
+}
+
 /** Agent 模式世界书接管配置 */
 export interface AgentWorldbookControl_ACU {
   enabled: boolean;
   mode: AgentWorldbookControlMode_ACU;
   agentPlotExecutionMode: AgentPlotExecutionMode_ACU;
+  worldbookScope: AgentWorldbookScope_ACU;
+  /** @deprecated 兼容旧持久化数据；不再作为范围事实源。 */
   scopeMode: 'follow_worldbook_page_selection';
   agentApiPreset: string;
   agentSkillApiPreset: string;

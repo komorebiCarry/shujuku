@@ -29,6 +29,7 @@ vi.mock('../../../src/data/gateways/worldbook-gateway', () => ({
 vi.mock('../../../src/service/runtime/state-manager', () => ({ settings_ACU: mockSettings }));
 
 import { getCharLorebooks_ACU } from '../../../src/data/gateways/worldbook-gateway';
+import { buildAgentWorldbookSelectionSignature_ACU } from '../../../src/service/agent/agent-worldbook-snapshot-restore';
 import {
   AGENT_WORLDBOOK_CONFIG_COMMENT_ACU,
   deleteAgentWorldbookStateEntry_ACU,
@@ -235,6 +236,62 @@ describe('agent worldbook config/state meta', () => {
       control: { mode: 'agent' },
       snapshot: { active: true, selectionSignature: 'sig-4', books: { '剧情书': [{ uid: 4, previousEnabled: true, previousKeys: ['K4'] }] } },
     });
+  });
+
+  it('changes scope only after restoring the active snapshot in the previous scope', async () => {
+    const takeoverComment = '普通条目\n<!-- ACU_AGENT_WORLDBOOK_TAKEOVER_META_START\n{}\nACU_AGENT_WORLDBOOK_TAKEOVER_META_END -->';
+    mockEntriesByBook.set('主世界书', [
+      configEntry({
+        version: 2,
+        kind: 'agent_worldbook_state',
+        updatedAt: 1,
+        control: { mode: 'agent', worldbookScope: { source: 'character', manualSelection: [] } },
+        snapshot: {
+          active: true,
+          selectionSignature: buildAgentWorldbookSelectionSignature_ACU(['主世界书']),
+          createdAt: 1,
+          books: { '主世界书': [{ uid: 'entry-1', previousEnabled: true, previousKeys: ['旧关键词'], previousType: 'selective' }] },
+        },
+      }, 'cfg'),
+      { uid: 'entry-1', comment: takeoverComment, enabled: false, keys: [], type: 'constant' },
+    ]);
+
+    const result = await writeAgentWorldbookControlToWorldbook_ACU({
+      worldbookScope: { source: 'manual', manualSelection: ['手动书'] },
+    } as any);
+    const entries = mockEntriesByBook.get('主世界书') || [];
+    const state = JSON.parse(entries.find(entry => entry.uid === 'cfg').content);
+    const restored = entries.find(entry => entry.uid === 'entry-1');
+
+    expect(result.updated).toBe(true);
+    expect(state.control.worldbookScope).toEqual({ source: 'manual', manualSelection: ['手动书'] });
+    expect(state.snapshot).toEqual({ active: false, selectionSignature: '', createdAt: 0, books: {} });
+    expect(restored).toMatchObject({ enabled: true, keys: ['旧关键词'], type: 'selective' });
+    expect(restored.comment).not.toContain('ACU_AGENT_WORLDBOOK_TAKEOVER_META_START');
+  });
+
+  it('refuses scope persistence when the active snapshot signature does not match its previous scope', async () => {
+    const initialState = {
+      version: 2,
+      kind: 'agent_worldbook_state',
+      updatedAt: 1,
+      control: { mode: 'agent', worldbookScope: { source: 'character', manualSelection: [] } },
+      snapshot: {
+        active: true,
+        selectionSignature: 'wrong-signature',
+        createdAt: 1,
+        books: { '主世界书': [{ uid: 'entry-1', previousEnabled: true }] },
+      },
+    };
+    mockEntriesByBook.set('主世界书', [configEntry(initialState, 'cfg'), { uid: 'entry-1', comment: '普通条目', enabled: false }]);
+
+    const result = await writeAgentWorldbookControlToWorldbook_ACU({
+      worldbookScope: { source: 'manual', manualSelection: ['手动书'] },
+    } as any);
+    const persisted = JSON.parse((mockEntriesByBook.get('主世界书') || []).find(entry => entry.uid === 'cfg').content);
+
+    expect(result).toMatchObject({ updated: false, reason: 'scope_restore_signature_mismatch' });
+    expect(persisted).toEqual(initialState);
   });
 
   it('deletes parseable state entries even when comment was renamed', async () => {

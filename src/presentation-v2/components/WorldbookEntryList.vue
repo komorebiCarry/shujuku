@@ -36,16 +36,17 @@
             @update:model-value="onToggle(entry.bookName, entry.uid, $event)"
           />
           <div v-else class="acu-v2-wb-entry-item__label">{{ entry.label }}</div>
-          <div v-if="showSkillifyControls" class="acu-v2-wb-entry-item__actions">
-            <span v-if="entry.skillMeta" class="acu-v2-wb-entry-item__skill-badge">Skill</span>
+          <div v-if="showSkillifyControls || entry.isConstant || formatAgentTakeoverState(entry)" class="acu-v2-wb-entry-item__actions">
+            <span v-if="showSkillifyControls && entry.skillMeta" class="acu-v2-wb-entry-item__skill-badge">Skill</span>
+            <span v-if="entry.isConstant" class="acu-v2-wb-entry-item__state-badge">常量</span>
             <span v-if="formatAgentTakeoverState(entry)" class="acu-v2-wb-entry-item__state-badge">{{ formatAgentTakeoverState(entry) }}</span>
-            <AcuCheckbox
+            <AcuCheckbox v-if="showSkillifyControls"
               :model-value="entry.skillifySelected"
               label="Skill 化"
               :disabled="entry.disabled || !entry.skillifySelectable"
               @update:model-value="$emit('toggle-skillify', entry.bookName, entry.uid, $event)"
             />
-            <AcuButton v-if="showSkillEditor" size="sm" @click="toggleSkillEditor(entry)">
+            <AcuButton v-if="showSkillifyControls && showSkillEditor" size="sm" @click="toggleSkillEditor(entry)">
               {{ isSkillEditorOpen(entry) ? '收起 Skill' : '编辑 Skill' }}
             </AcuButton>
           </div>
@@ -85,7 +86,7 @@ import AcuButton from './_lib/AcuButton.vue';
 import AcuCheckbox from './_lib/AcuCheckbox.vue';
 import AcuDisclosureGroup from './_lib/AcuDisclosureGroup.vue';
 import AcuTextarea from './_lib/AcuTextarea.vue';
-import type { WorldbookEntryGroup, WorldbookEntryItem } from '../composables/usePlotWorldbookEntries';
+import type { WorldbookEntryDisplayGroup_ACU, WorldbookEntryDisplayItem_ACU } from '../composables/worldbook-entry-display';
 
 interface WorldbookSkillDraft {
   description: string;
@@ -93,7 +94,7 @@ interface WorldbookSkillDraft {
 }
 
 const props = withDefaults(defineProps<{
-  groups: WorldbookEntryGroup[];
+  groups: WorldbookEntryDisplayGroup_ACU[];
   filter: string;
   loading: boolean;
   emptyText?: string;
@@ -131,10 +132,10 @@ const filteredGroups = computed(() => {
       if (filtered.length === 0) return null;
       return { ...g, entries: filtered, expanded: true };
     })
-    .filter((g): g is WorldbookEntryGroup => g !== null);
+    .filter((g): g is WorldbookEntryDisplayGroup_ACU => g !== null);
 });
 
-function formatGroupMeta(group: WorldbookEntryGroup): string {
+function formatGroupMeta(group: WorldbookEntryDisplayGroup_ACU): string {
   const checkedCount = props.showEntryToggle ? group.entries.filter(entry => entry.checked).length : null;
   const skillCount = group.entries.filter(entry => entry.hasSkill).length;
   const controlledCount = group.entries.filter(entry => entry.agentTakeoverState === 'taken_over' || entry.agentTakeoverState === 'final_greenlight').length;
@@ -146,8 +147,9 @@ function formatGroupMeta(group: WorldbookEntryGroup): string {
   return suffix ? `${prefix} · ${suffix}` : prefix;
 }
 
-function formatAgentTakeoverState(entry: WorldbookEntryItem): string {
+function formatAgentTakeoverState(entry: WorldbookEntryDisplayItem_ACU): string {
   if (entry.agentTakeoverState === 'initial_disabled') return '原本关闭';
+  if (entry.isConstant && entry.agentTakeoverState === 'native') return '';
   if (entry.agentTakeoverState === 'native') return '原生逻辑';
   if (entry.agentTakeoverState === 'skill_ready') return '可接管';
   if (entry.agentTakeoverState === 'taken_over') return 'Agent 接管';
@@ -159,39 +161,39 @@ function onToggle(bookName: string, uid: number, checked: boolean): void {
   emit('toggle', bookName, uid, checked);
 }
 
-function getEntryKey(entry: WorldbookEntryItem): string {
+function getEntryKey(entry: WorldbookEntryDisplayItem_ACU): string {
   return `${entry.bookName}::${entry.uid}`;
 }
 
-function buildSkillDraft(entry: WorldbookEntryItem): WorldbookSkillDraft {
+function buildSkillDraft(entry: WorldbookEntryDisplayItem_ACU): WorldbookSkillDraft {
   return {
     description: entry.skillMeta?.description ?? '',
     triggerWhen: entry.skillMeta?.triggerWhen ?? '',
   };
 }
 
-function getSkillDraft(entry: WorldbookEntryItem): WorldbookSkillDraft {
+function getSkillDraft(entry: WorldbookEntryDisplayItem_ACU): WorldbookSkillDraft {
   const key = getEntryKey(entry);
   if (!skillDrafts[key]) skillDrafts[key] = buildSkillDraft(entry);
   return skillDrafts[key];
 }
 
-function patchSkillDraft(entry: WorldbookEntryItem, patch: Partial<WorldbookSkillDraft>): void {
+function patchSkillDraft(entry: WorldbookEntryDisplayItem_ACU, patch: Partial<WorldbookSkillDraft>): void {
   const key = getEntryKey(entry);
   skillDrafts[key] = { ...getSkillDraft(entry), ...patch };
 }
 
-function isSkillEditorOpen(entry: WorldbookEntryItem): boolean {
+function isSkillEditorOpen(entry: WorldbookEntryDisplayItem_ACU): boolean {
   return !!skillEditorOpen[getEntryKey(entry)];
 }
 
-function toggleSkillEditor(entry: WorldbookEntryItem): void {
+function toggleSkillEditor(entry: WorldbookEntryDisplayItem_ACU): void {
   const key = getEntryKey(entry);
   skillEditorOpen[key] = !skillEditorOpen[key];
   if (skillEditorOpen[key]) skillDrafts[key] = buildSkillDraft(entry);
 }
 
-function saveSkill(entry: WorldbookEntryItem): void {
+function saveSkill(entry: WorldbookEntryDisplayItem_ACU): void {
   emit('save-skill', entry.bookName, entry.uid, { ...getSkillDraft(entry) });
 }
 </script>

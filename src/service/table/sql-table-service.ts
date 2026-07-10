@@ -13,6 +13,7 @@ import type {
   SqlQueryResult,
   SqlMutationResult,
   ApplyEditsResult,
+  SqlQueryExecutionOptions_ACU,
 } from '../../shared/table-storage-provider';
 import type { TableDataObject_ACU, Mate_ACU } from '../../shared/models/table-data';
 import type { TableMutationOperationV2_ACU, TableSqlBindValueV2_ACU } from './storage-frame-v2-types';
@@ -435,9 +436,13 @@ export class SqlTableService implements ITableStorageProvider {
    * 新开卡场景下表尚未创建，查询会抛出 "no such table" 错误——这是预期行为。
    * 建表只在写操作（applyEdits/executeMutation）时触发，确保用户有机会在首次填表前修改表结构。
    */
-  executeQuery(sql: string, params?: (string | number | null)[]): SqlQueryResult {
+  executeQuery(
+    sql: string,
+    params?: (string | number | null)[],
+    options?: SqlQueryExecutionOptions_ACU,
+  ): SqlQueryResult {
     this._ensureInitialized();
-    const result = this.engine.query(sql, params);
+    const result = this.engine.query(sql, params, options);
     return {
       columns: result.columns,
       values: result.values,

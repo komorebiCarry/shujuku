@@ -19,12 +19,12 @@ vi.mock('../../../src/data/gateways/worldbook-gateway', () => ({
 
 vi.mock('../../../src/service/agent/agent-worldbook-config-meta', () => ({
   readAgentWorldbookControlFromWorldbooks_ACU: vi.fn(),
-  resolveAgentWorldbookConfigBookNames_ACU: vi.fn(),
+  resolveAgentWorldbookScopeBookNames_ACU: vi.fn(),
 }));
 
 import {
   readAgentWorldbookControlFromWorldbooks_ACU,
-  resolveAgentWorldbookConfigBookNames_ACU,
+  resolveAgentWorldbookScopeBookNames_ACU,
 } from '../../../src/service/agent/agent-worldbook-config-meta';
 import {
   clearWorldbookSkillMetaBlocks_ACU,
@@ -56,7 +56,7 @@ describe('clearWorldbookSkillMetaBlocks_ACU', () => {
     mockEntriesByBook.clear();
     mockSetLorebookEntries.mockClear();
     vi.mocked(readAgentWorldbookControlFromWorldbooks_ACU).mockReset();
-    vi.mocked(resolveAgentWorldbookConfigBookNames_ACU).mockReset();
+    vi.mocked(resolveAgentWorldbookScopeBookNames_ACU).mockReset();
   });
 
   it('clears only ACU skill meta blocks and keeps config/takeover comments untouched', async () => {
@@ -90,7 +90,7 @@ describe('resolveAgentWorldbookFilterAvailability_ACU', () => {
     mockEntriesByBook.clear();
     mockSetLorebookEntries.mockClear();
     vi.mocked(readAgentWorldbookControlFromWorldbooks_ACU).mockReset();
-    vi.mocked(resolveAgentWorldbookConfigBookNames_ACU).mockReset();
+    vi.mocked(resolveAgentWorldbookScopeBookNames_ACU).mockReset();
   });
 
   it('agent 模式且世界书范围非空时 skillMetas 为空仍可用', async () => {
@@ -101,7 +101,7 @@ describe('resolveAgentWorldbookFilterAvailability_ACU', () => {
       duplicateCount: 0,
       writableBookName: '角色A世界书',
     } as any);
-    vi.mocked(resolveAgentWorldbookConfigBookNames_ACU).mockResolvedValue(['角色A世界书']);
+    vi.mocked(resolveAgentWorldbookScopeBookNames_ACU).mockResolvedValue(['角色A世界书']);
     mockEntriesByBook.set('角色A世界书', [
       { uid: 1, comment: '没有 Skill 元数据的普通条目', enabled: true, keys: ['钥匙A'] },
     ]);

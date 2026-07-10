@@ -11,6 +11,7 @@ import type {
   SqlQueryResult,
   SqlMutationResult,
   ApplyEditsResult,
+  SqlQueryExecutionOptions_ACU,
 } from '../../shared/table-storage-provider';
 import type { TableDataObject_ACU } from '../../shared/models/table-data';
 import {
@@ -91,7 +92,11 @@ export class NativeTableServiceAdapter implements ITableStorageProvider {
   /**
    * SQL 查询 — 原生模式不支持
    */
-  executeQuery(_sql: string, _params?: (string | number | null)[]): SqlQueryResult {
+  executeQuery(
+    _sql: string,
+    _params?: (string | number | null)[],
+    _options?: SqlQueryExecutionOptions_ACU,
+  ): SqlQueryResult {
     throw new Error('SQL 查询仅在 SQLite 模式下可用。请在设置中切换到 SQLite 模式。');
   }
 

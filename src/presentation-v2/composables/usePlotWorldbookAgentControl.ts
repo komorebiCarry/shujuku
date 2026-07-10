@@ -5,6 +5,7 @@ import type {
   AgentPlotExecutionMode_ACU,
   AgentWorldbookControl_ACU,
   AgentWorldbookControlMode_ACU,
+  AgentWorldbookScope_ACU,
   AgentWorldbookControlSnapshot_ACU,
   PromptSegment_ACU,
 } from '../../shared/models/agent-worldbook-model';
@@ -106,6 +107,13 @@ function countSnapshotEntries(snapshot: AgentWorldbookControlSnapshot_ACU): numb
   return Object.values(snapshot.books || {}).reduce((sum, entries) => sum + (Array.isArray(entries) ? entries.length : 0), 0);
 }
 
+function cloneWorldbookScope_ACU(scope: AgentWorldbookScope_ACU): AgentWorldbookScope_ACU {
+  return {
+    source: scope.source === 'manual' ? 'manual' : 'character',
+    manualSelection: Array.isArray(scope.manualSelection) ? [...scope.manualSelection] : [],
+  };
+}
+
 function getAgentApiPresetOptions_ACU(): AgentApiPresetOption[] {
   const seen = new Set<string>();
   const options: AgentApiPresetOption[] = [{
@@ -155,6 +163,7 @@ export function usePlotWorldbookAgentControl() {
   const agentApiPreset = ref('');
   const agentSkillApiPreset = ref('');
   const maxSkillifyConcurrency = ref(3);
+  const worldbookScope = ref<AgentWorldbookScope_ACU>({ source: 'character', manualSelection: [] });
   const snapshot = ref<AgentWorldbookControlSnapshot_ACU>(getPlotAgentWorldbookSnapshot_ACU());
   const busy = ref<AgentWorldbookBusyAction>(null);
   const configSource = ref<AgentWorldbookConfigSource_ACU>('default');
@@ -181,6 +190,7 @@ export function usePlotWorldbookAgentControl() {
     agentApiPreset.value = normalizeAgentApiPreset_ACU(control.agentApiPreset);
     agentSkillApiPreset.value = normalizeAgentApiPreset_ACU(control.agentSkillApiPreset);
     maxSkillifyConcurrency.value = normalizeMaxSkillifyConcurrency_ACU(control.maxSkillifyConcurrency) ?? 3;
+    worldbookScope.value = cloneWorldbookScope_ACU(control.worldbookScope);
     contextSettings.value = cloneContextSettings_ACU(normalizeAgentContextSettings_ACU(control.contextSettings));
     agentDecisionPromptSegments.value = clonePromptSegments_ACU(readPromptSegments_ACU(control as unknown as Record<string, any>, 'decision'));
     agentSkillifyPromptSegments.value = clonePromptSegments_ACU(readPromptSegments_ACU(control as unknown as Record<string, any>, 'skillify'));
@@ -258,6 +268,25 @@ export function usePlotWorldbookAgentControl() {
 
   async function setAgentSkillApiPreset(next: string): Promise<void> {
     await writeControlPatch({ agentSkillApiPreset: normalizeAgentApiPreset_ACU(next) });
+  }
+
+  async function setWorldbookScope(source: AgentWorldbookScope_ACU['source'], manualSelection = worldbookScope.value.manualSelection): Promise<boolean> {
+    const normalizedSource = source === 'manual' ? 'manual' : 'character';
+    const normalizedSelection = normalizedSource === 'manual'
+      ? [...new Set((Array.isArray(manualSelection) ? manualSelection : []).map(name => String(name || '').trim()).filter(Boolean))]
+      : [];
+    return Boolean(await writeControlPatch({
+      worldbookScope: { source: normalizedSource, manualSelection: normalizedSelection },
+    }));
+  }
+
+  async function toggleWorldbookScopeBook(name: string, checked: boolean): Promise<boolean> {
+    const normalizedName = String(name || '').trim();
+    if (!normalizedName) return false;
+    const selected = new Set(worldbookScope.value.manualSelection);
+    if (checked) selected.add(normalizedName);
+    else selected.delete(normalizedName);
+    return setWorldbookScope('manual', Array.from(selected));
   }
 
   async function setMaxSkillifyConcurrency(value: unknown): Promise<boolean> {
@@ -504,6 +533,7 @@ export function usePlotWorldbookAgentControl() {
     agentApiPreset,
     agentSkillApiPreset,
     maxSkillifyConcurrency,
+    worldbookScope,
     snapshot,
     busy,
     configSource,
@@ -523,6 +553,8 @@ export function usePlotWorldbookAgentControl() {
     setAgentPlotExecutionMode,
     setAgentApiPreset,
     setAgentSkillApiPreset,
+    setWorldbookScope,
+    toggleWorldbookScopeBook,
     setMaxSkillifyConcurrency,
     setContextSetting,
     resetContextSettings,

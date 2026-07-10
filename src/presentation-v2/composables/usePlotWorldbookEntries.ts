@@ -13,53 +13,20 @@ import type { AgentWorldbookControlSnapshot_ACU } from '../../shared/models/agen
 import {
   getPlotAgentWorldbookSnapshot_ACU,
 } from '../../service/agent/agent-worldbook-takeover';
-import type {
-  WorldbookSkillMeta_ACU,
-  WorldbookSkillMetaUpdatedBy_ACU,
-} from '../../service/agent/agent-worldbook-skill-meta';
 import {
-  deleteWorldbookEntrySkillMeta_ACU,
   parseWorldbookSkillMetaFromComment_ACU,
-  saveWorldbookEntrySkillMeta_ACU,
   stripWorldbookSkillMetaBlock_ACU,
 } from '../../service/agent/agent-worldbook-skill-meta';
-import {
-  getWorldbookEntryKeywordsForSkillify_ACU,
-  isDatabaseGeneratedWorldbookEntryForAgent_ACU,
-  isWorldbookEntrySkillifyCandidate_ACU,
-} from '../../service/agent/agent-skillify-service';
 import { logError_ACU } from '../../shared/utils';
+import type {
+  WorldbookEntryDisplayGroup_ACU,
+  WorldbookEntryDisplayItem_ACU,
+  WorldbookEntryTakeoverState_ACU,
+} from './worldbook-entry-display';
 
-export type WorldbookEntryAgentTakeoverState = 'native' | 'skill_ready' | 'taken_over' | 'final_greenlight' | 'initial_disabled';
-
-export interface WorldbookEntryItem {
-  uid: number;
-  bookName: string;
-  label: string;
-  comment: string;
-  skillMeta: WorldbookSkillMeta_ACU | null;
-  hasSkill: boolean;
-  agentTakeoverState: WorldbookEntryAgentTakeoverState;
-  checked: boolean;
-  skillifySelected: boolean;
-  skillifySelectable: boolean;
-  disabled: boolean;
-}
-
-export interface WorldbookSkillifySelectedEntry {
-  bookName: string;
-  uid: number;
-}
-
-export interface WorldbookEntryGroup {
-  bookName: string;
-  entries: WorldbookEntryItem[];
-  expanded: boolean;
-}
-
-export interface UsePlotWorldbookEntriesOptions {
-  onSkillMetaChanged?: () => Promise<unknown> | unknown;
-}
+export type WorldbookEntryAgentTakeoverState = WorldbookEntryTakeoverState_ACU;
+export type WorldbookEntryItem = WorldbookEntryDisplayItem_ACU;
+export type WorldbookEntryGroup = WorldbookEntryDisplayGroup_ACU;
 
 export type EntryLoadStatus = 'idle' | 'loading' | 'success' | 'error';
 
@@ -107,22 +74,10 @@ function isSnapshotControlledEntry_ACU(snapshotUidSetByBook: Map<string, Set<str
 
 function isEntryVisibleForPlotInjectionUI_ACU(bookName: string, entry: any, snapshotUidSetByBook: Map<string, Set<string>>): boolean {
   if (isSnapshotControlledEntry_ACU(snapshotUidSetByBook, bookName, entry)) return true;
-  if (isConstantWorldbookEntry_ACU(entry)) return false;
   const comment = String(entry?.comment || entry?.name || '');
   if (isDbGenerated(comment)) return false;
   if (isBlocked(comment)) return false;
   return true;
-}
-
-function isEntryVisibleForAgentSettingsUI_ACU(bookName: string, entry: any, snapshotUidSetByBook: Map<string, Set<string>>): boolean {
-  if (isSnapshotControlledEntry_ACU(snapshotUidSetByBook, bookName, entry)) return true;
-  const rawComment = String(entry?.comment || entry?.name || '');
-  const skillMeta = parseWorldbookSkillMetaFromComment_ACU(rawComment);
-  if (rawComment.trim().startsWith('外部导入-')) return true;
-  if (isDatabaseGeneratedWorldbookEntryForAgent_ACU(entry)) return false;
-  if (skillMeta) return true;
-  if (getWorldbookEntryKeywordsForSkillify_ACU(entry).length > 0) return true;
-  return !isConstantWorldbookEntry_ACU(entry);
 }
 
 function resolveEntryAgentTakeoverState_ACU(
@@ -159,23 +114,15 @@ function ensurePlotWorldbookConfig(): Record<string, any> {
   return cfg;
 }
 
-export function usePlotWorldbookEntries(options: UsePlotWorldbookEntriesOptions = {}) {
+export function usePlotWorldbookEntries() {
   const groups = shallowRef<WorldbookEntryGroup[]>([]);
-  const agentGroups = shallowRef<WorldbookEntryGroup[]>([]);
   const status = ref<EntryLoadStatus>('idle');
   const error = ref('');
-  const selectedForSkillify = ref(new Map<string, WorldbookSkillifySelectedEntry>());
-
-  function getSkillifySelectionKey(bookName: string, uid: number): string {
-    return `${bookName}\u0000${String(uid)}`;
-  }
 
   async function loadEntries(bookNames: string[]): Promise<void> {
     const unique = [...new Set(bookNames.filter(Boolean))];
     if (unique.length === 0) {
       groups.value = [];
-      agentGroups.value = [];
-      selectedForSkillify.value = new Map();
       status.value = 'success';
       return;
     }
@@ -189,12 +136,10 @@ export function usePlotWorldbookEntries(options: UsePlotWorldbookEntriesOptions 
       const snapshotUidSetByBook = buildSnapshotUidSetByBookForUI_ACU(getPlotAgentWorldbookSnapshot_ACU());
       let settingsChanged = false;
       const result: WorldbookEntryGroup[] = [];
-      const agentResult: WorldbookEntryGroup[] = [];
 
       for (const bookName of unique) {
         const bookEntries = Array.isArray(entriesMap[bookName]) ? entriesMap[bookName] : [];
         const visibleBookEntries = bookEntries.filter((entry: any) => isEntryVisibleForPlotInjectionUI_ACU(bookName, entry, snapshotUidSetByBook));
-        const agentVisibleBookEntries = bookEntries.filter((entry: any) => isEntryVisibleForAgentSettingsUI_ACU(bookName, entry, snapshotUidSetByBook));
         const visibleUidSet = new Set(visibleBookEntries.map((entry: any) => String(entry?.uid)));
 
         if (typeof cfg.enabledEntries[bookName] === 'undefined') {
@@ -214,10 +159,8 @@ export function usePlotWorldbookEntries(options: UsePlotWorldbookEntriesOptions 
           : [];
 
         const buildItems = (entries: any[]): WorldbookEntryItem[] => entries.map((entry: any) => {
-          const skillifyKey = getSkillifySelectionKey(bookName, entry.uid);
           const comment = String(entry?.comment || entry?.name || '');
           const skillMeta = parseWorldbookSkillMetaFromComment_ACU(comment);
-          const skillifySelectable = isWorldbookEntrySkillifyCandidate_ACU(entry);
           return {
             uid: entry.uid,
             bookName,
@@ -227,33 +170,22 @@ export function usePlotWorldbookEntries(options: UsePlotWorldbookEntriesOptions 
             hasSkill: !!skillMeta,
             agentTakeoverState: resolveEntryAgentTakeoverState_ACU(bookName, entry, !!skillMeta, snapshotUidSetByBook),
             checked: enabledList.includes(entry.uid),
-            skillifySelected: skillifySelectable && selectedForSkillify.value.has(skillifyKey),
-            skillifySelectable,
+            skillifySelected: false,
+            skillifySelectable: false,
+            isConstant: isConstantWorldbookEntry_ACU(entry),
             disabled: entry.enabled === false,
           };
         });
 
         const visible = buildItems(visibleBookEntries);
-        const agentVisible = buildItems(agentVisibleBookEntries);
 
         if (visible.length > 0) {
           result.push({ bookName, entries: visible, expanded: false });
         }
-        if (agentVisible.length > 0) agentResult.push({ bookName, entries: agentVisible, expanded: false });
       }
-
-      const nextSelectedForSkillify = new Map<string, WorldbookSkillifySelectedEntry>();
-      const allVisibleKeys = new Set(
-        agentResult.flatMap(group => group.entries.filter(entry => entry.skillifySelectable).map(entry => getSkillifySelectionKey(entry.bookName, entry.uid))),
-      );
-      for (const [key, value] of selectedForSkillify.value.entries()) {
-        if (allVisibleKeys.has(key)) nextSelectedForSkillify.set(key, value);
-      }
-      selectedForSkillify.value = nextSelectedForSkillify;
 
       if (settingsChanged) saveSettings_ACU();
       groups.value = result;
-      agentGroups.value = agentResult;
       status.value = 'success';
     } catch (e: any) {
       logError_ACU('[ACU-V2] usePlotWorldbookEntries loadEntries failed', e);
@@ -282,65 +214,6 @@ export function usePlotWorldbookEntries(options: UsePlotWorldbookEntriesOptions 
         ),
       };
     });
-    agentGroups.value = agentGroups.value.map(g => {
-      if (g.bookName !== bookName) return g;
-      return {
-        ...g,
-        entries: g.entries.map(e => e.uid === uid ? { ...e, checked } : e),
-      };
-    });
-  }
-
-  function syncSkillifySelectionToGroups(): void {
-    const sync = (source: WorldbookEntryGroup[]) => source.map(g => ({
-      ...g,
-      entries: g.entries.map(e => ({
-        ...e,
-        skillifySelected: selectedForSkillify.value.has(getSkillifySelectionKey(e.bookName, e.uid)),
-      })),
-    }));
-    groups.value = sync(groups.value);
-    agentGroups.value = sync(agentGroups.value);
-  }
-
-  function toggleSkillifyEntry(bookName: string, uid: number, checked: boolean): void {
-    const key = getSkillifySelectionKey(bookName, uid);
-    const next = new Map(selectedForSkillify.value);
-    const entry = agentGroups.value
-      .find(group => group.bookName === bookName)
-      ?.entries.find(item => item.uid === uid);
-    if (checked) {
-      if (!entry?.skillifySelectable) {
-        next.delete(key);
-      } else {
-        next.set(key, { bookName, uid });
-      }
-    } else {
-      next.delete(key);
-    }
-    selectedForSkillify.value = next;
-    syncSkillifySelectionToGroups();
-  }
-
-  function selectAllForSkillify(): void {
-    const next = new Map<string, WorldbookSkillifySelectedEntry>();
-    for (const group of agentGroups.value) {
-      for (const entry of group.entries) {
-        if (!entry.skillifySelectable) continue;
-        next.set(getSkillifySelectionKey(entry.bookName, entry.uid), { bookName: entry.bookName, uid: entry.uid });
-      }
-    }
-    selectedForSkillify.value = next;
-    syncSkillifySelectionToGroups();
-  }
-
-  function deselectAllForSkillify(): void {
-    selectedForSkillify.value = new Map();
-    syncSkillifySelectionToGroups();
-  }
-
-  function getSelectedSkillifyEntries(): WorldbookSkillifySelectedEntry[] {
-    return Array.from(selectedForSkillify.value.values());
   }
 
   function selectAll(): void {
@@ -356,15 +229,6 @@ export function usePlotWorldbookEntries(options: UsePlotWorldbookEntriesOptions 
       ...g,
       entries: g.entries.map(e => ({ ...e, checked: !e.disabled })),
     }));
-    agentGroups.value = agentGroups.value.map(g => ({
-      ...g,
-      entries: g.entries.map(e => {
-        const enabledList: number[] = Array.isArray(cfg.enabledEntries[g.bookName])
-          ? cfg.enabledEntries[g.bookName]
-          : [];
-        return { ...e, checked: enabledList.includes(e.uid) };
-      }),
-    }));
   }
 
   function deselectAll(): void {
@@ -378,67 +242,6 @@ export function usePlotWorldbookEntries(options: UsePlotWorldbookEntriesOptions 
       ...g,
       entries: g.entries.map(e => ({ ...e, checked: false })),
     }));
-    agentGroups.value = agentGroups.value.map(g => ({
-      ...g,
-      entries: g.entries.map(e => ({ ...e, checked: false })),
-    }));
-  }
-
-  function updateEntrySkillMetaLocal(bookName: string, uid: number, comment: string): void {
-    const skillMeta = parseWorldbookSkillMetaFromComment_ACU(comment);
-    const update = (source: WorldbookEntryGroup[]) => source.map(g => {
-      if (g.bookName !== bookName) return g;
-      return {
-        ...g,
-        entries: g.entries.map(e => {
-          if (e.uid !== uid) return e;
-          const label = stripWorldbookSkillMetaBlock_ACU(comment).trim() || `条目 ${uid}`;
-          return {
-            ...e,
-            comment,
-            label,
-            skillMeta,
-            hasSkill: !!skillMeta,
-          };
-        }),
-      };
-    });
-    groups.value = update(groups.value);
-    agentGroups.value = update(agentGroups.value);
-  }
-
-  async function notifySkillMetaChanged(): Promise<void> {
-    if (!options.onSkillMetaChanged) return;
-    try {
-      await options.onSkillMetaChanged();
-    } catch (e) {
-      logError_ACU('[ACU-V2] sync Agent worldbook takeover after Skill meta change failed', e);
-    }
-  }
-
-  async function saveEntrySkillMeta(
-    bookName: string,
-    uid: number,
-    draft: Partial<WorldbookSkillMeta_ACU>,
-    updatedBy: WorldbookSkillMetaUpdatedBy_ACU = 'manual',
-  ): Promise<void> {
-    const result = await saveWorldbookEntrySkillMeta_ACU(bookName, uid, draft, updatedBy);
-    if (result.entry && typeof result.entry.comment === 'string') {
-      updateEntrySkillMetaLocal(bookName, uid, result.entry.comment);
-    }
-    if (result.updated) {
-      await notifySkillMetaChanged();
-    }
-  }
-
-  async function deleteEntrySkillMeta(bookName: string, uid: number): Promise<void> {
-    const result = await deleteWorldbookEntrySkillMeta_ACU(bookName, uid);
-    if (result.entry && typeof result.entry.comment === 'string') {
-      updateEntrySkillMetaLocal(bookName, uid, result.entry.comment);
-    }
-    if (result.updated) {
-      await notifySkillMetaChanged();
-    }
   }
 
   function toggleGroupExpanded(bookName: string): void {
@@ -446,27 +249,16 @@ export function usePlotWorldbookEntries(options: UsePlotWorldbookEntriesOptions 
       if (g.bookName !== bookName) return g;
       return { ...g, expanded: !g.expanded };
     });
-    agentGroups.value = agentGroups.value.map(g => {
-      if (g.bookName !== bookName) return g;
-      return { ...g, expanded: !g.expanded };
-    });
   }
 
   return {
     groups,
-    agentGroups,
     status,
     error,
     loadEntries,
     toggleEntry,
-    toggleSkillifyEntry,
     selectAll,
     deselectAll,
-    selectAllForSkillify,
-    deselectAllForSkillify,
-    getSelectedSkillifyEntries,
-    saveEntrySkillMeta,
-    deleteEntrySkillMeta,
     toggleGroupExpanded,
   };
 }

@@ -5,8 +5,8 @@
  */
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-function makeEntry(uid: number, comment: string, enabled = true) {
-  return { uid, comment, name: comment, enabled };
+function makeEntry(uid: number, comment: string, enabled = true, type = 'selective') {
+  return { uid, comment, name: comment, enabled, type };
 }
 
 function createWorldbookConfig() {
@@ -59,5 +59,30 @@ describe('useFormFillWorldbookEntries', () => {
     expect(c.groups.value[0].entries.every(entry => entry.checked)).toBe(true);
     expect(worldbookConfig.enabledEntries['CharBook']).toEqual([1, 2]);
     expect(mockSaveSettings).toHaveBeenCalled();
+  });
+
+  it('显示、默认启用并标记 constant 条目', async () => {
+    mockGetEntries.mockResolvedValue({
+      'CharBook': [
+        makeEntry(1, '人物'),
+        makeEntry(2, '常驻设定', true, ' CONSTANT '),
+        makeEntry(3, '关闭常驻', false, 'constant'),
+      ],
+    });
+
+    const c = await getComposable();
+    await c.loadEntries(['CharBook']);
+
+    expect(c.groups.value[0].entries.map(entry => ({
+      uid: entry.uid,
+      checked: entry.checked,
+      disabled: entry.disabled,
+      isConstant: entry.isConstant,
+    }))).toEqual([
+      { uid: 1, checked: true, disabled: false, isConstant: false },
+      { uid: 2, checked: true, disabled: false, isConstant: true },
+      { uid: 3, checked: true, disabled: true, isConstant: true },
+    ]);
+    expect(worldbookConfig.enabledEntries.CharBook).toEqual([1, 2, 3]);
   });
 });

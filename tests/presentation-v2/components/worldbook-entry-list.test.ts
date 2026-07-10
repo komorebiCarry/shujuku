@@ -43,6 +43,7 @@ function mountGroups() {
         { uid: 1, bookName: 'CharBook', label: '人物', checked: true, skillifySelected: false, skillifySelectable: true, disabled: false, hasSkill: true, agentTakeoverState: 'skill_ready' },
         { uid: 2, bookName: 'CharBook', label: '地点', checked: false, skillifySelected: true, skillifySelectable: true, disabled: false, hasSkill: true, agentTakeoverState: 'taken_over' },
         { uid: 3, bookName: 'CharBook', label: '背景', checked: true, skillifySelected: false, skillifySelectable: true, disabled: false, hasSkill: false, agentTakeoverState: 'native' },
+        { uid: 4, bookName: 'CharBook', label: '常驻设定', checked: true, skillifySelected: false, skillifySelectable: false, disabled: false, hasSkill: false, isConstant: true, agentTakeoverState: 'native' },
       ],
     },
   ];
@@ -88,8 +89,10 @@ describe('WorldbookEntryList', () => {
     const meta = el.querySelector('.acu-disclosure-group__meta');
 
     expect(el.textContent).toContain('CharBook');
-    expect(meta?.textContent).toBe('2/3 条 · Skill 2 · 接管 1');
+    expect(meta?.textContent).toBe('3/4 条 · Skill 2 · 接管 1');
     expect(el.textContent).toContain('Agent 接管');
+    expect(el.textContent).toContain('常量');
+    expect(el.textContent).not.toContain('常量原生逻辑');
   });
 
   it('Skill 化复选框使用独立状态并透传 toggle-skillify 事件', async () => {
@@ -100,6 +103,7 @@ describe('WorldbookEntryList', () => {
       '人物', 'Skill 化',
       '地点', 'Skill 化',
       '背景', 'Skill 化',
+      '常驻设定', 'Skill 化',
     ]);
     expect(checkboxes[1].getAttribute('aria-checked')).toBe('false');
     expect(checkboxes[3].getAttribute('aria-checked')).toBe('true');

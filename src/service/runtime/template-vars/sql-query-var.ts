@@ -53,6 +53,11 @@ interface WhereClause {
  * ORM 查询构建器
  * 链式 API，内部拼 SQL 然后调 engine.query()
  */
+export interface TableQueryBuilderOptions_ACU {
+  throwOnQueryError?: boolean;
+  suppressQueryErrorLog?: boolean;
+}
+
 export class TableQueryBuilder {
   private tableName: string;
   private conditions: WhereClause[] = [];
@@ -63,11 +68,13 @@ export class TableQueryBuilder {
   private _having: string | null = null;
   private _distinct: boolean = false;
   private _offset: number | null = null;
+  private readonly options: TableQueryBuilderOptions_ACU;
 
-  constructor(tableName: string) {
+  constructor(tableName: string, options: TableQueryBuilderOptions_ACU = {}) {
     // 通过 NameMapper 解析表名（中文→英文）
     const mapper = getNameMapper();
     this.tableName = mapper.resolveTableName(tableName);
+    this.options = options;
   }
 
   /**
@@ -456,9 +463,12 @@ export class TableQueryBuilder {
   private _executeQuery(sql: string): { columns: string[]; values: any[][] } {
     try {
       const provider = getStorageProvider();
-      const result = provider.executeQuery(sql);
+      const result = provider.executeQuery(sql, undefined, {
+        suppressErrorLog: this.options.suppressQueryErrorLog === true,
+      });
       return { columns: result.columns, values: result.values };
     } catch (e: any) {
+      if (this.options.throwOnQueryError === true) throw new Error('orm_query_execution_failed');
       logWarn_ACU(`[ORM] 查询执行失败: ${sql} → ${e?.message}`);
       return { columns: [], values: [] };
     }
@@ -680,7 +690,12 @@ export function evaluateOrmExpression(expr: string): string {
  * 输入: 'sql "SELECT 状态 FROM 重要人物表 WHERE 姓名=\'角色A\'"'
  * 输出: 执行结果字符串
  */
-export function evaluateRawSqlExpression(expr: string): string {
+export interface RawSqlEvaluationOptions_ACU {
+  throwOnError?: boolean;
+  suppressQueryErrorLog?: boolean;
+}
+
+export function evaluateRawSqlExpression(expr: string, options: RawSqlEvaluationOptions_ACU = {}): string {
   try {
     let trimmed = expr.trim();
 
@@ -706,7 +721,9 @@ export function evaluateRawSqlExpression(expr: string): string {
 
     // 执行查询
     const provider = getStorageProvider();
-    const result = provider.executeQuery(translatedSql);
+    const result = provider.executeQuery(translatedSql, undefined, {
+      suppressErrorLog: options.suppressQueryErrorLog === true,
+    });
 
     // 格式化结果
     if (result.values.length === 0) return '';
@@ -717,6 +734,7 @@ export function evaluateRawSqlExpression(expr: string): string {
     // 多行多列：返回表格格式
     return formatQueryResultAsText(result.columns, result.values);
   } catch (e: any) {
+    if (options.throwOnError === true) throw new Error('sql_query_execution_failed');
     logError_ACU(`[SQL] 表达式执行失败: ${expr} → ${e?.message}`);
     return '';
   }

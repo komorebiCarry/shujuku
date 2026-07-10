@@ -1,10 +1,14 @@
 <template>
   <div class="acu-v2-wb-entry-toolbar">
-    <AcuButton @click="$emit('select-all')">全选</AcuButton>
-    <AcuButton @click="$emit('deselect-all')">全不选</AcuButton>
-    <AcuButton @click="$emit('skillify-select-all')">Skill 全选</AcuButton>
-    <AcuButton @click="$emit('skillify-deselect-all')">Skill 全不选</AcuButton>
-    <AcuButton variant="primary" @click="$emit('skillify-selected')">对所选 Skill 化</AcuButton>
+    <template v-if="showEntrySelectionControls">
+      <AcuButton @click="$emit('select-all')">全选</AcuButton>
+      <AcuButton @click="$emit('deselect-all')">全不选</AcuButton>
+    </template>
+    <template v-if="showSkillifyControls">
+      <AcuButton @click="$emit('skillify-select-all')">Skill 全选</AcuButton>
+      <AcuButton @click="$emit('skillify-deselect-all')">Skill 全不选</AcuButton>
+      <AcuButton variant="primary" @click="$emit('skillify-selected')">对所选 Skill 化</AcuButton>
+    </template>
     <AcuFormRow class="acu-v2-wb-entry-toolbar__filter">
       <AcuInput
         :model-value="filter"
@@ -21,9 +25,14 @@ import AcuButton from './_lib/AcuButton.vue';
 import AcuFormRow from './_lib/AcuFormRow.vue';
 import AcuInput from './_lib/AcuInput.vue';
 
-defineProps<{
+withDefaults(defineProps<{
   filter: string;
-}>();
+  showEntrySelectionControls?: boolean;
+  showSkillifyControls?: boolean;
+}>(), {
+  showEntrySelectionControls: true,
+  showSkillifyControls: false,
+});
 
 defineEmits<{
   (e: 'update:filter', value: string): void;

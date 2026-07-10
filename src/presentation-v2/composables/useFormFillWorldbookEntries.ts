@@ -13,20 +13,14 @@ import { getLorebookEntriesByNames_ACU } from '../../service/worldbook/pipeline'
 import { getCurrentWorldbookConfig_ACU } from '../../service/settings/settings-readers';
 import { saveSettings_ACU } from '../../service/settings/settings-service';
 import { logError_ACU } from '../../shared/utils';
+import type {
+  WorldbookEntryDisplayGroup_ACU,
+  WorldbookEntryDisplayItem_ACU,
+} from './worldbook-entry-display';
 
-export interface FormFillWorldbookEntryItem {
-  uid: number;
-  bookName: string;
-  label: string;
-  checked: boolean;
-  disabled: boolean;
-}
+export type FormFillWorldbookEntryItem = WorldbookEntryDisplayItem_ACU;
 
-export interface FormFillWorldbookEntryGroup {
-  bookName: string;
-  entries: FormFillWorldbookEntryItem[];
-  expanded: boolean;
-}
+export type FormFillWorldbookEntryGroup = WorldbookEntryDisplayGroup_ACU;
 
 export type FormFillEntryLoadStatus = 'idle' | 'loading' | 'success' | 'error';
 
@@ -50,6 +44,10 @@ function isDbGenerated(comment: string): boolean {
 
 function isBlocked(comment: string): boolean {
   return BLOCKED_KEYWORDS.some(kw => comment.includes(kw));
+}
+
+function isConstantWorldbookEntry_ACU(entry: any): boolean {
+  return String(entry?.type || '').trim().toLowerCase() === 'constant';
 }
 
 function isEntryVisibleForUI(entry: any): boolean {
@@ -106,11 +104,19 @@ export function useFormFillWorldbookEntries() {
         const visible: FormFillWorldbookEntryItem[] = [];
         for (const entry of bookEntries) {
           if (!isEntryVisibleForUI(entry)) continue;
+          const comment = String(entry?.comment || entry?.name || '');
           visible.push({
             uid: entry.uid,
             bookName,
-            label: entry.comment || `条目 ${entry.uid}`,
+            label: comment || `条目 ${entry.uid}`,
+            comment,
+            skillMeta: null,
+            hasSkill: false,
+            agentTakeoverState: entry.enabled === false ? 'initial_disabled' : 'native',
             checked: enabledList.includes(entry.uid),
+            skillifySelected: false,
+            skillifySelectable: false,
+            isConstant: isConstantWorldbookEntry_ACU(entry),
             disabled: entry.enabled === false,
           });
         }

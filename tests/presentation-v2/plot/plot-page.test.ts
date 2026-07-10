@@ -551,6 +551,9 @@ describe('PlotPage', () => {
     const buttons = Array.from(toolbar!.querySelectorAll('button')).map(b => b.textContent?.trim());
     expect(buttons).toContain('全选');
     expect(buttons).toContain('全不选');
+    expect(buttons).not.toContain('Skill 全选');
+    expect(buttons).not.toContain('对所选 Skill 化');
+    expect(document.querySelector('.acu-v2-agent-wb-control')).toBeNull();
 
     mount.__resetAcuV2MountForTests();
   });

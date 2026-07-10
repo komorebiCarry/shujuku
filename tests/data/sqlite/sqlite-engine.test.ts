@@ -2,8 +2,16 @@
  * tests/data/sqlite/sqlite-engine.test.ts
  * SqliteEngine 单元测试 — 使用真实 sql.js 实例
  */
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
+
+vi.mock('../../../src/shared/utils', () => ({
+  logDebug_ACU: vi.fn(),
+  logWarn_ACU: vi.fn(),
+  logError_ACU: vi.fn(),
+}));
+
 import { SqliteEngine } from '../../../src/data/sqlite/sqlite-engine';
+import { logError_ACU } from '../../../src/shared/utils';
 
 describe('SqliteEngine', () => {
   let engine: SqliteEngine;
@@ -11,6 +19,7 @@ describe('SqliteEngine', () => {
   beforeEach(async () => {
     engine = new SqliteEngine();
     await engine.init();
+    vi.mocked(logError_ACU).mockClear();
   });
 
   afterEach(() => {
@@ -78,8 +87,22 @@ describe('SqliteEngine', () => {
       expect(result.values).toEqual([[2, '李四']]);
     });
 
-    it('SQL 语法错误抛出异常', () => {
-      expect(() => engine.query('SELEC * FROM nonexistent;')).toThrow();
+    it('SQL 语法错误默认记录查询诊断并抛出异常', () => {
+      const sql = 'SELEC sensitive_default_log FROM nonexistent;';
+      expect(() => engine.query(sql)).toThrow();
+
+      const logs = vi.mocked(logError_ACU).mock.calls.flat().map(value => String(value)).join('\n');
+      expect(logs).toContain('query 执行失败');
+      expect(logs).toContain('sensitive_default_log');
+    });
+
+    it('可显式抑制 SQL 查询错误日志', () => {
+      const sql = 'SELEC sensitive_suppressed_log FROM nonexistent;';
+      expect(() => engine.query(sql, undefined, { suppressErrorLog: true })).toThrow();
+
+      const logs = vi.mocked(logError_ACU).mock.calls.flat().map(value => String(value)).join('\n');
+      expect(logs).not.toContain('sensitive_suppressed_log');
+      expect(logError_ACU).not.toHaveBeenCalled();
     });
   });
 

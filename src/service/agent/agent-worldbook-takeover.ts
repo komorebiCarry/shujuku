@@ -9,11 +9,15 @@ import {
 } from '../../data/gateways/worldbook-gateway';
 import { persistTavernSettings_ACU } from '../../data/storage/tavern-storage';
 import { hashUserInput_ACU, logWarn_ACU } from '../../shared/utils';
+import { buildAgentWorldbookSnapshotSelectionSignature_ACU } from '../../shared/agent-worldbook-snapshot';
+import {
+  getAgentWorldbookSnapshotState_ACU,
+  setAgentWorldbookSnapshotState_ACU,
+} from './agent-worldbook-snapshot-state';
 import { settings_ACU } from '../runtime/state-manager';
 import {
   getWorldbookEntryKeywordsForSkillify_ACU,
   isWorldbookEntrySkillifyCandidate_ACU,
-  resolvePlotWorldbookSkillifyBookNames_ACU,
 } from './agent-skillify-service';
 import {
   hasUsableWorldbookSkillMeta_ACU,
@@ -23,6 +27,7 @@ import {
 import {
   deleteAgentWorldbookStateEntry_ACU,
   readAgentWorldbookStateFromWorldbooks_ACU,
+  resolveAgentWorldbookScopeBookNames_ACU,
   writeAgentWorldbookStateToWorldbook_ACU,
 } from './agent-worldbook-config-meta';
 
@@ -182,8 +187,7 @@ async function patchSnapshotEntries_ACU(snapshotUidSetByBook: Map<string, Set<st
 }
 
 export function buildWorldbookSelectionSignature_ACU(bookNames: string[]): string {
-  const normalized = normalizeBookNamesForTakeover_ACU(bookNames);
-  return hashUserInput_ACU(JSON.stringify({ scope: 'agent-worldbook-takeover', books: normalized }));
+  return buildAgentWorldbookSnapshotSelectionSignature_ACU(bookNames);
 }
 
 function buildActiveSnapshot_ACU(selectionSignature: string, books: Record<string, AgentWorldbookControlSnapshotEntry_ACU[]>): AgentWorldbookControlSnapshot_ACU {
@@ -193,8 +197,6 @@ function buildActiveSnapshot_ACU(selectionSignature: string, books: Record<strin
 function buildInactiveSnapshot_ACU(selectionSignature = ''): AgentWorldbookControlSnapshot_ACU {
   return { active: false, selectionSignature, createdAt: 0, books: {} };
 }
-
-let cachedPlotAgentWorldbookSnapshot_ACU: AgentWorldbookControlSnapshot_ACU = buildInactiveSnapshot_ACU();
 
 function stripTakeoverMetaBlock_ACU(comment: unknown): string {
   return normalizeCommentText_ACU(comment)
@@ -281,11 +283,11 @@ function clearLegacyPlotAgentWorldbookSnapshot_ACU(): boolean {
 }
 
 export function getPlotAgentWorldbookSnapshot_ACU(): AgentWorldbookControlSnapshot_ACU {
-  return cachedPlotAgentWorldbookSnapshot_ACU;
+  return getAgentWorldbookSnapshotState_ACU();
 }
 
 export function setPlotAgentWorldbookSnapshot_ACU(snapshot: AgentWorldbookControlSnapshot_ACU): void {
-  cachedPlotAgentWorldbookSnapshot_ACU = snapshot;
+  setAgentWorldbookSnapshotState_ACU(snapshot);
 }
 
 export async function refreshPlotAgentWorldbookSnapshotFromWorldbooks_ACU(): Promise<AgentWorldbookControlSnapshot_ACU> {
@@ -351,7 +353,7 @@ export function isWorldbookTakeoverActive_ACU(): boolean {
 }
 
 async function resolveTakeoverBookNames_ACU(): Promise<string[]> {
-  return normalizeBookNamesForTakeover_ACU(await resolvePlotWorldbookSkillifyBookNames_ACU());
+  return normalizeBookNamesForTakeover_ACU(await resolveAgentWorldbookScopeBookNames_ACU());
 }
 
 function buildSnapshotEntry_ACU(entry: Record<string, any>): AgentWorldbookControlSnapshotEntry_ACU | null {

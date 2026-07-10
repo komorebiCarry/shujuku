@@ -26,6 +26,8 @@ function mountToolbar() {
       const filter = ref('');
       return () => h(WorldbookEntryToolbar, {
         filter: filter.value,
+        showEntrySelectionControls: true,
+        showSkillifyControls: true,
         'onUpdate:filter': (value: string) => { filter.value = value; },
         onSelectAll: selectAll,
         onDeselectAll: deselectAll,
@@ -77,5 +79,19 @@ describe('WorldbookEntryToolbar', () => {
     expect(skillifySelectAll).toHaveBeenCalledTimes(1);
     expect(skillifyDeselectAll).toHaveBeenCalledTimes(1);
     expect(skillifySelected).toHaveBeenCalledTimes(1);
+  });
+
+  it('默认不渲染 Skill 批量操作', () => {
+    const wrapper = defineComponent({
+      setup() { return () => h(WorldbookEntryToolbar, { filter: '' }); },
+    });
+    const el = document.createElement('div');
+    document.body.appendChild(el);
+    const app = createApp(wrapper);
+    app.mount(el);
+    mounted.push({ app, el });
+
+    expect(el.textContent).not.toContain('Skill 全选');
+    expect(el.textContent).not.toContain('对所选 Skill 化');
   });
 });

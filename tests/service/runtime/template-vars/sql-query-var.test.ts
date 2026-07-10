@@ -33,8 +33,8 @@ vi.mock('../../../../src/service/table/storage-mode', () => ({
 vi.mock('../../../../src/service/table/table-storage-strategy', () => ({
   getStorageProvider: vi.fn(() => ({
     mode: 'sqlite' as const,
-    executeQuery: (sql: string, params?: any[]) => {
-      const result = _engine.query(sql, params);
+    executeQuery: (sql: string, params?: any[], options?: { suppressErrorLog?: boolean }) => {
+      const result = _engine.query(sql, params, options);
       return {
         columns: result.columns,
         values: result.values,
@@ -84,11 +84,18 @@ import {
   evaluateDbCondition,
   evaluateSqlCondition,
 } from '../../../../src/service/runtime/template-vars/sql-query-var';
+import { renderAgentReadOnlyQueryTemplates_ACU } from '../../../../src/service/runtime/template-vars/agent-read-only-template-render';
+import { logError_ACU, logWarn_ACU } from '../../../../src/shared/utils';
 
 // ═══════════════════════════════════════════════════════════════
 // 测试套件
 // ═══════════════════════════════════════════════════════════════
 describe('sql-query-var', () => {
+  beforeEach(() => {
+    vi.mocked(logWarn_ACU).mockClear();
+    vi.mocked(logError_ACU).mockClear();
+  });
+
   beforeAll(async () => {
     // 初始化真实引擎
     _engine = new SqliteEngine();
@@ -1074,6 +1081,92 @@ describe('sql-query-var', () => {
       const content = '{[db.rand(5, 5) as d1]}{[db.rand(8, 8) as d2]}{[db.rand(3, 3) as d3]}{[db.max($v:d1, $v:d2, $v:d3) as best]}最佳: $v:best';
       const result = replaceDbSqlVariables(content);
       expect(result).toBe('最佳: 8'); // max(5, 8, 3) = 8
+    });
+  });
+
+  describe('Agent read-only query template renderer', () => {
+    it('executes one read-only SQL tag exactly once', () => {
+      const querySpy = vi.spyOn(_engine, 'query');
+      const before = querySpy.mock.calls.length;
+      const result = renderAgentReadOnlyQueryTemplates_ACU('总数: {[sql "SELECT SUM(quantity) FROM inventory"]}');
+
+      expect(result).toMatchObject({ content: '总数: 9', tagCount: 1, executedCount: 1, rejectedCount: 0 });
+      expect(querySpy.mock.calls.length - before).toBe(1);
+      querySpy.mockRestore();
+    });
+
+    it('executes allowlisted ORM chains without evaluating arbitrary JavaScript', () => {
+      const result = renderAgentReadOnlyQueryTemplates_ACU("数量: {[db.背包物品表.where('物品名称', '铁剑').get('数量')]}");
+      expect(result).toMatchObject({ content: '数量: 3', executedCount: 1, rejectedCount: 0 });
+
+      const rejected = renderAgentReadOnlyQueryTemplates_ACU('{[db.inventory.constructor.constructor("return globalThis")()]}');
+      expect(rejected.executedCount).toBe(0);
+      expect(rejected.rejectedCount).toBe(1);
+      expect(rejected.content).toContain('constructor');
+    });
+
+    it('keeps aliases local to one render call', () => {
+      const first = renderAgentReadOnlyQueryTemplates_ACU('{[sql "SELECT SUM(quantity) FROM inventory" as total]}总数=$v:total');
+      const second = renderAgentReadOnlyQueryTemplates_ACU('总数=$v:total');
+
+      expect(first.content).toBe('总数=9');
+      expect(second.content).toBe('总数=$v:total');
+    });
+
+    it('executes multiple query tags in one segment once each and shares aliases only within that render', () => {
+      const querySpy = vi.spyOn(_engine, 'query');
+      const before = querySpy.mock.calls.length;
+      const result = renderAgentReadOnlyQueryTemplates_ACU('{[sql "SELECT SUM(quantity) FROM inventory" as total]}总数=$v:total; 人数={[sql "SELECT COUNT(*) FROM characters"]}');
+
+      expect(result).toMatchObject({ content: '总数=9; 人数=3', tagCount: 2, executedCount: 2, rejectedCount: 0 });
+      expect(querySpy.mock.calls.length - before).toBe(2);
+      querySpy.mockRestore();
+    });
+
+    it('rejects query tags containing unresolved placeholders without executing them', () => {
+      const querySpy = vi.spyOn(_engine, 'query');
+      const before = querySpy.mock.calls.length;
+      const result = renderAgentReadOnlyQueryTemplates_ACU('{[sql "SELECT {{agent.userMessage}}"]}');
+      expect(result).toMatchObject({ executedCount: 0, rejectedCount: 1, content: '{[sql "SELECT {{agent.userMessage}}"]}' });
+      expect(querySpy.mock.calls.length - before).toBe(0);
+      querySpy.mockRestore();
+    });
+
+    it('reports real raw SQL engine failures as rejected without logging query text', () => {
+      const query = '{[sql "SELECT \'sensitive_value\' FROM missing_sensitive_table"]}';
+      const result = renderAgentReadOnlyQueryTemplates_ACU(query);
+
+      expect(result).toMatchObject({ content: query, executedCount: 0, rejectedCount: 1 });
+      const logs = [...vi.mocked(logWarn_ACU).mock.calls, ...vi.mocked(logError_ACU).mock.calls]
+        .flat().map(value => String(value)).join('\n');
+      expect(logs).toContain('reason=sql_query_execution_failed');
+      expect(logs).not.toContain('sensitive_value');
+      expect(logs).not.toContain('SELECT');
+    });
+
+    it('reports real ORM engine failures as rejected without logging generated SQL or values', () => {
+      const query = "{[db.背包物品表.where('不存在列', 'sensitive_value').get('数量')]}";
+      const result = renderAgentReadOnlyQueryTemplates_ACU(query);
+
+      expect(result).toMatchObject({ content: query, executedCount: 0, rejectedCount: 1 });
+      const logs = [...vi.mocked(logWarn_ACU).mock.calls, ...vi.mocked(logError_ACU).mock.calls]
+        .flat().map(value => String(value)).join('\n');
+      expect(logs).toContain('reason=orm_query_execution_failed');
+      expect(logs).not.toContain('sensitive_value');
+      expect(logs).not.toContain('SELECT');
+    });
+
+    it('rejects write SQL without mutating the database', () => {
+      const result = renderAgentReadOnlyQueryTemplates_ACU('{[sql "DELETE FROM inventory"]}');
+      expect(result).toMatchObject({ executedCount: 0, rejectedCount: 1, content: '{[sql "DELETE FROM inventory"]}' });
+      expect(_engine.query('SELECT COUNT(*) FROM inventory').values[0][0]).toBe(3);
+    });
+
+    it('does not interpret query tags returned by the database', () => {
+      const result = renderAgentReadOnlyQueryTemplates_ACU(`{[sql "SELECT '{[sql ''DELETE FROM inventory'']}'"]}`);
+      expect(result.executedCount).toBe(1);
+      expect(result.content).toContain('{[sql');
+      expect(_engine.query('SELECT COUNT(*) FROM inventory').values[0][0]).toBe(3);
     });
   });
 

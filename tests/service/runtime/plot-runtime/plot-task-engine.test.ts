@@ -16,6 +16,8 @@ const {
   mockGetPersonaDescription,
   mockGetCharDescription,
   mockBuildCombinedWorldbookContentByStrategy,
+  mockCollectCombinedWorldbookEntriesByStrategy,
+  mockFormatCombinedWorldbookEntries,
   mockEnsurePlotTasksCompat,
   mockGetPlotPromptContentById,
   mockNormalizePlotTask,
@@ -47,6 +49,8 @@ const {
   mockClearFinalGenerationGreenlights,
   mockWriteFinalGenerationGreenlights,
   mockResolveAgentWorldbookFilterAvailability,
+  mockAgentWorldbookSnapshotRef,
+  mockResolveAgentWorldbookScopeBookNames,
 } = vi.hoisted(() => {
   const mockAbortControllerRef = { value: null as any };
   const mockCurrentJsonTableDataRef = {
@@ -88,6 +92,8 @@ const {
     mockGetPersonaDescription: vi.fn(),
     mockGetCharDescription: vi.fn(),
     mockBuildCombinedWorldbookContentByStrategy: vi.fn(),
+    mockCollectCombinedWorldbookEntriesByStrategy: vi.fn(),
+    mockFormatCombinedWorldbookEntries: vi.fn(),
     mockEnsurePlotTasksCompat: vi.fn(),
     mockGetPlotPromptContentById: vi.fn(),
     mockNormalizePlotTask: vi.fn(),
@@ -119,6 +125,10 @@ const {
     mockClearFinalGenerationGreenlights: vi.fn(),
     mockWriteFinalGenerationGreenlights: vi.fn(),
     mockResolveAgentWorldbookFilterAvailability: vi.fn(),
+    mockAgentWorldbookSnapshotRef: {
+      value: { active: false, selectionSignature: '', createdAt: 0, books: {} } as any,
+    },
+    mockResolveAgentWorldbookScopeBookNames: vi.fn(),
   };
 });
 
@@ -161,8 +171,22 @@ vi.mock('../../../../src/data/gateways/host-state-gateway', () => ({
   getCharDescription_ACU: mockGetCharDescription,
 }));
 
+vi.mock('../../../../src/service/agent/agent-worldbook-snapshot-state', () => ({
+  getAgentWorldbookSnapshotState_ACU: () => mockAgentWorldbookSnapshotRef.value,
+}));
+
+vi.mock('../../../../src/service/agent/agent-worldbook-config-meta', () => ({
+  resolveAgentWorldbookScopeBookNames_ACU: mockResolveAgentWorldbookScopeBookNames,
+}));
+
+vi.mock('../../../../src/shared/agent-worldbook-snapshot', () => ({
+  buildAgentWorldbookSnapshotSelectionSignature_ACU: (bookNames: unknown) => `signature:${JSON.stringify(bookNames)}`,
+}));
+
 vi.mock('../../../../src/service/worldbook/pipeline', () => ({
   buildCombinedWorldbookContentByStrategy_ACU: mockBuildCombinedWorldbookContentByStrategy,
+  collectCombinedWorldbookEntriesByStrategy_ACU: mockCollectCombinedWorldbookEntriesByStrategy,
+  formatCombinedWorldbookEntries_ACU: mockFormatCombinedWorldbookEntries,
 }));
 
 vi.mock('../../../../src/shared/utils', () => ({
@@ -257,6 +281,7 @@ import {
   willPlotUseMainApiGenerateRaw_ACU,
   runPlotTasksRuntime_ACU,
   getWorldbookContentForPlot_ACU,
+  getAgentControlledWorldbookEntriesForFinalPrompt_ACU,
 } from '../../../../src/service/runtime/plot-runtime/plot-task-engine';
 
 beforeEach(() => {
@@ -295,6 +320,10 @@ beforeEach(() => {
   mockGetPersonaDescription.mockReturnValue('用户设定');
   mockGetCharDescription.mockReturnValue('角色设定');
   mockBuildCombinedWorldbookContentByStrategy.mockResolvedValue('世界书内容');
+  mockCollectCombinedWorldbookEntriesByStrategy.mockResolvedValue([]);
+  mockFormatCombinedWorldbookEntries.mockReturnValue('');
+  mockAgentWorldbookSnapshotRef.value = { active: false, selectionSignature: '', createdAt: 0, books: {} };
+  mockResolveAgentWorldbookScopeBookNames.mockResolvedValue(['Agent书']);
 
   mockEnsurePlotTasksCompat.mockImplementation(() => undefined);
   mockGetPlotPromptContentById.mockReturnValue('');
@@ -430,6 +459,9 @@ describe('getWorldbookContentForPlot_ACU', () => {
     expect(options.isSelected({ bookName: '书A', uid: 2, normalizedComment: '普通条目' })).toBe(false);
     expect(options.isSelected({ bookName: '书B', uid: 9, normalizedComment: '普通条目' })).toBe(true);
     expect(options.isSelected({ bookName: '书A', uid: 999, normalizedComment: 'TavernDB-ACU-自动生成条目' })).toBe(true);
+    expect(options.entryStateView).toBe('pre_takeover');
+    expect(options.entryStateSnapshot).toEqual(expect.objectContaining({ active: false }));
+    expect(options.entryStateSnapshotSignature).toBe('');
   });
 
 
@@ -457,6 +489,8 @@ describe('getWorldbookContentForPlot_ACU', () => {
     expect(options.formatEntry(greenlightEntry)).not.toContain('#');
     expect(options.formatEntry(normalEntry)).toBe('# 普通条目\n普通正文');
     expect(options.includeEntry({ bookName: '书A', uid: 8, normalizedComment: 'TavernDB-ACU-OutlineTable-1', blocked: true })).toBe(false);
+    expect(options.entryStateView).toBe('live');
+    expect(options.entryStateSnapshot).toBeUndefined();
   });
 
   it('normal 模式即使传入绿灯也保持普通世界书选择语义', async () => {
@@ -500,6 +534,45 @@ describe('getWorldbookContentForPlot_ACU', () => {
     expect(options.isSelected(controlledEntry)).toBe(false);
     expect(options.isSelected({ bookName: '书A', uid: 999, normalizedComment: 'TavernDB-ACU-自动生成条目' })).toBe(true);
     expect(options.forceIncludeEntry({ bookName: '书A', uid: 1, normalizedComment: '普通条目' })).toBe(false);
+    expect(options.entryStateView).toBe('live');
+    expect(mockResolveAgentWorldbookScopeBookNames).not.toHaveBeenCalled();
+  });
+
+  it('normal 模式按 Agent 独立范围校验 active snapshot，而不是按剧情书名计算签名', async () => {
+    const snapshot = { active: true, selectionSignature: 'signature:["Agent书"]', createdAt: 1, books: {} };
+    mockAgentWorldbookSnapshotRef.value = snapshot;
+    mockResolveAgentWorldbookScopeBookNames.mockResolvedValue(['Agent书']);
+
+    await getWorldbookContentForPlot_ACU(
+      { plotWorldbookConfig: { source: 'manual', manualSelection: ['剧情书'] } },
+      '当前输入',
+      '',
+      { agentMode: 'normal' },
+    );
+
+    const options = mockBuildCombinedWorldbookContentByStrategy.mock.calls[0][0];
+    expect(options.bookNames).toEqual(['剧情书']);
+    expect(options.entryStateView).toBe('pre_takeover');
+    expect(options.entryStateSnapshot).toBe(snapshot);
+    expect(options.entryStateSnapshotSignature).toBe('signature:["Agent书"]');
+  });
+
+  it('normal 模式解析 Agent 范围失败时保留 pre_takeover 请求并以空签名安全退化', async () => {
+    const snapshot = { active: true, selectionSignature: 'stale-signature', createdAt: 1, books: {} };
+    mockAgentWorldbookSnapshotRef.value = snapshot;
+    mockResolveAgentWorldbookScopeBookNames.mockRejectedValue(new Error('scope unavailable'));
+
+    await getWorldbookContentForPlot_ACU(
+      { plotWorldbookConfig: { source: 'manual', manualSelection: ['剧情书'] } },
+      '当前输入',
+      '',
+      { agentMode: 'normal' },
+    );
+
+    const options = mockBuildCombinedWorldbookContentByStrategy.mock.calls[0][0];
+    expect(options.entryStateView).toBe('pre_takeover');
+    expect(options.entryStateSnapshot).toBe(snapshot);
+    expect(options.entryStateSnapshotSignature).toBe('');
   });
 
 
@@ -597,6 +670,38 @@ describe('getWorldbookContentForPlot_ACU', () => {
 
     expect(result).toBe('');
     expect(mockBuildCombinedWorldbookContentByStrategy).not.toHaveBeenCalled();
+  });
+});
+
+describe('getAgentControlledWorldbookEntriesForFinalPrompt_ACU', () => {
+  it('最终提示词受控目录排除带首尾空白的 constant 条目', async () => {
+    await getAgentControlledWorldbookEntriesForFinalPrompt_ACU({
+      plotWorldbookConfig: {
+        source: 'manual',
+        manualSelection: ['书A'],
+      },
+    });
+
+    expect(mockCollectCombinedWorldbookEntriesByStrategy).toHaveBeenCalledTimes(1);
+    const options = mockCollectCombinedWorldbookEntriesByStrategy.mock.calls[0][0];
+    expect(options.bookNames).toEqual(['书A']);
+    expect(options.includeConstantEntriesInBaseScan).toBe(false);
+
+    expect(options.includeEntry({
+      type: ' CONSTANT ',
+      keys: ['应由酒馆常驻注入'],
+      comment: '带空白的常量条目',
+    })).toBe(false);
+    expect(options.includeEntry({
+      type: 'normal',
+      keys: ['可由 Agent 控制'],
+      comment: '普通条目',
+    })).toBe(true);
+    expect(options.includeEntry({
+      type: 'normal',
+      keys: ['数据库生成条目'],
+      comment: 'TavernDB-ACU-OutlineTable-1',
+    })).toBe(false);
   });
 });
 

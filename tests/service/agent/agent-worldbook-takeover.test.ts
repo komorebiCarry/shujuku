@@ -46,7 +46,6 @@ vi.mock('../../../src/service/runtime/state-manager', () => ({
 }));
 
 vi.mock('../../../src/service/agent/agent-skillify-service', () => ({
-  resolvePlotWorldbookSkillifyBookNames_ACU: mockResolveBookNames,
   isWorldbookEntrySkillifyCandidate_ACU: vi.fn((entry: any) => {
     const comment = String(entry?.comment || entry?.name || '').trim();
     if (entry?.enabled === false) return false;
@@ -89,6 +88,7 @@ vi.mock('../../../src/service/agent/agent-worldbook-config-meta', () => ({
   readAgentWorldbookStateFromWorldbooks_ACU: mockReadAgentWorldbookState,
   writeAgentWorldbookStateToWorldbook_ACU: mockWriteAgentWorldbookState,
   deleteAgentWorldbookStateEntry_ACU: mockDeleteAgentWorldbookState,
+  resolveAgentWorldbookScopeBookNames_ACU: mockResolveBookNames,
 }));
 
 import { settings_ACU } from '../../../src/service/runtime/state-manager';

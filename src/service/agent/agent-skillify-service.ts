@@ -1,7 +1,6 @@
 import type { AgentWorldbookControl_ACU } from '../../shared/models/agent-worldbook-model';
 import { callAIWithPreset_ACU } from '../ai/api-call';
 import { settings_ACU } from '../runtime/state-manager';
-import { getCharLorebooks_ACU } from '../worldbook/worldbook-service';
 import { getLorebookEntriesByNames_ACU } from '../worldbook/pipeline';
 import { estimateTextTk_ACU, normalizeTkBudgetNumber_ACU } from '../../shared/token-estimate';
 import { buildDefaultAgentWorldbookControl_ACU } from '../../shared/defaults';
@@ -18,6 +17,7 @@ import {
 } from './agent-prompt-template';
 import {
   readAgentWorldbookControlFromWorldbooks_ACU,
+  resolveAgentWorldbookScopeBookNames_ACU,
 } from './agent-worldbook-config-meta';
 
 export interface AgentSkillifyWorldbookEntrySummary_ACU {
@@ -163,22 +163,10 @@ export function isDatabaseGeneratedWorldbookEntryForAgent_ACU(entry: Record<stri
 export function isWorldbookEntrySkillifyCandidate_ACU(entry: Record<string, any>): boolean {
   if (!entry || entry.enabled === false) return false;
   if (isAgentInternalWorldbookEntry_ACU(entry)) return false;
-  if (String(entry.type || '').toLowerCase() === 'constant') return false;
+  if (String(entry.type || '').trim().toLowerCase() === 'constant') return false;
   if (isDatabaseGeneratedWorldbookEntryForAgent_ACU(entry)) return false;
   return true;
 }
-
-export async function resolvePlotWorldbookSkillifyBookNames_ACU(): Promise<string[]> {
-  const cfg = (settings_ACU.plotSettings as any)?.plotWorldbookConfig || {};
-  if (cfg.source === 'manual') return normalizeStringArray_ACU(cfg.manualSelection);
-
-  const names: string[] = [];
-  const charLorebooks = await getCharLorebooks_ACU({ type: 'all' });
-  if (charLorebooks?.primary) names.push(String(charLorebooks.primary));
-  if (Array.isArray(charLorebooks?.additional)) names.push(...charLorebooks.additional.map(String));
-  return [...new Set(names.map(name => name.trim()).filter(Boolean))];
-}
-
 
 function buildEntrySummary_ACU(
   bookName: string,
@@ -233,10 +221,11 @@ export function buildWorldbookSkillifyPrompt_ACU(
   const messages = renderAgentPromptSegments_ACU(
     control.agentSkillifyPromptSegments || getDefaultAgentSkillifyPromptSegments_ACU(),
     placeholders,
+    { enableSqlRender: true, promptKind: 'skillify' },
   );
   return messages.length > 0
     ? messages
-    : renderAgentPromptSegments_ACU(getDefaultAgentSkillifyPromptSegments_ACU(), placeholders);
+    : renderAgentPromptSegments_ACU(getDefaultAgentSkillifyPromptSegments_ACU(), placeholders, { enableSqlRender: true, promptKind: 'skillify' });
 }
 
 function extractJsonObjectText_ACU(text: string): string | null {
@@ -434,7 +423,7 @@ export async function skillifyWorldbookEntries_ACU(
 export async function skillifyCurrentPlotWorldbookSelection_ACU(
   options: AgentSkillifyOptions_ACU = {},
 ): Promise<AgentSkillifyRunResult_ACU> {
-  const bookNames = await resolvePlotWorldbookSkillifyBookNames_ACU();
+  const bookNames = await resolveAgentWorldbookScopeBookNames_ACU();
   if (bookNames.length === 0) return summarizeRunResults_ACU([]);
   return skillifyWorldbookEntries_ACU(bookNames, options);
 }
