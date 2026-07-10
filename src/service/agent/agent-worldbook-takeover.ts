@@ -11,8 +11,10 @@ import { persistTavernSettings_ACU } from '../../data/storage/tavern-storage';
 import { hashUserInput_ACU, logWarn_ACU } from '../../shared/utils';
 import { buildAgentWorldbookSnapshotSelectionSignature_ACU } from '../../shared/agent-worldbook-snapshot';
 import {
+  getAgentWorldbookSnapshotRevision_ACU,
   getAgentWorldbookSnapshotState_ACU,
   setAgentWorldbookSnapshotState_ACU,
+  setAgentWorldbookSnapshotStateIfRevision_ACU,
 } from './agent-worldbook-snapshot-state';
 import { settings_ACU } from '../runtime/state-manager';
 import {
@@ -290,13 +292,54 @@ export function setPlotAgentWorldbookSnapshot_ACU(snapshot: AgentWorldbookContro
   setAgentWorldbookSnapshotState_ACU(snapshot);
 }
 
+export interface PreTakeoverWorldbookSnapshotResolution_ACU {
+  snapshot: AgentWorldbookControlSnapshot_ACU;
+  expectedSignature: string;
+}
+
+const preTakeoverSnapshotResolutionPromisesBySignature_ACU = new Map<string, Promise<PreTakeoverWorldbookSnapshotResolution_ACU>>();
+
+async function readAndMaybeCachePlotAgentWorldbookSnapshot_ACU(
+  resolvedBookNames: string[],
+  selectionSignature: string,
+  initialRevision: number,
+): Promise<AgentWorldbookControlSnapshot_ACU> {
+  const snapshot = await readPlotAgentWorldbookSnapshotFromStateOrLegacy_ACU(resolvedBookNames, selectionSignature);
+  setAgentWorldbookSnapshotStateIfRevision_ACU(initialRevision, snapshot);
+  return snapshot;
+}
+
 export async function refreshPlotAgentWorldbookSnapshotFromWorldbooks_ACU(): Promise<AgentWorldbookControlSnapshot_ACU> {
+  const initialRevision = getAgentWorldbookSnapshotRevision_ACU();
   const resolvedBookNames = await resolveTakeoverBookNames_ACU();
   const selectionSignature = buildWorldbookSelectionSignature_ACU(resolvedBookNames);
+  return readAndMaybeCachePlotAgentWorldbookSnapshot_ACU(resolvedBookNames, selectionSignature, initialRevision);
+}
 
-  const snapshot = await readPlotAgentWorldbookSnapshotFromStateOrLegacy_ACU(resolvedBookNames, selectionSignature);
-  setPlotAgentWorldbookSnapshot_ACU(snapshot);
-  return snapshot;
+/** 为普通剧情与填表读取解析持久化接管前视图；expectedSignature 独立于返回快照，防止快照自签名。 */
+export async function resolvePreTakeoverWorldbookSnapshot_ACU(): Promise<PreTakeoverWorldbookSnapshotResolution_ACU> {
+  const initialRevision = getAgentWorldbookSnapshotRevision_ACU();
+  const resolvedBookNames = await resolveTakeoverBookNames_ACU();
+  const expectedSignature = buildWorldbookSelectionSignature_ACU(resolvedBookNames);
+  const existingPromise = preTakeoverSnapshotResolutionPromisesBySignature_ACU.get(expectedSignature);
+  if (existingPromise) return existingPromise;
+
+  const resolutionPromise = readAndMaybeCachePlotAgentWorldbookSnapshot_ACU(
+    resolvedBookNames,
+    expectedSignature,
+    initialRevision,
+  ).then(snapshot => ({ snapshot, expectedSignature }));
+  preTakeoverSnapshotResolutionPromisesBySignature_ACU.set(expectedSignature, resolutionPromise);
+  const clearResolutionPromise = () => {
+    if (preTakeoverSnapshotResolutionPromisesBySignature_ACU.get(expectedSignature) === resolutionPromise) {
+      preTakeoverSnapshotResolutionPromisesBySignature_ACU.delete(expectedSignature);
+    }
+  };
+  void resolutionPromise.then(
+    clearResolutionPromise,
+    clearResolutionPromise,
+  );
+  return resolutionPromise;
 }
 
 async function readPlotAgentWorldbookSnapshotFromStateOrLegacy_ACU(resolvedBookNames: string[], selectionSignature: string): Promise<AgentWorldbookControlSnapshot_ACU> {

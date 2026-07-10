@@ -16,8 +16,10 @@ const mockAttachSeedRows = vi.fn();
 const mockReplaceDbSqlVariables = vi.fn((content: string) => content);
 let mockCurrentJsonTableData: any = null;
 let mockSettings: any = {};
-let mockAgentWorldbookSnapshot: any = { active: false, selectionSignature: '', createdAt: 0, books: {} };
-const mockResolveAgentWorldbookScopeBookNames = vi.fn(async () => ['Agent书']);
+const mockResolvePreTakeoverSnapshot = vi.fn(async () => ({
+  snapshot: { active: false, selectionSignature: '', createdAt: 0, books: {} },
+  expectedSignature: 'signature:["Agent书"]',
+}));
 
 vi.mock('../../../src/service/template/chat-scope', () => ({
   getEffectiveSeedRowsForSheet_ACU: (...args: any[]) => mockGetEffectiveSeedRows(...args),
@@ -49,16 +51,8 @@ vi.mock('../../../src/service/worldbook/pipeline', () => ({
   getCombinedWorldbookContent_ACU: vi.fn().mockResolvedValue(''),
 }));
 
-vi.mock('../../../src/service/agent/agent-worldbook-snapshot-state', () => ({
-  getAgentWorldbookSnapshotState_ACU: () => mockAgentWorldbookSnapshot,
-}));
-
-vi.mock('../../../src/service/agent/agent-worldbook-config-meta', () => ({
-  resolveAgentWorldbookScopeBookNames_ACU: (...args: any[]) => mockResolveAgentWorldbookScopeBookNames(...args),
-}));
-
-vi.mock('../../../src/shared/agent-worldbook-snapshot', () => ({
-  buildAgentWorldbookSnapshotSelectionSignature_ACU: (bookNames: unknown) => `signature:${JSON.stringify(bookNames)}`,
+vi.mock('../../../src/service/agent/agent-worldbook-takeover', () => ({
+  resolvePreTakeoverWorldbookSnapshot_ACU: (...args: any[]) => mockResolvePreTakeoverSnapshot(...args),
 }));
 
 vi.mock('../../../src/service/runtime/helpers-remaining', () => ({
@@ -97,8 +91,10 @@ describe('formatTableForSqliteMode', () => {
     mockRuntimeProvider.getCurrentData.mockImplementation(() => mockCurrentJsonTableData);
     mockIsSqliteMode = true;
     mockCurrentJsonTableData = null;
-    mockAgentWorldbookSnapshot = { active: false, selectionSignature: '', createdAt: 0, books: {} };
-    mockResolveAgentWorldbookScopeBookNames.mockResolvedValue(['Agent书']);
+    mockResolvePreTakeoverSnapshot.mockResolvedValue({
+      snapshot: { active: false, selectionSignature: '', createdAt: 0, books: {} },
+      expectedSignature: 'signature:["Agent书"]',
+    });
     mockSettings = {
       tableContextExtractTags: '',
       tableContextExcludeTags: '',
@@ -338,6 +334,10 @@ describe('formatTableForSqliteMode', () => {
 describe('prepareAIInput_ACU — 显式 tableData 模式', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    mockResolvePreTakeoverSnapshot.mockResolvedValue({
+      snapshot: { active: false, selectionSignature: '', createdAt: 0, books: {} },
+      expectedSignature: 'signature:["Agent书"]',
+    });
     mockGetEffectiveSeedRows.mockReturnValue([]);
     mockEnsureChatSheetGuideSeeded.mockResolvedValue(null);
     mockAttachSeedRows.mockReset();
@@ -430,7 +430,7 @@ describe('prepareAIInput_ACU — 显式 tableData 模式', () => {
         agentGreenlights,
         entryStateView: 'pre_takeover',
         entryStateSnapshot: expect.objectContaining({ active: false }),
-        entryStateSnapshotSignature: '',
+        entryStateSnapshotSignature: 'signature:["Agent书"]',
       }),
     );
   });
@@ -444,12 +444,13 @@ describe('prepareAIInput_ACU — 显式 tableData 模式', () => {
         updateConfig: {},
       },
     };
-    mockAgentWorldbookSnapshot = {
+    const snapshot = {
       active: true,
       selectionSignature: 'signature:["Agent书"]',
       createdAt: 1,
-      books: {},
+      books: { Agent书: [{ uid: 1, previousEnabled: true, previousKeys: ['触发'], previousType: 'selective' }] },
     };
+    mockResolvePreTakeoverSnapshot.mockResolvedValue({ snapshot, expectedSignature: 'signature:["Agent书"]' });
 
     await prepareAIInput_ACU([], 'standard', null, { tableData: explicitTableData });
 
@@ -457,13 +458,13 @@ describe('prepareAIInput_ACU — 显式 tableData 模式', () => {
       expect.any(String),
       expect.objectContaining({
         entryStateView: 'pre_takeover',
-        entryStateSnapshot: mockAgentWorldbookSnapshot,
+        entryStateSnapshot: snapshot,
         entryStateSnapshotSignature: 'signature:["Agent书"]',
       }),
     );
   });
 
-  it('解析 Agent 范围失败时继续准备填表输入，并以空签名让管线退化 live', async () => {
+  it('hydration 失败时继续准备填表输入，并以空签名让管线退化 live', async () => {
     const explicitTableData = {
       sheet_0: {
         uid: 'sheet_0',
@@ -472,13 +473,7 @@ describe('prepareAIInput_ACU — 显式 tableData 模式', () => {
         updateConfig: {},
       },
     };
-    mockAgentWorldbookSnapshot = {
-      active: true,
-      selectionSignature: 'stale-signature',
-      createdAt: 1,
-      books: {},
-    };
-    mockResolveAgentWorldbookScopeBookNames.mockRejectedValue(new Error('scope unavailable'));
+    mockResolvePreTakeoverSnapshot.mockRejectedValue(new Error('snapshot unavailable'));
 
     await expect(prepareAIInput_ACU([], 'standard', null, { tableData: explicitTableData })).resolves.toBeTruthy();
 
@@ -486,7 +481,7 @@ describe('prepareAIInput_ACU — 显式 tableData 模式', () => {
       expect.any(String),
       expect.objectContaining({
         entryStateView: 'pre_takeover',
-        entryStateSnapshot: mockAgentWorldbookSnapshot,
+        entryStateSnapshot: undefined,
         entryStateSnapshotSignature: '',
       }),
     );

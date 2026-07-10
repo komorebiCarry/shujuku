@@ -10,9 +10,6 @@ import { getCharLorebooks_ACU } from '../../../data/gateways/character-gateway';
 import { getChatArray_ACU } from '../../../data/gateways/chat-gateway';
 import { getPersonaDescription_ACU, getCharDescription_ACU } from '../../../data/gateways/host-state-gateway';
 import { buildCombinedWorldbookContentByStrategy_ACU, collectCombinedWorldbookEntriesByStrategy_ACU, formatCombinedWorldbookEntries_ACU } from '../../worldbook/pipeline';
-import { buildAgentWorldbookSnapshotSelectionSignature_ACU } from '../../../shared/agent-worldbook-snapshot';
-import { getAgentWorldbookSnapshotState_ACU } from '../../agent/agent-worldbook-snapshot-state';
-import { resolveAgentWorldbookScopeBookNames_ACU } from '../../agent/agent-worldbook-config-meta';
 import { escapeRegExp_ACU, hashUserInput_ACU, isEntryBlocked_ACU, logDebug_ACU, logError_ACU, logWarn_ACU, normalizeNonNegativeInteger_ACU, normalizePositiveInteger_ACU, normalizeExcludeRules_ACU, normalizeExtractRules_ACU } from '../../../shared/utils';
 import { ensurePlotTasksCompat_ACU, getPlotPromptContentByIdFromSettings_ACU, normalizePlotTask_ACU, normalizePlotTasks_ACU } from '../../plot/plot-logic';
 import { parseRandomTags_ACU, replaceRandomVariables_ACU, getLatestAIMessageContent_ACU, replaceDbSqlVariables } from '../template-vars';
@@ -25,7 +22,7 @@ import { abortableDelay } from '../../../shared/abortable-delay';
 import { runAgentDecisionForPlot_ACU, type AgentDecisionResult_ACU, type AgentWorldbookRef_ACU } from '../../agent/agent-decision-engine';
 import { normalizeAgentContextSettings_ACU } from '../../agent/agent-prompt-template';
 import { getWorldbookEntryKeywordsForSkillify_ACU, isDatabaseGeneratedWorldbookEntryForAgent_ACU } from '../../agent/agent-skillify-service';
-import { clearFinalGenerationGreenlights_ACU, writeFinalGenerationGreenlights_ACU } from '../../agent/agent-worldbook-takeover';
+import { clearFinalGenerationGreenlights_ACU, resolvePreTakeoverWorldbookSnapshot_ACU, writeFinalGenerationGreenlights_ACU } from '../../agent/agent-worldbook-takeover';
 import { hasUsableWorldbookSkillMeta_ACU, resolveAgentWorldbookFilterAvailability_ACU } from '../../agent/agent-worldbook-skill-meta';
 
   type PlotWorldbookAgentMode_ACU = 'normal' | 'agent-controlled';
@@ -810,13 +807,12 @@ import { hasUsableWorldbookSkillMeta_ACU, resolveAgentWorldbookFilterAvailabilit
       let entryStateSnapshot;
       let entryStateSnapshotSignature = '';
       if (entryStateView === 'pre_takeover') {
-        entryStateSnapshot = getAgentWorldbookSnapshotState_ACU();
-        if (entryStateSnapshot.active === true) {
-          try {
-            entryStateSnapshotSignature = buildAgentWorldbookSnapshotSelectionSignature_ACU(await resolveAgentWorldbookScopeBookNames_ACU());
-          } catch (error) {
-            logWarn_ACU('[剧情推进] 无法解析 Agent 世界书范围，普通剧情世界书将使用 live 状态。', error);
-          }
+        try {
+          const resolvedSnapshot = await resolvePreTakeoverWorldbookSnapshot_ACU();
+          entryStateSnapshot = resolvedSnapshot.snapshot;
+          entryStateSnapshotSignature = resolvedSnapshot.expectedSignature;
+        } catch (error) {
+          logWarn_ACU('[剧情推进] 无法读取 Agent 世界书接管快照，普通剧情世界书将使用 live 状态。', error);
         }
       }
 

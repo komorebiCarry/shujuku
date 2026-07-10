@@ -791,7 +791,7 @@ function buildPreTakeoverSnapshotEntryMap_ACU(
         }
         if (byUid.size > 0) result.set(bookName, byUid);
     }
-    return result;
+    return result.size > 0 ? result : null;
 }
 
 function decorateWorldbookEntryStateView_ACU(
@@ -862,7 +862,10 @@ export   async function collectCombinedWorldbookEntriesByStrategy_ACU(options: a
           });
       }
       logDebug_ACU(`${logPrefix} view=${entryStateView}; entries=${entryCount}; snapshotValid=${snapshotEntries !== null}; snapshotHits=${snapshotHitCount}; snapshotMisses=${snapshotMissCount}`);
-      if (entryStateView === 'pre_takeover' && snapshotEntries === null) {
+      const hasInvalidActivePreTakeoverSnapshot = entryStateView === 'pre_takeover'
+          && options?.entryStateSnapshot?.active === true
+          && snapshotEntries === null;
+      if (hasInvalidActivePreTakeoverSnapshot) {
           logWarn_ACU(`${logPrefix} pre_takeover snapshot unavailable or signature mismatch; using live entry state.`);
       }
 

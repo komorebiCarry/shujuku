@@ -811,6 +811,45 @@ describe('collectCombinedWorldbookEntriesByStrategy_ACU entryStateView', () => {
     expect(result).toEqual([]);
   });
 
+  it('inactive pre_takeover snapshot 合法退化为 live 且不记录签名警告', async () => {
+    mockGwGetLorebookEntries.mockResolvedValue([
+      { uid: 3, comment: 'live 条目', content: 'live 内容', enabled: true, type: 'constant', key: [], keys: [] },
+    ]);
+
+    const result = await collectCombinedWorldbookEntriesByStrategy_ACU({
+      bookNames: ['书A'],
+      entryStateView: 'pre_takeover',
+      entryStateSnapshotSignature: '',
+      entryStateSnapshot: { active: false, selectionSignature: '', createdAt: 0, books: {} },
+    });
+
+    expect(result).toHaveLength(1);
+    expect(result[0]).toEqual(expect.objectContaining({ enabled: true, type: 'constant' }));
+    expect(mockLogWarn).not.toHaveBeenCalledWith(expect.stringContaining('pre_takeover snapshot unavailable or signature mismatch'));
+  });
+
+  it('active 但没有有效快照条目时退化为 live 并记录警告', async () => {
+    mockGwGetLorebookEntries.mockResolvedValue([
+      { uid: 3, comment: 'live 条目', content: 'live 内容', enabled: true, type: 'constant', key: [], keys: [] },
+    ]);
+
+    const result = await collectCombinedWorldbookEntriesByStrategy_ACU({
+      bookNames: ['书A'],
+      entryStateView: 'pre_takeover',
+      entryStateSnapshotSignature: 'scope-signature',
+      entryStateSnapshot: {
+        active: true,
+        selectionSignature: 'scope-signature',
+        createdAt: 1,
+        books: {},
+      },
+    });
+
+    expect(result).toHaveLength(1);
+    expect(result[0]).toEqual(expect.objectContaining({ enabled: true, type: 'constant' }));
+    expect(mockLogWarn).toHaveBeenCalledWith(expect.stringContaining('pre_takeover snapshot unavailable or signature mismatch'));
+  });
+
   it('签名不匹配时退化为 live 并记录警告', async () => {
     mockGwGetLorebookEntries.mockResolvedValue([
       { uid: 3, comment: 'live 条目', content: 'live 内容', enabled: true, type: 'constant', key: [], keys: [] },

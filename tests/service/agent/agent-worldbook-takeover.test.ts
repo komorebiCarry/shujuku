@@ -99,6 +99,7 @@ import {
   clearFinalGenerationGreenlights_ACU,
   getPlotAgentWorldbookSnapshot_ACU,
   readFinalGenerationGreenlights_ACU,
+  resolvePreTakeoverWorldbookSnapshot_ACU,
   refreshPlotAgentWorldbookSnapshotFromWorldbooks_ACU,
   restoreWorldbookGreenlights_ACU,
   setPlotAgentWorldbookSnapshot_ACU,
@@ -351,6 +352,129 @@ describe('agent worldbook takeover native trigger suppression', () => {
     expect(mockEntriesByBook.get('角色A世界书')?.find(entry => entry.uid === 1)?.enabled).toBe(true);
     expect(mockDeleteAgentWorldbookState).toHaveBeenCalledTimes(1);
     expect(getPlotAgentWorldbookSnapshot_ACU().active).toBe(false);
+  });
+
+  it('冷 cache 会从持久化状态 hydration active snapshot', async () => {
+    const selectionSignature = buildWorldbookSelectionSignature_ACU(['角色A世界书']);
+    const persistedSnapshot = {
+      active: true,
+      selectionSignature,
+      createdAt: 10,
+      books: {
+        角色A世界书: [{ uid: 1, previousEnabled: true, previousKeys: ['钥匙A'], previousType: 'selective' }],
+      },
+    };
+    mockStateSnapshot.current = persistedSnapshot;
+    setPlotAgentWorldbookSnapshot_ACU({ active: false, selectionSignature: '', createdAt: 0, books: {} });
+
+    const resolved = await resolvePreTakeoverWorldbookSnapshot_ACU();
+
+    expect(resolved.snapshot).toBe(persistedSnapshot);
+    expect(resolved.expectedSignature).toBe(selectionSignature);
+    expect(getPlotAgentWorldbookSnapshot_ACU()).toBe(persistedSnapshot);
+  });
+
+  it('并发 pre_takeover hydration 共享同一次持久化读取', async () => {
+    const selectionSignature = buildWorldbookSelectionSignature_ACU(['角色A世界书']);
+    const persistedSnapshot = {
+      active: true,
+      selectionSignature,
+      createdAt: 10,
+      books: {
+        角色A世界书: [{ uid: 1, previousEnabled: true, previousKeys: ['钥匙A'], previousType: 'selective' }],
+      },
+    };
+    mockStateSnapshot.current = persistedSnapshot;
+
+    const [first, second] = await Promise.all([
+      resolvePreTakeoverWorldbookSnapshot_ACU(),
+      resolvePreTakeoverWorldbookSnapshot_ACU(),
+    ]);
+
+    expect(first).toEqual({ snapshot: persistedSnapshot, expectedSignature: selectionSignature });
+    expect(second).toEqual({ snapshot: persistedSnapshot, expectedSignature: selectionSignature });
+    expect(mockReadAgentWorldbookState).toHaveBeenCalledTimes(1);
+  });
+
+  it('pre_takeover hydration 失败后会释放 single-flight 并允许下一次重试', async () => {
+    const selectionSignature = buildWorldbookSelectionSignature_ACU(['角色A世界书']);
+    const persistedSnapshot = {
+      active: true,
+      selectionSignature,
+      createdAt: 10,
+      books: {
+        角色A世界书: [{ uid: 1, previousEnabled: true, previousKeys: ['钥匙A'], previousType: 'selective' }],
+      },
+    };
+    mockReadAgentWorldbookState
+      .mockRejectedValueOnce(new Error('temporary read failure'))
+      .mockResolvedValueOnce({ control: {}, snapshot: persistedSnapshot, source: 'worldbook', bookName: '角色A世界书', duplicateCount: 0, writableBookName: '角色A世界书' });
+
+    await expect(resolvePreTakeoverWorldbookSnapshot_ACU()).rejects.toThrow('temporary read failure');
+    await expect(resolvePreTakeoverWorldbookSnapshot_ACU()).resolves.toEqual({ snapshot: persistedSnapshot, expectedSignature: selectionSignature });
+    expect(mockReadAgentWorldbookState).toHaveBeenCalledTimes(2);
+  });
+
+  it('hydration 期间 cache 被新状态更新时，旧读取结果不得覆盖新状态', async () => {
+    let releaseRead!: (value: any) => void;
+    mockReadAgentWorldbookState.mockImplementationOnce(() => new Promise(resolve => { releaseRead = resolve; }));
+    const hydrationPromise = refreshPlotAgentWorldbookSnapshotFromWorldbooks_ACU();
+    await vi.waitFor(() => expect(mockReadAgentWorldbookState).toHaveBeenCalledTimes(1));
+
+    const selectionSignature = buildWorldbookSelectionSignature_ACU(['角色A世界书']);
+    const originalSnapshot = {
+      active: true,
+      selectionSignature,
+      createdAt: 10,
+      books: { 角色A世界书: [{ uid: 1, previousEnabled: true, previousKeys: ['钥匙A'], previousType: 'selective' }] },
+    };
+    const newerSnapshot = {
+      active: true,
+      selectionSignature: 'newer-signature',
+      createdAt: 20,
+      books: { 新范围: [{ uid: 9, previousEnabled: true, previousKeys: ['新'], previousType: 'selective' }] },
+    };
+    setPlotAgentWorldbookSnapshot_ACU(newerSnapshot);
+    releaseRead({
+      control: {},
+      snapshot: originalSnapshot,
+      source: 'worldbook',
+      bookName: '角色A世界书',
+      duplicateCount: 0,
+      writableBookName: '角色A世界书',
+    });
+
+    await expect(hydrationPromise).resolves.toBe(originalSnapshot);
+    expect(getPlotAgentWorldbookSnapshot_ACU()).toBe(newerSnapshot);
+  });
+
+
+  it('不同 selection signature 的并发 hydration 不共享结果', async () => {
+    const signatureA = buildWorldbookSelectionSignature_ACU(['书A']);
+    const signatureB = buildWorldbookSelectionSignature_ACU(['书B']);
+    let releaseA!: (value: any) => void;
+    mockResolveBookNames.mockResolvedValueOnce(['书A']).mockResolvedValueOnce(['书B']);
+    mockReadAgentWorldbookState
+      .mockImplementationOnce(() => new Promise(resolve => { releaseA = resolve; }))
+      .mockResolvedValueOnce({
+        control: {},
+        snapshot: { active: true, selectionSignature: signatureB, createdAt: 2, books: { 书B: [{ uid: 2, previousEnabled: true }] } },
+        source: 'worldbook', bookName: '书B', duplicateCount: 0, writableBookName: '书B',
+      });
+
+    const promiseA = resolvePreTakeoverWorldbookSnapshot_ACU();
+    await vi.waitFor(() => expect(mockReadAgentWorldbookState).toHaveBeenCalledTimes(1));
+    const promiseB = resolvePreTakeoverWorldbookSnapshot_ACU();
+    await vi.waitFor(() => expect(mockReadAgentWorldbookState).toHaveBeenCalledTimes(2));
+    releaseA({
+      control: {},
+      snapshot: { active: true, selectionSignature: signatureA, createdAt: 1, books: { 书A: [{ uid: 1, previousEnabled: true }] } },
+      source: 'worldbook', bookName: '书A', duplicateCount: 0, writableBookName: '书A',
+    });
+
+    await expect(promiseA).resolves.toEqual(expect.objectContaining({ expectedSignature: signatureA }));
+    await expect(promiseB).resolves.toEqual(expect.objectContaining({ expectedSignature: signatureB }));
+    expect(mockReadAgentWorldbookState).toHaveBeenCalledTimes(2);
   });
 
   it('刷新快照时会清空 selection 不匹配的过期 active snapshot', async () => {
