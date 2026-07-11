@@ -1602,6 +1602,11 @@ export async function commitManualRefillSheetSnapshotInRangeAtomic_ACU(
         if (targetMessageIndex < 0) {
             return { success: false, changed: false, clearedCount: 0, checkpointCount: 0, targetMessageIndex, error: '手动重填最终快照提交失败：范围内找不到可回放的整库 full checkpoint。' };
         }
+        const completedMessageIndex = [...normalizedIndices].reverse().find(idx => !chat[idx]?.is_user);
+        if (completedMessageIndex === undefined) {
+            return { success: false, changed: false, clearedCount: 0, checkpointCount: 0, targetMessageIndex, error: '手动重填最终快照提交失败：目标消息范围不含 AI 回复楼层。' };
+        }
+        const completedAiFloor = chat.slice(0, completedMessageIndex + 1).filter(msg => msg && !msg.is_user).length;
 
         const snapshotIndices = [...new Set([...normalizedIndices, targetMessageIndex])];
         const snapshots = new Map<number, ReturnType<typeof messageFieldSnapshot_ACU>>();
@@ -1640,6 +1645,7 @@ export async function commitManualRefillSheetSnapshotInRangeAtomic_ACU(
                     reason: 'manual',
                     sheetKey,
                     data: cloneManualRefillJson_ACU(options.snapshotData[sheetKey]) as Sheet_ACU,
+                    scheduleSummary: { lastFilledAiFloor: completedAiFloor },
                 };
             }
             existingFrame.perSheetCheckpoints = perSheetCheckpoints;

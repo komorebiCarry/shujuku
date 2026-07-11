@@ -105,6 +105,7 @@ import {
   overrideLatestLayerWithTemplateCore_ACU,
   saveCurrentDataForTable_ACU,
 } from '../../../src/service/chat/chat-service';
+import { resolveTableHistoryStateFromChat_ACU } from '../../../src/service/table/table-history';
 
 beforeEach(() => {
   vi.clearAllMocks();
@@ -2143,10 +2144,27 @@ describe('commitManualRefillSheetSnapshotInRangeAtomic_ACU', () => {
     expect(chat[20].TavernDB_ACU_IsolatedData[''].storageFrame.perSheetCheckpoints.sheet_0).toEqual(expect.objectContaining({
       kind: 'sheet_full',
       data: refilledSheet,
+      scheduleSummary: { lastFilledAiFloor: 30 },
     }));
+    expect(chat[20].TavernDB_ACU_IsolatedData[''].storageFrame.perSheetCheckpoints.sheet_1).toBeUndefined();
     expect(chat[20].TavernDB_ACU_IsolatedData[''].storageFrame.checkpoint.data.sheet_1.content[1]).toEqual(['20', '保留']);
     expect(chat[20].TavernDB_ACU_IsolatedData[''].storageFrame.checkpoint.data.mate).toEqual({ type: 'acu' });
     expect(chat[29].TavernDB_ACU_IsolatedData[''].storageFrame.perSheetCheckpoints?.sheet_0).toBeUndefined();
+
+    const reloadedHistory = resolveTableHistoryStateFromChat_ACU(chat, {
+      sheetKey: 'sheet_0',
+      isSummaryTable: true,
+      isolationKey: '',
+      settings: mockSettings,
+    });
+    const untouchedSheetHistory = resolveTableHistoryStateFromChat_ACU(chat, {
+      sheetKey: 'sheet_1',
+      isSummaryTable: false,
+      isolationKey: '',
+      settings: mockSettings,
+    });
+    expect(reloadedHistory).toEqual(expect.objectContaining({ hasAnyData: true, hasTrackedUpdate: true, lastTrackedUpdateAiFloor: 30 }));
+    expect(untouchedSheetHistory.hasTrackedUpdate).toBe(false);
   });
 
   it('严格保存失败时还原本轮范围，避免留下清理后但未提交的快照状态', async () => {
