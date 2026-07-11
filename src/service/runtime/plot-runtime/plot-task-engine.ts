@@ -861,6 +861,7 @@ import { hasUsableWorldbookSkillMeta_ACU, resolveAgentWorldbookFilterAvailabilit
           const isAgentGreenlight = agentGreenlightKeySet.has(`${String(entry.bookName || '').trim()}\u0000${String(entry.uid || '').trim()}`);
           if (isAgentGreenlight) return true;
           if (isAgentControlledWorldbook && isAgentControlledWorldbookEntryForPlot_ACU(entry)) return false;
+          if (!isAgentControlledWorldbook && entry?._acuPreTakeoverSnapshotHit === true && entry.enabled !== false) return true;
           if (!hasAnySelection) return true;
           if (isDbGenerated) return true;
           const list = enabledMap?.[entry.bookName];

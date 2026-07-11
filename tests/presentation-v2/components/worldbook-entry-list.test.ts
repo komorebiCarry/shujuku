@@ -34,7 +34,7 @@ function mountList(emptyText: string) {
   return el;
 }
 
-function mountGroups() {
+function mountGroups(showAgentTakeoverState = true) {
   const groups = [
     {
       bookName: 'CharBook',
@@ -55,6 +55,7 @@ function mountGroups() {
         filter: '',
         loading: false,
         onToggleSkillify: toggleSkillify,
+        showAgentTakeoverState,
       });
     },
   });
@@ -93,6 +94,15 @@ describe('WorldbookEntryList', () => {
     expect(el.textContent).toContain('Agent 接管');
     expect(el.textContent).toContain('常量');
     expect(el.textContent).not.toContain('常量原生逻辑');
+  });
+
+  it('普通世界书选择页隐藏 Agent 控制态徽标和接管计数', () => {
+    const { el } = mountGroups(false);
+    const meta = el.querySelector('.acu-disclosure-group__meta');
+
+    expect(meta?.textContent).toBe('3/4 条 · Skill 2');
+    expect(el.textContent).not.toContain('Agent 接管');
+    expect(el.textContent).toContain('常量');
   });
 
   it('Skill 化复选框使用独立状态并透传 toggle-skillify 事件', async () => {

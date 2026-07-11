@@ -98,6 +98,8 @@ describe('useFormFillWorldbookEntries', () => {
   });
 
   it('按接管前状态展示受控条目，并与剧情页面共用可见性规则', async () => {
+    worldbookConfig = createWorldbookConfig();
+    worldbookConfig.enabledEntries = { CharBook: [] };
     mockGetAgentSnapshot.mockReturnValue({
       active: true,
       selectionSignature: 'test-selection',
@@ -120,7 +122,7 @@ describe('useFormFillWorldbookEntries', () => {
       ],
     });
 
-    const c = await getComposable();
+    const c = await getComposable(worldbookConfig);
     await c.loadEntries(['CharBook']);
 
     expect(c.groups.value[0].entries.map(entry => ({
@@ -131,10 +133,11 @@ describe('useFormFillWorldbookEntries', () => {
       checked: entry.checked,
     }))).toEqual([
       { uid: 1, disabled: false, isConstant: false, agentTakeoverState: 'taken_over', checked: true },
-      { uid: 2, disabled: true, isConstant: true, agentTakeoverState: 'taken_over', checked: true },
-      { uid: 4, disabled: false, isConstant: false, agentTakeoverState: 'native', checked: true },
-      { uid: 5, disabled: false, isConstant: false, agentTakeoverState: 'native', checked: true },
+      { uid: 2, disabled: true, isConstant: true, agentTakeoverState: 'taken_over', checked: false },
+      { uid: 4, disabled: false, isConstant: false, agentTakeoverState: 'native', checked: false },
+      { uid: 5, disabled: false, isConstant: false, agentTakeoverState: 'native', checked: false },
     ]);
+    expect(worldbookConfig.enabledEntries.CharBook).toEqual([]);
     c.selectAll();
     expect(worldbookConfig.enabledEntries.CharBook).toEqual([1, 4, 5]);
   });

@@ -28,6 +28,7 @@
       :loading="loading"
       :empty-text="emptyText"
       :show-skillify-controls="false"
+      :show-agent-takeover-state="false"
       :show-skill-editor="false"
       @toggle="(bookName: string, uid: number, checked: boolean) => $emit('toggle', bookName, uid, checked)"
       @toggle-group="$emit('toggle-group', $event)"

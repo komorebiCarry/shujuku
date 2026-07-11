@@ -36,10 +36,10 @@
             @update:model-value="onToggle(entry.bookName, entry.uid, $event)"
           />
           <div v-else class="acu-v2-wb-entry-item__label">{{ entry.label }}</div>
-          <div v-if="showSkillifyControls || entry.isConstant || formatAgentTakeoverState(entry)" class="acu-v2-wb-entry-item__actions">
+          <div v-if="showSkillifyControls || entry.isConstant || (showAgentTakeoverState && formatAgentTakeoverState(entry))" class="acu-v2-wb-entry-item__actions">
             <span v-if="showSkillifyControls && entry.skillMeta" class="acu-v2-wb-entry-item__skill-badge">Skill</span>
             <span v-if="entry.isConstant" class="acu-v2-wb-entry-item__state-badge">常量</span>
-            <span v-if="formatAgentTakeoverState(entry)" class="acu-v2-wb-entry-item__state-badge">{{ formatAgentTakeoverState(entry) }}</span>
+            <span v-if="showAgentTakeoverState && formatAgentTakeoverState(entry)" class="acu-v2-wb-entry-item__state-badge">{{ formatAgentTakeoverState(entry) }}</span>
             <AcuCheckbox v-if="showSkillifyControls"
               :model-value="entry.skillifySelected"
               label="Skill 化"
@@ -100,11 +100,13 @@ const props = withDefaults(defineProps<{
   emptyText?: string;
   showEntryToggle?: boolean;
   showSkillifyControls?: boolean;
+  showAgentTakeoverState?: boolean;
   showSkillEditor?: boolean;
 }>(), {
   emptyText: '所选世界书中无可显示的条目。',
   showEntryToggle: true,
   showSkillifyControls: true,
+  showAgentTakeoverState: true,
   showSkillEditor: true,
 });
 
@@ -141,7 +143,7 @@ function formatGroupMeta(group: WorldbookEntryDisplayGroup_ACU): string {
   const controlledCount = group.entries.filter(entry => entry.agentTakeoverState === 'taken_over' || entry.agentTakeoverState === 'final_greenlight').length;
   const suffix = [
     props.showSkillifyControls && skillCount > 0 ? `Skill ${skillCount}` : '',
-    props.showSkillifyControls && controlledCount > 0 ? `接管 ${controlledCount}` : '',
+    props.showAgentTakeoverState && controlledCount > 0 ? `接管 ${controlledCount}` : '',
   ].filter(Boolean).join(' · ');
   const prefix = checkedCount === null ? `${group.entries.length} 条` : `${checkedCount}/${group.entries.length} 条`;
   return suffix ? `${prefix} · ${suffix}` : prefix;

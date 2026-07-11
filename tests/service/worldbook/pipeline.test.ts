@@ -1063,7 +1063,7 @@ describe('getCombinedWorldbookContent_ACU', () => {
     });
   });
 
-  it('pre_takeover 下未勾选或 previousKeys 未命中的受控条目不注入', async () => {
+  it('pre_takeover 下接管前启用的受控条目忽略残留未勾选，但仍要求 previousKeys 命中', async () => {
     mockGetCurrentWorldbookConfig.mockReturnValue({
       source: 'manual',
       manualSelection: ['书A'],
@@ -1072,7 +1072,7 @@ describe('getCombinedWorldbookContent_ACU', () => {
     mockGwGetLorebookEntries.mockResolvedValue([{
       uid: 1,
       comment: '受控关键词条目',
-      content: '不应注入的正文',
+      content: '接管前正常注入正文',
       enabled: false,
       type: 'constant',
       key: [],
@@ -1092,13 +1092,8 @@ describe('getCombinedWorldbookContent_ACU', () => {
       entryStateSnapshotSignature: 'scope-signature',
       entryStateSnapshot: snapshot,
     });
-    expect(uncheckedResult).toBe('');
+    expect(uncheckedResult).toContain('# 受控关键词条目\n接管前正常注入正文');
 
-    mockGetCurrentWorldbookConfig.mockReturnValue({
-      source: 'manual',
-      manualSelection: ['书A'],
-      enabledEntries: { 书A: [1] },
-    });
     const unmatchedResult = await getCombinedWorldbookContent_ACU('没有匹配的文本', {
       entryStateView: 'pre_takeover',
       entryStateSnapshotSignature: 'scope-signature',

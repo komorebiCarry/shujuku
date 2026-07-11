@@ -138,6 +138,8 @@ describe('usePlotWorldbookEntries', () => {
   });
 
   it('loadEntries 按接管前状态使 live disabled 受控条目可选', async () => {
+    settings = createSettings();
+    settings.plotSettings.plotWorldbookConfig.enabledEntries = { MyBook: [] };
     mockGetAgentSnapshot.mockReturnValue({
       active: true,
       selectionSignature: 'test-selection',
@@ -160,7 +162,7 @@ describe('usePlotWorldbookEntries', () => {
       ],
     });
 
-    const c = await getComposable();
+    const c = await getComposable(settings);
     await c.loadEntries(['MyBook']);
 
     expect(c.groups.value[0].entries.map(entry => ({
@@ -171,10 +173,11 @@ describe('usePlotWorldbookEntries', () => {
       checked: entry.checked,
     }))).toEqual([
       { uid: 1, disabled: false, isConstant: false, agentTakeoverState: 'taken_over', checked: true },
-      { uid: 2, disabled: true, isConstant: true, agentTakeoverState: 'taken_over', checked: true },
-      { uid: 4, disabled: false, isConstant: false, agentTakeoverState: 'native', checked: true },
-      { uid: 5, disabled: false, isConstant: false, agentTakeoverState: 'native', checked: true },
+      { uid: 2, disabled: true, isConstant: true, agentTakeoverState: 'taken_over', checked: false },
+      { uid: 4, disabled: false, isConstant: false, agentTakeoverState: 'native', checked: false },
+      { uid: 5, disabled: false, isConstant: false, agentTakeoverState: 'native', checked: false },
     ]);
+    expect(settings.plotSettings.plotWorldbookConfig.enabledEntries.MyBook).toEqual([]);
     c.selectAll();
     expect(settings.plotSettings.plotWorldbookConfig.enabledEntries.MyBook).toEqual([1, 4, 5]);
   });

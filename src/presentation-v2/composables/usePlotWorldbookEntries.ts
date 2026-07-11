@@ -113,7 +113,7 @@ export function usePlotWorldbookEntries() {
             skillMeta,
             hasSkill: !!skillMeta,
             agentTakeoverState: resolveWorldbookEntryTakeoverState_ACU(entry, !!skillMeta, snapshotEntry),
-            checked: enabledList.includes(entry.uid),
+            checked: snapshotEntry ? snapshotEntry.previousEnabled !== false : enabledList.includes(entry.uid),
             skillifySelected: false,
             skillifySelectable: false,
             isConstant: displayView.isConstant,

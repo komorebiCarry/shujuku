@@ -444,6 +444,7 @@ describe('getWorldbookContentForPlot_ACU', () => {
 
     expect(options.isSelected({ bookName: '书A', uid: 1, normalizedComment: '普通条目' })).toBe(true);
     expect(options.isSelected({ bookName: '书A', uid: 2, normalizedComment: '普通条目' })).toBe(false);
+    expect(options.isSelected({ bookName: '书A', uid: 2, normalizedComment: '普通条目', enabled: true, _acuPreTakeoverSnapshotHit: true })).toBe(true);
     expect(options.isSelected({ bookName: '书B', uid: 9, normalizedComment: '普通条目' })).toBe(true);
     expect(options.isSelected({ bookName: '书A', uid: 999, normalizedComment: 'TavernDB-ACU-自动生成条目' })).toBe(true);
     expect(options.entryStateView).toBe('pre_takeover');
@@ -518,6 +519,7 @@ describe('getWorldbookContentForPlot_ACU', () => {
     const controlledEntry = { bookName: '书A', uid: 3, comment: '受控条目\n<!-- ACU_SKILL_META_START\n{"version":1,"description":"受控","triggerWhen":"触发","tk":1}\nACU_SKILL_META_END -->', normalizedComment: '受控条目' };
     expect(options.isSelected({ bookName: '书A', uid: 1, normalizedComment: '普通条目' })).toBe(true);
     expect(options.isSelected({ bookName: '书A', uid: 2, normalizedComment: '普通条目' })).toBe(false);
+    expect(options.isSelected({ bookName: '书A', uid: 2, normalizedComment: '普通条目', enabled: true, _acuPreTakeoverSnapshotHit: true })).toBe(false);
     expect(options.isSelected(controlledEntry)).toBe(false);
     expect(options.isSelected({ bookName: '书A', uid: 999, normalizedComment: 'TavernDB-ACU-自动生成条目' })).toBe(true);
     expect(options.forceIncludeEntry({ bookName: '书A', uid: 1, normalizedComment: '普通条目' })).toBe(false);
