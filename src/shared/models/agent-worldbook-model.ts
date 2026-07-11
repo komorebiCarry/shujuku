@@ -18,6 +18,12 @@ export interface PromptSegment_ACU {
   isMain2?: boolean;
 }
 
+/** 独立于卡级世界书控制配置的全局 Agent 提示词模板。 */
+export interface AgentWorldbookPromptTemplates_ACU {
+  agentDecisionPromptSegments: PromptSegment_ACU[];
+  agentSkillifyPromptSegments: PromptSegment_ACU[];
+}
+
 export interface AgentContextSettings_ACU {
   /** Compatibility field name. Runtime interprets it as recent AI layer count; 1 layer = 1 AI reply plus its preceding user input. */
   decisionRecentContextCharLimit: number;

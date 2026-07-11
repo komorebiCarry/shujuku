@@ -22,6 +22,7 @@
           :options="executionModeOptions"
           size="sm"
           aria-label="Agent 与剧情推进执行方式"
+          :disabled="!agentControl.isReady.value"
           @update:model-value="onExecutionModeChange"
         />
       </section>
@@ -32,7 +33,7 @@
             <h4>{{ plotCopy.agentControl.contextSettings.title }}</h4>
             <p>{{ plotCopy.agentControl.contextSettings.description }}</p>
           </div>
-          <AcuButton size="sm" @click="resetContextSettings">
+          <AcuButton size="sm" :disabled="!agentControl.isReady.value" @click="resetContextSettings">
             {{ plotCopy.agentControl.contextSettings.resetButton }}
           </AcuButton>
         </header>
@@ -50,6 +51,7 @@
               :min="field.limits.min"
               :max="field.limits.max"
               :step="field.step"
+              :disabled="!agentControl.isReady.value"
               @change="onContextChange(field.key, $event)"
             />
           </AcuFormRow>
@@ -75,6 +77,7 @@
               :min="agentControl.maxSkillifyConcurrencyLimits.min"
               :max="agentControl.maxSkillifyConcurrencyLimits.max"
               :step="1"
+              :disabled="!agentControl.isReady.value"
               @change="onMaxSkillifyConcurrencyChange"
             />
           </AcuFormRow>
@@ -87,45 +90,60 @@
             <h4>{{ plotCopy.agentControl.prompts.title }}</h4>
             <p>{{ plotCopy.agentControl.prompts.description }}</p>
           </div>
+          <AcuButton size="sm" variant="primary" :disabled="!agentControl.isReady.value" @click="savePromptsAsGlobalDefaults">
+            {{ plotCopy.agentControl.prompts.saveAsGlobal }}
+          </AcuButton>
         </header>
 
-        <div class="acu-agent-advanced__prompt-head">
-          <h5>{{ plotCopy.agentControl.prompts.decisionTitle }}</h5>
-          <AcuButton size="sm" @click="resetPrompt('decision')">
-            {{ plotCopy.agentControl.prompts.decisionReset }}
-          </AcuButton>
-        </div>
-        <AcuPromptSegments
-          :segments="agentControl.agentDecisionPromptSegments.value"
-          :role-options="AGENT_ROLE_OPTIONS"
-          :show-slot="false"
-          :allow-move="true"
-          :rows="7"
-          :empty-text="plotCopy.agentControl.prompts.emptyText"
-          @add="(position) => addPromptSegment('decision', position)"
-          @delete="(index) => deletePromptSegment('decision', index)"
-          @move="(index, delta) => movePromptSegment('decision', index, delta)"
-          @update="(index, patch) => updatePromptSegment('decision', index, patch)"
-        />
+        <AcuMessage :visible="!agentControl.isReady.value" kind="warning">
+          {{ agentControl.initializationFailed.value ? plotCopy.agentControl.prompts.loadFailed : plotCopy.agentControl.prompts.loadingNotReady }}
+        </AcuMessage>
+        <AcuButton
+          v-if="agentControl.initializationFailed.value"
+          size="sm"
+          @click="retryInitialization"
+        >
+          {{ plotCopy.agentControl.prompts.retryLoad }}
+        </AcuButton>
+        <template v-if="agentControl.isReady.value">
+          <div class="acu-agent-advanced__prompt-head">
+            <h5>{{ plotCopy.agentControl.prompts.decisionTitle }}</h5>
+            <AcuButton size="sm" @click="resetPrompt('decision')">
+              {{ plotCopy.agentControl.prompts.decisionReset }}
+            </AcuButton>
+          </div>
+          <AcuPromptSegments
+            :segments="agentControl.agentDecisionPromptSegments.value"
+            :role-options="AGENT_ROLE_OPTIONS"
+            :show-slot="false"
+            :allow-move="true"
+            :rows="7"
+            :empty-text="plotCopy.agentControl.prompts.emptyText"
+            @add="(position) => addPromptSegment('decision', position)"
+            @delete="(index) => deletePromptSegment('decision', index)"
+            @move="(index, delta) => movePromptSegment('decision', index, delta)"
+            @update="(index, patch) => updatePromptSegment('decision', index, patch)"
+          />
 
-        <div class="acu-agent-advanced__prompt-head">
-          <h5>{{ plotCopy.agentControl.prompts.skillifyTitle }}</h5>
-          <AcuButton size="sm" @click="resetPrompt('skillify')">
-            {{ plotCopy.agentControl.prompts.skillifyReset }}
-          </AcuButton>
-        </div>
-        <AcuPromptSegments
-          :segments="agentControl.agentSkillifyPromptSegments.value"
-          :role-options="AGENT_ROLE_OPTIONS"
-          :show-slot="false"
-          :allow-move="true"
-          :rows="7"
-          :empty-text="plotCopy.agentControl.prompts.emptyText"
-          @add="(position) => addPromptSegment('skillify', position)"
-          @delete="(index) => deletePromptSegment('skillify', index)"
-          @move="(index, delta) => movePromptSegment('skillify', index, delta)"
-          @update="(index, patch) => updatePromptSegment('skillify', index, patch)"
-        />
+          <div class="acu-agent-advanced__prompt-head">
+            <h5>{{ plotCopy.agentControl.prompts.skillifyTitle }}</h5>
+            <AcuButton size="sm" @click="resetPrompt('skillify')">
+              {{ plotCopy.agentControl.prompts.skillifyReset }}
+            </AcuButton>
+          </div>
+          <AcuPromptSegments
+            :segments="agentControl.agentSkillifyPromptSegments.value"
+            :role-options="AGENT_ROLE_OPTIONS"
+            :show-slot="false"
+            :allow-move="true"
+            :rows="7"
+            :empty-text="plotCopy.agentControl.prompts.emptyText"
+            @add="(position) => addPromptSegment('skillify', position)"
+            @delete="(index) => deletePromptSegment('skillify', index)"
+            @move="(index, delta) => movePromptSegment('skillify', index, delta)"
+            @update="(index, patch) => updatePromptSegment('skillify', index, patch)"
+          />
+        </template>
       </section>
     </div>
   </AcuDrawer>
@@ -226,6 +244,14 @@ async function onMaxSkillifyConcurrencyChange(value: string | number): Promise<v
 async function resetPrompt(kind: AgentPromptKind_ACU): Promise<void> {
   await agentControl.resetPromptSegments(kind);
   emit('changed');
+}
+
+async function savePromptsAsGlobalDefaults(): Promise<void> {
+  if (await agentControl.savePromptSegmentsAsGlobalDefaults()) emit('changed');
+}
+
+async function retryInitialization(): Promise<void> {
+  await agentControl.retryInitialization();
 }
 
 async function addPromptSegment(kind: AgentPromptKind_ACU, position: 'top' | 'bottom'): Promise<void> {

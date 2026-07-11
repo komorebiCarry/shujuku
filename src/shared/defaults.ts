@@ -94,6 +94,13 @@ export function buildDefaultAgentSkillifyPromptSegments_ACU() {
   ];
 }
 
+export function buildDefaultAgentWorldbookPromptTemplates_ACU() {
+  return {
+    agentDecisionPromptSegments: buildDefaultAgentDecisionPromptSegments_ACU(),
+    agentSkillifyPromptSegments: buildDefaultAgentSkillifyPromptSegments_ACU(),
+  };
+}
+
 export function buildDefaultAgentWorldbookControl_ACU() {
   return {
     enabled: false,

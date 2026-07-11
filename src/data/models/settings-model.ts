@@ -5,11 +5,13 @@
  */
 
 import type {
+  AgentWorldbookPromptTemplates_ACU,
   AgentWorldbookControl_ACU,
   AgentWorldbookControlSnapshot_ACU,
 } from '../../shared/models/agent-worldbook-model';
 
 export type {
+  AgentWorldbookPromptTemplates_ACU,
   AgentContextSettings_ACU,
   AgentPlotExecutionMode_ACU,
   AgentSkillMetadataPolicy_ACU,
@@ -78,6 +80,7 @@ export interface PlotSettings_ACU {
   contextExtractTags: string;
   contextExtractRules: unknown[];
   plotWorldbookConfig?: WorldbookConfig_ACU;
+  agentPromptTemplates?: AgentWorldbookPromptTemplates_ACU;
   agentWorldbookControl?: AgentWorldbookControl_ACU;
   agentWorldbookControlSnapshot?: AgentWorldbookControlSnapshot_ACU;
   [key: string]: unknown;

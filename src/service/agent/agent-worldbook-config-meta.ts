@@ -1,6 +1,7 @@
 import type {
   AgentWorldbookCardConfigMeta_ACU,
   AgentWorldbookControl_ACU,
+  AgentWorldbookPromptTemplates_ACU,
   AgentWorldbookScope_ACU,
   AgentWorldbookStateIdentity_ACU,
   AgentWorldbookControlMode_ACU,
@@ -20,15 +21,18 @@ import {
 import {
   buildDefaultAgentWorldbookControl_ACU,
   buildDefaultAgentWorldbookControlSnapshot_ACU,
+  buildDefaultAgentWorldbookPromptTemplates_ACU,
 } from '../../shared/defaults';
-import { restoreAgentWorldbookSnapshotEntries_ACU } from './agent-worldbook-snapshot-restore';
+import {
+  restoreAgentWorldbookSnapshotEntries_ACU,
+  rollbackAgentWorldbookSnapshotRestore_ACU,
+} from './agent-worldbook-snapshot-restore';
 import { settings_ACU } from '../runtime/state-manager';
 import {
-  getDefaultAgentDecisionPromptSegments_ACU,
-  getDefaultAgentSkillifyPromptSegments_ACU,
   normalizeAgentContextSettings_ACU,
   normalizeEditablePromptSegments_ACU,
 } from './agent-prompt-template';
+import { saveSettings_ACU } from '../settings/settings-service';
 
 export const AGENT_WORLDBOOK_CONFIG_COMMENT_ACU = 'TavernDB-ACU-AgentWorldbookConfig';
 
@@ -72,6 +76,7 @@ export interface AgentWorldbookControlWriteResult_ACU {
   bookName: string;
   entryUid?: string | number;
   reason?: string;
+  stateConfirmed?: boolean;
   control: AgentWorldbookControl_ACU;
 }
 
@@ -81,6 +86,48 @@ function cloneDefaultAgentControl_ACU(): AgentWorldbookControl_ACU {
 
 function cloneDefaultAgentSnapshot_ACU(): AgentWorldbookControlSnapshot_ACU {
   return JSON.parse(JSON.stringify(buildDefaultAgentWorldbookControlSnapshot_ACU())) as AgentWorldbookControlSnapshot_ACU;
+}
+
+function cloneAgentPromptTemplates_ACU(value: AgentWorldbookPromptTemplates_ACU): AgentWorldbookPromptTemplates_ACU {
+  return JSON.parse(JSON.stringify(value)) as AgentWorldbookPromptTemplates_ACU;
+}
+
+function normalizeAgentPromptTemplates_ACU(value: unknown): AgentWorldbookPromptTemplates_ACU {
+  const defaults = buildDefaultAgentWorldbookPromptTemplates_ACU();
+  const source = normalizeControlPatch_ACU(value);
+  return {
+    agentDecisionPromptSegments: normalizeEditablePromptSegments_ACU(
+      source.agentDecisionPromptSegments,
+      defaults.agentDecisionPromptSegments,
+    ),
+    agentSkillifyPromptSegments: normalizeEditablePromptSegments_ACU(
+      source.agentSkillifyPromptSegments,
+      defaults.agentSkillifyPromptSegments,
+    ),
+  };
+}
+
+export function getAgentPromptTemplateDefaults_ACU(): AgentWorldbookPromptTemplates_ACU {
+  const plotSettings = settings_ACU.plotSettings && typeof settings_ACU.plotSettings === 'object'
+    ? settings_ACU.plotSettings as Record<string, any>
+    : {};
+  return cloneAgentPromptTemplates_ACU(normalizeAgentPromptTemplates_ACU(plotSettings.agentPromptTemplates));
+}
+
+export function setAgentPromptTemplateDefaults_ACU(value: unknown): boolean {
+  if (!settings_ACU.plotSettings || typeof settings_ACU.plotSettings !== 'object' || Array.isArray(settings_ACU.plotSettings)) return false;
+  const plotSettings = settings_ACU.plotSettings as Record<string, any>;
+  const hadPreviousTemplates = Object.prototype.hasOwnProperty.call(plotSettings, 'agentPromptTemplates');
+  const previousTemplates = plotSettings.agentPromptTemplates;
+  plotSettings.agentPromptTemplates = normalizeAgentPromptTemplates_ACU(value);
+  try {
+    if (saveSettings_ACU().saved) return true;
+  } catch {
+    // 保存失败时同样回滚；调用方只需要收到 false，异常不应留下内存脏写。
+  }
+  if (hadPreviousTemplates) plotSettings.agentPromptTemplates = previousTemplates;
+  else delete plotSettings.agentPromptTemplates;
+  return false;
 }
 
 function normalizeBookNameList_ACU(value: unknown): string[] {
@@ -144,7 +191,7 @@ function hasExplicitWorldbookScope_ACU(value: unknown): boolean {
 }
 
 
-function normalizeAgentWorldbookControlForCardConfig_ACU(value: unknown): AgentWorldbookControl_ACU {
+function normalizeAgentWorldbookControlForCardConfig_ACU(value: unknown, promptTemplates = getAgentPromptTemplateDefaults_ACU()): AgentWorldbookControl_ACU {
   const defaults = cloneDefaultAgentControl_ACU();
   const source = normalizeControlPatch_ACU(value);
   const mode = normalizeMode_ACU(source.mode);
@@ -172,11 +219,11 @@ function normalizeAgentWorldbookControlForCardConfig_ACU(value: unknown): AgentW
     contextSettingsConfigured: source.contextSettingsConfigured === true,
     agentDecisionPromptSegments: normalizeEditablePromptSegments_ACU(
       source.agentDecisionPromptSegments,
-      getDefaultAgentDecisionPromptSegments_ACU(),
+      promptTemplates.agentDecisionPromptSegments,
     ),
     agentSkillifyPromptSegments: normalizeEditablePromptSegments_ACU(
       source.agentSkillifyPromptSegments,
-      getDefaultAgentSkillifyPromptSegments_ACU(),
+      promptTemplates.agentSkillifyPromptSegments,
     ),
     maxEntriesPerChannel: {
       plot: normalizePositiveInt_ACU(maxEntriesPerChannel.plot, defaults.maxEntriesPerChannel.plot, 1, 200),
@@ -370,6 +417,75 @@ function buildConfigEntryPayload_ACU(
   };
 }
 
+type AgentWorldbookScopeWriteConfirmation_ACU = 'next' | 'current' | 'partial_next' | 'missing' | 'unknown';
+
+function stringifyStableJsonValue_ACU(value: unknown): string {
+  if (value === null || typeof value !== 'object') return JSON.stringify(value);
+  if (Array.isArray(value)) return `[${value.map(item => stringifyStableJsonValue_ACU(item)).join(',')}]`;
+  const record = value as Record<string, unknown>;
+  return `{${Object.keys(record).sort().map(key => `${JSON.stringify(key)}:${stringifyStableJsonValue_ACU(record[key])}`).join(',')}}`;
+}
+
+function isSameStableJsonValue_ACU(left: unknown, right: unknown): boolean {
+  return stringifyStableJsonValue_ACU(left) === stringifyStableJsonValue_ACU(right);
+}
+
+function isPartialNextScopeWrite_ACU(
+  persistedControl: Record<string, any>,
+  persistedSnapshot: AgentWorldbookControlSnapshot_ACU,
+  currentPersistedControl: Partial<AgentWorldbookControl_ACU>,
+  nextPersistedControl: Partial<AgentWorldbookControl_ACU>,
+  nextSnapshot: AgentWorldbookControlSnapshot_ACU,
+): boolean {
+  if (
+    !isSameStableJsonValue_ACU(persistedSnapshot, nextSnapshot)
+    || !isSameStableJsonValue_ACU(persistedControl.worldbookScope, nextPersistedControl.worldbookScope)
+  ) return false;
+  return Object.entries(persistedControl).every(([key, value]) => {
+    const hasNext = Object.prototype.hasOwnProperty.call(nextPersistedControl, key);
+    const hasCurrent = Object.prototype.hasOwnProperty.call(currentPersistedControl, key);
+    return (hasNext && isSameStableJsonValue_ACU(value, nextPersistedControl[key as keyof AgentWorldbookControl_ACU]))
+      || (hasCurrent && isSameStableJsonValue_ACU(value, currentPersistedControl[key as keyof AgentWorldbookControl_ACU]));
+  });
+}
+
+async function confirmAgentWorldbookScopeWrite_ACU(
+  hostBookName: string,
+  entryUid: string | number,
+  currentPersistedControl: Partial<AgentWorldbookControl_ACU>,
+  nextPersistedControl: Partial<AgentWorldbookControl_ACU>,
+  currentSnapshot: AgentWorldbookControlSnapshot_ACU,
+  nextSnapshot: AgentWorldbookControlSnapshot_ACU,
+): Promise<AgentWorldbookScopeWriteConfirmation_ACU> {
+  try {
+    const entries = await getLorebookEntries_ACU(hostBookName);
+    const entry = (entries || []).find(candidate => isSameWorldbookUid_ACU(candidate?.uid, entryUid));
+    if (!entry) return 'missing';
+    const meta = parseAgentWorldbookStateMeta_ACU(entry.content);
+    if (!meta) return 'unknown';
+    const persistedControl = normalizeControlPatch_ACU(meta.control);
+    const persistedSnapshot = normalizeAgentWorldbookSnapshotForCardState_ACU(meta.snapshot);
+    if (
+      isSameStableJsonValue_ACU(persistedControl, nextPersistedControl)
+      && isSameStableJsonValue_ACU(persistedSnapshot, nextSnapshot)
+    ) return 'next';
+    if (
+      isSameStableJsonValue_ACU(persistedControl, currentPersistedControl)
+      && isSameStableJsonValue_ACU(persistedSnapshot, currentSnapshot)
+    ) return 'current';
+    if (isPartialNextScopeWrite_ACU(
+      persistedControl,
+      persistedSnapshot,
+      currentPersistedControl,
+      nextPersistedControl,
+      nextSnapshot,
+    )) return 'partial_next';
+    return 'unknown';
+  } catch {
+    return 'unknown';
+  }
+}
+
 
 async function resolveCurrentCharPrimaryBookName_ACU(): Promise<string> {
   try {
@@ -502,7 +618,7 @@ export async function readAgentWorldbookStateFromWorldbooks_ACU(): Promise<Agent
   }
 
   return {
-    control: cloneDefaultAgentControl_ACU(),
+    control: normalizeAgentWorldbookControlForCardConfig_ACU({}),
     snapshot: cloneDefaultAgentSnapshot_ACU(),
     source: 'default',
     bookName: '',
@@ -530,9 +646,10 @@ export async function writeAgentWorldbookStateToWorldbook_ACU(patch: {
   snapshot?: AgentWorldbookControlSnapshot_ACU;
 }): Promise<AgentWorldbookStateWriteResult_ACU> {
   const current = await readAgentWorldbookStateFromWorldbooks_ACU();
-  const nextControl = normalizeAgentWorldbookControlForCardConfig_ACU({
+  const requestedControlPatch = normalizeControlPatch_ACU(patch?.control);
+  let nextControl = normalizeAgentWorldbookControlForCardConfig_ACU({
     ...current.control,
-    ...normalizeControlPatch_ACU(patch?.control),
+    ...requestedControlPatch,
   });
   let nextSnapshot = patch?.snapshot === undefined
     ? normalizeAgentWorldbookSnapshotForCardState_ACU(current.snapshot)
@@ -541,56 +658,167 @@ export async function writeAgentWorldbookStateToWorldbook_ACU(patch: {
     && hasExplicitWorldbookScope_ACU(patch.control)
     && !isSameAgentWorldbookScope_ACU(current.control.worldbookScope, nextControl.worldbookScope);
 
-  if (changesScope && current.snapshot.active === true) {
-    const oldBookNames = await resolveAgentWorldbookScopeBookNamesFromScope_ACU(current.control.worldbookScope);
-    const restore = await restoreAgentWorldbookSnapshotEntries_ACU(current.snapshot, oldBookNames);
-    if (!restore.signatureMatched || restore.skipped > 0 || restore.failed > 0) {
-      return {
-        updated: false,
-        bookName: current.bookName,
-        entryUid: current.entryUid,
-        reason: !restore.signatureMatched ? 'scope_restore_signature_mismatch' : 'scope_restore_incomplete',
-        control: current.control,
-        snapshot: current.snapshot,
-      };
-    }
-    nextSnapshot = cloneDefaultAgentSnapshot_ACU();
-  }
-
   const hostBookName = current.bookName || await resolveAgentWorldbookHostBookForScope_ACU(nextControl.worldbookScope);
-
   if (!hostBookName) {
     return {
       updated: false,
       bookName: '',
       reason: 'no_config_host_book',
-      control: nextControl,
-      snapshot: nextSnapshot,
+      control: current.control,
+      snapshot: current.snapshot,
     };
   }
 
+  // 在恢复旧范围前完成配置宿主的读取和定位。这样宿主读取失败不会发生物理 restore，
+  // active snapshot 的 scope 切换也不会因为并发删除状态条目而退化为“创建新条目”。
   const entries = await getLorebookEntries_ACU(hostBookName);
   const currentEntryUid = current.bookName === hostBookName ? current.entryUid : undefined;
   const existingByUid = hasValidWorldbookUid_ACU(currentEntryUid)
     ? entries.find(entry => isSameWorldbookUid_ACU(entry?.uid, currentEntryUid))
     : undefined;
   const existing = existingByUid || findAgentStateEntry_ACU(entries, hostBookName).entry;
-  const nextEntry = buildConfigEntryPayload_ACU(nextControl, nextSnapshot, hostBookName, existing || undefined, existing?.uid);
-  if (existing?.uid !== null && existing?.uid !== undefined) {
-    await setLorebookEntries_ACU(hostBookName, [{ ...nextEntry, uid: existing.uid }]);
-    return { updated: true, bookName: hostBookName, entryUid: existing.uid, control: nextControl, snapshot: nextSnapshot };
+
+  let restoreRollbackPatchesByBook: Record<string, Record<string, any>[]> | null = null;
+  let restoreRestoredPatchesByBook: Record<string, Record<string, any>[]> | null = null;
+  if (changesScope && current.snapshot.active === true) {
+    if (current.source !== 'worldbook' || !existing || !hasValidWorldbookUid_ACU(existing.uid)) {
+      return {
+        updated: false,
+        bookName: current.bookName,
+        entryUid: current.entryUid,
+        reason: 'scope_state_entry_missing',
+        control: current.control,
+        snapshot: current.snapshot,
+      };
+    }
+    const oldBookNames = await resolveAgentWorldbookScopeBookNamesFromScope_ACU(current.control.worldbookScope);
+    const restore = await restoreAgentWorldbookSnapshotEntries_ACU(current.snapshot, oldBookNames);
+    if (!restore.signatureMatched || restore.skipped > 0 || restore.failed > 0) {
+      const rollbackSucceeded = await rollbackAgentWorldbookSnapshotRestore_ACU(
+        restore.rollbackPatchesByBook,
+        restore.restoredPatchesByBook,
+      );
+      return {
+        updated: false,
+        bookName: current.bookName,
+        entryUid: current.entryUid,
+        reason: !rollbackSucceeded
+          ? 'scope_restore_rollback_failed'
+          : (!restore.signatureMatched ? 'scope_restore_signature_mismatch' : 'scope_restore_incomplete'),
+        control: current.control,
+        snapshot: current.snapshot,
+      };
+    }
+    restoreRollbackPatchesByBook = restore.rollbackPatchesByBook;
+    restoreRestoredPatchesByBook = restore.restoredPatchesByBook;
+    nextSnapshot = cloneDefaultAgentSnapshot_ACU();
   }
 
-  const createdAfter = Date.now();
-  await createLorebookEntries_ACU(hostBookName, [nextEntry]);
-  const refreshedEntries = await getLorebookEntries_ACU(hostBookName);
-  const created = findCreatedAgentStateEntry_ACU(refreshedEntries, hostBookName, createdAfter);
-  if (created?.uid !== null && created?.uid !== undefined) {
-    const backfilledEntry = buildConfigEntryPayload_ACU(nextControl, nextSnapshot, hostBookName, created, created.uid);
-    await setLorebookEntries_ACU(hostBookName, [{ ...backfilledEntry, uid: created.uid }]);
-    return { updated: true, bookName: hostBookName, entryUid: created.uid, control: nextControl, snapshot: nextSnapshot };
+  const existingMeta = existing ? parseAgentWorldbookStateMeta_ACU(existing.content) : null;
+  const existingControl = normalizeControlPatch_ACU(existingMeta?.control);
+  if (existingMeta) {
+    nextControl = normalizeAgentWorldbookControlForCardConfig_ACU({
+      ...existingControl,
+      ...requestedControlPatch,
+    });
   }
-  return { updated: true, bookName: hostBookName, reason: 'state_entry_uid_unresolved', control: nextControl, snapshot: nextSnapshot };
+  const persistedControl = { ...nextControl } as Partial<AgentWorldbookControl_ACU>;
+  for (const key of ['agentDecisionPromptSegments', 'agentSkillifyPromptSegments'] as const) {
+    if (!Object.prototype.hasOwnProperty.call(existingControl, key) && !Object.prototype.hasOwnProperty.call(requestedControlPatch, key)) {
+      delete persistedControl[key];
+    }
+  }
+  try {
+    const nextEntry = buildConfigEntryPayload_ACU(persistedControl as AgentWorldbookControl_ACU, nextSnapshot, hostBookName, existing || undefined, existing?.uid);
+    if (existing?.uid !== null && existing?.uid !== undefined) {
+      if (!restoreRollbackPatchesByBook) {
+        await setLorebookEntries_ACU(hostBookName, [{ ...nextEntry, uid: existing.uid }]);
+        return { updated: true, bookName: hostBookName, entryUid: existing.uid, control: nextControl, snapshot: nextSnapshot };
+      }
+
+      let writeFailed = false;
+      try {
+        await setLorebookEntries_ACU(hostBookName, [{ ...nextEntry, uid: existing.uid }]);
+      } catch {
+        writeFailed = true;
+      }
+      const confirmation = await confirmAgentWorldbookScopeWrite_ACU(
+        hostBookName,
+        existing.uid,
+        existingControl,
+        persistedControl,
+        current.snapshot,
+        nextSnapshot,
+      );
+      if (confirmation === 'next') {
+        return { updated: true, bookName: hostBookName, entryUid: existing.uid, control: nextControl, snapshot: nextSnapshot };
+      }
+      let confirmedWriteState: AgentWorldbookScopeWriteConfirmation_ACU = confirmation;
+      if (confirmation === 'partial_next') {
+        try {
+          await setLorebookEntries_ACU(hostBookName, [{ ...nextEntry, uid: existing.uid }]);
+        } catch {
+          // 继续按读回结果判定；宿主可能已提交但响应失败。
+        }
+        confirmedWriteState = await confirmAgentWorldbookScopeWrite_ACU(
+          hostBookName, existing.uid, existingControl, persistedControl, current.snapshot, nextSnapshot,
+        );
+        if (confirmedWriteState === 'next') {
+          return { updated: true, bookName: hostBookName, entryUid: existing.uid, control: nextControl, snapshot: nextSnapshot };
+        }
+      }
+      if (confirmedWriteState === 'current') {
+        const rollbackSucceeded = await rollbackAgentWorldbookSnapshotRestore_ACU(
+          restoreRollbackPatchesByBook,
+          restoreRestoredPatchesByBook || {},
+        );
+        return {
+          updated: false,
+          bookName: current.bookName,
+          entryUid: current.entryUid,
+          reason: rollbackSucceeded
+            ? (writeFailed ? 'scope_state_write_failed' : 'scope_state_write_unconfirmed')
+            : 'scope_state_write_rollback_failed',
+          control: current.control,
+          snapshot: current.snapshot,
+        };
+      }
+      return {
+        updated: false,
+        bookName: current.bookName,
+        entryUid: current.entryUid,
+        reason: 'scope_state_write_unconfirmed',
+        stateConfirmed: false,
+        control: current.control,
+        snapshot: current.snapshot,
+      };
+    }
+
+    const createdAfter = Date.now();
+    await createLorebookEntries_ACU(hostBookName, [nextEntry]);
+    const refreshedEntries = await getLorebookEntries_ACU(hostBookName);
+    const created = findCreatedAgentStateEntry_ACU(refreshedEntries, hostBookName, createdAfter);
+    if (created?.uid !== null && created?.uid !== undefined) {
+      const backfilledEntry = buildConfigEntryPayload_ACU(persistedControl as AgentWorldbookControl_ACU, nextSnapshot, hostBookName, created, created.uid);
+      await setLorebookEntries_ACU(hostBookName, [{ ...backfilledEntry, uid: created.uid }]);
+      return { updated: true, bookName: hostBookName, entryUid: created.uid, control: nextControl, snapshot: nextSnapshot };
+    }
+    return { updated: true, bookName: hostBookName, reason: 'state_entry_uid_unresolved', control: nextControl, snapshot: nextSnapshot };
+  } catch (error) {
+    if (!restoreRollbackPatchesByBook) throw error;
+    const rollbackSucceeded = await rollbackAgentWorldbookSnapshotRestore_ACU(
+      restoreRollbackPatchesByBook,
+      restoreRestoredPatchesByBook || {},
+    );
+    return {
+      updated: false,
+      bookName: current.bookName,
+      entryUid: current.entryUid,
+      reason: rollbackSucceeded ? 'scope_state_write_failed' : 'scope_state_write_rollback_failed',
+      control: current.control,
+      snapshot: current.snapshot,
+    };
+  }
 }
 
 export async function writeAgentWorldbookControlToWorldbook_ACU(
@@ -602,6 +830,7 @@ export async function writeAgentWorldbookControlToWorldbook_ACU(
     bookName: result.bookName,
     entryUid: result.entryUid,
     reason: result.reason,
+    stateConfirmed: result.stateConfirmed,
     control: result.control,
   };
 }

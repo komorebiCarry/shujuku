@@ -37,8 +37,8 @@ function normalizeRole_ACU(value: unknown): string {
 }
 
 export function normalizeEditablePromptSegments_ACU(value: unknown, fallback: PromptSegment_ACU[]): PromptSegment_ACU[] {
-  const raw = Array.isArray(value) ? value : [];
-  if (raw.length === 0) return clonePromptSegments_ACU(fallback);
+  if (!Array.isArray(value)) return clonePromptSegments_ACU(fallback);
+  const raw = value;
   return raw
     .map(item => item && typeof item === 'object' ? item as Record<string, unknown> : null)
     .filter(Boolean)

@@ -34,7 +34,9 @@ import {
   resolveAgentWorldbookFilterAvailability_ACU,
 } from '../../service/agent/agent-worldbook-skill-meta';
 import {
+  getAgentPromptTemplateDefaults_ACU,
   readAgentWorldbookControlFromWorldbooks_ACU,
+  setAgentPromptTemplateDefaults_ACU,
   writeAgentWorldbookControlToWorldbook_ACU,
   type AgentWorldbookConfigSource_ACU,
   type AgentWorldbookControlWriteResult_ACU,
@@ -58,16 +60,6 @@ const MAX_SKILLIFY_CONCURRENCY_LIMIT_ACU = { min: 1, max: 5 };
 
 function getPromptFallback_ACU(kind: AgentPromptKind_ACU): PromptSegment_ACU[] {
   return kind === 'decision' ? getDefaultAgentDecisionPromptSegments_ACU() : getDefaultAgentSkillifyPromptSegments_ACU();
-}
-
-function readPromptSegments_ACU(control: Record<string, any>, kind: AgentPromptKind_ACU): PromptSegment_ACU[] {
-  const key = kind === 'decision' ? 'agentDecisionPromptSegments' : 'agentSkillifyPromptSegments';
-  return normalizeEditablePromptSegments_ACU(control[key], getPromptFallback_ACU(kind));
-}
-
-function writePromptSegments_ACU(control: Record<string, any>, kind: AgentPromptKind_ACU, segments: PromptSegment_ACU[]): void {
-  const key = kind === 'decision' ? 'agentDecisionPromptSegments' : 'agentSkillifyPromptSegments';
-  control[key] = normalizeEditablePromptSegments_ACU(segments, getPromptFallback_ACU(kind));
 }
 
 function cloneContextSettings_ACU(value: AgentContextSettings_ACU): AgentContextSettings_ACU {
@@ -173,6 +165,10 @@ export function usePlotWorldbookAgentControl() {
   const contextSettings = ref<AgentContextSettings_ACU>(normalizeAgentContextSettings_ACU(undefined));
   const agentDecisionPromptSegments = ref<PromptSegment_ACU[]>(getDefaultAgentDecisionPromptSegments_ACU());
   const agentSkillifyPromptSegments = ref<PromptSegment_ACU[]>(getDefaultAgentSkillifyPromptSegments_ACU());
+  const globalPromptTemplates = ref(getAgentPromptTemplateDefaults_ACU());
+  const isReady = ref(false);
+  const initializationFailed = ref(false);
+  let initialization: Promise<void> | null = null;
 
   const isAgentMode = computed(() => mode.value === 'agent');
   const snapshotEntryCount = computed(() => countSnapshotEntries(snapshot.value));
@@ -192,24 +188,43 @@ export function usePlotWorldbookAgentControl() {
     maxSkillifyConcurrency.value = normalizeMaxSkillifyConcurrency_ACU(control.maxSkillifyConcurrency) ?? 3;
     worldbookScope.value = cloneWorldbookScope_ACU(control.worldbookScope);
     contextSettings.value = cloneContextSettings_ACU(normalizeAgentContextSettings_ACU(control.contextSettings));
-    agentDecisionPromptSegments.value = clonePromptSegments_ACU(readPromptSegments_ACU(control as unknown as Record<string, any>, 'decision'));
-    agentSkillifyPromptSegments.value = clonePromptSegments_ACU(readPromptSegments_ACU(control as unknown as Record<string, any>, 'skillify'));
+    agentDecisionPromptSegments.value = clonePromptSegments_ACU(control.agentDecisionPromptSegments);
+    agentSkillifyPromptSegments.value = clonePromptSegments_ACU(control.agentSkillifyPromptSegments);
   }
 
   async function refresh(): Promise<void> {
-    const result = await readAgentWorldbookControlFromWorldbooks_ACU();
+    const [result, nextSnapshot] = await Promise.all([
+      readAgentWorldbookControlFromWorldbooks_ACU(),
+      refreshPlotAgentWorldbookSnapshotFromWorldbooks_ACU(),
+    ]);
+    globalPromptTemplates.value = getAgentPromptTemplateDefaults_ACU();
     configSource.value = result.source;
     configBookName.value = result.bookName || '';
     writableConfigBookName.value = result.writableBookName || '';
     configReason.value = result.reason || '';
     applyControlToRefs(result.control);
-    snapshot.value = await refreshPlotAgentWorldbookSnapshotFromWorldbooks_ACU();
+    snapshot.value = nextSnapshot;
   }
 
   async function writeControlPatch(patch: Partial<AgentWorldbookControl_ACU>): Promise<AgentWorldbookControlWriteResult_ACU | null> {
+    if (!isReady.value) {
+      toast.warning(
+        initializationFailed.value ? 'Agent 世界书配置读取失败，已拒绝保存以避免默认值覆盖已保存配置。' : 'Agent 世界书配置仍在加载，已拒绝保存以避免覆盖已保存提示词。',
+        { muteable: false },
+      );
+      return null;
+    }
     const result = await writeAgentWorldbookControlToWorldbook_ACU(patch);
     if (!result.updated) {
       toast.error(plotCopy.agentControl.config.saveFailed(result.reason || 'unknown'), { muteable: false });
+      if (result.stateConfirmed === false) {
+        try {
+          await refresh();
+        } catch {
+          toast.warning('Agent 世界书配置保存状态未确认，且重新读取失败；请刷新后重试。', { muteable: false });
+        }
+        return null;
+      }
       applyControlToRefs(result.control);
       return null;
     }
@@ -309,17 +324,36 @@ export function usePlotWorldbookAgentControl() {
   }
 
   async function setPromptSegments(kind: AgentPromptKind_ACU, segments: PromptSegment_ACU[]): Promise<void> {
-    const control = {
-      agentDecisionPromptSegments: agentDecisionPromptSegments.value,
-      agentSkillifyPromptSegments: agentSkillifyPromptSegments.value,
-    } as Record<string, any>;
-    writePromptSegments_ACU(control, kind, segments);
     const key = kind === 'decision' ? 'agentDecisionPromptSegments' : 'agentSkillifyPromptSegments';
-    await writeControlPatch({ [key]: control[key] } as Partial<AgentWorldbookControl_ACU>);
+    const fallback = kind === 'decision'
+      ? globalPromptTemplates.value.agentDecisionPromptSegments
+      : globalPromptTemplates.value.agentSkillifyPromptSegments;
+    const normalized = normalizeEditablePromptSegments_ACU(segments, fallback);
+    await writeControlPatch({ [key]: normalized } as Partial<AgentWorldbookControl_ACU>);
   }
 
   async function resetPromptSegments(kind: AgentPromptKind_ACU): Promise<void> {
-    await setPromptSegments(kind, getPromptFallback_ACU(kind));
+    const segments = kind === 'decision'
+      ? globalPromptTemplates.value.agentDecisionPromptSegments
+      : globalPromptTemplates.value.agentSkillifyPromptSegments;
+    await setPromptSegments(kind, segments);
+  }
+
+  async function savePromptSegmentsAsGlobalDefaults(): Promise<boolean> {
+    if (!isReady.value) {
+      toast.warning('Agent 世界书配置仍在加载，已拒绝保存以避免覆盖已保存提示词。', { muteable: false });
+      return false;
+    }
+    const saved = setAgentPromptTemplateDefaults_ACU({
+      agentDecisionPromptSegments: agentDecisionPromptSegments.value,
+      agentSkillifyPromptSegments: agentSkillifyPromptSegments.value,
+    });
+    if (!saved) {
+      toast.error('全局 Agent 提示词模板保存失败。', { muteable: false });
+      return false;
+    }
+    globalPromptTemplates.value = getAgentPromptTemplateDefaults_ACU();
+    return true;
   }
 
   async function addPromptSegment(kind: AgentPromptKind_ACU, position: 'top' | 'bottom'): Promise<void> {
@@ -525,7 +559,26 @@ export function usePlotWorldbookAgentControl() {
     }
   }
 
-  void refresh();
+  function retryInitialization(): Promise<void> {
+    if (initialization) return initialization;
+    isReady.value = false;
+    initializationFailed.value = false;
+    initialization = refresh()
+      .then(() => {
+        initializationFailed.value = false;
+        isReady.value = true;
+      })
+      .catch(error => {
+        initializationFailed.value = true;
+        toast.error(`Agent 世界书配置加载失败：${error?.message || '未知错误'}`, { muteable: false });
+      })
+      .finally(() => {
+        initialization = null;
+      });
+    return initialization;
+  }
+
+  void retryInitialization();
 
   return {
     mode,
@@ -545,10 +598,14 @@ export function usePlotWorldbookAgentControl() {
     maxSkillifyConcurrencyLimits: MAX_SKILLIFY_CONCURRENCY_LIMIT_ACU,
     agentDecisionPromptSegments,
     agentSkillifyPromptSegments,
+    globalPromptTemplates,
+    isReady,
+    initializationFailed,
     isAgentMode,
     snapshotEntryCount,
     apiPresetOptions,
     refresh,
+    retryInitialization,
     setMode,
     setAgentPlotExecutionMode,
     setAgentApiPreset,
@@ -560,6 +617,7 @@ export function usePlotWorldbookAgentControl() {
     resetContextSettings,
     setPromptSegments,
     resetPromptSegments,
+    savePromptSegmentsAsGlobalDefaults,
     addPromptSegment,
     updatePromptSegment,
     deletePromptSegment,

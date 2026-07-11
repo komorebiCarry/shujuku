@@ -8,7 +8,7 @@
 
 import { STORAGE_KEY_ALL_SETTINGS_ACU, STORAGE_KEY_CUSTOM_TEMPLATE_ACU, normalizeIsolationCode_ACU } from '../../shared/data-constants';
 import { DEFAULT_BUILTIN_PLOT_PRESETS_ACU, DEFAULT_CHAR_CARD_PROMPT_ACU, DEFAULT_CHAR_CARD_PROMPT_STRICT_JSON_ACU, DEFAULT_CHAR_CARD_PROMPT_SQL_STRICT_JSON_ACU, DEFAULT_MERGE_SUMMARY_PROMPT_ACU, DEFAULT_PLOT_SETTINGS_ACU, DEFAULT_TABLE_TEMPLATE_ACU, ORIGINAL_DEFAULT_TABLE_TEMPLATE_ACU, TABLE_TEMPLATE_ACU, _set_TABLE_TEMPLATE_ACU} from '../../shared/defaults-json.js';
-import { DEFAULT_AUTO_UPDATE_FREQUENCY_ACU, DEFAULT_AUTO_UPDATE_THRESHOLD_ACU, DEFAULT_AUTO_UPDATE_TOKEN_THRESHOLD_ACU, TABLE_TEMPLATE_DEFAULTS_REFRESH_VERSION_ACU, VECTOR_MEMORY_DEFAULTS_REFRESH_VERSION_ACU, buildDefaultAgentWorldbookControl_ACU, buildDefaultPlotWorldbookConfig_ACU, buildDefaultContentOptimizationPromptGroup_ACU, defaultWorldbookConfig_ACU, defaultVectorMemoryConfig_ACU } from '../../shared/defaults';
+import { DEFAULT_AUTO_UPDATE_FREQUENCY_ACU, DEFAULT_AUTO_UPDATE_THRESHOLD_ACU, DEFAULT_AUTO_UPDATE_TOKEN_THRESHOLD_ACU, TABLE_TEMPLATE_DEFAULTS_REFRESH_VERSION_ACU, VECTOR_MEMORY_DEFAULTS_REFRESH_VERSION_ACU, buildDefaultAgentWorldbookControl_ACU, buildDefaultAgentWorldbookPromptTemplates_ACU, buildDefaultPlotWorldbookConfig_ACU, buildDefaultContentOptimizationPromptGroup_ACU, defaultWorldbookConfig_ACU, defaultVectorMemoryConfig_ACU } from '../../shared/defaults';
 import { addDataIsolationHistory_ACU, ensureProfileExists_ACU, normalizeDataIsolationHistory_ACU } from '../../data/repositories/isolation-repo';
 import { globalMeta_ACU, loadGlobalMeta_ACU, readProfileSettingsFromStorage_ACU, readProfileTemplateFromStorage_ACU, sanitizeSettingsForProfileSave_ACU, saveGlobalMeta_ACU, writeProfileSettingsToStorage_ACU, writeProfileTemplateToStorage_ACU } from '../../data/repositories/profile-repo';
 import { getCurrentTemplatePresetName_ACU, normalizeTemplatePresetSelectionValue_ACU } from '../../shared/template-preset-utils';
@@ -23,6 +23,7 @@ import { getCurrentCharSettings_ACU, getCurrentWorldbookConfig_ACU } from './set
 import { getCurrentChatTemplateScopeState_ACU, getGlobalTemplateSnapshotForCurrentProfile_ACU, migrateLegacyTemplateScopeForCurrentChat_ACU, normalizeTemplateScopeIsolationKey_ACU, sanitizeChatSheetsObject_ACU, sanitizeTemplateSnapshotForChat_ACU } from '../template/chat-scope';
 import { safeJsonParse_ACU } from '../../shared/json-helpers';
 import { deepMerge_ACU, ensureSheetOrderNumbers_ACU, logDebug_ACU, logError_ACU, logWarn_ACU } from '../../shared/utils';
+import { normalizeEditablePromptSegments_ACU } from '../agent/agent-prompt-template';
 
 export type SaveSettingsResult_ACU = {
   saved: boolean;
@@ -71,6 +72,31 @@ function cloneDefaultValue_ACU<T>(value: T): T {
 function hasNonEmptyPromptSegments_ACU(value: unknown): boolean {
   return Array.isArray(value)
     && value.some(segment => segment && typeof segment === 'object' && typeof (segment as any).content === 'string' && (segment as any).content.trim());
+}
+
+function ensureAgentPromptTemplateDefaults_ACU(): boolean {
+  if (!settings_ACU.plotSettings || typeof settings_ACU.plotSettings !== 'object' || Array.isArray(settings_ACU.plotSettings)) {
+    settings_ACU.plotSettings = JSON.parse(JSON.stringify(DEFAULT_PLOT_SETTINGS_ACU));
+  }
+  const defaults = buildDefaultAgentWorldbookPromptTemplates_ACU();
+  const current = settings_ACU.plotSettings.agentPromptTemplates;
+  if (!current || typeof current !== 'object' || Array.isArray(current)) {
+    settings_ACU.plotSettings.agentPromptTemplates = cloneDefaultValue_ACU(defaults);
+    return true;
+  }
+  const normalized = {
+    agentDecisionPromptSegments: normalizeEditablePromptSegments_ACU(
+      (current as any).agentDecisionPromptSegments,
+      defaults.agentDecisionPromptSegments,
+    ),
+    agentSkillifyPromptSegments: normalizeEditablePromptSegments_ACU(
+      (current as any).agentSkillifyPromptSegments,
+      defaults.agentSkillifyPromptSegments,
+    ),
+  };
+  const changed = JSON.stringify(current) !== JSON.stringify(normalized);
+  settings_ACU.plotSettings.agentPromptTemplates = normalized;
+  return changed;
 }
 
 function ensureAgentWorldbookControlDefaults_ACU(): boolean {
@@ -431,6 +457,9 @@ export   function loadSettings_ACU() {
       }
 
       if (ensureAgentWorldbookControlDefaults_ACU()) {
+          shouldPersistSettingsAfterLoad_ACU = true;
+      }
+      if (ensureAgentPromptTemplateDefaults_ACU()) {
           shouldPersistSettingsAfterLoad_ACU = true;
       }
       // [兼容] 旧标签排除字段自动迁移为新规则组结构

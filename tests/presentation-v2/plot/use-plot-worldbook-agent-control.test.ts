@@ -15,7 +15,10 @@ const toast = {
 const dialog = {
   confirm: vi.fn(async () => true),
 };
+const mockGetPromptTemplates = vi.fn();
+const mockReadControl = vi.fn();
 const mockSaveSettings = vi.fn();
+const mockSetPromptTemplates = vi.fn();
 const mockRefreshSnapshot = vi.fn(async () => ({ active: false, selectionSignature: '', createdAt: 0, books: {} }));
 const mockWriteControl = vi.fn();
 const mockTakeover = vi.fn(async () => ({ updated: false, reason: 'noop', failed: 0 }));
@@ -38,6 +41,13 @@ const mockSkillify = vi.fn(async (options: any) => {
   throw new Error('boom');
 });
 
+function createGlobalPromptTemplates() {
+  return {
+    agentDecisionPromptSegments: [{ role: 'system', content: 'global decision', deletable: false }],
+    agentSkillifyPromptSegments: [{ role: 'user', content: 'global skillify', deletable: true }],
+  };
+}
+
 function createSettings() {
   return {
     apiPresets: [],
@@ -59,13 +69,23 @@ function createSettings() {
   } as any;
 }
 
-async function getComposable() {
+async function getComposable(options: {
+  readControl?: () => Promise<any>;
+  waitForReady?: boolean;
+} = {}) {
   vi.resetModules();
   const settings = createSettings();
   const worldbookControl = {
     ...settings.plotSettings.agentWorldbookControl,
     contextSettings: { ...settings.plotSettings.agentWorldbookControl.contextSettings },
   };
+  mockReadControl.mockImplementation(options.readControl || (async () => ({
+    source: 'worldbook',
+    bookName: '角色A世界书',
+    writableBookName: '角色A世界书',
+    reason: '',
+    control: worldbookControl,
+  })));
 
   mockWriteControl.mockImplementation(async (patch: any) => {
     Object.assign(worldbookControl, patch || {});
@@ -93,13 +113,9 @@ async function getComposable() {
     resolveAgentWorldbookFilterAvailability_ACU: mockResolveAvailability,
   }));
   vi.doMock('../../../src/service/agent/agent-worldbook-config-meta', () => ({
-    readAgentWorldbookControlFromWorldbooks_ACU: vi.fn(async () => ({
-      source: 'worldbook',
-      bookName: '角色A世界书',
-      writableBookName: '角色A世界书',
-      reason: '',
-      control: worldbookControl,
-    })),
+    getAgentPromptTemplateDefaults_ACU: mockGetPromptTemplates,
+    readAgentWorldbookControlFromWorldbooks_ACU: mockReadControl,
+    setAgentPromptTemplateDefaults_ACU: mockSetPromptTemplates,
     writeAgentWorldbookControlToWorldbook_ACU: mockWriteControl,
   }));
   vi.doMock('../../../src/service/agent/agent-prompt-template', () => ({
@@ -117,13 +133,20 @@ async function getComposable() {
   }));
 
   const mod = await import('../../../src/presentation-v2/composables/usePlotWorldbookAgentControl');
-  return Object.assign(mod.usePlotWorldbookAgentControl(), { __settings: settings });
+  const composable = Object.assign(mod.usePlotWorldbookAgentControl(), { __settings: settings });
+  if (options.waitForReady !== false) await vi.waitFor(() => expect(composable.isReady.value).toBe(true));
+  return composable;
 }
 
 describe('usePlotWorldbookAgentControl', () => {
   beforeEach(() => {
     vi.restoreAllMocks();
+    mockGetPromptTemplates.mockReset();
+    mockGetPromptTemplates.mockReturnValue(createGlobalPromptTemplates());
+    mockReadControl.mockReset();
     mockSaveSettings.mockClear();
+    mockSetPromptTemplates.mockReset();
+    mockSetPromptTemplates.mockReturnValue(true);
     mockRefreshSnapshot.mockClear();
     mockWriteControl.mockReset();
     mockSkillify.mockClear();
@@ -469,5 +492,175 @@ describe('usePlotWorldbookAgentControl', () => {
 
     await expect(c.clearSkillMeta()).resolves.toBe(false);
     expect(toast.info).toHaveBeenCalledWith('当前 Agent 世界书范围内没有可清除的 Skill 元数据。', { muteable: false });
+  });
+
+  it('初始化完成前拒绝当前世界书与全局模板写入', async () => {
+    let resolveRead: ((value: any) => void) | undefined;
+    const c = await getComposable({ readControl: () => new Promise(resolve => { resolveRead = resolve; }), waitForReady: false });
+
+    expect(c.isReady.value).toBe(false);
+    await c.setPromptSegments('decision', [{ role: 'user', content: 'should not save', deletable: true }]);
+    await expect(c.savePromptSegmentsAsGlobalDefaults()).resolves.toBe(false);
+    expect(mockWriteControl).not.toHaveBeenCalled();
+    expect(mockSetPromptTemplates).not.toHaveBeenCalled();
+    expect(toast.warning).toHaveBeenCalledTimes(2);
+
+    resolveRead?.({
+      source: 'worldbook', bookName: '角色A世界书', writableBookName: '角色A世界书', reason: '',
+      control: createSettings().plotSettings.agentWorldbookControl,
+    });
+    await vi.waitFor(() => expect(c.isReady.value).toBe(true));
+  });
+
+  it('初始化读取失败时保持写入门闩，重试成功后才开放当前世界书写入', async () => {
+    const success = await getComposable();
+    expect(success.isReady.value).toBe(true);
+
+    let shouldFail = true;
+    const failure = await getComposable({
+      waitForReady: false,
+      readControl: async () => {
+        if (shouldFail) throw new Error('read failed');
+        return {
+          source: 'worldbook',
+          bookName: '角色A世界书',
+          writableBookName: '角色A世界书',
+          reason: '',
+          control: createSettings().plotSettings.agentWorldbookControl,
+        };
+      },
+    });
+    await vi.waitFor(() => expect(failure.initializationFailed.value).toBe(true));
+    expect(failure.isReady.value).toBe(false);
+    await failure.setPromptSegments('decision', [{ role: 'user', content: 'must not save', deletable: true }]);
+    await expect(failure.savePromptSegmentsAsGlobalDefaults()).resolves.toBe(false);
+    expect(mockWriteControl).not.toHaveBeenCalled();
+    expect(mockSetPromptTemplates).not.toHaveBeenCalled();
+    expect(toast.error).toHaveBeenCalledWith(expect.stringContaining('read failed'), { muteable: false });
+
+    shouldFail = false;
+    await failure.retryInitialization();
+    expect(failure.initializationFailed.value).toBe(false);
+    expect(failure.isReady.value).toBe(true);
+    await failure.setPromptSegments('decision', [{ role: 'user', content: 'saved after retry', deletable: true }]);
+    expect(mockWriteControl).toHaveBeenCalledWith({
+      agentDecisionPromptSegments: [{ role: 'user', content: 'saved after retry', deletable: true }],
+    });
+  });
+
+
+  it('状态未确认的控制写入失败时刷新读回状态而不回填旧控制值', async () => {
+    const persistedControl = {
+      ...createSettings().plotSettings.agentWorldbookControl,
+      maxSkillifyConcurrency: 4,
+    };
+    const c = await getComposable({ readControl: async () => ({
+      source: 'worldbook',
+      bookName: '角色A世界书',
+      writableBookName: '角色A世界书',
+      reason: '',
+      control: persistedControl,
+    }) });
+    mockWriteControl.mockResolvedValueOnce({
+      updated: false,
+      reason: 'scope_state_write_unconfirmed',
+      stateConfirmed: false,
+      control: { ...persistedControl, maxSkillifyConcurrency: 1 },
+    });
+
+    await c.setMaxSkillifyConcurrency(2);
+
+    expect(mockReadControl).toHaveBeenCalledTimes(2);
+    expect(c.maxSkillifyConcurrency.value).toBe(4);
+    expect(toast.error).toHaveBeenCalledWith(expect.stringContaining('scope_state_write_unconfirmed'), { muteable: false });
+  });
+
+
+  it('状态未确认且快照重新读取失败时不提交部分 UI 状态', async () => {
+    const persistedControl = createSettings().plotSettings.agentWorldbookControl;
+    const readbackControl = { ...persistedControl, maxSkillifyConcurrency: 4 };
+    let readCount = 0;
+    const c = await getComposable({ readControl: async () => {
+      readCount += 1;
+      return {
+        source: readCount === 1 ? 'worldbook' : 'default',
+        bookName: readCount === 1 ? '角色A世界书' : '',
+        writableBookName: readCount === 1 ? '角色A世界书' : '',
+        reason: readCount === 1 ? '' : 'readback-default',
+        control: readCount === 1 ? persistedControl : readbackControl,
+      };
+    } });
+    mockWriteControl.mockResolvedValueOnce({
+      updated: false,
+      reason: 'scope_state_write_unconfirmed',
+      stateConfirmed: false,
+      control: { ...persistedControl, maxSkillifyConcurrency: 1 },
+    });
+    mockRefreshSnapshot.mockRejectedValueOnce(new Error('snapshot readback failed'));
+
+    await expect(c.setMaxSkillifyConcurrency(2)).resolves.toBe(false);
+
+    expect(readCount).toBe(2);
+    expect(c.maxSkillifyConcurrency.value).toBe(3);
+    expect(c.configSource.value).toBe('worldbook');
+    expect(c.configBookName.value).toBe('角色A世界书');
+    expect(c.writableConfigBookName.value).toBe('角色A世界书');
+    expect(c.snapshot.value).toEqual({ active: false, selectionSignature: '', createdAt: 0, books: {} });
+    expect(toast.warning).toHaveBeenCalledWith('Agent 世界书配置保存状态未确认，且重新读取失败；请刷新后重试。', { muteable: false });
+  });
+
+
+  it('状态未确认且重新读取失败时保留当前控制值并返回受控失败', async () => {
+    const persistedControl = createSettings().plotSettings.agentWorldbookControl;
+    let readCount = 0;
+    const c = await getComposable({ readControl: async () => {
+      readCount += 1;
+      if (readCount === 1) {
+        return {
+          source: 'worldbook',
+          bookName: '角色A世界书',
+          writableBookName: '角色A世界书',
+          reason: '',
+          control: persistedControl,
+        };
+      }
+      throw new Error('readback failed');
+    } });
+    mockWriteControl.mockResolvedValueOnce({
+      updated: false,
+      reason: 'scope_state_write_unconfirmed',
+      stateConfirmed: false,
+      control: { ...persistedControl, maxSkillifyConcurrency: 1 },
+    });
+
+    await expect(c.setMaxSkillifyConcurrency(2)).resolves.toBe(false);
+
+    expect(readCount).toBe(2);
+    expect(c.maxSkillifyConcurrency.value).toBe(3);
+    expect(toast.warning).toHaveBeenCalledWith('Agent 世界书配置保存状态未确认，且重新读取失败；请刷新后重试。', { muteable: false });
+  });
+
+  it('保存全局模板失败时显示错误且不写当前世界书', async () => {
+    mockSetPromptTemplates.mockReturnValue(false);
+    const c = await getComposable();
+
+    await expect(c.savePromptSegmentsAsGlobalDefaults()).resolves.toBe(false);
+
+    expect(mockSetPromptTemplates).toHaveBeenCalledWith({
+      agentDecisionPromptSegments: [],
+      agentSkillifyPromptSegments: [],
+    });
+    expect(mockWriteControl).not.toHaveBeenCalled();
+    expect(toast.error).toHaveBeenCalledWith('全局 Agent 提示词模板保存失败。', { muteable: false });
+  });
+
+  it('重置当前提示词时使用全局模板而非内置默认', async () => {
+    const c = await getComposable();
+
+    await c.resetPromptSegments('decision');
+
+    expect(mockWriteControl).toHaveBeenCalledWith({
+      agentDecisionPromptSegments: [{ role: 'system', content: 'global decision', deletable: false }],
+    });
   });
 });

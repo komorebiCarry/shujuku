@@ -806,6 +806,64 @@ describe('loadTableStateFromFramesV2_ACU', () => {
     expect(result?.sheet_outline.content[30]).toEqual(['30', '第30层大纲']);
   });
 
+  it('跨第20层边界重填纪要表1-30后，重入从既有 full checkpoint 的单表快照恢复全部楼层且不污染非目标表', async () => {
+    const boundaryData = {
+      mate: { type: 'chatSheets', version: 1 },
+      sheet_summary: {
+        name: '纪要表',
+        content: [['row_id', '事件'], ['20', '旧边界事件']],
+      },
+      sheet_outline: {
+        name: '总体大纲',
+        content: [['row_id', '大纲'], ['20', '保留的大纲']],
+      },
+    } as any;
+    const refilledSummary = {
+      name: '纪要表',
+      content: [
+        ['row_id', '事件'],
+        ...Array.from({ length: 30 }, (_, index) => [`${index + 1}`, `重填第${index + 1}层事件`]),
+      ],
+    } as any;
+    const chat = Array.from({ length: 30 }, () => ({ is_user: false } as any));
+    chat[20].TavernDB_ACU_IsolatedData = {
+      '': {
+        _acu_storage_version: 2,
+        storageFrame: {
+          version: 2,
+          checkpoint: {
+            kind: 'full',
+            createdAt: 20,
+            reason: 'compaction',
+            data: {
+              ...boundaryData,
+              sheet_summary: undefined,
+            },
+          },
+          perSheetCheckpoints: {
+            sheet_summary: {
+              kind: 'sheet_full',
+              createdAt: 30,
+              reason: 'manual',
+              sheetKey: 'sheet_summary',
+              data: refilledSummary,
+            },
+          },
+          logEntries: [],
+        },
+      },
+    };
+
+    expect(chat[20].TavernDB_ACU_IsolatedData[''].storageFrame.perSheetCheckpoints.sheet_summary).toEqual(expect.objectContaining({ kind: 'sheet_full', data: refilledSummary }));
+    expect(chat[29].TavernDB_ACU_IsolatedData).toBeUndefined();
+    const result = await loadTableStateFromFramesV2_ACU(chat, '');
+
+    expect(result?.sheet_summary.content).toHaveLength(31);
+    expect(result?.sheet_summary.content[1]).toEqual(['1', '重填第1层事件']);
+    expect(result?.sheet_summary.content[30]).toEqual(['30', '重填第30层事件']);
+    expect(result?.sheet_outline).toEqual(boundaryData.sheet_outline);
+  });
+
   it('按消息时间线用单表 checkpoint 覆盖旧 full 中的目标表，同时保留根数据与非目标表', async () => {
     const rootData = makeDslCheckpointData();
     const rebuiltSummarySheet = {

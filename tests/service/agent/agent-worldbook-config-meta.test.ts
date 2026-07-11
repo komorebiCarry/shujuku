@@ -1,24 +1,35 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-const { mockEntriesByBook, mockCreated, mockDeleted, mockSettings } = vi.hoisted(() => ({
+const {
+  mockEntriesByBook,
+  mockCreated,
+  mockDeleted,
+  mockGetEntries,
+  mockSaveSettings,
+  mockSetEntries,
+  mockSettings,
+} = vi.hoisted(() => ({
   mockEntriesByBook: new Map<string, any[]>(),
   mockCreated: vi.fn(),
   mockDeleted: vi.fn(),
+  mockGetEntries: vi.fn(async (bookName: string) => mockEntriesByBook.get(bookName) || []),
+  mockSaveSettings: vi.fn(),
+  mockSetEntries: vi.fn(async (bookName: string, patches: any[]) => {
+    const patchByUid = new Map((patches || []).map(patch => [String(patch.uid), patch]));
+    mockEntriesByBook.set(bookName, (mockEntriesByBook.get(bookName) || []).map(entry => patchByUid.has(String(entry.uid)) ? { ...entry, ...patchByUid.get(String(entry.uid)) } : entry));
+  }),
   mockSettings: { plotSettings: {} as any },
 }));
 
 vi.mock('../../../src/data/gateways/worldbook-gateway', () => ({
   getCurrentCharPrimaryLorebook_ACU: vi.fn(async () => '主世界书'),
   getCharLorebooks_ACU: vi.fn(async () => ({ primary: '主世界书', additional: [] })),
-  getLorebookEntries_ACU: vi.fn(async (bookName: string) => mockEntriesByBook.get(bookName) || []),
+  getLorebookEntries_ACU: mockGetEntries,
   createLorebookEntries_ACU: vi.fn(async (bookName: string, entries: any[]) => {
     mockCreated(bookName, entries);
     mockEntriesByBook.set(bookName, [...(mockEntriesByBook.get(bookName) || []), ...entries.map((entry, index) => ({ ...entry, uid: entry.uid ?? `new-${index}` }))]);
   }),
-  setLorebookEntries_ACU: vi.fn(async (bookName: string, patches: any[]) => {
-    const patchByUid = new Map((patches || []).map(patch => [String(patch.uid), patch]));
-    mockEntriesByBook.set(bookName, (mockEntriesByBook.get(bookName) || []).map(entry => patchByUid.has(String(entry.uid)) ? { ...entry, ...patchByUid.get(String(entry.uid)) } : entry));
-  }),
+  setLorebookEntries_ACU: mockSetEntries,
   deleteLorebookEntries_ACU: vi.fn(async (bookName: string, uids: any[]) => {
     mockDeleted(bookName, uids);
     const uidSet = new Set((uids || []).map(uid => String(uid)));
@@ -27,13 +38,16 @@ vi.mock('../../../src/data/gateways/worldbook-gateway', () => ({
 }));
 
 vi.mock('../../../src/service/runtime/state-manager', () => ({ settings_ACU: mockSettings }));
+vi.mock('../../../src/service/settings/settings-service', () => ({ saveSettings_ACU: mockSaveSettings }));
 
 import { getCharLorebooks_ACU } from '../../../src/data/gateways/worldbook-gateway';
 import { buildAgentWorldbookSelectionSignature_ACU } from '../../../src/service/agent/agent-worldbook-snapshot-restore';
 import {
   AGENT_WORLDBOOK_CONFIG_COMMENT_ACU,
   deleteAgentWorldbookStateEntry_ACU,
+  getAgentPromptTemplateDefaults_ACU,
   readAgentWorldbookStateFromWorldbooks_ACU,
+  setAgentPromptTemplateDefaults_ACU,
   writeAgentWorldbookControlToWorldbook_ACU,
   writeAgentWorldbookStateToWorldbook_ACU,
 } from '../../../src/service/agent/agent-worldbook-config-meta';
@@ -42,11 +56,32 @@ function configEntry(content: unknown, uid: any = 'cfg', comment = AGENT_WORLDBO
   return { uid, comment, enabled: false, keys: [], content: JSON.stringify(content) };
 }
 
+function activeScopeState(snapshotBooks: Record<string, any[]>, bookNames: string[] = ['主世界书']): any {
+  return {
+    version: 2,
+    kind: 'agent_worldbook_state',
+    updatedAt: 1,
+    control: { mode: 'agent', worldbookScope: { source: 'character', manualSelection: [] } },
+    snapshot: {
+      active: true,
+      selectionSignature: buildAgentWorldbookSelectionSignature_ACU(bookNames),
+      createdAt: 1,
+      books: snapshotBooks,
+    },
+  };
+}
+
 describe('agent worldbook config/state meta', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mockEntriesByBook.clear();
+    mockGetEntries.mockImplementation(async (bookName: string) => mockEntriesByBook.get(bookName) || []);
+    mockSetEntries.mockImplementation(async (bookName: string, patches: any[]) => {
+      const patchByUid = new Map((patches || []).map(patch => [String(patch.uid), patch]));
+      mockEntriesByBook.set(bookName, (mockEntriesByBook.get(bookName) || []).map(entry => patchByUid.has(String(entry.uid)) ? { ...entry, ...patchByUid.get(String(entry.uid)) } : entry));
+    });
     mockSettings.plotSettings = {};
+    mockSaveSettings.mockReturnValue({ saved: true });
     vi.mocked(getCharLorebooks_ACU).mockResolvedValue({ primary: '主世界书', additional: [] } as any);
   });
 
@@ -270,6 +305,349 @@ describe('agent worldbook config/state meta', () => {
     expect(restored.comment).not.toContain('ACU_AGENT_WORLDBOOK_TAKEOVER_META_START');
   });
 
+  it('rolls back restored entries when writing the changed scope state entry fails', async () => {
+    const takeoverComment = '普通条目\n<!-- ACU_AGENT_WORLDBOOK_TAKEOVER_META_START\n{}\nACU_AGENT_WORLDBOOK_TAKEOVER_META_END -->';
+    const initialState = activeScopeState({
+      主世界书: [{ uid: 'entry-1', previousEnabled: true, previousKeys: ['旧关键词'], previousType: 'selective' }],
+    });
+    mockEntriesByBook.set('主世界书', [
+      configEntry(initialState, 'cfg'),
+      { uid: 'entry-1', comment: takeoverComment, enabled: false, keys: [], type: 'constant' },
+    ]);
+    mockSetEntries.mockImplementation(async (bookName: string, patches: any[]) => {
+      if (bookName === '主世界书' && patches.some(patch => patch.uid === 'cfg')) throw new Error('config write failed');
+      const patchByUid = new Map((patches || []).map(patch => [String(patch.uid), patch]));
+      mockEntriesByBook.set(bookName, (mockEntriesByBook.get(bookName) || []).map(entry => patchByUid.has(String(entry.uid)) ? { ...entry, ...patchByUid.get(String(entry.uid)) } : entry));
+    });
+
+    const result = await writeAgentWorldbookControlToWorldbook_ACU({
+      worldbookScope: { source: 'manual', manualSelection: ['手动书'] },
+    } as any);
+    const entries = mockEntriesByBook.get('主世界书') || [];
+    const persisted = JSON.parse(entries.find(entry => entry.uid === 'cfg').content);
+    const target = entries.find(entry => entry.uid === 'entry-1');
+
+    expect(result).toMatchObject({ updated: false, reason: 'scope_state_write_failed' });
+    expect(persisted).toEqual(initialState);
+    expect(target).toEqual({ uid: 'entry-1', comment: takeoverComment, enabled: false, keys: [], type: 'constant' });
+  });
+
+  it('rolls back restored entries when the config write resolves without changing the state entry', async () => {
+    const takeoverComment = '普通条目\n<!-- ACU_AGENT_WORLDBOOK_TAKEOVER_META_START\n{}\nACU_AGENT_WORLDBOOK_TAKEOVER_META_END -->';
+    const initialState = activeScopeState({
+      主世界书: [{ uid: 'entry-1', previousEnabled: true, previousKeys: ['旧关键词'], previousType: 'selective' }],
+    });
+    mockEntriesByBook.set('主世界书', [
+      configEntry(initialState, 'cfg'),
+      { uid: 'entry-1', comment: takeoverComment, enabled: false, keys: [], type: 'constant' },
+    ]);
+    mockSetEntries.mockImplementation(async (bookName: string, patches: any[]) => {
+      if (patches.some(patch => patch.uid === 'cfg')) return;
+      const patchByUid = new Map((patches || []).map(patch => [String(patch.uid), patch]));
+      mockEntriesByBook.set(bookName, (mockEntriesByBook.get(bookName) || []).map(entry => patchByUid.has(String(entry.uid)) ? { ...entry, ...patchByUid.get(String(entry.uid)) } : entry));
+    });
+
+    const result = await writeAgentWorldbookControlToWorldbook_ACU({
+      worldbookScope: { source: 'manual', manualSelection: ['手动书'] },
+    } as any);
+    const entries = mockEntriesByBook.get('主世界书') || [];
+
+    expect(result).toMatchObject({ updated: false, reason: 'scope_state_write_unconfirmed' });
+    expect(JSON.parse(entries.find(entry => entry.uid === 'cfg').content)).toEqual(initialState);
+    expect(entries.find(entry => entry.uid === 'entry-1')).toEqual({ uid: 'entry-1', comment: takeoverComment, enabled: false, keys: [], type: 'constant' });
+  });
+
+  it('reports rollback failure when the config write and restored-entry rollback both fail confirmation', async () => {
+    const takeoverComment = '普通条目\n<!-- ACU_AGENT_WORLDBOOK_TAKEOVER_META_START\n{}\nACU_AGENT_WORLDBOOK_TAKEOVER_META_END -->';
+    mockEntriesByBook.set('主世界书', [
+      configEntry(activeScopeState({
+        主世界书: [{ uid: 'entry-1', previousEnabled: true, previousKeys: ['旧关键词'], previousType: 'selective' }],
+      }), 'cfg'),
+      { uid: 'entry-1', comment: takeoverComment, enabled: false, keys: [], type: 'constant' },
+    ]);
+    mockSetEntries.mockImplementation(async (bookName: string, patches: any[]) => {
+      if (patches.some(patch => patch.uid === 'cfg')) throw new Error('config write failed');
+      if (patches.some(patch => patch.uid === 'entry-1' && patch.enabled === false)) return;
+      const patchByUid = new Map((patches || []).map(patch => [String(patch.uid), patch]));
+      mockEntriesByBook.set(bookName, (mockEntriesByBook.get(bookName) || []).map(entry => patchByUid.has(String(entry.uid)) ? { ...entry, ...patchByUid.get(String(entry.uid)) } : entry));
+    });
+
+    const result = await writeAgentWorldbookControlToWorldbook_ACU({
+      worldbookScope: { source: 'manual', manualSelection: ['手动书'] },
+    } as any);
+
+    expect(result).toMatchObject({ updated: false, reason: 'scope_state_write_rollback_failed' });
+    expect((mockEntriesByBook.get('主世界书') || []).find(entry => entry.uid === 'entry-1')).toMatchObject({
+      enabled: true,
+      keys: ['旧关键词'],
+      type: 'selective',
+    });
+  });
+
+  it('accepts a scope switch when the config write commits before its gateway response rejects', async () => {
+    const takeoverComment = '普通条目\n<!-- ACU_AGENT_WORLDBOOK_TAKEOVER_META_START\n{}\nACU_AGENT_WORLDBOOK_TAKEOVER_META_END -->';
+    mockEntriesByBook.set('主世界书', [
+      configEntry(activeScopeState({
+        主世界书: [{ uid: 'entry-1', previousEnabled: true, previousKeys: ['旧关键词'], previousType: 'selective' }],
+      }), 'cfg'),
+      { uid: 'entry-1', comment: takeoverComment, enabled: false, keys: [], type: 'constant' },
+    ]);
+    mockSetEntries.mockImplementation(async (bookName: string, patches: any[]) => {
+      const reverseObjectKeys = (value: any): any => {
+        if (Array.isArray(value)) return value.map(reverseObjectKeys);
+        if (!value || typeof value !== 'object') return value;
+        return Object.fromEntries(Object.entries(value).reverse().map(([key, nested]) => [key, reverseObjectKeys(nested)]));
+      };
+      const patchByUid = new Map((patches || []).map(patch => [String(patch.uid), patch]));
+      mockEntriesByBook.set(bookName, (mockEntriesByBook.get(bookName) || []).map(entry => {
+        const written = patchByUid.has(String(entry.uid)) ? { ...entry, ...patchByUid.get(String(entry.uid)) } : entry;
+        if (written.uid !== 'cfg') return written;
+        const state = JSON.parse(written.content);
+        state.control = reverseObjectKeys(state.control);
+        return { ...written, content: JSON.stringify(state) };
+      }));
+      if (patches.some(patch => patch.uid === 'cfg')) throw new Error('response lost after commit');
+    });
+
+    const result = await writeAgentWorldbookControlToWorldbook_ACU({
+      worldbookScope: { source: 'manual', manualSelection: ['手动书'] },
+      contextSettings: { agentAiMaxRetries: 4 },
+    } as any);
+    const entries = mockEntriesByBook.get('主世界书') || [];
+    const state = JSON.parse(entries.find(entry => entry.uid === 'cfg').content);
+
+    expect(result.updated).toBe(true);
+    expect(state.control.worldbookScope).toEqual({ source: 'manual', manualSelection: ['手动书'] });
+    expect(state.snapshot).toEqual({ active: false, selectionSignature: '', createdAt: 0, books: {} });
+    expect(entries.find(entry => entry.uid === 'entry-1')).toMatchObject({ enabled: true, keys: ['旧关键词'], type: 'selective' });
+  });
+
+  it('repairs a recognized partial scope write when another submitted control field was lost', async () => {
+    const takeoverComment = '普通条目\n<!-- ACU_AGENT_WORLDBOOK_TAKEOVER_META_START\n{}\nACU_AGENT_WORLDBOOK_TAKEOVER_META_END -->';
+    let configWriteCount = 0;
+    mockEntriesByBook.set('主世界书', [
+      configEntry(activeScopeState({
+        主世界书: [{ uid: 'entry-1', previousEnabled: true, previousKeys: ['旧关键词'], previousType: 'selective' }],
+      }), 'cfg'),
+      { uid: 'entry-1', comment: takeoverComment, enabled: false, keys: [], type: 'constant' },
+    ]);
+    mockSetEntries.mockImplementation(async (bookName: string, patches: any[]) => {
+      const patchByUid = new Map((patches || []).map(patch => [String(patch.uid), patch]));
+      mockEntriesByBook.set(bookName, (mockEntriesByBook.get(bookName) || []).map(entry => {
+        const patch = patchByUid.get(String(entry.uid));
+        if (!patch) return entry;
+        if (patch.uid !== 'cfg') return { ...entry, ...patch };
+        const written = { ...entry, ...patch };
+        if (configWriteCount++ === 0) {
+          const state = JSON.parse(written.content);
+          delete state.control.agentApiPreset;
+          written.content = JSON.stringify(state);
+        }
+        return written;
+      }));
+    });
+
+    const result = await writeAgentWorldbookControlToWorldbook_ACU({
+      worldbookScope: { source: 'manual', manualSelection: ['手动书'] },
+      agentApiPreset: 'new-preset',
+    } as any);
+    const state = JSON.parse((mockEntriesByBook.get('主世界书') || []).find(entry => entry.uid === 'cfg').content);
+    const restored = (mockEntriesByBook.get('主世界书') || []).find(entry => entry.uid === 'entry-1');
+
+    expect(result.updated).toBe(true);
+    expect(state.control.worldbookScope).toEqual({ source: 'manual', manualSelection: ['手动书'] });
+    expect(state.control.agentApiPreset).toBe('new-preset');
+    expect(state.snapshot).toEqual({ active: false, selectionSignature: '', createdAt: 0, books: {} });
+    expect(restored).toMatchObject({ enabled: true, keys: ['旧关键词'], type: 'selective' });
+  });
+
+
+  it.each([
+    ['next', undefined],
+    ['current', undefined],
+    ['partial_next', false],
+    ['missing', false],
+    ['unknown', false],
+  ] as const)('handles a repair write reject-after-commit when readback is %s', async (repairState, expectedStateConfirmed) => {
+    const takeoverComment = '普通条目\n<!-- ACU_AGENT_WORLDBOOK_TAKEOVER_META_START\n{}\nACU_AGENT_WORLDBOOK_TAKEOVER_META_END -->';
+    const initialState = activeScopeState({
+      主世界书: [{ uid: 'entry-1', previousEnabled: true, previousKeys: ['旧关键词'], previousType: 'selective' }],
+    });
+    let configWriteCount = 0;
+    mockEntriesByBook.set('主世界书', [
+      configEntry(initialState, 'cfg'),
+      { uid: 'entry-1', comment: takeoverComment, enabled: false, keys: [], type: 'constant' },
+    ]);
+    mockSetEntries.mockImplementation(async (bookName: string, patches: any[]) => {
+      const configPatch = patches.find(patch => patch.uid === 'cfg');
+      if (!configPatch) {
+        const patchByUid = new Map((patches || []).map(patch => [String(patch.uid), patch]));
+        mockEntriesByBook.set(bookName, (mockEntriesByBook.get(bookName) || []).map(entry => patchByUid.has(String(entry.uid)) ? { ...entry, ...patchByUid.get(String(entry.uid)) } : entry));
+        return;
+      }
+      const written = { ...(mockEntriesByBook.get(bookName) || []).find(entry => entry.uid === 'cfg'), ...configPatch };
+      const state = JSON.parse(written.content);
+      if (configWriteCount++ === 0 || repairState === 'partial_next') {
+        delete state.control.agentApiPreset;
+        written.content = JSON.stringify(state);
+      } else if (repairState === 'current') {
+        written.content = JSON.stringify(initialState);
+      } else if (repairState === 'unknown') {
+        state.control.agentApiPreset = 'foreign-preset';
+        written.content = JSON.stringify(state);
+      }
+      const nextEntries = (mockEntriesByBook.get(bookName) || []).filter(entry => entry.uid !== 'cfg');
+      if (repairState !== 'missing' || configWriteCount === 1) nextEntries.unshift(written);
+      mockEntriesByBook.set(bookName, nextEntries);
+      if (configWriteCount === 2) throw new Error('repair response lost after commit');
+    });
+
+    const result = await writeAgentWorldbookControlToWorldbook_ACU({
+      worldbookScope: { source: 'manual', manualSelection: ['手动书'] },
+      agentApiPreset: 'new-preset',
+    } as any);
+    const entries = mockEntriesByBook.get('主世界书') || [];
+    const config = entries.find(entry => entry.uid === 'cfg');
+    const restored = entries.find(entry => entry.uid === 'entry-1');
+
+    if (repairState === 'next') {
+      const persisted = JSON.parse(config.content);
+      expect(result.updated).toBe(true);
+      expect(persisted.control.agentApiPreset).toBe('new-preset');
+      expect(restored).toMatchObject({ enabled: true, keys: ['旧关键词'], type: 'selective' });
+      return;
+    }
+    expect(result).toMatchObject({ updated: false, reason: 'scope_state_write_unconfirmed', stateConfirmed: expectedStateConfirmed });
+    if (repairState === 'current') {
+      expect(JSON.parse(config.content)).toEqual(initialState);
+      expect(restored).toEqual({ uid: 'entry-1', comment: takeoverComment, enabled: false, keys: [], type: 'constant' });
+      return;
+    }
+    if (repairState === 'missing') {
+      expect(config).toBeUndefined();
+    } else {
+      const persisted = JSON.parse(config.content);
+      expect(persisted.control.worldbookScope).toEqual({ source: 'manual', manualSelection: ['手动书'] });
+      expect(persisted.snapshot).toEqual({ active: false, selectionSignature: '', createdAt: 0, books: {} });
+      expect(persisted.control.agentApiPreset).toBe(repairState === 'unknown' ? 'foreign-preset' : undefined);
+    }
+    expect(restored).toMatchObject({ enabled: true, keys: ['旧关键词'], type: 'selective' });
+  });
+
+  it('does not report success or blindly roll back when the state entry disappears after restore', async () => {
+    const takeoverComment = '普通条目\n<!-- ACU_AGENT_WORLDBOOK_TAKEOVER_META_START\n{}\nACU_AGENT_WORLDBOOK_TAKEOVER_META_END -->';
+    const initialState = activeScopeState({
+      主世界书: [{ uid: 'entry-1', previousEnabled: true, previousKeys: ['旧关键词'], previousType: 'selective' }],
+    });
+    mockEntriesByBook.set('主世界书', [
+      configEntry(initialState, 'cfg'),
+      { uid: 'entry-1', comment: takeoverComment, enabled: false, keys: [], type: 'constant' },
+    ]);
+    mockSetEntries.mockImplementation(async (bookName: string, patches: any[]) => {
+      if (patches.some(patch => patch.uid === 'cfg')) {
+        mockEntriesByBook.set(bookName, (mockEntriesByBook.get(bookName) || []).filter(entry => entry.uid !== 'cfg'));
+        return;
+      }
+      const patchByUid = new Map((patches || []).map(patch => [String(patch.uid), patch]));
+      mockEntriesByBook.set(bookName, (mockEntriesByBook.get(bookName) || []).map(entry => patchByUid.has(String(entry.uid)) ? { ...entry, ...patchByUid.get(String(entry.uid)) } : entry));
+    });
+
+    const result = await writeAgentWorldbookControlToWorldbook_ACU({
+      worldbookScope: { source: 'manual', manualSelection: ['手动书'] },
+    } as any);
+    const entries = mockEntriesByBook.get('主世界书') || [];
+
+    expect(result).toMatchObject({ updated: false, reason: 'scope_state_write_unconfirmed' });
+    expect(entries.find(entry => entry.uid === 'cfg')).toBeUndefined();
+    expect(entries.find(entry => entry.uid === 'entry-1')).toMatchObject({ enabled: true, keys: ['旧关键词'], type: 'selective' });
+  });
+
+  it('rolls back already restored books when restoring another book fails', async () => {
+    const mainTakeoverComment = '主书条目\n<!-- ACU_AGENT_WORLDBOOK_TAKEOVER_META_START\n{}\nACU_AGENT_WORLDBOOK_TAKEOVER_META_END -->';
+    const additionalTakeoverComment = '附加书条目\n<!-- ACU_AGENT_WORLDBOOK_TAKEOVER_META_START\n{}\nACU_AGENT_WORLDBOOK_TAKEOVER_META_END -->';
+    const initialState = activeScopeState({
+      主世界书: [{ uid: 'main-entry', previousEnabled: true, previousKeys: ['主书关键词'], previousType: 'selective' }],
+      附加书: [{ uid: 'additional-entry', previousEnabled: true, previousKeys: ['附加书关键词'], previousType: 'selective' }],
+    }, ['主世界书', '附加书']);
+    mockEntriesByBook.set('主世界书', [
+      configEntry(initialState, 'cfg'),
+      { uid: 'main-entry', comment: mainTakeoverComment, enabled: false, keys: [], type: 'constant' },
+    ]);
+    mockEntriesByBook.set('附加书', [
+      { uid: 'additional-entry', comment: additionalTakeoverComment, enabled: false, keys: [], type: 'constant' },
+    ]);
+    vi.mocked(getCharLorebooks_ACU).mockResolvedValue({ primary: '主世界书', additional: ['附加书'] } as any);
+    mockSetEntries.mockImplementation(async (bookName: string, patches: any[]) => {
+      if (bookName === '附加书') throw new Error('additional restore failed');
+      const patchByUid = new Map((patches || []).map(patch => [String(patch.uid), patch]));
+      mockEntriesByBook.set(bookName, (mockEntriesByBook.get(bookName) || []).map(entry => patchByUid.has(String(entry.uid)) ? { ...entry, ...patchByUid.get(String(entry.uid)) } : entry));
+    });
+
+    const result = await writeAgentWorldbookControlToWorldbook_ACU({
+      worldbookScope: { source: 'manual', manualSelection: ['手动书'] },
+    } as any);
+    const mainEntries = mockEntriesByBook.get('主世界书') || [];
+
+    expect(result).toMatchObject({ updated: false, reason: 'scope_restore_incomplete' });
+    expect(JSON.parse(mainEntries.find(entry => entry.uid === 'cfg').content)).toEqual(initialState);
+    expect(mainEntries.find(entry => entry.uid === 'main-entry')).toEqual({ uid: 'main-entry', comment: mainTakeoverComment, enabled: false, keys: [], type: 'constant' });
+    expect(mockEntriesByBook.get('附加书')).toEqual([
+      { uid: 'additional-entry', comment: additionalTakeoverComment, enabled: false, keys: [], type: 'constant' },
+    ]);
+  });
+
+  it('does not restore entries when the target config host read fails before the scope transaction starts', async () => {
+    const takeoverComment = '普通条目\n<!-- ACU_AGENT_WORLDBOOK_TAKEOVER_META_START\n{}\nACU_AGENT_WORLDBOOK_TAKEOVER_META_END -->';
+    const initialState = activeScopeState({
+      主世界书: [{ uid: 'entry-1', previousEnabled: true, previousKeys: ['旧关键词'], previousType: 'selective' }],
+    });
+    const initialEntries = [
+      configEntry(initialState, 'cfg'),
+      { uid: 'entry-1', comment: takeoverComment, enabled: false, keys: [], type: 'constant' },
+    ];
+    mockEntriesByBook.set('主世界书', initialEntries);
+    let mainBookReads = 0;
+    mockGetEntries.mockImplementation(async (bookName: string) => {
+      if (bookName !== '主世界书') return mockEntriesByBook.get(bookName) || [];
+      mainBookReads += 1;
+      if (mainBookReads === 2) throw new Error('target host read failed');
+      return mockEntriesByBook.get(bookName) || [];
+    });
+
+    await expect(writeAgentWorldbookControlToWorldbook_ACU({
+      worldbookScope: { source: 'manual', manualSelection: ['手动书'] },
+    } as any)).rejects.toThrow('target host read failed');
+
+    expect(mockEntriesByBook.get('主世界书')).toEqual(initialEntries);
+    expect(mockSetEntries).not.toHaveBeenCalled();
+  });
+
+  it('refuses an active scope switch if its state entry disappears before restore', async () => {
+    const takeoverComment = '普通条目\n<!-- ACU_AGENT_WORLDBOOK_TAKEOVER_META_START\n{}\nACU_AGENT_WORLDBOOK_TAKEOVER_META_END -->';
+    const initialState = activeScopeState({
+      主世界书: [{ uid: 'entry-1', previousEnabled: true }],
+    });
+    const initialEntries = [
+      configEntry(initialState, 'cfg'),
+      { uid: 'entry-1', comment: takeoverComment, enabled: false, keys: [] },
+    ];
+    mockEntriesByBook.set('主世界书', initialEntries);
+    let mainBookReads = 0;
+    mockGetEntries.mockImplementation(async (bookName: string) => {
+      if (bookName !== '主世界书') return mockEntriesByBook.get(bookName) || [];
+      mainBookReads += 1;
+      return mainBookReads === 1 ? initialEntries : initialEntries.filter(entry => entry.uid !== 'cfg');
+    });
+
+    const result = await writeAgentWorldbookControlToWorldbook_ACU({
+      worldbookScope: { source: 'manual', manualSelection: ['手动书'] },
+    } as any);
+
+    expect(result).toMatchObject({ updated: false, reason: 'scope_state_entry_missing' });
+    expect(mockSetEntries).not.toHaveBeenCalled();
+    expect(mockEntriesByBook.get('主世界书')).toEqual(initialEntries);
+  });
+
   it('refuses scope persistence when the active snapshot signature does not match its previous scope', async () => {
     const initialState = {
       version: 2,
@@ -346,5 +724,67 @@ describe('agent worldbook config/state meta', () => {
     expect(mockDeleted).toHaveBeenCalledWith('旧附加书', ['legacy-cfg']);
     expect(mockEntriesByBook.get('手动书')).toEqual([{ uid: 'manual-normal', comment: 'TavernDB-ACU-AgentWorldbookConfig-用户条目' }]);
     expect(mockEntriesByBook.get('旧附加书')).toEqual([{ uid: 'additional-normal', comment: '普通条目' }]);
+  });
+
+  it('缺失世界书提示词字段时读取全局模板，显式空数组则保留当前世界书覆盖', async () => {
+    mockSettings.plotSettings.agentPromptTemplates = {
+      agentDecisionPromptSegments: [{ role: 'system', content: 'global decision', deletable: false }],
+      agentSkillifyPromptSegments: [{ role: 'user', content: 'global skillify', deletable: true }],
+    };
+    mockEntriesByBook.set('主世界书', [configEntry({
+      version: 2,
+      kind: 'agent_worldbook_state',
+      updatedAt: 1,
+      control: { mode: 'passive', agentSkillifyPromptSegments: [] },
+      snapshot: {},
+    })]);
+
+    const result = await readAgentWorldbookStateFromWorldbooks_ACU();
+
+    expect(result.control.agentDecisionPromptSegments).toEqual([{ role: 'system', content: 'global decision', deletable: false }]);
+    expect(result.control.agentSkillifyPromptSegments).toEqual([]);
+  });
+
+  it('未显式提交提示词字段时，首次创建状态条目不物化全局模板', async () => {
+    mockSettings.plotSettings.agentPromptTemplates = {
+      agentDecisionPromptSegments: [{ role: 'system', content: 'global decision', deletable: false }],
+      agentSkillifyPromptSegments: [{ role: 'user', content: 'global skillify', deletable: true }],
+    };
+
+    await writeAgentWorldbookControlToWorldbook_ACU({ mode: 'agent' } as any);
+
+    const state = JSON.parse((mockEntriesByBook.get('主世界书') || [])[0].content);
+    expect(state.control).not.toHaveProperty('agentDecisionPromptSegments');
+    expect(state.control).not.toHaveProperty('agentSkillifyPromptSegments');
+  });
+
+  it('显式空提示词数组会持久化为当前世界书覆盖', async () => {
+    await writeAgentWorldbookControlToWorldbook_ACU({
+      agentDecisionPromptSegments: [],
+      agentSkillifyPromptSegments: [],
+    } as any);
+
+    const state = JSON.parse((mockEntriesByBook.get('主世界书') || [])[0].content);
+    expect(state.control.agentDecisionPromptSegments).toEqual([]);
+    expect(state.control.agentSkillifyPromptSegments).toEqual([]);
+  });
+
+  it('全局提示词模板保存失败时回滚内存状态', () => {
+    const previous = {
+      agentDecisionPromptSegments: [{ role: 'system', content: 'previous decision', deletable: false }],
+      agentSkillifyPromptSegments: [{ role: 'user', content: 'previous skillify', deletable: true }],
+    };
+    mockSettings.plotSettings.agentPromptTemplates = previous;
+    mockSaveSettings.mockReturnValue({ saved: false });
+
+    const saved = setAgentPromptTemplateDefaults_ACU({
+      agentDecisionPromptSegments: [{ role: 'system', content: 'next decision', deletable: false }],
+      agentSkillifyPromptSegments: [{ role: 'user', content: 'next skillify', deletable: true }],
+    });
+
+    expect(saved).toBe(false);
+    expect(mockSaveSettings).toHaveBeenCalledTimes(1);
+    expect(mockSettings.plotSettings.agentPromptTemplates).toBe(previous);
+    expect(getAgentPromptTemplateDefaults_ACU()).toEqual(previous);
   });
 });

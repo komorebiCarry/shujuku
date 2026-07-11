@@ -17,6 +17,7 @@ vi.mock('../../../src/shared/utils', () => ({
 
 import {
   buildAgentWorldbookSelectionSignature_ACU,
+  rollbackAgentWorldbookSnapshotRestore_ACU,
   restoreAgentWorldbookSnapshotEntries_ACU,
 } from '../../../src/service/agent/agent-worldbook-snapshot-restore';
 
@@ -33,12 +34,25 @@ describe('restoreAgentWorldbookSnapshotEntries_ACU', () => {
   beforeEach(() => {
     entriesByBook.clear();
     mockSetEntries.mockReset();
+    mockSetEntries.mockImplementation(async (bookName: string, patches: any[]) => {
+      const patchByUid = new Map((patches || []).map(patch => [String(patch.uid), patch]));
+      entriesByBook.set(bookName, (entriesByBook.get(bookName) || []).map(entry => patchByUid.has(String(entry.uid))
+        ? { ...entry, ...patchByUid.get(String(entry.uid)) }
+        : entry));
+    });
   });
 
   it('rejects an active snapshot whose signature belongs to another scope', async () => {
     const result = await restoreAgentWorldbookSnapshotEntries_ACU({ ...activeSnapshot([]), selectionSignature: 'other' }, ['世界书']);
 
-    expect(result).toEqual({ restored: 0, skipped: 0, failed: 0, signatureMatched: false });
+    expect(result).toEqual({
+      restored: 0,
+      skipped: 0,
+      failed: 0,
+      signatureMatched: false,
+      rollbackPatchesByBook: {},
+      restoredPatchesByBook: {},
+    });
     expect(mockSetEntries).not.toHaveBeenCalled();
   });
 
@@ -50,7 +64,14 @@ describe('restoreAgentWorldbookSnapshotEntries_ACU', () => {
       { uid: 'missing', previousEnabled: true },
     ]), ['世界书']);
 
-    expect(result).toEqual({ restored: 0, skipped: 2, failed: 0, signatureMatched: true });
+    expect(result).toEqual({
+      restored: 0,
+      skipped: 2,
+      failed: 0,
+      signatureMatched: true,
+      rollbackPatchesByBook: {},
+      restoredPatchesByBook: {},
+    });
     expect(mockSetEntries).not.toHaveBeenCalled();
   });
 
@@ -62,8 +83,46 @@ describe('restoreAgentWorldbookSnapshotEntries_ACU', () => {
       { uid: 'entry-1', commentHash: 'hash:旧正文', previousEnabled: true, previousKeys: ['旧关键词'], previousType: 'selective' },
     ]), ['世界书']);
 
-    expect(result).toEqual({ restored: 0, skipped: 1, failed: 0, signatureMatched: true });
+    expect(result).toEqual({
+      restored: 0,
+      skipped: 1,
+      failed: 0,
+      signatureMatched: true,
+      rollbackPatchesByBook: {
+        世界书: [{ uid: 'entry-1', comment }],
+      },
+      restoredPatchesByBook: {
+        世界书: [{ uid: 'entry-1', comment: '用户修改后的正文' }],
+      },
+    });
     expect(mockSetEntries).toHaveBeenCalledWith('世界书', [{ uid: 'entry-1', comment: '用户修改后的正文' }]);
+  });
+
+  it('captures only patches confirmed after a partial gateway write rejects', async () => {
+    entriesByBook.set('世界书', [
+      { uid: 'entry-1', comment: '正文一', enabled: false, keys: [] },
+      { uid: 'entry-2', comment: '正文二', enabled: false, keys: [] },
+    ]);
+    mockSetEntries.mockImplementationOnce(async (bookName: string, patches: any[]) => {
+      const firstPatch = patches[0];
+      entriesByBook.set(bookName, (entriesByBook.get(bookName) || []).map(entry => String(entry.uid) === String(firstPatch.uid)
+        ? { ...entry, ...firstPatch }
+        : entry));
+      throw new Error('partial gateway failure');
+    });
+
+    const result = await restoreAgentWorldbookSnapshotEntries_ACU(activeSnapshot([
+      { uid: 'entry-1', previousEnabled: true, previousKeys: ['关键词一'], previousType: 'selective' },
+      { uid: 'entry-2', previousEnabled: true, previousKeys: ['关键词二'], previousType: 'selective' },
+    ]), ['世界书']);
+
+    expect(result).toMatchObject({ restored: 0, failed: 2, signatureMatched: true });
+    expect(result.rollbackPatchesByBook).toEqual({
+      世界书: [{ uid: 'entry-1', comment: '正文一', enabled: false, keys: [], type: undefined }],
+    });
+    expect(result.restoredPatchesByBook).toEqual({
+      世界书: [{ uid: 'entry-1', comment: '正文一', enabled: true, keys: ['关键词一'], type: 'selective' }],
+    });
   });
 
   it('reports all entries in a book as failed when the gateway write fails', async () => {
@@ -74,6 +133,36 @@ describe('restoreAgentWorldbookSnapshotEntries_ACU', () => {
       { uid: 'entry-1', previousEnabled: true, previousKeys: ['关键词'], previousType: 'selective' },
     ]), ['世界书']);
 
-    expect(result).toEqual({ restored: 0, skipped: 0, failed: 1, signatureMatched: true });
+    expect(result).toEqual({
+      restored: 0,
+      skipped: 0,
+      failed: 1,
+      signatureMatched: true,
+      rollbackPatchesByBook: {},
+      restoredPatchesByBook: {},
+    });
+  });
+
+  it('does not overwrite an entry edited after restore when rollback detects a conflict', async () => {
+    entriesByBook.set('世界书', [{ uid: 'entry-1', comment: '恢复后的正文', enabled: true, keys: ['旧关键词'], type: 'selective' }]);
+
+    const result = await rollbackAgentWorldbookSnapshotRestore_ACU(
+      { 世界书: [{ uid: 'entry-1', comment: '接管正文', enabled: false, keys: [], type: 'constant' }] },
+      { 世界书: [{ uid: 'entry-1', comment: '恢复后的正文', enabled: true, keys: ['旧关键词'], type: 'selective' }] },
+    );
+    const beforeEditCallCount = mockSetEntries.mock.calls.length;
+    entriesByBook.set('世界书', [{ uid: 'entry-1', comment: '第三方编辑', enabled: true, keys: ['新关键词'], type: 'selective' }]);
+
+    const conflicted = await rollbackAgentWorldbookSnapshotRestore_ACU(
+      { 世界书: [{ uid: 'entry-1', comment: '接管正文', enabled: false, keys: [], type: 'constant' }] },
+      { 世界书: [{ uid: 'entry-1', comment: '恢复后的正文', enabled: true, keys: ['旧关键词'], type: 'selective' }] },
+    );
+
+    expect(result).toBe(true);
+    expect(conflicted).toBe(false);
+    expect(mockSetEntries).toHaveBeenCalledTimes(beforeEditCallCount);
+    expect(entriesByBook.get('世界书')).toEqual([
+      { uid: 'entry-1', comment: '第三方编辑', enabled: true, keys: ['新关键词'], type: 'selective' },
+    ]);
   });
 });

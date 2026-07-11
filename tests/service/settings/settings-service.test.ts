@@ -163,6 +163,10 @@ vi.mock('../../../src/shared/defaults', () => ({
     summaryPromptGroup: []
   },
   buildDefaultPlotWorldbookConfig_ACU: () => ({ source: 'character', manualSelection: [] }),
+  buildDefaultAgentWorldbookPromptTemplates_ACU: () => ({
+    agentDecisionPromptSegments: [],
+    agentSkillifyPromptSegments: [],
+  }),
   buildDefaultAgentWorldbookControl_ACU: () => ({
     enabled: false,
     mode: 'disabled',

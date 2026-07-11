@@ -1,7 +1,9 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-const { mockReadControl, mockWriteControl, mockSaveSettings } = vi.hoisted(() => ({
+const { mockGetPromptTemplates, mockReadControl, mockSetPromptTemplates, mockWriteControl, mockSaveSettings } = vi.hoisted(() => ({
+  mockGetPromptTemplates: vi.fn(),
   mockReadControl: vi.fn(),
+  mockSetPromptTemplates: vi.fn(),
   mockWriteControl: vi.fn(),
   mockSaveSettings: vi.fn(),
 }));
@@ -19,7 +21,9 @@ vi.mock('../../src/presentation/triggers/update-process', () => ({ handleManualU
 vi.mock('../../src/presentation/triggers/settings-ui-sync', () => ({ deleteApiPreset_ACU: vi.fn(), loadApiPreset_ACU: vi.fn() }));
 vi.mock('../../src/presentation/components/settings-ui-helpers', () => ({ saveSettingsAndNotify_ACU: mockSaveSettings }));
 vi.mock('../../src/service/agent/agent-worldbook-config-meta', () => ({
+  getAgentPromptTemplateDefaults_ACU: mockGetPromptTemplates,
   readAgentWorldbookControlFromWorldbooks_ACU: mockReadControl,
+  setAgentPromptTemplateDefaults_ACU: mockSetPromptTemplates,
   writeAgentWorldbookControlToWorldbook_ACU: mockWriteControl,
 }));
 
@@ -47,6 +51,11 @@ describe('createSettingsConfigApi Agent config source', () => {
     vi.clearAllMocks();
     (settings_ACU as any).plotSettings = { agentWorldbookControl: { contextSettings: { skillifyMaxEntries: 99 } } };
     mockReadControl.mockResolvedValue({ control, source: 'worldbook', writableBookName: '主世界书' });
+    mockGetPromptTemplates.mockReturnValue({
+      agentDecisionPromptSegments: [{ role: 'system', content: 'global decision', deletable: false }],
+      agentSkillifyPromptSegments: [{ role: 'user', content: 'global skillify', deletable: true }],
+    });
+    mockSetPromptTemplates.mockReturnValue(true);
     mockWriteControl.mockResolvedValue({ updated: true, control });
   });
 
@@ -141,6 +150,41 @@ describe('createSettingsConfigApi Agent config source', () => {
     expect(mockWriteControl).toHaveBeenNthCalledWith(2, {
       agentSkillifyPromptSegments: expect.arrayContaining([expect.objectContaining({ role: expect.any(String), content: expect.any(String) })]),
     });
+    expect(mockSaveSettings).not.toHaveBeenCalled();
+  });
+
+  it('全局模板 API 读取、保存和重置均不触碰当前世界书或 saveSettingsAndNotify', () => {
+    const api = createSettingsConfigApi({} as any);
+    const templates = {
+      agentDecisionPromptSegments: [{ role: 'ASSISTANT', content: 'global decision', deletable: false }],
+      agentSkillifyPromptSegments: [],
+    };
+
+    expect(api.getAgentPromptTemplates()).toEqual({
+      agentDecisionPromptSegments: [{ role: 'system', content: 'global decision', deletable: false }],
+      agentSkillifyPromptSegments: [{ role: 'user', content: 'global skillify', deletable: true }],
+    });
+    expect(api.setAgentPromptTemplates(templates)).toBe(true);
+    expect(api.resetAgentPromptTemplates()).toBe(true);
+
+    expect(mockSetPromptTemplates).toHaveBeenNthCalledWith(1, {
+      agentDecisionPromptSegments: [{ role: 'assistant', content: 'global decision', deletable: false }],
+      agentSkillifyPromptSegments: [],
+    });
+    expect(mockSetPromptTemplates).toHaveBeenNthCalledWith(2, expect.objectContaining({
+      agentDecisionPromptSegments: expect.any(Array),
+      agentSkillifyPromptSegments: expect.any(Array),
+    }));
+    expect(mockReadControl).not.toHaveBeenCalled();
+    expect(mockWriteControl).not.toHaveBeenCalled();
+    expect(mockSaveSettings).not.toHaveBeenCalled();
+  });
+
+  it('全局模板 API 拒绝缺失提示词字段的输入且不调用 service', () => {
+    const api = createSettingsConfigApi({} as any);
+
+    expect(api.setAgentPromptTemplates({ agentDecisionPromptSegments: [] })).toBe(false);
+    expect(mockSetPromptTemplates).not.toHaveBeenCalled();
     expect(mockSaveSettings).not.toHaveBeenCalled();
   });
 

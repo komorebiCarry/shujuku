@@ -20,9 +20,12 @@ import {
     normalizeEditablePromptSegments_ACU,
     normalizeAgentContextSettings_ACU,
 } from '../../../service/agent/agent-prompt-template';
-import type { AgentWorldbookControl_ACU } from '../../../shared/models/agent-worldbook-model';
+import { buildDefaultAgentWorldbookPromptTemplates_ACU } from '../../../shared/defaults';
+import type { AgentWorldbookControl_ACU, AgentWorldbookPromptTemplates_ACU } from '../../../shared/models/agent-worldbook-model';
 import {
+    getAgentPromptTemplateDefaults_ACU,
     readAgentWorldbookControlFromWorldbooks_ACU,
+    setAgentPromptTemplateDefaults_ACU,
     writeAgentWorldbookControlToWorldbook_ACU,
 } from '../../../service/agent/agent-worldbook-config-meta';
 
@@ -68,6 +71,17 @@ function getAgentPromptSegmentsForApi_ACU(value: unknown, fallback: PromptSegmen
 function normalizeAgentPromptSegmentsForApi_ACU(value: unknown, fallback: PromptSegmentForApi_ACU[]): PromptSegmentForApi_ACU[] | null {
     if (!Array.isArray(value)) return null;
     return normalizeEditablePromptSegments_ACU(value, fallback);
+}
+
+function normalizeAgentPromptTemplatesForApi_ACU(value: unknown): AgentWorldbookPromptTemplates_ACU | null {
+    if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
+    const source = value as Record<string, unknown>;
+    if (!Array.isArray(source.agentDecisionPromptSegments) || !Array.isArray(source.agentSkillifyPromptSegments)) return null;
+    const defaults = buildDefaultAgentWorldbookPromptTemplates_ACU();
+    return {
+        agentDecisionPromptSegments: normalizeEditablePromptSegments_ACU(source.agentDecisionPromptSegments, defaults.agentDecisionPromptSegments),
+        agentSkillifyPromptSegments: normalizeEditablePromptSegments_ACU(source.agentSkillifyPromptSegments, defaults.agentSkillifyPromptSegments),
+    };
 }
 
 async function writeAgentWorldbookControlPatchForSettingsApi_ACU(
@@ -391,6 +405,50 @@ export function createSettingsConfigApi(_ctx: ApiGroupContext): Record<string, F
                     agentDecisionPromptSegments: getDefaultAgentDecisionPromptSegments_ACU(),
                     agentSkillifyPromptSegments: getDefaultAgentSkillifyPromptSegments_ACU(),
                 };
+            }
+        },
+
+        getAgentPromptTemplates: function() {
+            try {
+                return getAgentPromptTemplateDefaults_ACU();
+            } catch (e) {
+                logError_ACU('getAgentPromptTemplates failed:', e);
+                return buildDefaultAgentWorldbookPromptTemplates_ACU();
+            }
+        },
+
+        setAgentPromptTemplates: function(templates: unknown) {
+            try {
+                const normalized = normalizeAgentPromptTemplatesForApi_ACU(templates);
+                if (!normalized) {
+                    logError_ACU('setAgentPromptTemplates: both prompt segment fields must be arrays');
+                    return false;
+                }
+                const saved = setAgentPromptTemplateDefaults_ACU(normalized);
+                if (!saved) {
+                    logError_ACU('setAgentPromptTemplates: failed to persist global prompt templates');
+                    return false;
+                }
+                logDebug_ACU('Global Agent prompt templates saved');
+                return true;
+            } catch (e) {
+                logError_ACU('setAgentPromptTemplates failed:', e);
+                return false;
+            }
+        },
+
+        resetAgentPromptTemplates: function() {
+            try {
+                const saved = setAgentPromptTemplateDefaults_ACU(buildDefaultAgentWorldbookPromptTemplates_ACU());
+                if (!saved) {
+                    logError_ACU('resetAgentPromptTemplates: failed to persist global prompt templates');
+                    return false;
+                }
+                logDebug_ACU('Global Agent prompt templates reset');
+                return true;
+            } catch (e) {
+                logError_ACU('resetAgentPromptTemplates failed:', e);
+                return false;
             }
         },
 
