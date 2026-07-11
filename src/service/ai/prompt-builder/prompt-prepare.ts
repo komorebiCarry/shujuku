@@ -222,7 +222,6 @@ import { replaceDbSqlVariables } from '../../runtime/template-vars/sql-query-var
         entryStateView: 'pre_takeover',
         entryStateSnapshot,
         entryStateSnapshotSignature,
-        agentGreenlights: options?.agentGreenlights,
     });
     const manualExtraHintText = manualExtraHint_ACU || '';
 

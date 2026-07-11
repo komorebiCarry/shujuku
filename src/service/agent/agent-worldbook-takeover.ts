@@ -163,6 +163,14 @@ function buildAllowedFinalGreenlightKeySet_ACU(greenlights: AgentWorldbookFinalG
   return allowed;
 }
 
+function getSnapshotEntryForBookAndUid_ACU(
+  snapshot: AgentWorldbookControlSnapshot_ACU,
+  bookName: string,
+  uid: unknown,
+): AgentWorldbookControlSnapshotEntry_ACU | undefined {
+  return (snapshot.books?.[bookName] || []).find(entry => String(entry?.uid) === String(uid));
+}
+
 function isFinalGenerationBlueLightEntry_ACU(entry: Record<string, any>): boolean {
   // SillyTavern constant worldbook entries are blue lights whenever enabled; keys do not affect triggering.
   return entry?.enabled !== false
@@ -594,8 +602,19 @@ export async function writeFinalGenerationGreenlights_ACU(greenlights: unknown):
     if (!hasValidWorldbookUid_ACU(entry?.uid)) return null;
     const isAllowed = allowedKeySet.has(buildFinalGreenlightKey_ACU(bookName, entry.uid));
     if (isAllowed) {
-      if (isFinalGenerationBlueLightEntry_ACU(entry)) return null;
-      return { uid: entry.uid, enabled: true, type: 'constant', keys: [] };
+      const snapshotEntry = getSnapshotEntryForBookAndUid_ACU(snapshot, bookName, entry.uid);
+      const liveKeys = getWorldbookEntryKeywordsForSkillify_ACU(entry);
+      const previousKeys = Array.isArray(snapshotEntry?.previousKeys) ? snapshotEntry.previousKeys : [];
+      const shouldRestoreLegacyClearedKeys = liveKeys.length === 0
+        && previousKeys.length > 0
+        && !!snapshotEntry?.commentHash
+        && doesTakeoverSnapshotCommentHashMatch_ACU(snapshotEntry.commentHash, String(entry?.comment || ''));
+      if (isFinalGenerationBlueLightEntry_ACU(entry) && !shouldRestoreLegacyClearedKeys) return null;
+      return {
+        uid: entry.uid,
+        ...(isFinalGenerationBlueLightEntry_ACU(entry) ? {} : { enabled: true, type: 'constant' }),
+        ...(shouldRestoreLegacyClearedKeys ? { keys: [...previousKeys] } : {}),
+      };
     }
     if (entry.enabled === false) return null;
     return { uid: entry.uid, enabled: false };

@@ -404,7 +404,7 @@ describe('prepareAIInput_ACU — 显式 tableData 模式', () => {
     expect(mockCurrentJsonTableData.sheet_0.seedRows).toBeUndefined();
   });
 
-  it('传入 Agent 绿灯时透传绿灯，并固定使用 pre_takeover 读取视图', async () => {
+  it('传入 Agent 绿灯时仍固定使用不受绿灯强制注入影响的 pre_takeover 读取视图', async () => {
     const explicitTableData = {
       sheet_0: {
         uid: 'sheet_0',
@@ -424,15 +424,13 @@ describe('prepareAIInput_ACU — 显式 tableData 模式', () => {
       agentGreenlights,
     });
 
-    expect(getCombinedWorldbookContent_ACU).toHaveBeenCalledWith(
-      expect.stringContaining('用户: 用户触发普通关键词'),
-      expect.objectContaining({
-        agentGreenlights,
-        entryStateView: 'pre_takeover',
-        entryStateSnapshot: expect.objectContaining({ active: false }),
-        entryStateSnapshotSignature: 'signature:["Agent书"]',
-      }),
-    );
+    const [, options] = vi.mocked(getCombinedWorldbookContent_ACU).mock.calls[0];
+    expect(options).toEqual(expect.objectContaining({
+      entryStateView: 'pre_takeover',
+      entryStateSnapshot: expect.objectContaining({ active: false }),
+      entryStateSnapshotSignature: 'signature:["Agent书"]',
+    }));
+    expect(options).not.toHaveProperty('agentGreenlights');
   });
 
   it('active snapshot 使用 Agent 独立范围签名，不使用填表世界书范围自证', async () => {

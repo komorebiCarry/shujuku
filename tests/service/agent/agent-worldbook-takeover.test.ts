@@ -492,7 +492,7 @@ describe('agent worldbook takeover native trigger suppression', () => {
     expect(getPlotAgentWorldbookSnapshot_ACU()).toMatchObject({ active: false, books: {} });
   });
 
-  it('正文绿灯写入会把 active snapshot 内放行条目改为常量蓝灯并可读回', async () => {
+  it('正文绿灯写入会把 active snapshot 内放行条目改为保留关键词的常量蓝灯并可读回', async () => {
     mockEntriesByBook.set('角色A世界书', [
       { uid: 1, enabled: true, keys: ['钥匙A'], comment: skillComment_ACU, content: '内容A' },
       { uid: 'final-state', enabled: false, type: 'constant', keys: [], comment: AGENT_FINAL_GENERATION_GREENLIGHT_COMMENT_ACU, content: '{}' },
@@ -505,8 +505,70 @@ describe('agent worldbook takeover native trigger suppression', () => {
 
     expect(written).toBe(true);
     expect(readBack).toEqual([{ bookName: '角色A世界书', uid: 1 }]);
-    expect(patchedEntry).toMatchObject({ enabled: true, type: 'constant', keys: [] });
+    expect(patchedEntry).toMatchObject({ enabled: true, type: 'constant', keys: ['钥匙A'] });
     expect(finalGenerationGreenlightEntry()).toBeDefined();
+  });
+
+  it('正文绿灯写入会用可信快照修复旧版本清空的关键词', async () => {
+    mockEntriesByBook.set('角色A世界书', [
+      { uid: 1, enabled: true, keys: ['钥匙A'], type: 'selective', comment: skillComment_ACU, content: '内容A' },
+    ]);
+    await takeoverWorldbookGreenlights_ACU();
+    mockEntriesByBook.set('角色A世界书', [
+      { uid: 1, enabled: true, keys: [], type: 'constant', comment: skillComment_ACU, content: '内容A' },
+    ]);
+
+    const written = await writeFinalGenerationGreenlights_ACU([{ bookName: '角色A世界书', uid: 1, reason: '修复旧绿灯' }]);
+
+    expect(written).toBe(true);
+    expect(mockEntriesByBook.get('角色A世界书')?.find(entry => entry.uid === 1)).toMatchObject({
+      enabled: true,
+      type: 'constant',
+      keys: ['钥匙A'],
+    });
+  });
+
+  it('正文绿灯写入不会用快照覆盖用户修改 comment 后主动清空的关键词', async () => {
+    mockEntriesByBook.set('角色A世界书', [
+      { uid: 1, enabled: true, keys: ['钥匙A'], type: 'selective', comment: skillComment_ACU, content: '内容A' },
+    ]);
+    await takeoverWorldbookGreenlights_ACU();
+    mockEntriesByBook.set('角色A世界书', [
+      { uid: 1, enabled: true, keys: [], type: 'constant', comment: `用户已修改条目\n\n${skillMetaBlock_ACU}`, content: '内容A' },
+    ]);
+
+    const written = await writeFinalGenerationGreenlights_ACU([{ bookName: '角色A世界书', uid: 1, reason: '不得覆盖用户修改' }]);
+
+    expect(written).toBe(false);
+    expect(mockEntriesByBook.get('角色A世界书')?.find(entry => entry.uid === 1)).toMatchObject({
+      enabled: true,
+      type: 'constant',
+      keys: [],
+    });
+  });
+
+  it('正文绿灯写入在快照缺少 commentHash 时不推断恢复旧空关键词', async () => {
+    mockEntriesByBook.set('角色A世界书', [
+      { uid: 1, enabled: true, keys: ['钥匙A'], type: 'selective', comment: skillComment_ACU, content: '内容A' },
+    ]);
+    await takeoverWorldbookGreenlights_ACU();
+    mockSetLorebookEntries.mockClear();
+    const snapshot = getPlotAgentWorldbookSnapshot_ACU();
+    snapshot.books['角色A世界书'][0].commentHash = undefined;
+    setPlotAgentWorldbookSnapshot_ACU(snapshot);
+    mockEntriesByBook.set('角色A世界书', [
+      { uid: 1, enabled: true, keys: [], type: 'constant', comment: skillComment_ACU, content: '内容A' },
+    ]);
+
+    const written = await writeFinalGenerationGreenlights_ACU([{ bookName: '角色A世界书', uid: 1, reason: '缺少编辑指纹' }]);
+
+    expect(written).toBe(false);
+    expect(mockSetLorebookEntries).not.toHaveBeenCalled();
+    expect(mockEntriesByBook.get('角色A世界书')?.find(entry => entry.uid === 1)).toMatchObject({
+      enabled: true,
+      type: 'constant',
+      keys: [],
+    });
   });
 
   it('正文绿灯写入遇到已启用 constant 且 keys 非空的受控条目时不重复 patch 或清空 keys', async () => {
@@ -539,7 +601,7 @@ describe('agent worldbook takeover native trigger suppression', () => {
     const entries = mockEntriesByBook.get('角色A世界书') || [];
 
     expect(entries.find(entry => entry.uid === 1)).toMatchObject({ enabled: false });
-    expect(entries.find(entry => entry.uid === 2)).toMatchObject({ enabled: true, type: 'constant', keys: [] });
+    expect(entries.find(entry => entry.uid === 2)).toMatchObject({ enabled: true, type: 'constant', keys: ['钥匙B'] });
     expect(await readFinalGenerationGreenlights_ACU()).toEqual([{ bookName: '角色A世界书', uid: 2 }]);
   });
 
@@ -554,7 +616,7 @@ describe('agent worldbook takeover native trigger suppression', () => {
     const cleared = await clearFinalGenerationGreenlights_ACU();
 
     expect(cleared).toBe(2);
-    expect(mockEntriesByBook.get('角色A世界书')?.find(entry => entry.uid === 1)).toMatchObject({ enabled: false, type: 'constant', keys: [] });
+    expect(mockEntriesByBook.get('角色A世界书')?.find(entry => entry.uid === 1)).toMatchObject({ enabled: false, type: 'constant', keys: ['钥匙A'] });
     expect(finalGenerationGreenlightEntry()).toBeUndefined();
     expect(await readFinalGenerationGreenlights_ACU()).toEqual([]);
   });

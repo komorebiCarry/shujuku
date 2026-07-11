@@ -137,7 +137,36 @@ describe('usePlotWorldbookEntries', () => {
     expect(settings.plotSettings.plotWorldbookConfig.enabledEntries.MyBook).toEqual([1, 7, 8, 9]);
   });
 
-  it('loadEntries 按接管前状态使 live disabled 受控条目可选', async () => {
+  it('首次加载按接管前 enabled 初始化，而不把 live disabled 常量条目写入普通剧情配置', async () => {
+    mockGetAgentSnapshot.mockReturnValue({
+      active: true,
+      selectionSignature: 'test-selection',
+      createdAt: 1,
+      books: {
+        MyBook: [
+          { uid: 1, previousEnabled: true, previousKeys: ['旧关键词'], previousType: 'selective' },
+          { uid: 2, previousEnabled: false, previousKeys: ['关闭关键词'], previousType: 'selective' },
+        ],
+      },
+    });
+    mockGetEntries.mockResolvedValue({
+      MyBook: [
+        { uid: 1, comment: '接管前开启', name: '接管前开启', enabled: false, type: 'constant', keys: ['旧关键词'] },
+        { uid: 2, comment: '接管前关闭', name: '接管前关闭', enabled: false, type: 'constant', keys: ['关闭关键词'] },
+      ],
+    });
+
+    const c = await getComposable();
+    await c.loadEntries(['MyBook']);
+
+    expect(c.groups.value[0].entries.map(entry => ({ uid: entry.uid, disabled: entry.disabled, isConstant: entry.isConstant, checked: entry.checked }))).toEqual([
+      { uid: 1, disabled: false, isConstant: false, checked: true },
+      { uid: 2, disabled: true, isConstant: false, checked: false },
+    ]);
+    expect(settings.plotSettings.plotWorldbookConfig.enabledEntries.MyBook).toEqual([1]);
+  });
+
+  it('已有空选择时按接管前状态展示受控条目，但不重新勾选用户取消的条目', async () => {
     settings = createSettings();
     settings.plotSettings.plotWorldbookConfig.enabledEntries = { MyBook: [] };
     mockGetAgentSnapshot.mockReturnValue({
@@ -172,7 +201,7 @@ describe('usePlotWorldbookEntries', () => {
       agentTakeoverState: entry.agentTakeoverState,
       checked: entry.checked,
     }))).toEqual([
-      { uid: 1, disabled: false, isConstant: false, agentTakeoverState: 'taken_over', checked: true },
+      { uid: 1, disabled: false, isConstant: false, agentTakeoverState: 'taken_over', checked: false },
       { uid: 2, disabled: true, isConstant: true, agentTakeoverState: 'taken_over', checked: false },
       { uid: 4, disabled: false, isConstant: false, agentTakeoverState: 'native', checked: false },
       { uid: 5, disabled: false, isConstant: false, agentTakeoverState: 'native', checked: false },

@@ -1063,7 +1063,7 @@ describe('getCombinedWorldbookContent_ACU', () => {
     });
   });
 
-  it('pre_takeover 下接管前启用的受控条目忽略残留未勾选，但仍要求 previousKeys 命中', async () => {
+  it('pre_takeover 下接管前启用的受控条目仍尊重当前任务的未勾选状态', async () => {
     mockGetCurrentWorldbookConfig.mockReturnValue({
       source: 'manual',
       manualSelection: ['书A'],
@@ -1092,7 +1092,7 @@ describe('getCombinedWorldbookContent_ACU', () => {
       entryStateSnapshotSignature: 'scope-signature',
       entryStateSnapshot: snapshot,
     });
-    expect(uncheckedResult).toContain('# 受控关键词条目\n接管前正常注入正文');
+    expect(uncheckedResult).toBe('');
 
     const unmatchedResult = await getCombinedWorldbookContent_ACU('没有匹配的文本', {
       entryStateView: 'pre_takeover',

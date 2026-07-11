@@ -1051,7 +1051,6 @@ export   async function getCombinedWorldbookContent_ACU(initialScanTextOverride 
             isSelected: (entry: any) => {
                 const isAgentGreenlight = agentGreenlightKeySet.has(`${String(entry.bookName || '').trim()}\u0000${String(entry.uid || '').trim()}`);
                 if (isAgentGreenlight) return true;
-                if (entry?._acuPreTakeoverSnapshotHit === true && entry.enabled !== false) return true;
                 if (!hasAnySelection) return true;
                 const list = enabledEntriesMap?.[entry.bookName];
                 if (typeof list === 'undefined') return true;

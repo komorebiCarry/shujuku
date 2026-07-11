@@ -69,10 +69,23 @@ export function useFormFillWorldbookEntries() {
       for (const bookName of unique) {
         const bookEntries = Array.isArray(entriesMap[bookName]) ? entriesMap[bookName] : [];
         const visibleBookEntries = bookEntries.filter((entry: any) => isWorldbookEntryVisibleForPageUI_ACU(bookName, entry, snapshotEntryIndexByBook));
+        const visibleUidSet = new Set(visibleBookEntries.map((entry: any) => String(entry?.uid)));
 
         if (typeof enabledEntries[bookName] === 'undefined') {
-          enabledEntries[bookName] = visibleBookEntries.map((entry: any) => entry.uid);
+          enabledEntries[bookName] = visibleBookEntries
+            .filter((entry: any) => buildWorldbookEntryDisplayView_ACU(
+              entry,
+              getWorldbookSnapshotEntryForDisplay_ACU(snapshotEntryIndexByBook, bookName, entry),
+            ).enabled)
+            .map((entry: any) => entry.uid);
           settingsChanged = true;
+        } else if (Array.isArray(enabledEntries[bookName])) {
+          const cleanedEnabledEntries = enabledEntries[bookName]
+            .filter((uid: any) => visibleUidSet.has(String(uid)));
+          if (cleanedEnabledEntries.length !== enabledEntries[bookName].length) {
+            enabledEntries[bookName] = cleanedEnabledEntries;
+            settingsChanged = true;
+          }
         }
 
         const enabledList: number[] = Array.isArray(enabledEntries[bookName])
@@ -92,7 +105,7 @@ export function useFormFillWorldbookEntries() {
             skillMeta,
             hasSkill: !!skillMeta,
             agentTakeoverState: resolveWorldbookEntryTakeoverState_ACU(entry, !!skillMeta, snapshotEntry),
-            checked: snapshotEntry ? snapshotEntry.previousEnabled !== false : enabledList.includes(entry.uid),
+            checked: enabledList.includes(entry.uid),
             skillifySelected: false,
             skillifySelectable: false,
             isConstant: displayView.isConstant,

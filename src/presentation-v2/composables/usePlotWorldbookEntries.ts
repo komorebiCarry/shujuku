@@ -85,7 +85,12 @@ export function usePlotWorldbookEntries() {
         const visibleUidSet = new Set(visibleBookEntries.map((entry: any) => String(entry?.uid)));
 
         if (typeof cfg.enabledEntries[bookName] === 'undefined') {
-          cfg.enabledEntries[bookName] = visibleBookEntries.map((e: any) => e.uid);
+          cfg.enabledEntries[bookName] = visibleBookEntries
+            .filter((entry: any) => buildWorldbookEntryDisplayView_ACU(
+              entry,
+              getWorldbookSnapshotEntryForDisplay_ACU(snapshotEntryIndexByBook, bookName, entry),
+            ).enabled)
+            .map((entry: any) => entry.uid);
           settingsChanged = true;
         } else if (Array.isArray(cfg.enabledEntries[bookName])) {
           const cleanedEnabledEntries = cfg.enabledEntries[bookName]
@@ -113,7 +118,7 @@ export function usePlotWorldbookEntries() {
             skillMeta,
             hasSkill: !!skillMeta,
             agentTakeoverState: resolveWorldbookEntryTakeoverState_ACU(entry, !!skillMeta, snapshotEntry),
-            checked: snapshotEntry ? snapshotEntry.previousEnabled !== false : enabledList.includes(entry.uid),
+            checked: enabledList.includes(entry.uid),
             skillifySelected: false,
             skillifySelectable: false,
             isConstant: displayView.isConstant,

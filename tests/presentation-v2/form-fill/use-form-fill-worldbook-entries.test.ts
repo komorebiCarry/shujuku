@@ -72,7 +72,7 @@ describe('useFormFillWorldbookEntries', () => {
     expect(mockSaveSettings).toHaveBeenCalled();
   });
 
-  it('显示、默认启用并标记 constant 条目', async () => {
+  it('显示并标记 constant 条目，首次加载不默认启用 disabled 条目', async () => {
     mockGetEntries.mockResolvedValue({
       'CharBook': [
         makeEntry(1, '人物'),
@@ -92,12 +92,12 @@ describe('useFormFillWorldbookEntries', () => {
     }))).toEqual([
       { uid: 1, checked: true, disabled: false, isConstant: false },
       { uid: 2, checked: true, disabled: false, isConstant: true },
-      { uid: 3, checked: true, disabled: true, isConstant: true },
+      { uid: 3, checked: false, disabled: true, isConstant: true },
     ]);
-    expect(worldbookConfig.enabledEntries.CharBook).toEqual([1, 2, 3]);
+    expect(worldbookConfig.enabledEntries.CharBook).toEqual([1, 2]);
   });
 
-  it('按接管前状态展示受控条目，并与剧情页面共用可见性规则', async () => {
+  it('已有空选择时按接管前状态展示受控条目，但不重新勾选用户取消的条目', async () => {
     worldbookConfig = createWorldbookConfig();
     worldbookConfig.enabledEntries = { CharBook: [] };
     mockGetAgentSnapshot.mockReturnValue({
@@ -132,7 +132,7 @@ describe('useFormFillWorldbookEntries', () => {
       agentTakeoverState: entry.agentTakeoverState,
       checked: entry.checked,
     }))).toEqual([
-      { uid: 1, disabled: false, isConstant: false, agentTakeoverState: 'taken_over', checked: true },
+      { uid: 1, disabled: false, isConstant: false, agentTakeoverState: 'taken_over', checked: false },
       { uid: 2, disabled: true, isConstant: true, agentTakeoverState: 'taken_over', checked: false },
       { uid: 4, disabled: false, isConstant: false, agentTakeoverState: 'native', checked: false },
       { uid: 5, disabled: false, isConstant: false, agentTakeoverState: 'native', checked: false },
