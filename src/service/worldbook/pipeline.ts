@@ -819,6 +819,8 @@ function decorateWorldbookEntryStateView_ACU(
 export   async function collectCombinedWorldbookEntriesByStrategy_ACU(options: any = {}) {
       const logPrefix = String(options?.logPrefix || '[Worldbook]');
       const bookNames: string[] = [...new Set<string>((Array.isArray(options?.bookNames) ? options.bookNames : []).map((name: any) => String(name || '').trim()).filter(Boolean))];
+      const excludeEntry = typeof options?.excludeEntry === 'function' ? options.excludeEntry : () => false;
+      const entryScope = typeof options?.entryScope === 'function' ? options.entryScope : () => true;
       const includeEntry = typeof options?.includeEntry === 'function' ? options.includeEntry : () => true;
       const isSelected = typeof options?.isSelected === 'function' ? options.isSelected : () => true;
       const forceIncludeEntry = typeof options?.forceIncludeEntry === 'function' ? options.forceIncludeEntry : () => false;
@@ -858,6 +860,8 @@ export   async function collectCombinedWorldbookEntriesByStrategy_ACU(options: a
                   normalizedComment,
                   _acuPlaceholderOriginalIndex: placeholderOriginalIndex++,
               };
+              if (excludeEntry(decoratedEntry) === true) return;
+              if (entryScope(decoratedEntry) === false) return;
               if (includeEntry(decoratedEntry) === false) return;
               allEntries.push(decoratedEntry);
           });
@@ -996,6 +1000,7 @@ export   async function getCombinedWorldbookContent_ACU(initialScanTextOverride 
     logDebug_ACU('Starting to get combined worldbook content with advanced logic...');
     const worldbookConfig = getCurrentWorldbookConfig_ACU();
     const excludeImportTaggedEntries = options?.excludeImportTaggedEntries === true;
+    const includeGeneratedEntries = options?.includeGeneratedEntries === true;
     const agentGreenlightKeySet = new Set((Array.isArray(options?.agentGreenlights) ? options.agentGreenlights : [])
         .map((ref: any) => `${String(ref?.bookName || '').trim()}\u0000${String(ref?.uid || '').trim()}`)
         .filter((key: string) => !key.startsWith('\u0000') && !key.endsWith('\u0000')));
@@ -1027,23 +1032,21 @@ export   async function getCombinedWorldbookContent_ACU(initialScanTextOverride 
         return await buildCombinedWorldbookContentByStrategy_ACU({
             logPrefix: '[Worldbook]',
             bookNames,
-            formatEntry: (entry: any) => {
-                const isAgentGreenlight = agentGreenlightKeySet.has(`${String(entry.bookName || '').trim()}\u0000${String(entry.uid || '').trim()}`);
-                if (isAgentGreenlight) return String(entry?.content || '').trim();
-                return `# ${entry.comment || `Entry from ${entry.bookName}`}\n${entry.content}`;
-            },
+            formatEntry: (entry: any) => String(entry?.content || '').trim(),
             baseScanText: (typeof initialScanTextOverride === 'string' && initialScanTextOverride.trim()) ? initialScanTextOverride : '',
             fallbackScanText: allChatMessages_ACU.map(message => message.message).join('\n'),
             entryStateView,
             entryStateSnapshot: options?.entryStateSnapshot,
             entryStateSnapshotSignature: String(options?.entryStateSnapshotSignature || '').trim(),
+            excludeEntry: typeof options?.excludeEntry === 'function' ? options.excludeEntry : undefined,
+            entryScope: typeof options?.entryScope === 'function' ? options.entryScope : undefined,
             includeEntry: (entry: any) => {
                 const comment = entry.comment || '';
                 const isAgentGreenlight = agentGreenlightKeySet.has(`${String(entry.bookName || '').trim()}\u0000${String(entry.uid || '').trim()}`);
                 if (isAgentGreenlight) return true;
-                if (comment.startsWith('TavernDB-ACU-')) return false;
-                if (comment.startsWith('重要人物条目')) return false;
-                if (comment.startsWith('总结条目')) return false;
+                if (!includeGeneratedEntries && comment.startsWith('TavernDB-ACU-')) return false;
+                if (!includeGeneratedEntries && comment.startsWith('重要人物条目')) return false;
+                if (!includeGeneratedEntries && comment.startsWith('总结条目')) return false;
                 if (excludeImportTaggedEntries && isImportTaggedLorebookEntry_ACU(entry)) return false;
                 if (isEntryBlocked_ACU(entry)) return false;
                 return true;

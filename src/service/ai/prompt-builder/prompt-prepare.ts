@@ -7,7 +7,8 @@ import { manualExtraHint_ACU } from '../../runtime/state-manager';
 import { currentJsonTableData_ACU, settings_ACU } from '../../runtime/state-manager';
 import { getUserName_ACU } from '../../../data/gateways/host-state-gateway';
 import { attachSeedRowsToCurrentDataFromGuide_ACU, ensureChatSheetGuideSeeded_ACU, getEffectiveSeedRowsForSheet_ACU, getSortedSheetKeys_ACU } from '../../template/chat-scope';
-import { getCombinedWorldbookContent_ACU } from '../../worldbook/pipeline';
+import { getCombinedWorldbookContent_ACU, getWorldBooks_ACU } from '../../worldbook/pipeline';
+import { isDatabaseGeneratedLorebookEntry_ACU, resolveGeneratedEntriesForTable_ACU } from '../../worldbook/worldbook-placeholder-classification';
 import { resolvePreTakeoverWorldbookSnapshot_ACU } from '../../agent/agent-worldbook-takeover';
 import { isSummaryOrOutlineTable_ACU, logDebug_ACU, logError_ACU, logWarn_ACU, normalizeExcludeRules_ACU, normalizeExtractRules_ACU } from '../../../shared/utils';
 import { applyContextTagFilters_ACU } from '../../runtime/helpers-remaining';
@@ -217,12 +218,41 @@ import { replaceDbSqlVariables } from '../../runtime/template-vars/sql-query-var
     } catch (error) {
         logWarn_ACU('[Worldbook] 无法读取 Agent 世界书接管快照，填表世界书将使用 live 状态。', error);
     }
-    const worldbookContent = await getCombinedWorldbookContent_ACU(worldbookScanText, {
+    const worldbookOptions = {
         excludeImportTaggedEntries: excludeImportTaggedWorldbookEntries,
+        agentGreenlights: Array.isArray(options?.agentGreenlights) ? options.agentGreenlights : [],
         entryStateView: 'pre_takeover',
         entryStateSnapshot,
         entryStateSnapshotSignature,
-    });
+    };
+    const [worldbookContent, worldbookDatabaseExcludedContent] = await Promise.all([
+        getCombinedWorldbookContent_ACU(worldbookScanText, worldbookOptions),
+        getCombinedWorldbookContent_ACU(worldbookScanText, {
+            ...worldbookOptions,
+            excludeEntry: isDatabaseGeneratedLorebookEntry_ACU,
+        }),
+    ]);
+    const resolveTableWorldbookContent = async (tableName: string): Promise<string | null> => {
+        const normalizedTableName = String(tableName || '').trim();
+        if (!normalizedTableName) return null;
+        try {
+            const worldbooks = await getWorldBooks_ACU();
+            const entries = worldbooks.flatMap((worldbook: any) => (Array.isArray(worldbook?.entries) ? worldbook.entries : [])
+                .map((entry: any) => ({ ...entry, bookName: String(worldbook?.name || '').trim() })));
+            const scopedEntries = resolveGeneratedEntriesForTable_ACU(entries, normalizedTableName, workingTableData);
+            if (scopedEntries.length === 0) return null;
+            const scopedKeys = new Set(scopedEntries.map((entry: any) => `${String(entry.bookName || '').trim()}\u0000${String(entry.uid || '').trim()}`));
+            const content = await getCombinedWorldbookContent_ACU(worldbookScanText, {
+                ...worldbookOptions,
+                includeGeneratedEntries: true,
+                entryScope: (entry: any) => scopedKeys.has(`${String(entry.bookName || '').trim()}\u0000${String(entry.uid || '').trim()}`),
+            });
+            return `<worldbook_context>\n${content}\n</worldbook_context>`;
+        } catch (error) {
+            logWarn_ACU(`[Worldbook] 无法解析填表表名占位符 "${normalizedTableName}"，保留原 token。`, error);
+            return null;
+        }
+    };
     const manualExtraHintText = manualExtraHint_ACU || '';
 
     // SQLite 模式下追加 SQL 编辑格式兜底说明（Q17 确认：$0 自带格式说明）
@@ -234,7 +264,14 @@ import { replaceDbSqlVariables } from '../../runtime/template-vars/sql-query-var
         }
     }
 
-    return { tableDataText, messagesText, worldbookContent, manualExtraHint: manualExtraHintText };
+    return {
+        tableDataText,
+        messagesText,
+        worldbookContent,
+        worldbookDatabaseExcludedContent,
+        resolveTableWorldbookContent,
+        manualExtraHint: manualExtraHintText,
+    };
 }
 
 /**

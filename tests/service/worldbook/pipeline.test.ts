@@ -890,6 +890,54 @@ describe('collectCombinedWorldbookEntriesByStrategy_ACU entryStateView', () => {
 
     expect(result).toEqual([]);
   });
+
+  it('在状态投影后将 excludeEntry 置于 includeEntry、forceIncludeEntry 和 isSelected 之前', async () => {
+    const includeEntry = vi.fn(() => true);
+    const forceIncludeEntry = vi.fn(() => true);
+    const isSelected = vi.fn(() => true);
+    const excludeEntry = vi.fn((entry: any) => entry.type === 'keyword' && entry.key.includes('接管前关键词'));
+    mockGwGetLorebookEntries.mockResolvedValue([
+      { uid: 5, comment: '受控条目', content: '不应出现', enabled: false, type: 'constant', key: [], keys: [] },
+    ]);
+
+    const result = await collectCombinedWorldbookEntriesByStrategy_ACU({
+      bookNames: ['书A'],
+      baseScanText: '接管前关键词',
+      entryStateView: 'pre_takeover',
+      entryStateSnapshotSignature: 'scope-signature',
+      entryStateSnapshot: {
+        active: true,
+        selectionSignature: 'scope-signature',
+        createdAt: 1,
+        books: { 书A: [{ uid: 5, previousEnabled: true, previousKeys: ['接管前关键词'], previousType: 'keyword' }] },
+      },
+      excludeEntry,
+      includeEntry,
+      forceIncludeEntry,
+      isSelected,
+    });
+
+    expect(result).toEqual([]);
+    expect(excludeEntry).toHaveBeenCalledWith(expect.objectContaining({ enabled: true, type: 'keyword', key: ['接管前关键词'] }));
+    expect(includeEntry).not.toHaveBeenCalled();
+    expect(forceIncludeEntry).not.toHaveBeenCalled();
+    expect(isSelected).not.toHaveBeenCalled();
+  });
+
+  it('entryScope 排除常量条目时不会让其内容参与关键词递归', async () => {
+    mockGwGetLorebookEntries.mockResolvedValue([
+      { uid: 6, comment: '作用域外常量', content: '仅作用域外关键词', enabled: true, type: 'constant', key: [], keys: [], prevent_recursion: false },
+      { uid: 7, comment: '关键词条目', content: '不应被递归触发', enabled: true, type: 'keyword', key: ['仅作用域外关键词'], keys: [] },
+    ]);
+
+    const result = await collectCombinedWorldbookEntriesByStrategy_ACU({
+      bookNames: ['书A'],
+      entryScope: (entry: any) => entry.uid !== 6,
+      sortEntries: null,
+    });
+
+    expect(result).toEqual([]);
+  });
 });
 
 describe('buildCombinedWorldbookContentByStrategy_ACU', () => {
@@ -998,7 +1046,52 @@ describe('getCombinedWorldbookContent_ACU', () => {
     expect(result).not.toContain('内部');
   });
 
-  it('Agent 绿灯进入普通合成链路时只让绿灯条目 content-only，未接管普通条目仍按正常逻辑读取', async () => {
+  it('仅在 includeGeneratedEntries 与精确 entryScope 同时提供时收集目标内部导出条目', async () => {
+    mockGetCurrentWorldbookConfig.mockReturnValue({
+      source: 'manual',
+      manualSelection: ['书A'],
+      enabledEntries: {},
+    });
+    mockGwGetLorebookEntries.mockResolvedValue([
+      { uid: 1, comment: 'TavernDB-ACU-CustomExport-人物关系', content: '目标表导出', enabled: true, type: 'constant', key: [], keys: [] },
+      { uid: 2, comment: 'TavernDB-ACU-CustomExport-背包', content: '非目标表导出', enabled: true, type: 'constant', key: [], keys: [] },
+      { uid: 3, comment: '用户条目', content: '非目标用户条目', enabled: true, type: 'constant', key: [], keys: [] },
+    ]);
+
+    const result = await getCombinedWorldbookContent_ACU('', {
+      includeGeneratedEntries: true,
+      entryScope: (entry: any) => entry.uid === 1,
+    });
+
+    expect(result).toContain('目标表导出');
+    expect(result).not.toContain('非目标表导出');
+    expect(result).not.toContain('非目标用户条目');
+  });
+
+  it('facade 将 excludeEntry 置于 Agent greenlight 之前传递给 collector', async () => {
+    mockGetCurrentWorldbookConfig.mockReturnValue({
+      source: 'manual',
+      manualSelection: ['书A'],
+      enabledEntries: {},
+    });
+    mockGwGetLorebookEntries.mockResolvedValue([
+      { uid: 1, comment: 'TavernDB-ACU-内部', content: '不可被绿灯复活', enabled: false, type: 'keyword', key: ['不会触发'], keys: [] },
+      { uid: 2, comment: '用户条目', content: '应保留', enabled: true, type: 'constant', key: [], keys: [] },
+      { uid: 3, comment: '作用域外用户条目', content: '不应越过作用域', enabled: true, type: 'constant', key: [], keys: [] },
+    ]);
+
+    const result = await getCombinedWorldbookContent_ACU('', {
+      agentGreenlights: [{ bookName: '书A', uid: 1, reason: '不应绕过排除' }],
+      excludeEntry: (entry: any) => entry.comment === 'TavernDB-ACU-内部',
+      entryScope: (entry: any) => entry.uid !== 3,
+    });
+
+    expect(result).toContain('应保留');
+    expect(result).not.toContain('不可被绿灯复活');
+    expect(result).not.toContain('不应越过作用域');
+  });
+
+  it('填表世界书合成只输出条目正文，不泄漏普通条目或绿灯条目的 comment', async () => {
     mockGetCurrentWorldbookConfig.mockReturnValue({
       source: 'manual',
       manualSelection: ['书A'],
@@ -1015,10 +1108,12 @@ describe('getCombinedWorldbookContent_ACU', () => {
     });
 
     expect(result).toContain('绿灯正文内容');
-    expect(result).toContain('# 普通条目\n普通内容');
-    expect(result).toContain('# 关键词条目\n关键词内容');
+    expect(result).toContain('普通内容');
+    expect(result).toContain('关键词内容');
+    expect(result).not.toContain('普通条目');
+    expect(result).not.toContain('关键词条目');
     expect(result).not.toContain('TavernDB-ACU-AgentGreenlight');
-    expect(result).not.toContain('# TavernDB-ACU-AgentGreenlight');
+    expect(result).not.toContain('#');
   });
 
   it('pre_takeover 让已接管条目按 previousKeys 命中，但不修改 live 条目', async () => {
@@ -1051,7 +1146,8 @@ describe('getCombinedWorldbookContent_ACU', () => {
       },
     });
 
-    expect(result).toContain('# 受控关键词条目\n接管前关键词命中正文');
+    expect(result).toContain('接管前关键词命中正文');
+    expect(result).not.toContain('受控关键词条目');
     expect(liveEntry).toEqual({
       uid: 1,
       comment: '受控关键词条目',

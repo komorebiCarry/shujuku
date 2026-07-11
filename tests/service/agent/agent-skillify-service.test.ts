@@ -80,14 +80,24 @@ describe('agent worldbook skillify candidate filtering', () => {
     expect(isWorldbookEntrySkillifyCandidate_ACU({ comment: 'TavernDB-ACU-ReadableDataTable', keys: ['db'] })).toBe(false);
   });
 
-  it('excludes isolated and imported database-generated entries', () => {
+  it('excludes isolated internal database-generated entries', () => {
     expect(isWorldbookEntrySkillifyCandidate_ACU({ comment: 'ACU-[role-a]-TavernDB-ACU-WrapperStart', keys: ['wrap'] })).toBe(false);
-    expect(isWorldbookEntrySkillifyCandidate_ACU({ comment: 'ACU-[role-a]-外部导入-TavernDB-ACU-MemoryStart', keys: ['memory'] })).toBe(false);
+  });
+
+  it('keeps external import entries as normal keyword candidates', () => {
+    const importedEntry = {
+      comment: '外部导入-TavernDB-ACU-CustomExport-关系档案\n<!-- ACU_CUSTOM_TABLE_EXPORT_V1 {"version":1,"kind":"custom_table_export","sheetKey":"sheet_people","tableName":"人物关系表","entryName":"关系档案","role":"main"} -->',
+      keys: ['艾琳'],
+      type: 'keyword',
+    };
+    expect(isDatabaseGeneratedWorldbookEntryForAgent_ACU(importedEntry)).toBe(false);
+    expect(isWorldbookEntrySkillifyCandidate_ACU(importedEntry)).toBe(true);
+    expect(isWorldbookEntrySkillifyCandidate_ACU({ ...importedEntry, type: 'constant' })).toBe(false);
   });
 
   it('excludes Chinese summary and person database entries', () => {
     expect(isWorldbookEntrySkillifyCandidate_ACU({ comment: '重要人物条目-张三', keys: ['张三'] })).toBe(false);
-    expect(isWorldbookEntrySkillifyCandidate_ACU({ comment: '外部导入-总结条目-1', keys: ['总结'] })).toBe(false);
+    expect(isWorldbookEntrySkillifyCandidate_ACU({ comment: '外部导入-总结条目-1', keys: ['总结'] })).toBe(true);
     expect(isWorldbookEntrySkillifyCandidate_ACU({ comment: 'ACU-[role-a]-小总结条目-2', keys: ['小总结'] })).toBe(false);
   });
 

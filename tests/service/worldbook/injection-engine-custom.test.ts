@@ -350,6 +350,52 @@ describe('updateCustomTableExports_ACU', () => {
       // 表头(1) + 行条目(2) = 3
       expect(createArgs[1].length).toBe(3);
     });
+
+    it('表名与 entryName 不同时，按行条目仍以 entryName 生成 comment 并从配置列提取关键词', async () => {
+      const mergedData: any = {
+        sheet_people: {
+          name: '人物关系表',
+          content: [
+            ['', '姓名', '关系'],
+            ['', '艾琳', '搭档'],
+            ['', '布莱恩', '对手'],
+          ],
+          exportConfig: {
+            enabled: true,
+            splitByRow: true,
+            entryName: '关系档案',
+            entryType: 'keyword',
+            keywords: '姓名',
+          },
+        },
+      };
+      mockGetSortedSheetKeys.mockReturnValue(['sheet_people']);
+      mockEnsureExportConfigDefaults.mockReturnValue({
+        enabled: true,
+        splitByRow: true,
+        entryName: '关系档案',
+        entryType: 'keyword',
+        keywords: '姓名',
+        preventRecursion: true,
+        injectionTemplate: '',
+        extraIndexEnabled: false,
+        extraIndexColumns: [],
+        extraIndexColumnModes: {},
+        extraIndexInjectionTemplate: '',
+        entryPlacement: { position: 'at_depth_as_system', depth: 2, order: 10000 },
+        extraIndexPlacement: { position: 'at_depth_as_system', depth: 2, order: 10010 },
+      });
+
+      await updateCustomTableExports_ACU(mergedData);
+
+      const createdEntries = mockCreateLorebookEntries.mock.calls[0][1];
+      expect(createdEntries).toEqual(expect.arrayContaining([
+        expect.objectContaining({ comment: 'TavernDB-ACU-CustomExport-关系档案-表头', type: 'constant' }),
+        expect.objectContaining({ comment: 'TavernDB-ACU-CustomExport-关系档案-1', keys: ['艾琳'], type: 'keyword', content: '| 艾琳 | 搭档 |\n' }),
+        expect.objectContaining({ comment: 'TavernDB-ACU-CustomExport-关系档案-2', keys: ['布莱恩'], type: 'keyword', content: '| 布莱恩 | 对手 |\n' }),
+      ]));
+      expect(createdEntries.some((entry: any) => String(entry.comment).includes('人物关系表-'))).toBe(false);
+    });
   });
 
   // ═══ 隔离模式 ═══
@@ -444,6 +490,11 @@ describe('updateCustomTableExports_ACU', () => {
         const createArgs = mockCreateLorebookEntries.mock.calls[0];
         const hasImportPrefix = createArgs[1].some((e: any) => e.comment && e.comment.includes('外部导入-'));
         expect(hasImportPrefix).toBe(true);
+        expect(createArgs[1]).toEqual(expect.arrayContaining([
+          expect.objectContaining({
+            comment: expect.stringContaining('ACU_CUSTOM_TABLE_EXPORT_V1'),
+          }),
+        ]));
       }
     });
 

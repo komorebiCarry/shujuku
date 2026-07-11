@@ -102,7 +102,7 @@ import { cloneStrictPromptSegments_ACU } from './strict-json-table-fill';
     const tableExcludeRules = normalizeExcludeRules_ACU(settings_ACU.tableContextExcludeRules, tableExcludeTags);
     const filterTableInjectedContent = (value: any, placeholderKey = '') => {
         const text = value !== undefined && value !== null ? String(value) : '';
-        if (!['$0', '$1', '$4', '$6', '$8', '$U', '$C'].includes(placeholderKey)) return text;
+        if (!['$0', '$1', '$4', '$6', '$8', '$9', '$U', '$C'].includes(placeholderKey)) return text;
         return applyExcludeRulesToText_ACU(text, { excludeRules: tableExcludeRules, excludeTags: tableExcludeTags });
     };
 
@@ -113,9 +113,31 @@ import { cloneStrictPromptSegments_ACU } from './strict-json-table-fill';
         finalContent = finalContent.replace('$4', filterTableInjectedContent(dynamicContent.worldbookContent, '$4'));
         finalContent = finalContent.replace(/\$6/g, filterTableInjectedContent(lastPlotContent || '', '$6'));
         finalContent = finalContent.replace('$8', filterTableInjectedContent(dynamicContent.manualExtraHint || '', '$8'));
+        finalContent = finalContent.replace(/\$9/g, filterTableInjectedContent(dynamicContent.worldbookDatabaseExcludedContent || '', '$9'));
         finalContent = finalContent.replace(/\$U/g, filterTableInjectedContent(userInfoContent_Table, '$U'));
         finalContent = finalContent.replace(/\$C/g, filterTableInjectedContent(charInfoContent_Table, '$C'));
-        
+
+        if (typeof dynamicContent?.resolveTableWorldbookContent === 'function') {
+          const tableTokens: Array<{ raw: string; tableName: string }> = [];
+          const seenTableTokens = new Set<string>();
+          for (const match of finalContent.matchAll(/\{\{([^{}]+)\}\}/g)) {
+            const raw = String(match[0] || '');
+            if (!raw || seenTableTokens.has(raw)) continue;
+            seenTableTokens.add(raw);
+            tableTokens.push({ raw, tableName: String(match[1] || '') });
+          }
+          for (const token of tableTokens) {
+            try {
+              const resolvedContent = await dynamicContent.resolveTableWorldbookContent(token.tableName);
+              if (typeof resolvedContent === 'string') {
+                finalContent = finalContent.split(token.raw).join(resolvedContent);
+              }
+            } catch (error) {
+              logWarn_ACU(`[填表] 无法解析表名占位符 "${token.tableName}"，保留原 token。`, error);
+            }
+          }
+        }
+
         if (typeof (globalThis as any).EjsTemplate?.evalTemplate === 'function') {
           try {
             finalContent = await (globalThis as any).EjsTemplate.evalTemplate(finalContent);

@@ -14,6 +14,7 @@ const mockGetEffectiveSeedRows = vi.fn(() => []);
 const mockEnsureChatSheetGuideSeeded = vi.fn().mockResolvedValue(null);
 const mockAttachSeedRows = vi.fn();
 const mockReplaceDbSqlVariables = vi.fn((content: string) => content);
+const mockGetWorldBooks = vi.fn().mockResolvedValue([]);
 let mockCurrentJsonTableData: any = null;
 let mockSettings: any = {};
 const mockResolvePreTakeoverSnapshot = vi.fn(async () => ({
@@ -49,6 +50,7 @@ vi.mock('../../../src/data/gateways/host-state-gateway', () => ({
 
 vi.mock('../../../src/service/worldbook/pipeline', () => ({
   getCombinedWorldbookContent_ACU: vi.fn().mockResolvedValue(''),
+  getWorldBooks_ACU: (...args: any[]) => mockGetWorldBooks(...args),
 }));
 
 vi.mock('../../../src/service/agent/agent-worldbook-takeover', () => ({
@@ -87,6 +89,7 @@ describe('formatTableForSqliteMode', () => {
     mockEnsureChatSheetGuideSeeded.mockResolvedValue(null);
     mockAttachSeedRows.mockReset();
     mockReplaceDbSqlVariables.mockImplementation((content: string) => content);
+    mockGetWorldBooks.mockResolvedValue([]);
     mockRuntimeProvider.mode = 'sqlite';
     mockRuntimeProvider.getCurrentData.mockImplementation(() => mockCurrentJsonTableData);
     mockIsSqliteMode = true;
@@ -341,6 +344,7 @@ describe('prepareAIInput_ACU — 显式 tableData 模式', () => {
     mockGetEffectiveSeedRows.mockReturnValue([]);
     mockEnsureChatSheetGuideSeeded.mockResolvedValue(null);
     mockAttachSeedRows.mockReset();
+    mockGetWorldBooks.mockResolvedValue([]);
     mockRuntimeProvider.mode = 'sqlite';
     mockRuntimeProvider.getCurrentData.mockImplementation(() => mockCurrentJsonTableData);
     mockIsSqliteMode = false;
@@ -404,7 +408,7 @@ describe('prepareAIInput_ACU — 显式 tableData 模式', () => {
     expect(mockCurrentJsonTableData.sheet_0.seedRows).toBeUndefined();
   });
 
-  it('传入 Agent 绿灯时仍固定使用不受绿灯强制注入影响的 pre_takeover 读取视图', async () => {
+  it('传入 Agent 绿灯时在同一 pre_takeover 读取视图中收集 $4 与 $9', async () => {
     const explicitTableData = {
       sheet_0: {
         uid: 'sheet_0',
@@ -424,13 +428,55 @@ describe('prepareAIInput_ACU — 显式 tableData 模式', () => {
       agentGreenlights,
     });
 
-    const [, options] = vi.mocked(getCombinedWorldbookContent_ACU).mock.calls[0];
-    expect(options).toEqual(expect.objectContaining({
-      entryStateView: 'pre_takeover',
-      entryStateSnapshot: expect.objectContaining({ active: false }),
-      entryStateSnapshotSignature: 'signature:["Agent书"]',
+    const calls = vi.mocked(getCombinedWorldbookContent_ACU).mock.calls;
+    expect(calls).toHaveLength(2);
+    calls.forEach(([, callOptions]) => {
+      expect(callOptions).toEqual(expect.objectContaining({
+        entryStateView: 'pre_takeover',
+        entryStateSnapshot: expect.objectContaining({ active: false }),
+        entryStateSnapshotSignature: 'signature:["Agent书"]',
+        agentGreenlights,
+      }));
+    });
+    expect(calls[0][1]).not.toHaveProperty('excludeEntry');
+    expect(calls[1][1]).toEqual(expect.objectContaining({ excludeEntry: expect.any(Function) }));
+  });
+
+  it('返回 $9 世界书内容与请求内表名 resolver', async () => {
+    vi.mocked(getCombinedWorldbookContent_ACU)
+      .mockResolvedValueOnce('普通世界书')
+      .mockResolvedValueOnce('排除内部后的世界书')
+      .mockResolvedValueOnce('关系正文');
+    mockGetWorldBooks.mockResolvedValue([{
+      name: '书A',
+      entries: [
+        { uid: 7, comment: 'TavernDB-ACU-CustomExport-关系档案', content: '关系正文' },
+        { uid: 8, comment: 'TavernDB-ACU-CustomExport-其他档案', content: '其他正文' },
+      ],
+    }]);
+    const result = await prepareAIInput_ACU([], 'standard', null, {
+      tableData: {
+        sheet_0: {
+          uid: 'sheet_0', name: '显式表', content: [['row_id', 'name']], updateConfig: {},
+          exportConfig: { enabled: true, entryName: '关系档案' },
+        },
+      },
+    });
+
+    expect(result).toEqual(expect.objectContaining({
+      worldbookContent: '普通世界书',
+      worldbookDatabaseExcludedContent: '排除内部后的世界书',
+      resolveTableWorldbookContent: expect.any(Function),
     }));
-    expect(options).not.toHaveProperty('agentGreenlights');
+    await expect(result!.resolveTableWorldbookContent('显式表')).resolves.toBe('<worldbook_context>\n关系正文\n</worldbook_context>');
+    const [, resolverOptions] = vi.mocked(getCombinedWorldbookContent_ACU).mock.calls[2];
+    expect(resolverOptions).toEqual(expect.objectContaining({
+      includeGeneratedEntries: true,
+      entryScope: expect.any(Function),
+    }));
+    expect(resolverOptions.entryScope({ bookName: '书A', uid: 7 })).toBe(true);
+    expect(resolverOptions.entryScope({ bookName: '书A', uid: 8 })).toBe(false);
+    await expect(result!.resolveTableWorldbookContent('不存在的表')).resolves.toBeNull();
   });
 
   it('active snapshot 使用 Agent 独立范围签名，不使用填表世界书范围自证', async () => {

@@ -16,6 +16,7 @@ import { splitKeywordsByComma_ACU } from './injection-engine-entries';
 import { getLatestSummaryVectorIndexSnapshotState_ACU } from '../vector/summary-vector-index-state-service';
 import { getEffectiveSummaryVectorIndexConfig_ACU } from '../vector/vector-memory-config';
 import { isSqliteMode } from '../table/storage-mode';
+import { buildExternalCustomTableExportComment_ACU, type ExternalCustomTableExportMarker_ACU } from './worldbook-placeholder-classification';
 
   // [新增] 处理自定义表格导出逻辑
   // [修复] 当 mergedData 为空/null 时，仍需执行"清理旧自定义导出条目"逻辑，
@@ -31,7 +32,15 @@ import { isSqliteMode } from '../table/storage-mode';
       // [修改] 外部导入时只使用"外部导入-"前缀，不再包含"TavernDB-ACU-CustomExport-"
       const exportPrefix = isoPrefix + (isImport ? IMPORT_PREFIX : '');
       // [修复] 外部导入时的条目命名辅助函数：只使用"外部导入-"前缀
-      const getImportEntryName = (name: string) => isImport ? `${exportPrefix}${name}` : `${exportPrefix}TavernDB-ACU-CustomExport-${name}`;
+      const getImportEntryName = (name: string, marker?: Omit<ExternalCustomTableExportMarker_ACU, 'version' | 'kind'>) => {
+          const comment = isImport ? `${exportPrefix}${name}` : `${exportPrefix}TavernDB-ACU-CustomExport-${name}`;
+          if (!isImport || !marker) return comment;
+          return buildExternalCustomTableExportComment_ACU(comment, {
+              version: 1,
+              kind: 'custom_table_export',
+              ...marker,
+          });
+      };
       // [修改] 定义旧版前缀用于清理（非外部导入模式）
       const baseLegacyPrefix = 'TavernDB-ACU-CustomExport';
       const LEGACY_EXPORT_PREFIX = isoPrefix + baseLegacyPrefix;
@@ -236,7 +245,7 @@ import { isSqliteMode } from '../table/storage-mode';
               };
           };
 
-          const buildExtraIndexEntryBlock_ACU = ({ exportPrefix, extraIndexSpec, templateStr, startOrder, placement, usedOrderSet, enabled = true }: { exportPrefix: string; extraIndexSpec: any; templateStr?: string; startOrder: number; placement: Record<string, any>; usedOrderSet?: Set<any>; enabled?: boolean }) => {
+          const buildExtraIndexEntryBlock_ACU = ({ exportPrefix, extraIndexSpec, templateStr, startOrder, placement, usedOrderSet, enabled = true, marker }: { exportPrefix: string; extraIndexSpec: any; templateStr?: string; startOrder: number; placement: Record<string, any>; usedOrderSet?: Set<any>; enabled?: boolean; marker?: Omit<ExternalCustomTableExportMarker_ACU, 'version' | 'kind' | 'role' | 'rowIndex'> }) => {
               if (!extraIndexSpec) return { entries: [], names: [], plans: [], nextOrder: startOrder, span: 0 };
               const cursor = allocOrder_ACU(usedOrderSet || usedOrders, startOrder, 1, 99999);
               const names = [];
@@ -246,7 +255,7 @@ import { isSqliteMode } from '../table/storage-mode';
               const fallbackTemplate = `# ${extraIndexSpec.entryName}\n\n$1`;
               // 自定义表格导出的附加索引条目：在注释名中加入统一标记，便于在世界书 UI 中识别为"数据库生成条目"并默认隐藏
               // [修复] 外部导入时只使用"外部导入-"前缀
-              const mainComment = getImportEntryName(extraIndexSpec.entryName);
+              const mainComment = getImportEntryName(extraIndexSpec.entryName, marker ? { ...marker, role: 'index' } : undefined);
               const isCrossfireSummaryEntry = extraIndexSpec.entryName === '纪要索引';
               let mainContent = buildEntryContent(
                   extraIndexSpec.entryName,
@@ -323,6 +332,11 @@ import { isSqliteMode } from '../table/storage-mode';
               );
               const mainHeaders = extraIndexSpec ? extraIndexSpec.mainCols : headers;
               const mainRows = extraIndexSpec ? extraIndexSpec.mainRows : effectiveRows;
+              const markerBase = {
+                  sheetKey,
+                  tableName: String(tableName || sheetKey),
+                  entryName: String(config.entryName || tableName || sheetKey),
+              };
               
               // [新增] 检查是否有有效的索引条目数据
               const hasExtraIndex = hasExtraIndexEnabled && extraIndexSpec && extraIndexSpec.indexCols.length > 0 && extraIndexSpec.indexRows.length > 0;
@@ -343,6 +357,7 @@ import { isSqliteMode } from '../table/storage-mode';
                       placement: extraIndexPlacement,
                       usedOrderSet: usedOrders,
                       enabled: extraIndexEntryEnabled,
+                      marker: markerBase,
                   });
                   newGeneratedNames.push(...extraBlock.names);
                   postCreateOrderFixPlan.push(...extraBlock.plans);
@@ -357,7 +372,7 @@ import { isSqliteMode } from '../table/storage-mode';
                   if (config.entryType === 'keyword' && keys.length === 0) return;
 
                   const mainOrder = allocOrder_ACU(usedOrders, toIntOrFallback_ACU(entryPlacement.order, nextCustomExportOrder), 1, 99999);
-                  const fullComment = getImportEntryName(entryName);
+                  const fullComment = getImportEntryName(entryName, { ...markerBase, entryName, role: 'main' });
                   newGeneratedNames.push(fullComment);
                   postCreateOrderFixPlan.push({ comment: fullComment, order: mainOrder, placement: entryPlacement });
                   entriesToCreate.push(applyPlacementToEntry_ACU({
@@ -380,6 +395,7 @@ import { isSqliteMode } from '../table/storage-mode';
                           placement: extraIndexPlacement,
                           usedOrderSet: usedOrders,
                           enabled: extraIndexEntryEnabled,
+                          marker: markerBase,
                       });
                       newGeneratedNames.push(...extraBlock.names);
                       postCreateOrderFixPlan.push(...extraBlock.plans);
@@ -421,7 +437,7 @@ import { isSqliteMode } from '../table/storage-mode';
 
                   // 在拆分模式下，如果存在包裹模板，先追加前置常量条目（包含表头）
                   if (use3DepthWrapperGroup && hasWrapperBefore) {
-                      const wrapperName = getImportEntryName(`${(config.entryName || tableName)}-包裹-上`);
+                      const wrapperName = getImportEntryName(`${(config.entryName || tableName)}-包裹-上`, { ...markerBase, role: 'wrapper_before' });
                       newGeneratedNames.push(wrapperName);
                       postCreateOrderFixPlan.push({ comment: wrapperName, order: orderCursor, placement: entryPlacement });
                       const wrapperContent = [wrapperParts.before, headerMarkdown].filter(Boolean).join('\n\n').trim();
@@ -429,7 +445,7 @@ import { isSqliteMode } from '../table/storage-mode';
                           comment: wrapperName, content: wrapperContent, keys: [], enabled: true, type: 'constant', prevent_recursion: true, order: orderCursor++
                       }, entryPlacement));
                   } else if (!useWrapperEntries && mainHeaders.length > 0) {
-                      const headerName = getImportEntryName(`${(config.entryName || tableName)}-表头`);
+                      const headerName = getImportEntryName(`${(config.entryName || tableName)}-表头`, { ...markerBase, role: 'header' });
                       newGeneratedNames.push(headerName);
                       postCreateOrderFixPlan.push({ comment: headerName, order: orderCursor, placement: entryPlacement });
                       rowEntries.push(applyPlacementToEntry_ACU({
@@ -456,7 +472,7 @@ import { isSqliteMode } from '../table/storage-mode';
 
                       const rowTableMarkdown = mainHeaders.length > 0 ? `| ${rowData.join(' | ')} |\n` : '';
                       const finalContent = buildEntryContent(entryName, rowTableMarkdown, config.injectionTemplate, useWrapperEntries, null, true);
-                      const fullComment = getImportEntryName(entryName);
+                      const fullComment = getImportEntryName(entryName, { ...markerBase, role: 'row', rowIndex: i + 1 });
                       newGeneratedNames.push(fullComment);
                       postCreateOrderFixPlan.push({ comment: fullComment, order: dataOrder, placement: entryPlacement });
                       rowEntries.push(applyPlacementToEntry_ACU({
@@ -466,7 +482,7 @@ import { isSqliteMode } from '../table/storage-mode';
                   });
 
                   if (use3DepthWrapperGroup && hasWrapperAfter) {
-                      const wrapperName = getImportEntryName(`${(config.entryName || tableName)}-包裹-下`);
+                      const wrapperName = getImportEntryName(`${(config.entryName || tableName)}-包裹-下`, { ...markerBase, role: 'wrapper_after' });
                       newGeneratedNames.push(wrapperName);
                       postCreateOrderFixPlan.push({ comment: wrapperName, order: orderCursor, placement: entryPlacement });
                       rowEntries.push(applyPlacementToEntry_ACU({
@@ -479,6 +495,7 @@ import { isSqliteMode } from '../table/storage-mode';
                           exportPrefix, extraIndexSpec, templateStr: config.extraIndexInjectionTemplate,
                           startOrder: toIntOrFallback_ACU(extraIndexPlacement.order, orderCursor),
                           placement: extraIndexPlacement, usedOrderSet: usedOrders, enabled: extraIndexEntryEnabled,
+                          marker: markerBase,
                       });
                       newGeneratedNames.push(...extraBlock.names);
                       postCreateOrderFixPlan.push(...extraBlock.plans);
@@ -511,7 +528,7 @@ import { isSqliteMode } from '../table/storage-mode';
                           : `# ${tableName}`;
 
                       if (useWrapperBlock && hasWrapperBefore) {
-                          const wrapperName = getImportEntryName(`${entryName}-包裹-上`);
+                          const wrapperName = getImportEntryName(`${entryName}-包裹-上`, { ...markerBase, entryName, role: 'wrapper_before' });
                           const wrapperContent = [wrapperParts.before, tableHeader].filter(Boolean).join('\n\n').trim();
                           newGeneratedNames.push(wrapperName);
                           postCreateOrderFixPlan.push({ comment: wrapperName, order: cursor, placement: entryPlacement });
@@ -519,7 +536,7 @@ import { isSqliteMode } from '../table/storage-mode';
                               comment: wrapperName, content: wrapperContent, keys: [], enabled: true, type: 'constant', prevent_recursion: true, order: cursor++
                           }, entryPlacement));
                       } else if (!useWrapperEntries && mainHeaders.length > 0) {
-                          const headerName = getImportEntryName(`${entryName}-表头`);
+                          const headerName = getImportEntryName(`${entryName}-表头`, { ...markerBase, entryName, role: 'header' });
                           newGeneratedNames.push(headerName);
                           postCreateOrderFixPlan.push({ comment: headerName, order: cursor, placement: entryPlacement });
                           blockEntries.push(applyPlacementToEntry_ACU({
@@ -529,7 +546,7 @@ import { isSqliteMode } from '../table/storage-mode';
 
                       const mainBody = buildMarkdownTableFromRows_ACU(mainHeaders, mainRows);
                       const mainContent = buildEntryContent(entryName, mainBody, config.injectionTemplate, useWrapperBlock, '$1');
-                      const fullComment = getImportEntryName(entryName);
+                      const fullComment = getImportEntryName(entryName, { ...markerBase, entryName, role: 'main' });
                       newGeneratedNames.push(fullComment);
                       postCreateOrderFixPlan.push({ comment: fullComment, order: cursor, placement: entryPlacement });
                       blockEntries.push(applyPlacementToEntry_ACU({
@@ -538,7 +555,7 @@ import { isSqliteMode } from '../table/storage-mode';
                       }, entryPlacement));
 
                       if (useWrapperBlock && hasWrapperAfter) {
-                          const wrapperName = getImportEntryName(`${entryName}-包裹-下`);
+                          const wrapperName = getImportEntryName(`${entryName}-包裹-下`, { ...markerBase, entryName, role: 'wrapper_after' });
                           newGeneratedNames.push(wrapperName);
                           postCreateOrderFixPlan.push({ comment: wrapperName, order: cursor, placement: entryPlacement });
                           blockEntries.push(applyPlacementToEntry_ACU({
@@ -550,6 +567,7 @@ import { isSqliteMode } from '../table/storage-mode';
                           exportPrefix, extraIndexSpec, templateStr: config.extraIndexInjectionTemplate,
                           startOrder: toIntOrFallback_ACU(extraIndexPlacement.order, cursor),
                           placement: extraIndexPlacement, usedOrderSet: usedOrders, enabled: extraIndexEntryEnabled,
+                          marker: markerBase,
                       });
                       newGeneratedNames.push(...extraBlock.names);
                       postCreateOrderFixPlan.push(...extraBlock.plans);
@@ -568,12 +586,12 @@ import { isSqliteMode } from '../table/storage-mode';
                   if (config.entryType === 'keyword' && keys.length === 0) return;
 
                   // [合并逻辑] 检查是否可以合并
-                  const mergeKey = `${entryName}|${config.entryType || 'constant'}|${keys.sort().join(',')}`;
+                  const mergeKey = `${entryName}|${config.entryType || 'constant'}|${keys.sort().join(',')}${isImport ? `|${sheetKey}` : ''}`;
                   
                   if (!mergedEntriesMap[mergeKey]) {
                       mergedEntriesMap[mergeKey] = {
                           entryName: entryName, entryType: config.entryType || 'constant', keywords: keys,
-                          preventRecursion: config.preventRecursion !== false, sheetKeys: [], tableContents: [],
+                          preventRecursion: config.preventRecursion !== false, sheetKeys: [], tableContents: [], tableName: String(tableName || sheetKey),
                           injectionTemplate: config.injectionTemplate, wrapperParts: wrapperParts,
                           useWrapperEntries: useWrapperEntries, entryPlacement: entryPlacement
                       };
@@ -624,9 +642,17 @@ import { isSqliteMode } from '../table/storage-mode';
               const preferredBlockStart = calcPreferredBlockStart_ACU(preferredMainOrder, leadingSlots, nextCustomExportOrder);
               const baseOrder = allocConsecutiveOrderBlock_ACU(usedOrders, Math.max(1, blockSize), preferredBlockStart, 1, 99999);
               let cursor = baseOrder;
+              const groupMarker = {
+                  sheetKey: String(group.sheetKeys[0] || ''),
+                  tableName: String(group.tableName || ''),
+                  entryName: String(group.entryName || ''),
+              };
+              const getMergedEntryComment_ACU = (name: string, role: ExternalCustomTableExportMarker_ACU['role']) => isImport
+                  ? getImportEntryName(name, { ...groupMarker, role })
+                  : `${exportPrefix}${name}`;
 
               if (useWrapperEntries && wrapperParts?.before) {
-                  const wrapperName = `${exportPrefix}${group.entryName}-包裹-上`;
+                  const wrapperName = getMergedEntryComment_ACU(`${group.entryName}-包裹-上`, 'wrapper_before');
                   newGeneratedNames.push(wrapperName);
                   const wrapperContent = [wrapperParts.before, allHeadersContent].filter(Boolean).join('\n\n').trim();
                   postCreateOrderFixPlan.push({ comment: wrapperName, order: cursor, placement: groupPlacement });
@@ -634,7 +660,7 @@ import { isSqliteMode } from '../table/storage-mode';
                       comment: wrapperName, content: wrapperContent, keys: [], enabled: true, type: 'constant', prevent_recursion: true, order: cursor++
                   }, groupPlacement));
               } else if (!useWrapperEntries && allHeadersContent) {
-                  const headerName = `${exportPrefix}${group.entryName}-表头`;
+                  const headerName = getMergedEntryComment_ACU(`${group.entryName}-表头`, 'header');
                   newGeneratedNames.push(headerName);
                   postCreateOrderFixPlan.push({ comment: headerName, order: cursor, placement: groupPlacement });
                   blockEntries.push(applyPlacementToEntry_ACU({
@@ -643,7 +669,7 @@ import { isSqliteMode } from '../table/storage-mode';
               }
 
               const finalContent = buildEntryContent(group.entryName, combinedTableData, group.injectionTemplate, useWrapperEntries, '$1');
-              const fullComment = `${exportPrefix}${group.entryName}`;
+              const fullComment = getMergedEntryComment_ACU(group.entryName, 'main');
               newGeneratedNames.push(fullComment);
               postCreateOrderFixPlan.push({ comment: fullComment, order: cursor, placement: groupPlacement });
               blockEntries.push(applyPlacementToEntry_ACU({
@@ -652,7 +678,7 @@ import { isSqliteMode } from '../table/storage-mode';
               }, groupPlacement));
 
               if (useWrapperEntries && wrapperParts?.after) {
-                  const wrapperName = `${exportPrefix}${group.entryName}-包裹-下`;
+                  const wrapperName = getMergedEntryComment_ACU(`${group.entryName}-包裹-下`, 'wrapper_after');
                   newGeneratedNames.push(wrapperName);
                   postCreateOrderFixPlan.push({ comment: wrapperName, order: cursor, placement: groupPlacement });
                   blockEntries.push(applyPlacementToEntry_ACU({

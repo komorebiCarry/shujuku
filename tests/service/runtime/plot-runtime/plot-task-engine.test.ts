@@ -18,6 +18,7 @@ const {
   mockBuildCombinedWorldbookContentByStrategy,
   mockCollectCombinedWorldbookEntriesByStrategy,
   mockFormatCombinedWorldbookEntries,
+  mockGetWorldBooks,
   mockEnsurePlotTasksCompat,
   mockGetPlotPromptContentById,
   mockNormalizePlotTask,
@@ -50,6 +51,8 @@ const {
   mockWriteFinalGenerationGreenlights,
   mockResolveAgentWorldbookFilterAvailability,
   mockResolvePreTakeoverSnapshot,
+  mockIsDatabaseGeneratedLorebookEntry,
+  mockResolveGeneratedEntriesForTable,
 } = vi.hoisted(() => {
   const mockAbortControllerRef = { value: null as any };
   const mockCurrentJsonTableDataRef = {
@@ -93,6 +96,7 @@ const {
     mockBuildCombinedWorldbookContentByStrategy: vi.fn(),
     mockCollectCombinedWorldbookEntriesByStrategy: vi.fn(),
     mockFormatCombinedWorldbookEntries: vi.fn(),
+    mockGetWorldBooks: vi.fn(),
     mockEnsurePlotTasksCompat: vi.fn(),
     mockGetPlotPromptContentById: vi.fn(),
     mockNormalizePlotTask: vi.fn(),
@@ -125,6 +129,8 @@ const {
     mockWriteFinalGenerationGreenlights: vi.fn(),
     mockResolveAgentWorldbookFilterAvailability: vi.fn(),
     mockResolvePreTakeoverSnapshot: vi.fn(),
+    mockIsDatabaseGeneratedLorebookEntry: vi.fn(),
+    mockResolveGeneratedEntriesForTable: vi.fn(),
   };
 });
 
@@ -171,6 +177,12 @@ vi.mock('../../../../src/service/worldbook/pipeline', () => ({
   buildCombinedWorldbookContentByStrategy_ACU: mockBuildCombinedWorldbookContentByStrategy,
   collectCombinedWorldbookEntriesByStrategy_ACU: mockCollectCombinedWorldbookEntriesByStrategy,
   formatCombinedWorldbookEntries_ACU: mockFormatCombinedWorldbookEntries,
+  getWorldBooks_ACU: mockGetWorldBooks,
+}));
+
+vi.mock('../../../../src/service/worldbook/worldbook-placeholder-classification', () => ({
+  isDatabaseGeneratedLorebookEntry_ACU: mockIsDatabaseGeneratedLorebookEntry,
+  resolveGeneratedEntriesForTable_ACU: mockResolveGeneratedEntriesForTable,
 }));
 
 vi.mock('../../../../src/shared/utils', () => ({
@@ -307,6 +319,15 @@ beforeEach(() => {
   mockBuildCombinedWorldbookContentByStrategy.mockResolvedValue('世界书内容');
   mockCollectCombinedWorldbookEntriesByStrategy.mockResolvedValue([]);
   mockFormatCombinedWorldbookEntries.mockReturnValue('');
+  mockGetWorldBooks.mockResolvedValue([]);
+  mockIsDatabaseGeneratedLorebookEntry.mockImplementation((entry: any) => {
+    const comment = String(entry?.comment || entry?.name || '');
+    return comment.startsWith('TavernDB-ACU-') && !comment.startsWith('外部导入-');
+  });
+  mockResolveGeneratedEntriesForTable.mockImplementation((entries: any[], tableName: string) => {
+    if (tableName !== '关系档案') return [];
+    return entries.filter((entry: any) => entry.bookName === '剧情书' && entry.uid === 7);
+  });
   mockResolvePreTakeoverSnapshot.mockResolvedValue({
     snapshot: { active: false, selectionSignature: '', createdAt: 0, books: {} },
     expectedSignature: 'signature:["Agent书"]',
@@ -475,7 +496,9 @@ describe('getWorldbookContentForPlot_ACU', () => {
     expect(options.formatEntry(greenlightEntry)).toBe('剧情推进绿灯正文');
     expect(options.formatEntry(greenlightEntry)).not.toContain('TavernDB-ACU-AgentGreenlight');
     expect(options.formatEntry(greenlightEntry)).not.toContain('#');
-    expect(options.formatEntry(normalEntry)).toBe('# 普通条目\n普通正文');
+    expect(options.formatEntry(normalEntry)).toBe('普通正文');
+    expect(options.formatEntry(normalEntry)).not.toContain('普通条目');
+    expect(options.formatEntry(normalEntry)).not.toContain('#');
     expect(options.includeEntry({ bookName: '书A', uid: 8, normalizedComment: 'TavernDB-ACU-OutlineTable-1', blocked: true })).toBe(false);
     expect(options.entryStateView).toBe('live');
     expect(options.entryStateSnapshot).toBeUndefined();
@@ -662,6 +685,24 @@ describe('getWorldbookContentForPlot_ACU', () => {
 
     expect(result).toBe('');
     expect(mockBuildCombinedWorldbookContentByStrategy).not.toHaveBeenCalled();
+  });
+
+  it('将 $9 与表名 resolver 的 collector 筛选选项完整透传，并保留旧调用默认值', async () => {
+    const excludeEntry = vi.fn((entry: any) => entry.uid === 9);
+    const entryScope = vi.fn((entry: any) => entry.uid === 7);
+
+    await getWorldbookContentForPlot_ACU(
+      { plotWorldbookConfig: { source: 'manual', manualSelection: ['剧情书'] } },
+      '当前输入',
+      '任务标签内容',
+      { excludeEntry, entryScope, includeGeneratedEntries: true },
+    );
+
+    const options = mockBuildCombinedWorldbookContentByStrategy.mock.calls[0][0];
+    expect(options.excludeEntry).toBe(excludeEntry);
+    expect(options.entryScope).toBe(entryScope);
+    expect(options.includeGeneratedEntries).toBe(true);
+    expect(options.baseScanText).toContain('任务标签内容');
   });
 });
 
@@ -1285,5 +1326,148 @@ describe('runPlotTasksRuntime_ACU', () => {
     expect(allCalls[0][1]).toBe('stage1-preset');
     // stage 2 任务无显式 preset，回退到全局
     expect(allCalls[1][1]).toBe('global-default');
+  });
+
+  it('任务提示词中的 $9 只收集非数据库生成条目，且 Agent 绿灯不能复活被排除条目', async () => {
+    mockResolveAgentWorldbookFilterAvailability.mockResolvedValueOnce({
+      available: true,
+      reason: 'available',
+      configuredMode: 'agent',
+      control: { mode: 'agent', agentPlotExecutionMode: 'sequential' },
+      configSource: 'worldbook',
+      skillCount: 1,
+      bookNames: ['剧情书'],
+      skillMetas: [],
+    });
+    mockRunAgentDecisionForPlot.mockResolvedValueOnce({
+      active: true,
+      taskPlan: [],
+      plotGreenlights: { 'task-nine': [{ bookName: '剧情书', uid: 9, reason: '错误绿灯' }] },
+      finalGenerationGreenlights: [],
+      effectiveTasks: [{
+        id: 'task-nine',
+        name: '数据库排除',
+        description: '需要世界书',
+        stage: 1,
+        order: 1,
+        maxRetries: 1,
+        promptGroup: [{ role: 'user', content: '重复 $9 / $9' }],
+      }],
+    });
+    mockBuildCombinedWorldbookContentByStrategy.mockImplementation(async (options: any) => {
+      if (typeof options.excludeEntry === 'function') return '外部导入内容';
+      return '普通世界书内容';
+    });
+
+    await runPlotTasksRuntime_ACU({
+      plotWorldbookConfig: { source: 'manual', manualSelection: ['剧情书'] },
+      tasks: [{
+        id: 'task-nine',
+        name: '数据库排除',
+        description: '需要世界书',
+        stage: 1,
+        order: 1,
+        maxRetries: 1,
+        promptGroup: [{ role: 'user', content: '重复 $9 / $9' }],
+      }],
+    }, '当前输入');
+
+    const databaseExcludedOptions = mockBuildCombinedWorldbookContentByStrategy.mock.calls
+      .map((call: any[]) => call[0])
+      .find((options: any) => typeof options.excludeEntry === 'function');
+    expect(databaseExcludedOptions).toBeDefined();
+    expect(databaseExcludedOptions.excludeEntry({ comment: 'TavernDB-ACU-CustomExport-关系档案', uid: 9 })).toBe(true);
+    expect(databaseExcludedOptions.excludeEntry({ comment: '外部导入-关系档案', uid: 10 })).toBe(false);
+    expect(databaseExcludedOptions.forceIncludeEntry({ bookName: '剧情书', uid: 9 })).toBe(true);
+    expect(mockCallApiWithPlotPreset.mock.calls[0][0][0].content).toBe('重复 \n<worldbook_context>\n外部导入内容\n</worldbook_context>\n / \n<worldbook_context>\n外部导入内容\n</worldbook_context>\n');
+  });
+
+  it('在 EJS 前解析唯一 {{表格名}}，只放行精确 scope，并保留未知 token', async () => {
+    mockCurrentJsonTableDataRef.value = {
+      relation_sheet: { name: '关系档案', exportConfig: { entryName: '关系档案' } },
+    };
+    mockGetWorldBooks.mockResolvedValue([{ name: '剧情书', entries: [{ uid: 7, comment: 'TavernDB-ACU-CustomExport-关系档案' }] }]);
+    const renderOrder: string[] = [];
+    mockTryRenderPlotTemplateWithEjs.mockImplementation(async (text: string) => {
+      renderOrder.push(text);
+      return text;
+    });
+    mockBuildCombinedWorldbookContentByStrategy.mockImplementation(async (options: any) => {
+      if (typeof options.entryScope === 'function') return '关系档案世界书';
+      return '普通世界书内容';
+    });
+
+    await runPlotTasksRuntime_ACU({
+      plotWorldbookConfig: { source: 'manual', manualSelection: ['剧情书'] },
+      tasks: [{
+        id: 'task-table', name: '表名解析', stage: 1, order: 1, maxRetries: 1,
+        promptGroup: [{ role: 'user', content: '表 {{关系档案}} 与 {{未知表}}' }],
+      }],
+    }, '当前输入');
+
+    const triggerPromptGroup = mockBuildTaskWorldbookTriggerText.mock.calls
+      .map((call: any[]) => call[0])
+      .find((promptGroup: any[]) => promptGroup?.[0]?.content?.includes('{{未知表}}'));
+    expect(triggerPromptGroup?.[0]?.content).not.toContain('{{关系档案}}');
+    expect(triggerPromptGroup?.[0]?.content).toContain('{{未知表}}');
+    expect(triggerPromptGroup?.[0]?.content).toBe('表  与 {{未知表}}');
+
+    const scopeOptions = mockBuildCombinedWorldbookContentByStrategy.mock.calls
+      .map((call: any[]) => call[0])
+      .find((options: any) => typeof options.entryScope === 'function');
+    expect(mockResolveGeneratedEntriesForTable).toHaveBeenCalledWith(
+      [{ bookName: '剧情书', uid: 7, comment: 'TavernDB-ACU-CustomExport-关系档案' }],
+      '关系档案',
+      mockCurrentJsonTableDataRef.value,
+    );
+    expect(scopeOptions.includeGeneratedEntries).toBe(true);
+    expect(scopeOptions.entryScope({ bookName: '剧情书', uid: 7 })).toBe(true);
+    expect(scopeOptions.entryScope({ bookName: '剧情书', uid: 8 })).toBe(false);
+    expect(renderOrder.some(text => text.includes('<worldbook_context>\n关系档案世界书\n</worldbook_context>'))).toBe(true);
+    expect(mockCallApiWithPlotPreset.mock.calls[0][0][0].content).toContain('{{未知表}}');
+  });
+
+  it('唯一当前表名没有可用导出条目时替换为空，不保留 token', async () => {
+    mockCurrentJsonTableDataRef.value = {
+      empty_sheet: { name: '空表', exportConfig: { entryName: '空表' } },
+    };
+    mockGetWorldBooks.mockResolvedValue([{ name: '剧情书', entries: [] }]);
+
+    await runPlotTasksRuntime_ACU({
+      plotWorldbookConfig: { source: 'manual', manualSelection: ['剧情书'] },
+      tasks: [{
+        id: 'task-empty-table', name: '空表解析', stage: 1, order: 1, maxRetries: 1,
+        promptGroup: [{ role: 'user', content: '表={{空表}}' }],
+      }],
+    }, '当前输入');
+
+    expect(mockResolveGeneratedEntriesForTable).toHaveBeenCalledWith([], '空表', mockCurrentJsonTableDataRef.value);
+    expect(mockCallApiWithPlotPreset.mock.calls[0][0][0].content).toBe('表=');
+  });
+
+  it('重名中文表名不作为表名占位符解析，并保留给既有渲染链路', async () => {
+    mockCurrentJsonTableDataRef.value = {
+      relation_a: { name: '关系档案', exportConfig: { entryName: '关系档案A' } },
+      relation_b: { name: '关系档案', exportConfig: { entryName: '关系档案B' } },
+    };
+    mockGetWorldBooks.mockResolvedValue([{ name: '剧情书', entries: [
+      { uid: 7, comment: 'TavernDB-ACU-CustomExport-关系档案A' },
+      { uid: 8, comment: 'TavernDB-ACU-CustomExport-关系档案B' },
+    ] }]);
+
+    await runPlotTasksRuntime_ACU({
+      plotWorldbookConfig: { source: 'manual', manualSelection: ['剧情书'] },
+      tasks: [{
+        id: 'task-duplicate-table', name: '重名表解析', stage: 1, order: 1, maxRetries: 1,
+        promptGroup: [{ role: 'user', content: '表={{关系档案}}' }],
+      }],
+    }, '当前输入');
+
+    expect(mockResolveGeneratedEntriesForTable).not.toHaveBeenCalled();
+    expect(mockBuildCombinedWorldbookContentByStrategy.mock.calls.some((call: any[]) => (
+      typeof call[0]?.entryScope === 'function'
+    ))).toBe(false);
+    expect(mockBuildTaskWorldbookTriggerText.mock.calls[0][0][0].content).toBe('表={{关系档案}}');
+    expect(mockCallApiWithPlotPreset.mock.calls[0][0][0].content).toBe('表={{关系档案}}');
   });
 });

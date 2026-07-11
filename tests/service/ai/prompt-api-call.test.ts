@@ -147,6 +147,7 @@ beforeEach(() => {
   mockSettings.streamingEnabled = false;
   mockSettings.promptTemplateSettings = { enabled: true };
 
+  mockApplyExcludeRulesToText.mockImplementation((text: string) => text);
   mockGetApiConfigByPreset.mockReturnValue({
     apiMode: 'custom',
     apiConfig: { useMainApi: true, url: '', model: '', max_tokens: 4096 },
@@ -227,9 +228,9 @@ describe('handleApiResponse_ACU', () => {
 
 // ═══ callCustomOpenAI_ACU — prompt 组装 ═══
 describe('callCustomOpenAI_ACU — prompt 组装', () => {
-  it('占位符 $0/$1/$4/$6/$8/$U/$C 被正确替换', async () => {
+  it('占位符 $0/$1/$4/$6/$8/$9/$U/$C 被正确替换', async () => {
     mockSettings.charCardPrompt = [
-      { role: 'USER', content: '表格:$0 消息:$1 世界书:$4 剧情:$6 额外:$8 用户:$U 角色:$C' },
+      { role: 'USER', content: '表格:$0 消息:$1 世界书:$4 剧情:$6 额外:$8 内部已排除世界书:$9/$9 用户:$U 角色:$C' },
     ];
     mockGetApiConfigByPreset.mockReturnValue({
       apiMode: 'custom',
@@ -242,6 +243,7 @@ describe('callCustomOpenAI_ACU — prompt 组装', () => {
       tableDataText: '表格数据',
       messagesText: '消息数据',
       worldbookContent: '世界书数据',
+      worldbookDatabaseExcludedContent: '仅保留非内部条目',
       manualExtraHint: '额外提示',
     });
 
@@ -254,6 +256,7 @@ describe('callCustomOpenAI_ACU — prompt 组装', () => {
     expect(content).toContain('世界书数据');
     expect(content).toContain('上轮剧情');
     expect(content).toContain('额外提示');
+    expect(content).toContain('内部已排除世界书:仅保留非内部条目/仅保留非内部条目');
     expect(content).toContain('用户设定');
     expect(content).toContain('角色描述');
     expect(content).not.toContain('$0');
@@ -291,6 +294,38 @@ describe('callCustomOpenAI_ACU — prompt 组装', () => {
 
     const content = mockGenerateRaw.mock.calls[0][0].ordered_prompts[0].content;
     expect(content).toBe('用户:');
+  });
+
+  it('在 EJS 之前替换已确认的表名 token，并将未知 token 原样保留', async () => {
+    mockSettings.charCardPrompt = [{ role: 'USER', content: '表:{{人物关系表}} 未知:{{不存在的表}}' }];
+    mockGenerateRaw.mockResolvedValue('AI回复');
+    const ejsEvaluate = vi.fn(async (content: string) => content);
+    (globalThis as any).EjsTemplate = { evalTemplate: ejsEvaluate };
+    const resolveTableWorldbookContent = vi.fn(async (tableName: string) => (
+      tableName.trim() === '人物关系表' ? '<worldbook_context>\n关系正文\n</worldbook_context>' : null
+    ));
+
+    await callCustomOpenAI_ACU({ resolveTableWorldbookContent });
+
+    expect(resolveTableWorldbookContent).toHaveBeenCalledWith('人物关系表');
+    expect(resolveTableWorldbookContent).toHaveBeenCalledWith('不存在的表');
+    expect(ejsEvaluate).toHaveBeenCalledWith('表:<worldbook_context>\n关系正文\n</worldbook_context> 未知:{{不存在的表}}');
+    const content = mockGenerateRaw.mock.calls[0][0].ordered_prompts[0].content;
+    expect(content).toContain('<worldbook_context>\n关系正文\n</worldbook_context>');
+    expect(content).toContain('{{不存在的表}}');
+    delete (globalThis as any).EjsTemplate;
+  });
+
+  it('$9 按填表上下文排除规则过滤', async () => {
+    mockSettings.charCardPrompt = [{ role: 'USER', content: '$9' }];
+    mockSettings.tableContextExcludeRules = ['已排除'];
+    mockApplyExcludeRulesToText.mockImplementation((text: string) => text === '已排除的世界书正文' ? '过滤后的世界书' : text);
+    mockGenerateRaw.mockResolvedValue('AI回复');
+
+    await callCustomOpenAI_ACU({ worldbookDatabaseExcludedContent: '已排除的世界书正文' });
+
+    expect(mockApplyExcludeRulesToText).toHaveBeenCalledWith('已排除的世界书正文', expect.any(Object));
+    expect(mockGenerateRaw.mock.calls[0][0].ordered_prompts[0].content).toBe('过滤后的世界书');
   });
 });
 

@@ -9,7 +9,8 @@ import { abortController_ACU, currentJsonTableData_ACU, planningGuard_ACU, setti
 import { getCharLorebooks_ACU } from '../../../data/gateways/character-gateway';
 import { getChatArray_ACU } from '../../../data/gateways/chat-gateway';
 import { getPersonaDescription_ACU, getCharDescription_ACU } from '../../../data/gateways/host-state-gateway';
-import { buildCombinedWorldbookContentByStrategy_ACU, collectCombinedWorldbookEntriesByStrategy_ACU, formatCombinedWorldbookEntries_ACU } from '../../worldbook/pipeline';
+import { buildCombinedWorldbookContentByStrategy_ACU, collectCombinedWorldbookEntriesByStrategy_ACU, formatCombinedWorldbookEntries_ACU, getWorldBooks_ACU } from '../../worldbook/pipeline';
+import { isDatabaseGeneratedLorebookEntry_ACU, resolveGeneratedEntriesForTable_ACU } from '../../worldbook/worldbook-placeholder-classification';
 import { escapeRegExp_ACU, hashUserInput_ACU, isEntryBlocked_ACU, logDebug_ACU, logError_ACU, logWarn_ACU, normalizeNonNegativeInteger_ACU, normalizePositiveInteger_ACU, normalizeExcludeRules_ACU, normalizeExtractRules_ACU } from '../../../shared/utils';
 import { ensurePlotTasksCompat_ACU, getPlotPromptContentByIdFromSettings_ACU, normalizePlotTask_ACU, normalizePlotTasks_ACU } from '../../plot/plot-logic';
 import { parseRandomTags_ACU, replaceRandomVariables_ACU, getLatestAIMessageContent_ACU, replaceDbSqlVariables } from '../template-vars';
@@ -30,6 +31,9 @@ import { hasUsableWorldbookSkillMeta_ACU, resolveAgentWorldbookFilterAvailabilit
   type PlotWorldbookContentOptions_ACU = AgentWorldbookRef_ACU[] | {
     agentGreenlights?: AgentWorldbookRef_ACU[];
     agentMode?: PlotWorldbookAgentMode_ACU;
+    excludeEntry?: (entry: any) => boolean;
+    entryScope?: (entry: any) => boolean;
+    includeGeneratedEntries?: boolean;
   };
 
   function hasPlotTaskAgentSkill_ACU(task: Record<string, any> | null | undefined): boolean {
@@ -57,7 +61,13 @@ import { hasUsableWorldbookSkillMeta_ACU, resolveAgentWorldbookFilterAvailabilit
       return { agentGreenlights: options, agentMode: (options.length > 0 ? 'agent-controlled' : 'normal') as PlotWorldbookAgentMode_ACU };
     }
     const agentMode = options?.agentMode === 'agent-controlled' ? 'agent-controlled' : 'normal';
-    return { agentGreenlights: Array.isArray(options?.agentGreenlights) ? options.agentGreenlights : [], agentMode };
+    return {
+      agentGreenlights: Array.isArray(options?.agentGreenlights) ? options.agentGreenlights : [],
+      agentMode,
+      excludeEntry: typeof options?.excludeEntry === 'function' ? options.excludeEntry : undefined,
+      entryScope: typeof options?.entryScope === 'function' ? options.entryScope : undefined,
+      includeGeneratedEntries: options?.includeGeneratedEntries === true,
+    };
   }
 
   function checkPlotAbortRequested_ACU() {
@@ -213,8 +223,66 @@ import { hasUsableWorldbookSkillMeta_ACU, resolveAgentWorldbookFilterAvailabilit
     const plotExcludeRules = normalizeExcludeRules_ACU(plotSettings.contextExcludeRules, plotExcludeTags);
     const filterPlotInjectedContent = (value: any, placeholderKey: string = '') => {
       const text = value !== undefined && value !== null ? String(value) : '';
-      if (!['$1', '$5', '$6', '$7', '$8', '$U', '$C'].includes(placeholderKey)) return text;
+      if (!['$1', '$5', '$6', '$7', '$8', '$9', '$U', '$C'].includes(placeholderKey)) return text;
       return applyExcludeRulesToText_ACU(text, { excludeRules: plotExcludeRules, excludeTags: plotExcludeTags });
+    };
+
+    const isUniqueCurrentTableName = (tableName: string, tableData: Record<string, any>) => {
+      const normalizedTableName = String(tableName || '').trim();
+      if (!normalizedTableName || !tableData || typeof tableData !== 'object') return false;
+      return Object.values(tableData).filter((table: any) => (
+        table
+        && typeof table === 'object'
+        && String(table.name || '').trim() === normalizedTableName
+      )).length === 1;
+    };
+
+    const wrapWorldbookContext = (content: any, placeholderKey: string) => {
+      const filteredContent = filterPlotInjectedContent(content, placeholderKey);
+      return filteredContent ? `\n<worldbook_context>\n${filteredContent}\n</worldbook_context>\n` : '';
+    };
+
+    const resolveTableWorldbookContent = async (
+      tableName: string,
+      extraBaseText: string = '',
+      worldbookOptions: PlotWorldbookContentOptions_ACU = [],
+    ): Promise<string | null> => {
+      const normalizedTableName = String(tableName || '').trim();
+      const tableData = currentJsonTableData_ACU;
+      if (!isUniqueCurrentTableName(normalizedTableName, tableData)) return null;
+      try {
+        const worldbooks = await getWorldBooks_ACU();
+        const entries = worldbooks.flatMap((worldbook: any) => (Array.isArray(worldbook?.entries) ? worldbook.entries : [])
+          .map((entry: any) => ({ ...entry, bookName: String(worldbook?.name || '').trim() })));
+        const scopedEntries = resolveGeneratedEntriesForTable_ACU(entries, normalizedTableName, tableData);
+        if (scopedEntries.length === 0) return '';
+        const scopedKeys = new Set(scopedEntries.map((entry: any) => `${String(entry.bookName || '').trim()}\u0000${String(entry.uid || '').trim()}`));
+        const content = await getWorldbookContentForPlot_ACU(plotSettings, userMessage, extraBaseText, {
+          ...worldbookOptions,
+          includeGeneratedEntries: true,
+          entryScope: (entry: any) => scopedKeys.has(`${String(entry.bookName || '').trim()}\u0000${String(entry.uid || '').trim()}`),
+        });
+        return wrapWorldbookContext(content, '$1');
+      } catch (error) {
+        logWarn_ACU(`[剧情推进] 无法解析表名占位符 "${normalizedTableName}"，保留原 token。`,error);
+        return null;
+      }
+    };
+
+    const resolveTableWorldbookTokens = async (
+      text: string,
+      extraBaseText: string = '',
+      worldbookOptions: PlotWorldbookContentOptions_ACU = [],
+    ) => {
+      if (!text || !text.includes('{{')) return text;
+      const resolvedByToken = new Map<string, string | null>();
+      const tokens = [...text.matchAll(/\{\{([^{}]+)\}\}/g)];
+      for (const token of tokens) {
+        const rawToken = token[0];
+        if (resolvedByToken.has(rawToken)) continue;
+        resolvedByToken.set(rawToken, await resolveTableWorldbookContent(token[1], extraBaseText, worldbookOptions));
+      }
+      return text.replace(/\{\{([^{}]+)\}\}/g, (rawToken) => resolvedByToken.get(rawToken) ?? rawToken);
     };
 
     const sanitizeHtml = (htmlString: string): string => {
@@ -267,6 +335,7 @@ import { hasUsableWorldbookSkillMeta_ACU, resolveAgentWorldbookFilterAvailabilit
       $6: lastPlotContent,
       $7: contextInjectionText,
       $8: userMessage,
+      $9: '',
       $U: userInfoContent_Plot,
       $C: charInfoContent_Plot,
     };
@@ -279,12 +348,15 @@ import { hasUsableWorldbookSkillMeta_ACU, resolveAgentWorldbookFilterAvailabilit
       const effectiveWorldbookContent = taskOverrides.$1 !== undefined
         ? String(taskOverrides.$1)
         : worldbookContent;
-      const worldbookReplacement = effectiveWorldbookContent
-        ? `\n<worldbook_context>\n${filterPlotInjectedContent(effectiveWorldbookContent, '$1')}\n</worldbook_context>\n`
-        : '';
-      processed = processed.replace(/(?<!\\)\$1/g, worldbookReplacement);
+      processed = processed.replace(/(?<!\\)\$1/g, wrapWorldbookContext(effectiveWorldbookContent, '$1'));
+
+      const effectiveDatabaseExcludedWorldbookContent = taskOverrides.$9 !== undefined
+        ? String(taskOverrides.$9)
+        : String(replacements.$9 || '');
+      processed = processed.replace(/(?<!\\)\$9/g, wrapWorldbookContext(effectiveDatabaseExcludedWorldbookContent, '$9'));
 
       for (const key in replacements) {
+        if (key === '$9') continue;
         const value = taskOverrides[key] !== undefined ? taskOverrides[key] : replacements[key];
         const regex = new RegExp(escapeRegExp_ACU(key), 'g');
         const filteredValue = filterPlotInjectedContent(value, key);
@@ -300,6 +372,7 @@ import { hasUsableWorldbookSkillMeta_ACU, resolveAgentWorldbookFilterAvailabilit
     let rawFinal = getPlotPromptContentByIdFromSettings_ACU(plotSettings, 'finalSystemDirective')
       || plotSettings.finalSystemDirective
       || '';
+    rawFinal = await resolveTableWorldbookTokens(rawFinal);
     rawFinal = await tryRenderPlotTemplateWithEjs_ACU(rawFinal);
     const plotFinalDirective = performReplacements(rawFinal);
     let finalWithRandom = parseRandomTags_ACU(plotFinalDirective);
@@ -323,6 +396,7 @@ import { hasUsableWorldbookSkillMeta_ACU, resolveAgentWorldbookFilterAvailabilit
       userMessage,
       lastPlotContent,
       performReplacements,
+      resolveTableWorldbookTokens,
       finalSystemDirectiveContent,
       seedContentForConditional,
       recentContextMessages: Array.isArray(agentContextMessages) ? agentContextMessages : [],
@@ -343,10 +417,16 @@ import { hasUsableWorldbookSkillMeta_ACU, resolveAgentWorldbookFilterAvailabilit
     if (sharedContext.taskWorldbookContent !== undefined) {
       replacementOverrides.$1 = sharedContext.taskWorldbookContent;
     }
+    if (sharedContext.taskWorldbookDatabaseExcludedContent !== undefined) {
+      replacementOverrides.$9 = sharedContext.taskWorldbookDatabaseExcludedContent;
+    }
 
     for (const seg of messagesToUse) {
       if (!seg || typeof seg.content !== 'string') continue;
       let c = seg.content;
+      if (typeof sharedContext.resolveTaskTableWorldbookTokens === 'function') {
+        c = await sharedContext.resolveTaskTableWorldbookTokens(c);
+      }
       c = await tryRenderPlotTemplateWithEjs_ACU(c);
       c = sharedContext.performReplacements(c, replacementOverrides);
       c = replacePlotTagPlaceholders_ACU(c, relayTagMap, historyTagMap);
@@ -357,6 +437,28 @@ import { hasUsableWorldbookSkillMeta_ACU, resolveAgentWorldbookFilterAvailabilit
     return messagesToUse
       .filter(seg => seg && typeof seg.__renderedContent === 'string' && seg.__renderedContent.trim().length > 0)
       .map(seg => ({ role: getNormalizedPlotMessageRole_ACU(seg.role), content: seg.__renderedContent }));
+  }
+
+  function getPlotPromptGroupForWorldbookTrigger_ACU(promptGroup: any[]): any[] {
+    const tableNameCounts = new Map<string, number>();
+    for (const table of Object.values(currentJsonTableData_ACU || {})) {
+      const tableName = String((table as any)?.name || '').trim();
+      if (tableName) tableNameCounts.set(tableName, (tableNameCounts.get(tableName) || 0) + 1);
+    }
+    const uniqueTableNames = new Set([...tableNameCounts]
+      .filter(([, count]) => count === 1)
+      .map(([tableName]) => tableName));
+    if (uniqueTableNames.size === 0) return Array.isArray(promptGroup) ? promptGroup : [];
+
+    return (Array.isArray(promptGroup) ? promptGroup : []).map(segment => {
+      if (!segment || typeof segment.content !== 'string') return segment;
+      return {
+        ...segment,
+        content: segment.content.replace(/\{\{([^{}]+)\}\}/g, (token: string, tableName: string) => (
+          uniqueTableNames.has(String(tableName || '').trim()) ? '' : token
+        )),
+      };
+    });
   }
 
   async function executeSinglePlotTask_ACU(task: Record<string, any>, sharedContext: Record<string, any>, runtimeOptions: any = {}) {
@@ -375,13 +477,16 @@ import { hasUsableWorldbookSkillMeta_ACU, resolveAgentWorldbookFilterAvailabilit
     // - 若本轮已完成任务产出目标标签：优先用本轮 relayTagMap
     // - 否则回退到 historyTagMap / lastPlotContent（上一轮历史）
     let taskWorldbookContent = '';
+    let taskWorldbookDatabaseExcludedContent = '';
+    let resolveTaskTableWorldbookTokens: ((text: string) => Promise<string>) | undefined;
     try {
       const taskPlotContent = String(sharedContext.lastPlotContent || '');
       const effectiveRelayTagMap = runtimeOptions.relayTagMap instanceof Map
         ? runtimeOptions.relayTagMap
         : undefined;
       // 从任务 prompt 中提取 {{tag}}，按实际标签来源取对应内容，构造触发文本
-      const worldbookTriggerText = buildTaskWorldbookTriggerText_ACU(normalizedTask.promptGroup, taskPlotContent, effectiveRelayTagMap, runtimeOptions.historyTagMap);
+      const triggerPromptGroup = getPlotPromptGroupForWorldbookTrigger_ACU(normalizedTask.promptGroup);
+      const worldbookTriggerText = buildTaskWorldbookTriggerText_ACU(triggerPromptGroup, taskPlotContent, effectiveRelayTagMap, runtimeOptions.historyTagMap);
       if (worldbookTriggerText) {
         logDebug_ACU(`[剧情推进] [任务:${taskLabel}] 基于 {{tag}} 注入内容构造世界书触发文本，长度: ${worldbookTriggerText.length}`);
       } else {
@@ -392,10 +497,22 @@ import { hasUsableWorldbookSkillMeta_ACU, resolveAgentWorldbookFilterAvailabilit
       const taskAgentGreenlights = usesAgentWorldbook
         ? (sharedContext.agentDecision?.plotGreenlights?.[String(normalizedTask.id || '').trim()] || [])
         : [];
-      taskWorldbookContent = await getWorldbookContentForPlot_ACU(sharedContext.plotSettings, sharedContext.userMessage, worldbookTriggerText, {
+      const taskPromptGroup = Array.isArray(normalizedTask.promptGroup) ? normalizedTask.promptGroup : [];
+      const needsDatabaseExcludedWorldbook = taskPromptGroup.some((segment: any) => /(?<!\\)\$9/.test(String(segment?.content || '')));
+      const taskWorldbookOptions = {
         agentMode: usesAgentWorldbook && !forceNormalWorldbook ? 'agent-controlled' : 'normal',
         agentGreenlights: taskAgentGreenlights,
-      });
+      } as const;
+      const worldbookContents = await Promise.all([
+        getWorldbookContentForPlot_ACU(sharedContext.plotSettings, sharedContext.userMessage, worldbookTriggerText, taskWorldbookOptions),
+        needsDatabaseExcludedWorldbook
+          ? getWorldbookContentForPlot_ACU(sharedContext.plotSettings, sharedContext.userMessage, worldbookTriggerText, {
+          ...taskWorldbookOptions,
+          excludeEntry: isDatabaseGeneratedLorebookEntry_ACU,
+          })
+          : Promise.resolve(''),
+      ]);
+      [taskWorldbookContent, taskWorldbookDatabaseExcludedContent] = worldbookContents;
       if (taskWorldbookContent) {
         // 对任务级世界书内容执行与共享管线相同的后处理
         taskWorldbookContent = await tryRenderPlotTemplateWithEjs_ACU(taskWorldbookContent);
@@ -404,15 +521,30 @@ import { hasUsableWorldbookSkillMeta_ACU, resolveAgentWorldbookFilterAvailabilit
         taskWorldbookContent = replaceDbSqlVariables(taskWorldbookContent);
         logDebug_ACU(`[剧情推进] [任务:${taskLabel}] 任务级世界书内容长度: ${taskWorldbookContent.length}`);
       }
+      if (taskWorldbookDatabaseExcludedContent) {
+        taskWorldbookDatabaseExcludedContent = await tryRenderPlotTemplateWithEjs_ACU(taskWorldbookDatabaseExcludedContent);
+        taskWorldbookDatabaseExcludedContent = parseRandomTags_ACU(taskWorldbookDatabaseExcludedContent);
+        taskWorldbookDatabaseExcludedContent = replaceRandomVariables_ACU(taskWorldbookDatabaseExcludedContent);
+        taskWorldbookDatabaseExcludedContent = replaceDbSqlVariables(taskWorldbookDatabaseExcludedContent);
+      }
+
+      resolveTaskTableWorldbookTokens = (text: string) => sharedContext.resolveTableWorldbookTokens(
+        text,
+        worldbookTriggerText,
+        taskWorldbookOptions,
+      );
     } catch (wbError) {
-      logWarn_ACU(`[剧情推进] [任务:${taskLabel}] 任务级世界书计算失败，$1 将为空:`, wbError);
+      logWarn_ACU(`[剧情推进] [任务:${taskLabel}] 任务级世界书计算失败，$1/$9 将为空:`, wbError);
       taskWorldbookContent = '';
+      taskWorldbookDatabaseExcludedContent = '';
     }
 
-    // 构建任务级共享上下文：覆盖 $1 替换值，使 performReplacements 使用任务级世界书内容
+    // 构建任务级共享上下文：覆盖 $1/$9 替换值，并在 EJS 前解析表名占位符。
     const taskSharedContext = {
       ...sharedContext,
       taskWorldbookContent,
+      taskWorldbookDatabaseExcludedContent,
+      resolveTaskTableWorldbookTokens,
     };
 
     try {
@@ -819,17 +951,15 @@ import { hasUsableWorldbookSkillMeta_ACU, resolveAgentWorldbookFilterAvailabilit
       return await buildCombinedWorldbookContentByStrategy_ACU({
         logPrefix: '[剧情推进]',
         bookNames,
-        formatEntry: (entry: any) => {
-          const isAgentGreenlight = agentGreenlightKeySet.has(`${String(entry.bookName || '').trim()}\u0000${String(entry.uid || '').trim()}`);
-          if (isAgentGreenlight) return String(entry?.content || '').trim();
-          const comment = entry.comment || `Entry from ${entry.bookName}`;
-          return `# ${comment}\n${entry.content}`;
-        },
+        formatEntry: (entry: any) => String(entry?.content || '').trim(),
         baseScanText: [historyAndUserText, extraBaseText || ''].filter(Boolean).join('\n'),
         includeConstantEntriesInBaseScan: true,
         entryStateView,
         entryStateSnapshot,
         entryStateSnapshotSignature,
+        excludeEntry: worldbookOptions.excludeEntry,
+        entryScope: worldbookOptions.entryScope,
+        includeGeneratedEntries: worldbookOptions.includeGeneratedEntries,
         includeEntry: (entry: any) => {
           const normalizedComment = entry.normalizedComment || '';
           const isAgentGreenlight = agentGreenlightKeySet.has(`${String(entry.bookName || '').trim()}\u0000${String(entry.uid || '').trim()}`);

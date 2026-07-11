@@ -19,6 +19,7 @@ import {
   readAgentWorldbookControlFromWorldbooks_ACU,
   resolveAgentWorldbookScopeBookNames_ACU,
 } from './agent-worldbook-config-meta';
+import { isDatabaseGeneratedLorebookEntry_ACU } from '../worldbook/worldbook-placeholder-classification';
 
 export interface AgentSkillifyWorldbookEntrySummary_ACU {
   bookName: string;
@@ -123,46 +124,12 @@ export function getWorldbookEntryKeywordsForSkillify_ACU(entry: Record<string, a
   return [...new Set([...normalizeStringArray_ACU(entry?.keys), ...normalizeStringArray_ACU(entry?.key)])];
 }
 
-const DATABASE_GENERATED_WORLDBOOK_COMMENT_PREFIXES_ACU = [
-  'TavernDB-ACU-',
-  '重要人物条目',
-  '总结条目',
-  '小总结条目',
-];
-
-const AGENT_MANAGED_WORLDBOOK_COMMENT_PREFIXES_ACU = [
-  'TavernDB-ACU-AgentGreenlight',
-];
-
-const AGENT_INTERNAL_WORLDBOOK_COMMENT_PREFIXES_ACU = [
-  'TavernDB-ACU-AgentWorldbookConfig',
-  'TavernDB-ACU-AgentWorldbookSnapshot',
-  'TavernDB-ACU-AgentFinalGenerationGreenlights',
-];
-
-function normalizeGeneratedWorldbookComment_ACU(value: unknown): string {
-  return String(value || '')
-    .trim()
-    .replace(/^ACU-\[[^\]]+\]-/, '')
-    .replace(/^外部导入-/, '');
-}
-
-function isAgentInternalWorldbookEntry_ACU(entry: Record<string, any>): boolean {
-  const normalizedComment = normalizeGeneratedWorldbookComment_ACU(entry?.comment || entry?.name);
-  return !!normalizedComment && AGENT_INTERNAL_WORLDBOOK_COMMENT_PREFIXES_ACU.some(prefix => normalizedComment.startsWith(prefix));
-}
-
 export function isDatabaseGeneratedWorldbookEntryForAgent_ACU(entry: Record<string, any>): boolean {
-  const normalizedComment = normalizeGeneratedWorldbookComment_ACU(entry?.comment || entry?.name);
-  if (!normalizedComment) return false;
-  if (AGENT_INTERNAL_WORLDBOOK_COMMENT_PREFIXES_ACU.some(prefix => normalizedComment.startsWith(prefix))) return true;
-  if (AGENT_MANAGED_WORLDBOOK_COMMENT_PREFIXES_ACU.some(prefix => normalizedComment.startsWith(prefix))) return false;
-  return DATABASE_GENERATED_WORLDBOOK_COMMENT_PREFIXES_ACU.some(prefix => normalizedComment.startsWith(prefix));
+  return isDatabaseGeneratedLorebookEntry_ACU(entry);
 }
 
 export function isWorldbookEntrySkillifyCandidate_ACU(entry: Record<string, any>): boolean {
   if (!entry || entry.enabled === false) return false;
-  if (isAgentInternalWorldbookEntry_ACU(entry)) return false;
   if (String(entry.type || '').trim().toLowerCase() === 'constant') return false;
   if (isDatabaseGeneratedWorldbookEntryForAgent_ACU(entry)) return false;
   return true;
