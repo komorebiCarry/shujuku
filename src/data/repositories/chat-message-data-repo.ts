@@ -108,12 +108,12 @@ function purgeEventSheetKeysV2_ACU(eventLike: any, sheetKeys: Set<string>): bool
 const RUNTIME_REVISION_SNAPSHOT_PREFIX_V2_ACU = 'runtime-v1:';
 
 function normalizeSqlIdentifierForPurge_ACU(value: any): string {
-    return typeof value === 'string' ? value.trim().replace(/^[`"\[]|[`"\]]$/g, '').toLowerCase() : '';
+    return typeof value === 'string' ? value.trim().replace(/^[`'"\[]|[`'"\]]$/g, '').toLowerCase() : '';
 }
 
 function parseSqlDDLTableNameForPurge_ACU(ddl: any): string {
     if (typeof ddl !== 'string') return '';
-    const match = ddl.match(/\bCREATE\s+TABLE\s+(?:IF\s+NOT\s+EXISTS\s+)?(?:`([^`]+)`|"([^"]+)"|\[([^\]]+)\]|([A-Za-z_][A-Za-z0-9_]*))/i);
+    const match = ddl.match(/\bCREATE\s+TABLE\s+(?:IF\s+NOT\s+EXISTS\s+)?(?:`([^`]+)`|'([^']+)'|"([^"]+)"|\[([^\]]+)\]|([A-Za-z_][A-Za-z0-9_]*))/i);
     return normalizeSqlIdentifierForPurge_ACU(match?.slice(1).find(Boolean));
 }
 
@@ -149,13 +149,20 @@ function collectSqlTargetTableNamesFromOperationForPurge_ACU(operation: any, she
     }
 }
 
-function collectSqlTargetTableNamesFromStorageFrameV2_ACU(frame: any, sheetKeys: Set<string>): Set<string> {
+export function collectSqlTargetTableNamesFromStorageFrameV2_ACU(frame: any, sheetKeys: Set<string>): Set<string> {
     const targetNames = new Set<string>();
     sheetKeys.forEach(sheetKey => {
         const normalizedSheetKey = normalizeSqlIdentifierForPurge_ACU(sheetKey);
         if (normalizedSheetKey) targetNames.add(normalizedSheetKey);
     });
     collectSqlTargetTableNamesFromRecordForPurge_ACU(frame?.checkpoint?.data, sheetKeys, targetNames);
+    if (isObjectRecord_ACU(frame?.perSheetCheckpoints)) {
+        sheetKeys.forEach(sheetKey => {
+            const checkpoint = frame.perSheetCheckpoints[sheetKey];
+            if (!isObjectRecord_ACU(checkpoint)) return;
+            collectSqlTableNameCandidatesFromSheetForPurge_ACU(sheetKey, checkpoint.data, targetNames);
+        });
+    }
     if (Array.isArray(frame?.logEntries)) {
         frame.logEntries.forEach((entry: any) => {
             if (!isObjectRecord_ACU(entry)) return;
@@ -170,19 +177,185 @@ function collectSqlTargetTableNamesFromStorageFrameV2_ACU(frame: any, sheetKeys:
     return targetNames;
 }
 
+interface SqlPurgeToken_ACU {
+    value: string;
+    quoted: boolean;
+}
+
+interface SqlPurgeTokenizeResult_ACU {
+    tokens: SqlPurgeToken_ACU[];
+    reliable: boolean;
+}
+
+function tokenizeTopLevelSqlForPurge_ACU(statement: string): SqlPurgeTokenizeResult_ACU {
+    const tokens: SqlPurgeToken_ACU[] = [];
+    let depth = 0;
+    let index = 0;
+    let reliable = true;
+    while (index < statement.length) {
+        const char = statement[index];
+        const next = statement[index + 1];
+        if (/\s/.test(char)) {
+            index += 1;
+            continue;
+        }
+        if (char === '-' && next === '-') {
+            index += 2;
+            while (index < statement.length && statement[index] !== '\n' && statement[index] !== '\r') index += 1;
+            continue;
+        }
+        if (char === '/' && next === '*') {
+            index += 2;
+            while (index < statement.length && !(statement[index] === '*' && statement[index + 1] === '/')) index += 1;
+            if (index >= statement.length) {
+                reliable = false;
+                break;
+            }
+            index += 2;
+            continue;
+        }
+        if (char === '(') {
+            depth += 1;
+            index += 1;
+            continue;
+        }
+        if (char === ')') {
+            if (depth === 0) reliable = false;
+            depth = Math.max(0, depth - 1);
+            index += 1;
+            continue;
+        }
+        if (char === "'" || char === '"' || char === '`' || char === '[') {
+            const closing = char === '[' ? ']' : char;
+            let value = '';
+            let closed = false;
+            index += 1;
+            while (index < statement.length) {
+                const current = statement[index];
+                if (current === '\\' && index + 1 < statement.length) {
+                    value += statement[index + 1];
+                    index += 2;
+                    continue;
+                }
+                if (current === closing) {
+                    if (statement[index + 1] === closing) {
+                        value += closing;
+                        index += 2;
+                        continue;
+                    }
+                    index += 1;
+                    closed = true;
+                    break;
+                }
+                value += current;
+                index += 1;
+            }
+            if (!closed) {
+                reliable = false;
+                break;
+            }
+            if (depth === 0) tokens.push({ value, quoted: true });
+            continue;
+        }
+        if (char === '.') {
+            if (depth === 0) tokens.push({ value: '.', quoted: false });
+            index += 1;
+            continue;
+        }
+        if (/[A-Za-z_]/.test(char)) {
+            const start = index;
+            index += 1;
+            while (index < statement.length && /[A-Za-z0-9_]/.test(statement[index])) index += 1;
+            if (depth === 0) tokens.push({ value: statement.slice(start, index), quoted: false });
+            continue;
+        }
+        index += 1;
+    }
+    return { tokens, reliable: reliable && depth === 0 };
+}
+
+function findTopLevelSqlKeywordForPurge_ACU(tokens: SqlPurgeToken_ACU[], keyword: string, startIndex = 0): number {
+    for (let index = startIndex; index < tokens.length; index++) {
+        if (!tokens[index].quoted && tokens[index].value.toUpperCase() === keyword) return index;
+    }
+    return -1;
+}
+
+interface SqlPurgeTableTokenResult_ACU {
+    names: string[];
+    nextIndex: number;
+}
+
+function readSqlTableTokenForPurge_ACU(tokens: SqlPurgeToken_ACU[], index: number): SqlPurgeTableTokenResult_ACU {
+    const token = tokens[index];
+    if (!token || (!token.quoted && token.value === '.')) return { names: [], nextIndex: index };
+    const tableName = normalizeSqlIdentifierForPurge_ACU(token.value);
+    if (!tableName) return { names: [], nextIndex: index };
+
+    const separator = tokens[index + 1];
+    const qualifiedTableToken = tokens[index + 2];
+    if (!separator?.quoted && separator?.value === '.' && qualifiedTableToken
+        && (qualifiedTableToken.quoted || qualifiedTableToken.value !== '.')) {
+        const qualifiedTableName = normalizeSqlIdentifierForPurge_ACU(qualifiedTableToken.value);
+        if (qualifiedTableName) {
+            return {
+                names: [`${tableName}.${qualifiedTableName}`, qualifiedTableName],
+                nextIndex: index + 3,
+            };
+        }
+    }
+
+    return { names: [tableName], nextIndex: index + 1 };
+}
+
 function extractMutatedSqlTableNamesForPurge_ACU(statement: any): string[] {
     if (typeof statement !== 'string') return [];
-    const patterns = [
-        /\bINSERT\s+(?:OR\s+\w+\s+)?INTO\s+(?:`([^`]+)`|"([^"]+)"|\[([^\]]+)\]|([A-Za-z_][A-Za-z0-9_]*))/i,
-        /\bREPLACE\s+INTO\s+(?:`([^`]+)`|"([^"]+)"|\[([^\]]+)\]|([A-Za-z_][A-Za-z0-9_]*))/i,
-        /\bUPDATE\s+(?:OR\s+\w+\s+)?(?:`([^`]+)`|"([^"]+)"|\[([^\]]+)\]|([A-Za-z_][A-Za-z0-9_]*))/i,
-        /\bDELETE\s+FROM\s+(?:`([^`]+)`|"([^"]+)"|\[([^\]]+)\]|([A-Za-z_][A-Za-z0-9_]*))/i,
-        /\bALTER\s+TABLE\s+(?:`([^`]+)`|"([^"]+)"|\[([^\]]+)\]|([A-Za-z_][A-Za-z0-9_]*))/i,
-    ];
-    for (const pattern of patterns) {
-        const match = statement.match(pattern);
-        const tableName = normalizeSqlIdentifierForPurge_ACU(match?.slice(1).find(Boolean));
-        if (tableName) return [tableName];
+    const tokenized = tokenizeTopLevelSqlForPurge_ACU(statement);
+    if (!tokenized.reliable) return [];
+    const tokens = tokenized.tokens;
+    const conflictActions = new Set(['ROLLBACK', 'ABORT', 'REPLACE', 'FAIL', 'IGNORE']);
+    const mutationKeywords = new Set(['INSERT', 'REPLACE', 'UPDATE', 'DELETE', 'ALTER']);
+    const firstKeyword = tokens.find(token => !token.quoted)?.value.toUpperCase();
+    if (!firstKeyword || (!mutationKeywords.has(firstKeyword) && firstKeyword !== 'WITH')) return [];
+    const startIndex = firstKeyword === 'WITH' ? 1 : 0;
+    for (let index = startIndex; index < tokens.length; index++) {
+        if (tokens[index].quoted) continue;
+        const keyword = tokens[index].value.toUpperCase();
+        if (!mutationKeywords.has(keyword)) continue;
+        if (keyword === 'INSERT') {
+            const intoIndex = findTopLevelSqlKeywordForPurge_ACU(tokens, 'INTO', index + 1);
+            return intoIndex >= 0 ? readSqlTableTokenForPurge_ACU(tokens, intoIndex + 1).names : [];
+        }
+        if (keyword === 'REPLACE') {
+            const intoIndex = findTopLevelSqlKeywordForPurge_ACU(tokens, 'INTO', index + 1);
+            return intoIndex >= 0 ? readSqlTableTokenForPurge_ACU(tokens, intoIndex + 1).names : [];
+        }
+        if (keyword === 'UPDATE') {
+            let tableIndex = index + 1;
+            if (!tokens[tableIndex]?.quoted && tokens[tableIndex]?.value.toUpperCase() === 'OR') {
+                const action = tokens[tableIndex + 1];
+                if (!action || action.quoted || !conflictActions.has(action.value.toUpperCase())) return [];
+                tableIndex += 2;
+            }
+            return readSqlTableTokenForPurge_ACU(tokens, tableIndex).names;
+        }
+        if (keyword === 'DELETE') {
+            const fromIndex = findTopLevelSqlKeywordForPurge_ACU(tokens, 'FROM', index + 1);
+            return fromIndex >= 0 ? readSqlTableTokenForPurge_ACU(tokens, fromIndex + 1).names : [];
+        }
+        if (keyword === 'ALTER') {
+            const tableIndex = findTopLevelSqlKeywordForPurge_ACU(tokens, 'TABLE', index + 1);
+            if (tableIndex < 0) return [];
+            const sourceTable = readSqlTableTokenForPurge_ACU(tokens, tableIndex + 1);
+            const renameToken = tokens[sourceTable.nextIndex];
+            const toToken = tokens[sourceTable.nextIndex + 1];
+            if (!renameToken?.quoted && renameToken?.value.toUpperCase() === 'RENAME'
+                && !toToken?.quoted && toToken?.value.toUpperCase() === 'TO') {
+                const targetTable = readSqlTableTokenForPurge_ACU(tokens, sourceTable.nextIndex + 2);
+                return [...sourceTable.names, ...targetTable.names];
+            }
+            return sourceTable.names;
+        }
     }
     return [];
 }
@@ -415,12 +588,18 @@ function purgeSheetKeysFromStorageFrameV2_ACU(frame: any, sheetKeys: Set<string>
     return changed;
 }
 
-function purgeManualRefillIncrementalSheetKeysFromStorageFrameV2_ACU(frame: any, sheetKeys: Set<string>): boolean {
+function purgeManualRefillIncrementalSheetKeysFromStorageFrameV2_ACU(frame: any, sheetKeys: Set<string>, knownSqlTableNames?: Iterable<string>): boolean {
     if (!isObjectRecord_ACU(frame)) return false;
     // 单表 checkpoint 是重放基底；增量预清除只裁剪日志和重填进度，不能删除或改写 shard。
     // 需要替换基底时必须走完整的 purgeSheetKeysFromStorageFrameV2_ACU 流程。
     let changed = false;
     const targetSqlTableNames = collectSqlTargetTableNamesFromStorageFrameV2_ACU(frame, sheetKeys);
+    if (knownSqlTableNames) {
+        for (const tableName of knownSqlTableNames) {
+            const normalized = normalizeSqlIdentifierForPurge_ACU(tableName);
+            if (normalized) targetSqlTableNames.add(normalized);
+        }
+    }
 
     const checkpoint = frame.checkpoint;
     if (isObjectRecord_ACU(checkpoint)) {
@@ -479,7 +658,7 @@ function purgeManualRefillIncrementalSheetKeysFromStorageFrameV2_ACU(frame: any,
     return changed;
 }
 
-export function purgeManualRefillIncrementalSheetKeysFromMessage_ACU(msg: any, isolationKey: string, sheetKeys: string[]): boolean {
+export function purgeManualRefillIncrementalSheetKeysFromMessage_ACU(msg: any, isolationKey: string, sheetKeys: string[], knownSqlTableNames?: Iterable<string>): boolean {
     if (!msg || !Array.isArray(sheetKeys) || sheetKeys.length === 0) return false;
 
     let msgChanged = false;
@@ -490,7 +669,7 @@ export function purgeManualRefillIncrementalSheetKeysFromMessage_ACU(msg: any, i
     const nextIsolated = safeClone(isolated);
     const tagData = nextIsolated[isolationKey || ''];
     if (!tagData || typeof tagData !== 'object') return false;
-    if (purgeManualRefillIncrementalSheetKeysFromStorageFrameV2_ACU((tagData as any).storageFrame, sheetKeySet)) {
+    if (purgeManualRefillIncrementalSheetKeysFromStorageFrameV2_ACU((tagData as any).storageFrame, sheetKeySet, knownSqlTableNames)) {
         msgChanged = true;
     }
 

@@ -1620,6 +1620,66 @@ describe('clearManualRefillIncrementalDataInRange_ACU', () => {
     expect(JSON.stringify(diagnosticCall![1])).not.toContain('checkpoint目标表1');
   });
 
+
+  it('使用重填范围之前的 checkpoint 映射清理范围内 log-only sql_batch，避免回放 UPDATE 不存在表', async () => {
+    const chat = [
+      {
+        is_user: false,
+        mes: '历史基底',
+        TavernDB_ACU_IsolatedData: JSON.stringify({
+          '': {
+            _acu_storage_version: 2,
+            storageFrame: {
+              version: 2,
+              checkpoint: {
+                kind: 'full',
+                reason: 'compaction',
+                createdAt: 1,
+                data: {
+                  sheet_0: {
+                    uid: 'chronicle',
+                    name: '纪要表',
+                    sourceData: { ddl: 'CREATE TABLE chronicle (row_id TEXT PRIMARY KEY, code_index TEXT)' },
+                  },
+                },
+              },
+              logEntries: [],
+            },
+          },
+        }),
+      },
+      {
+        is_user: false,
+        mes: '待重填楼层',
+        TavernDB_ACU_IsolatedData: {
+          '': {
+            _acu_storage_version: 2,
+            storageFrame: {
+              version: 2,
+              logEntries: [{
+                seq: 1,
+                operations: [{
+                  kind: 'sql_batch',
+                  statements: ["UPDATE 'chronicle' SET 'code_index' = ? WHERE 'row_id' = ?"],
+                  params: [['new-index', 'row-1']],
+                }],
+              }],
+            },
+          },
+        },
+      },
+    ];
+    mockGetChatArray.mockReturnValue(chat);
+
+    const count = await clearManualRefillIncrementalDataInRange_ACU([1], ['sheet_0']);
+
+    expect(count).toBe(1);
+    const historicalTagData = JSON.parse(chat[0].TavernDB_ACU_IsolatedData);
+    expect(historicalTagData[''].storageFrame.checkpoint.data.sheet_0.uid).toBe('chronicle');
+    expect(chat[1].TavernDB_ACU_IsolatedData[''].storageFrame.logEntries).toEqual([]);
+    expect(mockSaveChatToHost).toHaveBeenCalledTimes(1);
+  });
+
   it('未指定目标表时拒绝执行，避免把手动重填增量清理退化成全量清理', async () => {
     await expect(clearManualRefillIncrementalDataInRange_ACU([1], [])).rejects.toThrow('手动重填增量清理必须指定目标表');
     await expect(clearManualRefillIncrementalDataInRange_ACU([1], null)).rejects.toThrow('手动重填增量清理必须指定目标表');

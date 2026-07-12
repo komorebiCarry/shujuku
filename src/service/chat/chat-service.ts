@@ -23,7 +23,7 @@ import { logDebug_ACU, logError_ACU, logWarn_ACU, isSummaryOrOutlineTable_ACU } 
 import { getLastOptimizationBase_ACU, setLastOptimizationBase_ACU } from '../optimization/content-optimization';
 import { settings_ACU, currentJsonTableData_ACU, getCurrentIsolationKey_ACU } from '../runtime/state-manager';
 import { sanitizeSheetForStorage_ACU } from '../template/chat-scope';
-import { clearTableFieldsForIsolation_ACU, purgeManualRefillIncrementalSheetKeysFromMessage_ACU, purgeSheetKeysFromMessage_ACU, purgeSheetKeysFromMessageForIsolation_ACU, writeMessageIdentity_ACU } from '../../data/repositories/chat-message-data-repo';
+import { clearTableFieldsForIsolation_ACU, collectSqlTargetTableNamesFromStorageFrameV2_ACU, purgeManualRefillIncrementalSheetKeysFromMessage_ACU, purgeSheetKeysFromMessage_ACU, purgeSheetKeysFromMessageForIsolation_ACU, readIsolatedTagData_ACU, writeMessageIdentity_ACU } from '../../data/repositories/chat-message-data-repo';
 import { MAX_CHECKPOINT_RISK_DETAILS_ACU, scanTargetKeysResidue_ACU } from '../../data/repositories/target-keys-diagnostics';
 import { runTableUpdateCommit_ACU } from '../table/table-update-commit';
 import { getLatestAiMessageIndexFromChat_ACU, resolveTableHistoryStateFromChat_ACU } from '../table/table-history';
@@ -1416,6 +1416,20 @@ async function clearManualRefillIncrementalDataInRangeCore_ACU(targetMessageIndi
     if (!chat || chat.length === 0) return 0;
 
     const isolationKey = getCurrentIsolationKey_ACU();
+    const targetSheetKeySet = new Set(targetSheetKeys);
+    const maxTargetMessageIndex = targetMessageIndices.reduce(
+        (max, index) => Number.isInteger(index) ? Math.max(max, index) : max,
+        -1,
+    );
+    const knownSqlTableNames = new Set<string>();
+    for (let index = 0; index <= maxTargetMessageIndex && index < chat.length; index++) {
+        const msg = chat[index];
+        if (!msg || msg.is_user) continue;
+        const tagData = readIsolatedTagData_ACU(msg, isolationKey);
+        if (!isV2TagData_ACU(tagData)) continue;
+        const names = collectSqlTargetTableNamesFromStorageFrameV2_ACU(tagData.storageFrame, targetSheetKeySet);
+        names.forEach(name => knownSqlTableNames.add(name));
+    }
     const clearsSummaryOrOutline = tableListContainsSummaryOrOutline_ACU(targetSheetKeys);
     let clearedCount = 0;
 
@@ -1424,7 +1438,7 @@ async function clearManualRefillIncrementalDataInRangeCore_ACU(targetMessageIndi
         const msg = chat[idx];
         if (!msg || msg.is_user) continue;
 
-        const changed = purgeManualRefillIncrementalSheetKeysFromMessage_ACU(msg, isolationKey, targetSheetKeys);
+        const changed = purgeManualRefillIncrementalSheetKeysFromMessage_ACU(msg, isolationKey, targetSheetKeys, knownSqlTableNames);
         if (clearsSummaryOrOutline) {
             const isolatedData = msg?.TavernDB_ACU_IsolatedData;
             const tagData = isolatedData && typeof isolatedData === 'object' && !Array.isArray(isolatedData)

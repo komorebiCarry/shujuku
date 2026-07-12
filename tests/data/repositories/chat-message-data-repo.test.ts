@@ -1140,6 +1140,214 @@ describe('purgeManualRefillIncrementalSheetKeysFromMessage_ACU', () => {
     expect(msg.TavernDB_ACU_IsolatedData.tag1.storageFrame.perSheetCheckpoints.sheet_0).toEqual(before);
     expect(msg.TavernDB_ACU_IsolatedData.tag1.storageFrame.logEntries).toEqual([]);
   });
+
+  it('会从 perSheet checkpoint 推导 SQL 表名并裁剪旧 sql_batch', () => {
+    const msg: any = {
+      TavernDB_ACU_IsolatedData: {
+        tag1: {
+          storageFrame: {
+            version: 2,
+            perSheetCheckpoints: {
+              sheet_0: {
+                kind: 'sheet_full',
+                sheetKey: 'sheet_0',
+                createdAt: 1,
+                reason: 'manual',
+                data: { uid: 'chronicle', name: '纪要表', sourceData: { ddl: 'CREATE TABLE chronicle (row_id TEXT)' } },
+              },
+            },
+            logEntries: [{ operations: [{ kind: 'sql_batch', statements: ["UPDATE chronicle SET code_index = 'x' WHERE row_id = 'r1'"] }] }],
+          },
+        },
+      },
+    };
+
+    expect(purgeManualRefillIncrementalSheetKeysFromMessage_ACU(msg, 'tag1', ['sheet_0'])).toBe(true);
+    expect(msg.TavernDB_ACU_IsolatedData.tag1.storageFrame.perSheetCheckpoints.sheet_0.data.uid).toBe('chronicle');
+    expect(msg.TavernDB_ACU_IsolatedData.tag1.storageFrame.logEntries).toEqual([]);
+  });
+
+  it('使用跨 frame 汇总的 SQL 表名裁剪当前 log-only frame，并保留其他表语句与 params', () => {
+    const msg: any = {
+      TavernDB_ACU_IsolatedData: {
+        tag1: {
+          storageFrame: {
+            version: 2,
+            logEntries: [{
+              operations: [{
+                kind: 'sql_batch',
+                statements: [
+                  'UPDATE chronicle SET code_index = ? WHERE row_id = ?',
+                  'UPDATE quest_log SET value = ? WHERE row_id = ?',
+                ],
+                params: [['target', 'r1'], ['keep', 'q1']],
+              }],
+            }],
+          },
+        },
+      },
+    };
+
+    expect(purgeManualRefillIncrementalSheetKeysFromMessage_ACU(msg, 'tag1', ['sheet_0'], new Set(['chronicle']))).toBe(true);
+    expect(msg.TavernDB_ACU_IsolatedData.tag1.storageFrame.logEntries[0].operations).toEqual([{
+      kind: 'sql_batch',
+      statements: ['UPDATE quest_log SET value = ? WHERE row_id = ?'],
+      params: [['keep', 'q1']],
+    }]);
+  });
+
+  it('支持现场单引号表名，并忽略字符串、注释和 CTE 内的伪 mutation', () => {
+    const statements = [
+      "UPDATE 'chronicle' SET 'code_index' = ? WHERE 'row_id' = ?",
+      "WITH source AS (SELECT 'UPDATE chronicle SET code_index = 1' AS note) UPDATE quest_log SET value = ? WHERE row_id = ?",
+      '/* UPDATE chronicle SET code_index = 1 */ UPDATE quest_log SET value = ? WHERE row_id = ?',
+      '-- DELETE FROM chronicle\nUPDATE quest_log SET value = ? WHERE row_id = ?',
+    ];
+    const msg: any = {
+      TavernDB_ACU_IsolatedData: {
+        tag1: {
+          storageFrame: {
+            version: 2,
+            logEntries: [{
+              operations: [{
+                kind: 'sql_batch',
+                statements,
+                params: [['target', 'r1'], ['cte', 'q1'], ['block', 'q2'], ['line', 'q3']],
+              }],
+            }],
+          },
+        },
+      },
+    };
+
+    expect(purgeManualRefillIncrementalSheetKeysFromMessage_ACU(msg, 'tag1', ['sheet_0'], new Set(['chronicle']))).toBe(true);
+    expect(msg.TavernDB_ACU_IsolatedData.tag1.storageFrame.logEntries[0].operations).toEqual([{
+      kind: 'sql_batch',
+      statements: statements.slice(1),
+      params: [['cte', 'q1'], ['block', 'q2'], ['line', 'q3']],
+    }]);
+  });
+
+
+  it('只在可靠解析时裁剪 SQLite 冲突子句，并保留异常或转义字符串中的伪 mutation', () => {
+    const removableStatements = [
+      "UPDATE OR REPLACE chronicle SET code_index = 'x' WHERE row_id = 'r1'",
+      "UPDATE OR IGNORE 'chronicle' SET code_index = 'y' WHERE row_id = 'r2'",
+      "INSERT OR REPLACE INTO chronicle (row_id) VALUES ('r3')",
+    ];
+    const retainedStatements = [
+      "SELECT 'it\\'s UPDATE chronicle SET code_index = 1'",
+      "UPDATE [chron]]icle] SET code_index = 'keep' WHERE row_id = 'r4'",
+      'UPDATE OR UNKNOWN chronicle SET code_index = 1',
+      "SELECT 'UPDATE chronicle SET code_index = 1",
+      '/* UPDATE chronicle SET code_index = 1',
+      'WITH source AS (SELECT 1 UPDATE chronicle SET code_index = 1',
+      "UPDATE quest_log SET value = 'keep' WHERE row_id = 'q1'",
+    ];
+    const statements = [...removableStatements, ...retainedStatements];
+    const msg: any = {
+      TavernDB_ACU_IsolatedData: {
+        tag1: {
+          storageFrame: {
+            version: 2,
+            logEntries: [{ operations: [{ kind: 'sql_batch', statements }] }],
+          },
+        },
+      },
+    };
+
+    expect(purgeManualRefillIncrementalSheetKeysFromMessage_ACU(msg, 'tag1', ['sheet_0'], new Set(['chronicle']))).toBe(true);
+    expect(msg.TavernDB_ACU_IsolatedData.tag1.storageFrame.logEntries[0].operations).toEqual([{
+      kind: 'sql_batch',
+      statements: retainedStatements,
+    }]);
+  });
+
+  it('保留定义与包装语句中的 mutation 文本，不误删触发器、视图或 EXPLAIN', () => {
+    const statements = [
+      'CREATE TRIGGER sync_chronicle AFTER INSERT ON source_table BEGIN UPDATE chronicle SET code_index = NEW.code_index WHERE row_id = NEW.row_id; END',
+      'CREATE TRIGGER insert_chronicle AFTER INSERT ON source_table BEGIN INSERT INTO chronicle (row_id) VALUES (NEW.row_id); END',
+      'CREATE TRIGGER delete_chronicle AFTER DELETE ON source_table BEGIN DELETE FROM chronicle WHERE row_id = OLD.row_id; END',
+      'CREATE VIEW chronicle_view AS SELECT * FROM chronicle',
+      "EXPLAIN UPDATE chronicle SET code_index = 'x' WHERE row_id = 'r1'",
+    ];
+    const msg: any = {
+      TavernDB_ACU_IsolatedData: {
+        tag1: {
+          storageFrame: {
+            version: 2,
+            logEntries: [{ operations: [{ kind: 'sql_batch', statements }] }],
+          },
+        },
+      },
+    };
+
+    expect(purgeManualRefillIncrementalSheetKeysFromMessage_ACU(msg, 'tag1', ['sheet_0'], new Set(['chronicle']))).toBe(false);
+    expect(msg.TavernDB_ACU_IsolatedData.tag1.storageFrame.logEntries[0].operations).toEqual([{
+      kind: 'sql_batch',
+      statements,
+    }]);
+  });
+
+  it('裁剪 schema-qualified 目标表写操作，并保留其他限定表', () => {
+    const removableStatements = [
+      'UPDATE main.chronicle SET code_index = 1',
+      'INSERT INTO "main"."chronicle" (row_id) VALUES (1)',
+      'REPLACE INTO temp.chronicle (row_id) VALUES (2)',
+      'DELETE FROM [main].[chronicle] WHERE row_id = 3',
+      'ALTER TABLE main . chronicle ADD COLUMN note TEXT',
+    ];
+    const retainedStatements = [
+      'UPDATE main.quest_log SET value = 1',
+      'INSERT INTO "main"."quest_log" (row_id) VALUES (1)',
+    ];
+    const msg: any = {
+      TavernDB_ACU_IsolatedData: {
+        tag1: {
+          storageFrame: {
+            version: 2,
+            logEntries: [{ operations: [{ kind: 'sql_batch', statements: [...removableStatements, ...retainedStatements] }] }],
+          },
+        },
+      },
+    };
+
+    expect(purgeManualRefillIncrementalSheetKeysFromMessage_ACU(msg, 'tag1', ['sheet_0'], new Set(['chronicle']))).toBe(true);
+    expect(msg.TavernDB_ACU_IsolatedData.tag1.storageFrame.logEntries[0].operations).toEqual([{
+      kind: 'sql_batch',
+      statements: retainedStatements,
+    }]);
+  });
+
+  it('ALTER TABLE RENAME TO 同时匹配源表和目标表，但不把列重命名当作表名', () => {
+    const retainedStatements = [
+      'ALTER TABLE other RENAME TO other2',
+      'ALTER TABLE other ADD COLUMN x TEXT',
+      'ALTER TABLE other RENAME COLUMN chronicle TO archived',
+    ];
+    const msg: any = {
+      TavernDB_ACU_IsolatedData: {
+        tag1: {
+          storageFrame: {
+            version: 2,
+            logEntries: [{ operations: [{
+              kind: 'sql_batch',
+              statements: ['ALTER TABLE quest_log RENAME TO chronicle', ...retainedStatements],
+            }] }],
+          },
+        },
+      },
+    };
+
+    expect(purgeManualRefillIncrementalSheetKeysFromMessage_ACU(msg, 'tag1', ['sheet_0'], new Set(['chronicle']))).toBe(true);
+    expect(msg.TavernDB_ACU_IsolatedData.tag1.storageFrame.logEntries[0].operations).toEqual([{
+      kind: 'sql_batch',
+      statements: retainedStatements,
+    }]);
+  });
+
+
+
 });
 
 describe('clearAllTableFields_ACU', () => {
