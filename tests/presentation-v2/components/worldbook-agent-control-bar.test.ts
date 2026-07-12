@@ -11,27 +11,26 @@ const mockRestore = vi.fn(async () => false);
 const mockSkillifyAll = vi.fn(async () => false);
 const mockClearSkillMeta = vi.fn(async () => false);
 
-vi.mock('../../../src/presentation-v2/composables/usePlotWorldbookAgentControl', () => ({
-  usePlotWorldbookAgentControl: () => ({
-    mode: { value: 'passive' },
-    busy: { value: null },
-    configStatusText: { value: '配置正常' },
-    apiPresetOptions: { value: [] },
-    agentApiPreset: { value: '' },
-    agentSkillApiPreset: { value: '' },
-    isAgentMode: { value: false },
-    setMode: mockSetMode,
-    setAgentApiPreset: vi.fn(),
-    setAgentSkillApiPreset: vi.fn(),
-    restore: mockRestore,
-    skillifyAll: mockSkillifyAll,
-    clearSkillMeta: mockClearSkillMeta,
-  }),
-}));
+const agentControl = {
+  mode: { value: 'passive' },
+  busy: { value: null },
+  configStatusText: { value: '配置正常' },
+  apiPresetOptions: { value: [] },
+  agentApiPreset: { value: '' },
+  agentSkillApiPreset: { value: '' },
+  isAgentMode: { value: false },
+  setMode: mockSetMode,
+  setAgentApiPreset: vi.fn(),
+  setAgentSkillApiPreset: vi.fn(),
+  restore: mockRestore,
+  skillifyAll: mockSkillifyAll,
+  clearSkillMeta: mockClearSkillMeta,
+};
 
 vi.mock('../../../src/presentation-v2/components/WorldbookAgentAdvancedPanel.vue', () => ({
   default: defineComponent({
-    emits: ['close', 'changed'],
+    props: { agentControl: { type: Object, required: true } },
+    emits: ['close', 'current-worldbook-changed', 'global-template-saved'],
     setup() { return () => null; },
   }),
 }));
@@ -39,25 +38,25 @@ vi.mock('../../../src/presentation-v2/components/WorldbookAgentAdvancedPanel.vue
 interface Mounted {
   app: App<Element>;
   el: HTMLElement;
-  changed: ReturnType<typeof vi.fn>;
+  currentWorldbookChanged: ReturnType<typeof vi.fn>;
 }
 
 const mounted: Mounted[] = [];
 
 async function mountControlBar(): Promise<Mounted> {
   vi.resetModules();
-  const changed = vi.fn();
+  const currentWorldbookChanged = vi.fn();
   const mod = await import('../../../src/presentation-v2/components/WorldbookAgentControlBar.vue');
   const wrapper = defineComponent({
     setup() {
-      return () => h(mod.default, { onChanged: changed });
+      return () => h(mod.default, { agentControl, onCurrentWorldbookChanged: currentWorldbookChanged });
     },
   });
   const el = document.createElement('div');
   document.body.appendChild(el);
   const app = createApp(wrapper);
   app.mount(el);
-  const result = { app, el, changed };
+  const result = { app, el, currentWorldbookChanged };
   mounted.push(result);
   return result;
 }
@@ -74,7 +73,7 @@ afterEach(() => {
 
 describe('WorldbookAgentControlBar', () => {
   it('切换 Agent 世界书模式后等待 setMode 并通知父级刷新条目列表', async () => {
-    const { el, changed } = await mountControlBar();
+    const { el, currentWorldbookChanged } = await mountControlBar();
     const buttons = Array.from(el.querySelectorAll<HTMLButtonElement>('.acu-segmented__item'));
 
     buttons[2].click();
@@ -82,6 +81,6 @@ describe('WorldbookAgentControlBar', () => {
     await Promise.resolve();
 
     expect(mockSetMode).toHaveBeenCalledWith('agent');
-    expect(changed).toHaveBeenCalledTimes(1);
+    expect(currentWorldbookChanged).toHaveBeenCalledTimes(1);
   });
 });

@@ -120,8 +120,12 @@ async function getComposable(options: {
   }));
   vi.doMock('../../../src/service/agent/agent-prompt-template', () => ({
     clonePromptSegments_ACU: (segments: any[]) => [...segments],
-    getDefaultAgentDecisionPromptSegments_ACU: () => [],
-    getDefaultAgentSkillifyPromptSegments_ACU: () => [],
+    getDefaultAgentDecisionPromptSegments_ACU: () => [
+      { role: 'system', content: 'built-in decision', deletable: false },
+    ],
+    getDefaultAgentSkillifyPromptSegments_ACU: () => [
+      { role: 'system', content: 'built-in skillify', deletable: false },
+    ],
     normalizeAgentContextSettings_ACU: (value: any) => ({ agentAiMaxRetries: 2, ...(value || {}) }),
     normalizeEditablePromptSegments_ACU: (segments: any[] | undefined, fallback: any[]) => segments || fallback,
   }));
@@ -500,7 +504,10 @@ describe('usePlotWorldbookAgentControl', () => {
 
     expect(c.isReady.value).toBe(false);
     await c.setPromptSegments('decision', [{ role: 'user', content: 'should not save', deletable: true }]);
-    await expect(c.savePromptSegmentsAsGlobalDefaults()).resolves.toBe(false);
+    await expect(c.savePromptSegmentsAsGlobalTemplate(
+      [{ role: 'user', content: 'decision draft', deletable: true }],
+      [{ role: 'user', content: 'skillify draft', deletable: true }],
+    )).resolves.toBe(false);
     expect(mockWriteControl).not.toHaveBeenCalled();
     expect(mockSetPromptTemplates).not.toHaveBeenCalled();
     expect(toast.warning).toHaveBeenCalledTimes(2);
@@ -533,7 +540,10 @@ describe('usePlotWorldbookAgentControl', () => {
     await vi.waitFor(() => expect(failure.initializationFailed.value).toBe(true));
     expect(failure.isReady.value).toBe(false);
     await failure.setPromptSegments('decision', [{ role: 'user', content: 'must not save', deletable: true }]);
-    await expect(failure.savePromptSegmentsAsGlobalDefaults()).resolves.toBe(false);
+    await expect(failure.savePromptSegmentsAsGlobalTemplate(
+      [{ role: 'user', content: 'decision draft', deletable: true }],
+      [{ role: 'user', content: 'skillify draft', deletable: true }],
+    )).resolves.toBe(false);
     expect(mockWriteControl).not.toHaveBeenCalled();
     expect(mockSetPromptTemplates).not.toHaveBeenCalled();
     expect(toast.error).toHaveBeenCalledWith(expect.stringContaining('read failed'), { muteable: false });
@@ -643,24 +653,57 @@ describe('usePlotWorldbookAgentControl', () => {
   it('保存全局模板失败时显示错误且不写当前世界书', async () => {
     mockSetPromptTemplates.mockReturnValue(false);
     const c = await getComposable();
+    const decision = [{ role: 'user', content: 'decision draft', deletable: true }];
+    const skillify = [{ role: 'user', content: 'skillify draft', deletable: true }];
 
-    await expect(c.savePromptSegmentsAsGlobalDefaults()).resolves.toBe(false);
+    await expect(c.savePromptSegmentsAsGlobalTemplate(decision, skillify)).resolves.toBe(false);
 
     expect(mockSetPromptTemplates).toHaveBeenCalledWith({
-      agentDecisionPromptSegments: [],
-      agentSkillifyPromptSegments: [],
+      agentDecisionPromptSegments: decision,
+      agentSkillifyPromptSegments: skillify,
     });
     expect(mockWriteControl).not.toHaveBeenCalled();
     expect(toast.error).toHaveBeenCalledWith('全局 Agent 提示词模板保存失败。', { muteable: false });
   });
 
-  it('重置当前提示词时使用全局模板而非内置默认', async () => {
+  it('保存当前世界书只写世界书，不写全局模板', async () => {
     const c = await getComposable();
+    const decision = [{ role: 'user', content: 'decision draft', deletable: true }];
+    const skillify = [{ role: 'user', content: 'skillify draft', deletable: true }];
 
-    await c.resetPromptSegments('decision');
+    await expect(c.savePromptSegmentsToCurrentWorldbook(decision, skillify)).resolves.toBe(true);
 
     expect(mockWriteControl).toHaveBeenCalledWith({
-      agentDecisionPromptSegments: [{ role: 'system', content: 'global decision', deletable: false }],
+      agentDecisionPromptSegments: decision,
+      agentSkillifyPromptSegments: skillify,
     });
+    expect(mockSetPromptTemplates).not.toHaveBeenCalled();
+  });
+
+  it('保存全局模板只写全局模板，不写当前世界书', async () => {
+    const c = await getComposable();
+    const decision = [{ role: 'user', content: 'decision draft', deletable: true }];
+    const skillify = [{ role: 'user', content: 'skillify draft', deletable: true }];
+
+    await expect(c.savePromptSegmentsAsGlobalTemplate(decision, skillify)).resolves.toBe(true);
+
+    expect(mockSetPromptTemplates).toHaveBeenCalledWith({
+      agentDecisionPromptSegments: decision,
+      agentSkillifyPromptSegments: skillify,
+    });
+    expect(mockWriteControl).not.toHaveBeenCalled();
+  });
+
+  it('获取内置提示词副本，不读取全局模板也不写当前世界书', async () => {
+    const c = await getComposable();
+    mockGetPromptTemplates.mockClear();
+
+    const first = c.getBuiltInPromptSegments('decision');
+    first[0].content = 'mutated';
+    const second = c.getBuiltInPromptSegments('decision');
+
+    expect(second).toEqual([{ role: 'system', content: 'built-in decision', deletable: false }]);
+    expect(mockGetPromptTemplates).not.toHaveBeenCalled();
+    expect(mockWriteControl).not.toHaveBeenCalled();
   });
 });

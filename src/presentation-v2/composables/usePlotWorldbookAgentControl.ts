@@ -332,21 +332,39 @@ export function usePlotWorldbookAgentControl() {
     await writeControlPatch({ [key]: normalized } as Partial<AgentWorldbookControl_ACU>);
   }
 
-  async function resetPromptSegments(kind: AgentPromptKind_ACU): Promise<void> {
-    const segments = kind === 'decision'
-      ? globalPromptTemplates.value.agentDecisionPromptSegments
-      : globalPromptTemplates.value.agentSkillifyPromptSegments;
-    await setPromptSegments(kind, segments);
+  async function savePromptSegmentsToCurrentWorldbook(
+    decisionSegments: PromptSegment_ACU[],
+    skillifySegments: PromptSegment_ACU[],
+  ): Promise<boolean> {
+    const decision = normalizeEditablePromptSegments_ACU(
+      decisionSegments,
+      globalPromptTemplates.value.agentDecisionPromptSegments,
+    );
+    const skillify = normalizeEditablePromptSegments_ACU(
+      skillifySegments,
+      globalPromptTemplates.value.agentSkillifyPromptSegments,
+    );
+    return Boolean(await writeControlPatch({
+      agentDecisionPromptSegments: decision,
+      agentSkillifyPromptSegments: skillify,
+    }));
   }
 
-  async function savePromptSegmentsAsGlobalDefaults(): Promise<boolean> {
+  function getBuiltInPromptSegments(kind: AgentPromptKind_ACU): PromptSegment_ACU[] {
+    return getPromptFallback_ACU(kind);
+  }
+
+  async function savePromptSegmentsAsGlobalTemplate(
+    decisionSegments: PromptSegment_ACU[],
+    skillifySegments: PromptSegment_ACU[],
+  ): Promise<boolean> {
     if (!isReady.value) {
       toast.warning('Agent 世界书配置仍在加载，已拒绝保存以避免覆盖已保存提示词。', { muteable: false });
       return false;
     }
     const saved = setAgentPromptTemplateDefaults_ACU({
-      agentDecisionPromptSegments: agentDecisionPromptSegments.value,
-      agentSkillifyPromptSegments: agentSkillifyPromptSegments.value,
+      agentDecisionPromptSegments: decisionSegments,
+      agentSkillifyPromptSegments: skillifySegments,
     });
     if (!saved) {
       toast.error('全局 Agent 提示词模板保存失败。', { muteable: false });
@@ -616,8 +634,9 @@ export function usePlotWorldbookAgentControl() {
     setContextSetting,
     resetContextSettings,
     setPromptSegments,
-    resetPromptSegments,
-    savePromptSegmentsAsGlobalDefaults,
+    savePromptSegmentsToCurrentWorldbook,
+    getBuiltInPromptSegments,
+    savePromptSegmentsAsGlobalTemplate,
     addPromptSegment,
     updatePromptSegment,
     deletePromptSegment,

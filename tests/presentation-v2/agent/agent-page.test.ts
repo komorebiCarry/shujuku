@@ -2,7 +2,7 @@
  * @vitest-environment jsdom
  */
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { createApp } from 'vue';
+import { createApp, defineComponent } from 'vue';
 
 const harness = vi.hoisted(() => ({
   setScope: vi.fn(async () => true),
@@ -46,7 +46,12 @@ vi.mock('../../../src/presentation-v2/composables/useChatChangedListener', async
   const { ref } = await import('vue');
   return { useChatChangedTick: () => ref(0) };
 });
-vi.mock('../../../src/presentation-v2/components/WorldbookAgentControlBar.vue', () => ({ default: { template: '<div />' } }));
+vi.mock('../../../src/presentation-v2/components/WorldbookAgentControlBar.vue', () => ({
+  default: defineComponent({
+    props: { agentControl: { type: Object, required: true } },
+    template: '<div />',
+  }),
+}));
 
 afterEach(() => {
   document.body.innerHTML = '';

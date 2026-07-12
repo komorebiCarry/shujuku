@@ -62,8 +62,10 @@
 
     <WorldbookAgentAdvancedPanel
       :open="advancedOpen"
+      :agent-control="agentControl"
       @close="advancedOpen = false"
-      @changed="emit('changed')"
+      @current-worldbook-changed="emit('current-worldbook-changed')"
+      @global-template-saved="emit('global-template-saved')"
     />
   </section>
 </template>
@@ -82,8 +84,16 @@ import AcuSelect from './_lib/AcuSelect.vue';
 
 type AcuBadgeVariant = 'neutral' | 'accent' | 'success' | 'warning' | 'danger';
 
-const emit = defineEmits<{ (e: 'changed'): void }>();
-const agentControl = usePlotWorldbookAgentControl();
+const props = defineProps<{
+  agentControl: ReturnType<typeof usePlotWorldbookAgentControl>;
+}>();
+
+const emit = defineEmits<{
+  (e: 'current-worldbook-changed'): void;
+  (e: 'global-template-saved'): void;
+}>();
+
+const agentControl = props.agentControl;
 const advancedOpen = ref(false);
 
 const modeOptions: AcuSegmentedOption[] = [
@@ -99,17 +109,17 @@ const statusText = computed(() => agentControl.isAgentMode.value
 
 async function onModeChange(value: string): Promise<void> {
   await agentControl.setMode(value as AgentWorldbookControlMode_ACU);
-  emit('changed');
+  emit('current-worldbook-changed');
 }
 
 async function runRestore(): Promise<void> {
-  if (await agentControl.restore()) emit('changed');
+  if (await agentControl.restore()) emit('current-worldbook-changed');
 }
 async function runSkillify(): Promise<void> {
-  if (await agentControl.skillifyAll()) emit('changed');
+  if (await agentControl.skillifyAll()) emit('current-worldbook-changed');
 }
 async function runClearSkillMeta(): Promise<void> {
-  if (await agentControl.clearSkillMeta()) emit('changed');
+  if (await agentControl.clearSkillMeta()) emit('current-worldbook-changed');
 }
 </script>
 

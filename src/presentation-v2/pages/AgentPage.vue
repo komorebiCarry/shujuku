@@ -2,7 +2,10 @@
   <section class="acu-v2-agent-page">
     <AcuPanelGrid class="acu-v2-agent-page__grid">
       <AcuPanel title="Agent 世界书" description="独立管理 Agent 的世界书范围、Skill 元数据和接管状态。">
-        <WorldbookAgentControlBar @changed="refreshAll" />
+        <WorldbookAgentControlBar
+          :agent-control="agentControl"
+          @current-worldbook-changed="refreshAll"
+        />
 
         <WorldbookSourcePicker
           :source="agentControl.worldbookScope.value.source"
