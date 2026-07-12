@@ -25,12 +25,12 @@ export function getCurrentCharData_ACU(target: string = 'current'): any | null {
 /**
  * 获取当前角色绑定的所有世界书列表
  * @param options 查询选项，默认 { type: 'all' }
- * @returns 世界书名称数组，不可用时返回 []
+ * @returns 角色世界书结构，不可用时返回空结构
  */
 export async function getCharLorebooks_ACU(options: { type?: 'all' | 'primary' | 'additional' } = { type: 'all' }): Promise<any> {
     if (!TavernHelper_API_ACU || typeof TavernHelper_API_ACU.getCharLorebooks !== 'function') {
-        logWarn_ACU('[CharacterGateway] getCharLorebooks 不可用，返回空数组');
-        return [];
+        logWarn_ACU('[CharacterGateway] getCharLorebooks 不可用，返回空对象');
+        return { primary: '', additional: [] };
     }
     return await TavernHelper_API_ACU.getCharLorebooks(options);
 }

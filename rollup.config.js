@@ -12,7 +12,7 @@ import replace from '@rollup/plugin-replace';
 import vuePlugin from 'unplugin-vue/rollup';
 import sfcStyleInjector from './src/presentation-v2/build/rollup-sfc-style-injector.js';
 import vueScriptTranspiler from './src/presentation-v2/build/rollup-vue-script-transpiler.js';
-import { copyFileSync, existsSync, mkdirSync } from 'fs';
+import { copyFileSync, existsSync, mkdirSync, readFileSync } from 'fs';
 import { dirname, join } from 'path';
 import { fileURLToPath } from 'url';
 
@@ -20,6 +20,8 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
 
 const BUILD_MODE = process.env.BUILD_MODE || 'userscript';
+const PACKAGE_VERSION = JSON.parse(readFileSync(join(__dirname, 'package.json'), 'utf8')).version;
+const ACU_BUILD_VERSION = process.env.ACU_BUILD_VERSION || PACKAGE_VERSION;
 
 const USER_SCRIPT_BANNER = `// ==UserScript==
 // @name         SP·数据库 VII
@@ -69,6 +71,7 @@ function createReplacePlugin() {
     preventAssignment: true,
     values: {
       'process.env.NODE_ENV': JSON.stringify('production'),
+      'globalThis.__ACU_BUILD_VERSION__': JSON.stringify(ACU_BUILD_VERSION),
       __VUE_OPTIONS_API__: 'true',
       __VUE_PROD_DEVTOOLS__: 'false',
       __VUE_PROD_HYDRATION_MISMATCH_DETAILS__: 'false',

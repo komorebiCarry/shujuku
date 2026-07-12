@@ -142,7 +142,7 @@ describe('getCurrentCharPrimaryLorebook_ACU', () => {
 describe('getCharLorebooks_ACU', () => {
   it('API 不可用返回空对象', async () => {
     const result = await getCharLorebooks_ACU();
-    expect(result).toEqual({ primary: [], additional: [] });
+    expect(result).toEqual({ primary: '', additional: [] });
   });
 
   it('API 可用返回世界书列表', async () => {

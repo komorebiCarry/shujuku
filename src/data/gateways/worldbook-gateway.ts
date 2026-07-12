@@ -8,6 +8,7 @@
  */
 
 import { TavernHelper_API_ACU, SillyTavern_API_ACU } from '../../shared/host-api';
+import { getCharLorebooks_ACU } from './character-gateway';
 import { logWarn_ACU } from '../../shared/utils';
 
 // ═══ 可用性检查 ═══
@@ -131,12 +132,6 @@ export async function getCurrentCharPrimaryLorebook_ACU(): Promise<string | null
 /**
  * 获取角色关联的世界书列表
  * @param options 查询选项（如 { type: 'all' }）
- * @returns 角色世界书数组，不可用时返回 []
+ * @returns 角色世界书结构，不可用时返回空结构
  */
-export async function getCharLorebooks_ACU(options?: { type?: 'all' | 'primary' | 'additional'; [key: string]: any }): Promise<any> {
-    if (!TavernHelper_API_ACU || typeof TavernHelper_API_ACU.getCharLorebooks !== 'function') {
-        logWarn_ACU('[WorldbookGateway] getCharLorebooks 不可用，返回空对象');
-        return { primary: [], additional: [] };
-    }
-    return await TavernHelper_API_ACU.getCharLorebooks(options || { type: 'all' });
-}
+export { getCharLorebooks_ACU };

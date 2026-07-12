@@ -4,7 +4,7 @@
  */
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
-const { mockSettings, mockLoopState, mockPlanningGuard, mockRunPlotTasks } = vi.hoisted(() => ({
+const { mockSettings, mockLoopState, mockPlanningGuard, mockRunPlotTasks, mockLogError, mockCaptureScope } = vi.hoisted(() => ({
   mockSettings: {
     plotSettings: { enabled: true },
     streamingEnabled: false,
@@ -12,6 +12,8 @@ const { mockSettings, mockLoopState, mockPlanningGuard, mockRunPlotTasks } = vi.
   mockLoopState: { isRetrying: false } as any,
   mockPlanningGuard: { inProgress: false } as any,
   mockRunPlotTasks: vi.fn(),
+  mockLogError: vi.fn(),
+  mockCaptureScope: vi.fn(),
 }));
 
 vi.mock('../../../../src/shared/defaults-json.js', () => ({
@@ -28,11 +30,17 @@ vi.mock('../../../../src/service/runtime/state-manager', () => ({
 
 vi.mock('../../../../src/shared/utils', () => ({
   logDebug_ACU: vi.fn(),
-  logError_ACU: vi.fn(),
+  logError_ACU: mockLogError,
 }));
 
 vi.mock('../../../../src/service/runtime/plot-runtime/plot-task-engine', () => ({
   runPlotTasksRuntime_ACU: mockRunPlotTasks,
+}));
+
+vi.mock('../../../../src/service/runtime/plot-runtime/plot-runtime-scope', () => ({
+  capturePlotRuntimeScope_ACU: mockCaptureScope,
+  summarizePlotRuntimeScope_ACU: (scope: any) => scope,
+  summarizePlotRuntimeError_ACU: () => ({ category: 'unknown' }),
 }));
 
 import { runOptimizationLogic_ACU } from '../../../../src/service/runtime/plot-runtime/plot-entry';
@@ -42,6 +50,7 @@ beforeEach(() => {
   mockSettings.plotSettings = { enabled: true };
   mockLoopState.isRetrying = false;
   mockPlanningGuard.inProgress = false;
+  mockCaptureScope.mockReturnValue({ chatId: 'chat-1', characterId: '1', isolationKey: '', reliable: true });
   // 重置 __inFlight 标记
   (runOptimizationLogic_ACU as any).__inFlight = false;
   (runOptimizationLogic_ACU as any).__inFlightText = '';
@@ -135,11 +144,23 @@ describe('runOptimizationLogic_ACU', () => {
     expect(result.aborted).toBe(true);
   });
 
-  it('未知异常返回 exception', async () => {
-    mockRunPlotTasks.mockRejectedValue(new Error('未知错误'));
-    const result = await runOptimizationLogic_ACU('继续');
+  it('未知异常返回通用错误且日志与结果均不泄露宿主正文', async () => {
+    const sensitiveText = '用户输入、提示词和世界书正文都不能泄露';
+    mockRunPlotTasks.mockRejectedValue(new Error(sensitiveText));
+    const result = await runOptimizationLogic_ACU(sensitiveText);
     expect(result.success).toBe(false);
     expect(result.errorType).toBe('exception');
+    expect(result.errorMessage).toBe('剧情规划大师在处理时发生错误。');
+    expect(result).not.toHaveProperty('error');
+    expect(JSON.stringify(result)).not.toContain(sensitiveText);
+    expect(mockLogError).toHaveBeenCalledWith('[剧情推进] 在核心优化逻辑中发生错误:', expect.objectContaining({
+      phase: 'top_level',
+      build: expect.any(String),
+      initialScope: expect.objectContaining({ chatId: 'chat-1' }),
+      errorScope: expect.objectContaining({ chatId: 'chat-1' }),
+      error: { category: 'unknown' },
+    }));
+    expect(JSON.stringify(mockLogError.mock.calls)).not.toContain(sensitiveText);
   });
 
   it('部分失败时 hasPartialFailure=true', async () => {

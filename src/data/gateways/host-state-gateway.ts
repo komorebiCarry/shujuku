@@ -24,6 +24,36 @@ export function getUserName_ACU(): string {
 }
 
 /**
+ * 获取当前角色的宿主稳定索引。
+ *
+ * 该值只用于运行时作用域比较，不能使用角色显示名代替；显示名可重复或被编辑。
+ * API 未完成初始化时返回 null，调用方必须将其视为不可靠作用域。
+ */
+function normalizeCharacterId_ACU(value: unknown): string | null {
+    if (value === null || value === undefined) return null;
+    const normalized = String(value).trim();
+    if (!normalized || normalized.toLowerCase() === 'null' || normalized.toLowerCase() === 'undefined') {
+        return null;
+    }
+    return normalized;
+}
+
+export function getCurrentCharacterId_ACU(win?: any): string | null {
+    try {
+        const directId = normalizeCharacterId_ACU(SillyTavern_API_ACU?.this_chid);
+        if (directId !== null) return directId;
+
+        const w = win || topLevelWindow_ACU || window;
+        const contextId = normalizeCharacterId_ACU((w as any)?.SillyTavern?.getContext?.()?.characterId);
+        if (contextId !== null) return contextId;
+
+        return normalizeCharacterId_ACU((w as any)?.this_chid);
+    } catch {
+        return null;
+    }
+}
+
+/**
  * 获取用户人设描述 (persona_description)
  * 按优先级尝试多个来源：
  *   1. SillyTavern.getContext().powerUserSettings.persona_description

@@ -641,14 +641,16 @@ export   async function loadAllChatMessages_ACU() {
   }
 
 
+function normalizeWorldbookListNames_ACU(bookList: unknown): string[] {
+      if (!Array.isArray(bookList)) return [];
+      return bookList
+          .map(item => String(typeof item === 'object' && item !== null ? (item as any).name || '' : item || '').trim())
+          .filter(Boolean);
+}
+
 export   async function getWorldbookNames_ACU() {
       const bookNames = await listLorebooks_ACU();
-      if (Array.isArray(bookNames) && bookNames.length > 0) {
-          return bookNames
-              .map(name => String(typeof name === 'object' ? (name as any)?.name || '' : name || '').trim())
-              .filter(Boolean);
-      }
-      return [];
+      return normalizeWorldbookListNames_ACU(bookNames);
   }
 
 
@@ -662,10 +664,16 @@ export   async function getLorebookEntriesByNames_ACU(bookNames: string[] = []) 
       // 防止 SillyTavern API 返回残留/缓存的不存在世界书名称导致报错
       try {
           const availableBooks = await listLorebooks_ACU();
-          if (Array.isArray(availableBooks) && availableBooks.length > 0) {
+          const availableBookNames = normalizeWorldbookListNames_ACU(availableBooks);
+          if (availableBookNames.length > 0) {
+              const availableBookNameSet = new Set(availableBookNames);
               const filtered = uniqueNames.filter(name => {
-                  if (availableBooks.includes(name)) return true;
-                  logDebug_ACU(`[Worldbook] 世界书 "${name}" 不存在于可用列表中，静默跳过。`);
+                  if (availableBookNameSet.has(name)) return true;
+                  logDebug_ACU('[Worldbook] 世界书不在当前可用列表中，跳过读取。', {
+                      phase: 'read_entries',
+                      reason: 'not_in_available_list',
+                      bookName: name,
+                  });
                   entriesMap[name] = []; // 为不存在的书返回空数组，保持接口一致
                   return false;
               });
@@ -689,8 +697,13 @@ export   async function getLorebookEntriesByNames_ACU(bookNames: string[] = []) 
                   entries = (matchedBook as any)?.entries || [];
               }
               entriesMap[name] = Array.isArray(entries) ? entries.map((entry: any) => ({ ...entry, book: name })) : [];
-          } catch (e) {
-              logWarn_ACU(`[Worldbook] 获取世界书 "${name}" 条目失败（忽略该书，继续）：`, e);
+          } catch {
+              logWarn_ACU('[Worldbook] 获取世界书条目失败，忽略该书并继续。', {
+                  phase: 'read_entries',
+                  attempt: 1,
+                  bookName: name,
+                  error: { category: 'read_failed' },
+              });
               entriesMap[name] = [];
           }
       }
@@ -1020,8 +1033,11 @@ export   async function getCombinedWorldbookContent_ACU(initialScanTextOverride 
                 const charLorebooks = await getCharLorebooks_ACU({ type: 'all' });
                 if (charLorebooks.primary) bookNames.push(charLorebooks.primary);
                 if (charLorebooks.additional?.length) bookNames.push(...charLorebooks.additional);
-            } catch (e) {
-                logError_ACU('[Worldbook] 获取角色世界书失败:', e);
+            } catch {
+                logError_ACU('[Worldbook] 获取角色世界书失败:', {
+                    phase: 'resolve_character',
+                    error: { category: 'read_failed' },
+                });
                 return '';
             }
         }

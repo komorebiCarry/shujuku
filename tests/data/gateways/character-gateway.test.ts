@@ -47,8 +47,8 @@ describe('getCurrentCharData_ACU', () => {
 });
 
 describe('getCharLorebooks_ACU', () => {
-  it('API 不可用返回空数组', async () => {
-    expect(await getCharLorebooks_ACU()).toEqual([]);
+  it('API 不可用返回结构化空结果', async () => {
+    expect(await getCharLorebooks_ACU()).toEqual({ primary: '', additional: [] });
     expect(mockLogWarn).toHaveBeenCalled();
   });
 

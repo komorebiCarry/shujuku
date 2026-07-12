@@ -27,6 +27,7 @@ import {
   getPersonaDescription_ACU,
   getCurrentCharacterFallback_ACU,
   getCharDescription_ACU,
+  getCurrentCharacterId_ACU,
 } from '../../../src/data/gateways/host-state-gateway';
 
 beforeEach(() => {
@@ -69,6 +70,35 @@ describe('getPersonaDescription_ACU', () => {
   it('从 SillyTavern_API_ACU 获取（最终降级）', () => {
     mockSillyTavern.powerUserSettings = { persona_description: 'API描述' };
     expect(getPersonaDescription_ACU()).toBe('API描述');
+  });
+});
+
+describe('getCurrentCharacterId_ACU', () => {
+  it('优先使用 SillyTavern API 的 this_chid，并保留 0', () => {
+    mockSillyTavern.this_chid = 0;
+    mockTopLevelWindow.SillyTavern = { getContext: () => ({ characterId: 9 }) };
+    mockTopLevelWindow.this_chid = 12;
+    expect(getCurrentCharacterId_ACU()).toBe('0');
+  });
+
+  it('降级使用 SillyTavern context 的 characterId', () => {
+    mockTopLevelWindow.SillyTavern = { getContext: () => ({ characterId: 9 }) };
+    mockTopLevelWindow.this_chid = 12;
+    expect(getCurrentCharacterId_ACU()).toBe('9');
+  });
+
+  it('最终降级使用 window.this_chid，并在没有值时返回 null', () => {
+    mockTopLevelWindow.this_chid = 12;
+    expect(getCurrentCharacterId_ACU()).toBe('12');
+    delete mockTopLevelWindow.this_chid;
+    expect(getCurrentCharacterId_ACU()).toBeNull();
+  });
+
+  it('忽略字符串形式的初始化占位值', () => {
+    mockSillyTavern.this_chid = 'null';
+    mockTopLevelWindow.SillyTavern = { getContext: () => ({ characterId: 'undefined' }) };
+    mockTopLevelWindow.this_chid = 'NULL';
+    expect(getCurrentCharacterId_ACU()).toBeNull();
   });
 });
 

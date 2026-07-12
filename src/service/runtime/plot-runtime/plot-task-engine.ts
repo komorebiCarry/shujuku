@@ -9,6 +9,7 @@ import { abortController_ACU, currentJsonTableData_ACU, planningGuard_ACU, setti
 import { getCharLorebooks_ACU } from '../../../data/gateways/character-gateway';
 import { getChatArray_ACU } from '../../../data/gateways/chat-gateway';
 import { getPersonaDescription_ACU, getCharDescription_ACU } from '../../../data/gateways/host-state-gateway';
+import { capturePlotRuntimeScope_ACU, isSamePlotRuntimeScope_ACU, isTransientLorebookNotFoundError_ACU, normalizeLorebookNames_ACU, summarizePlotRuntimeError_ACU, summarizePlotRuntimeScope_ACU } from './plot-runtime-scope';
 import { buildCombinedWorldbookContentByStrategy_ACU, collectCombinedWorldbookEntriesByStrategy_ACU, formatCombinedWorldbookEntries_ACU, getWorldBooks_ACU } from '../../worldbook/pipeline';
 import { isDatabaseGeneratedLorebookEntry_ACU, resolveGeneratedEntriesForTable_ACU } from '../../worldbook/worldbook-placeholder-classification';
 import { escapeRegExp_ACU, hashUserInput_ACU, isEntryBlocked_ACU, logDebug_ACU, logError_ACU, logWarn_ACU, normalizeNonNegativeInteger_ACU, normalizePositiveInteger_ACU, normalizeExcludeRules_ACU, normalizeExtractRules_ACU } from '../../../shared/utils';
@@ -27,6 +28,8 @@ import { clearFinalGenerationGreenlights_ACU, resolvePreTakeoverWorldbookSnapsho
 import { hasUsableWorldbookSkillMeta_ACU, resolveAgentWorldbookFilterAvailability_ACU } from '../../agent/agent-worldbook-skill-meta';
 
   type PlotWorldbookAgentMode_ACU = 'normal' | 'agent-controlled';
+
+  const CHARACTER_LOREBOOK_RETRY_DELAY_MS_ACU = 300;
 
   type PlotWorldbookContentOptions_ACU = AgentWorldbookRef_ACU[] | {
     agentGreenlights?: AgentWorldbookRef_ACU[];
@@ -264,7 +267,11 @@ import { hasUsableWorldbookSkillMeta_ACU, resolveAgentWorldbookFilterAvailabilit
         });
         return wrapWorldbookContext(content, '$1');
       } catch (error) {
-        logWarn_ACU(`[剧情推进] 无法解析表名占位符 "${normalizedTableName}"，保留原 token。`,error);
+        logWarn_ACU('[剧情推进][世界书] 表名占位符解析失败，保留原 token。', {
+          phase: 'table_token',
+          scope: summarizePlotRuntimeScope_ACU(capturePlotRuntimeScope_ACU()),
+          error: summarizePlotRuntimeError_ACU(error),
+        });
         return null;
       }
     };
@@ -878,6 +885,80 @@ import { hasUsableWorldbookSkillMeta_ACU, resolveAgentWorldbookFilterAvailabilit
 
   // ═══ 世界书内容获取 ═══
 
+  export async function resolveCharacterLorebookNamesStable_ACU(): Promise<string[]> {
+    const initialScope = capturePlotRuntimeScope_ACU();
+    const readOnce = async (attempt: number): Promise<string[] | null> => {
+      checkPlotAbortRequested_ACU();
+      const beforeScope = capturePlotRuntimeScope_ACU();
+      if (initialScope.reliable && !isSamePlotRuntimeScope_ACU(initialScope, beforeScope)) {
+        logWarn_ACU('[剧情推进][世界书] 角色绑定解析取消：读取前作用域已变化。', {
+          phase: 'resolve_character',
+          attempt,
+          initialScope: summarizePlotRuntimeScope_ACU(initialScope),
+          currentScope: summarizePlotRuntimeScope_ACU(beforeScope),
+        });
+        return null;
+      }
+
+      const charLorebooks = await getCharLorebooks_ACU({ type: 'all' });
+      const afterScope = capturePlotRuntimeScope_ACU();
+      if (initialScope.reliable && !isSamePlotRuntimeScope_ACU(initialScope, afterScope)) {
+        logWarn_ACU('[剧情推进][世界书] 角色绑定解析取消：读取后作用域已变化。', {
+          phase: 'resolve_character',
+          attempt,
+          initialScope: summarizePlotRuntimeScope_ACU(initialScope),
+          currentScope: summarizePlotRuntimeScope_ACU(afterScope),
+        });
+        return null;
+      }
+
+      return normalizeLorebookNames_ACU(charLorebooks);
+    };
+
+    try {
+      const names = await readOnce(1);
+      return names || [];
+    } catch (error) {
+      if (!isTransientLorebookNotFoundError_ACU(error)) throw error;
+      if (!initialScope.reliable) {
+        logWarn_ACU('[剧情推进][世界书] 角色绑定首次读取失败：作用域不可靠，已禁用重试。', {
+          phase: 'resolve_character',
+          attempt: 1,
+          scope: summarizePlotRuntimeScope_ACU(initialScope),
+          error: summarizePlotRuntimeError_ACU(error),
+        });
+        throw error;
+      }
+
+      await abortableDelay(CHARACTER_LOREBOOK_RETRY_DELAY_MS_ACU, abortController_ACU?.signal);
+      checkPlotAbortRequested_ACU();
+      const retryScope = capturePlotRuntimeScope_ACU();
+      if (!isSamePlotRuntimeScope_ACU(initialScope, retryScope)) {
+        logWarn_ACU('[剧情推进][世界书] 角色绑定重试取消：等待期间作用域已变化。', {
+          phase: 'resolve_character',
+          attempt: 1,
+          initialScope: summarizePlotRuntimeScope_ACU(initialScope),
+          currentScope: summarizePlotRuntimeScope_ACU(retryScope),
+        });
+        return [];
+      }
+
+      try {
+        const names = await readOnce(2);
+        logDebug_ACU('[剧情推进][世界书] 角色绑定世界书在第 2 次读取后恢复。');
+        return names || [];
+      } catch (retryError) {
+        logWarn_ACU('[剧情推进][世界书] 角色绑定世界书读取失败，已达到重试上限。', {
+          phase: 'resolve_character',
+          attempt: 2,
+          scope: summarizePlotRuntimeScope_ACU(capturePlotRuntimeScope_ACU()),
+          error: summarizePlotRuntimeError_ACU(retryError),
+        });
+        throw retryError;
+      }
+    }
+  }
+
   /** 获取剧情推进功能的世界书内容（默认开启，无需检查 worldbookEnabled） */
   export async function getWorldbookContentForPlot_ACU(apiSettings: Record<string, any>, userMessage: string, extraBaseText: string = '', options: PlotWorldbookContentOptions_ACU = []) {
     if (!apiSettings) {
@@ -900,12 +981,13 @@ import { hasUsableWorldbookSkillMeta_ACU, resolveAgentWorldbookFilterAvailabilit
       } else {
         logDebug_ACU('[剧情推进] 使用角色绑定的世界书模式');
         try {
-          const charLorebooks = await getCharLorebooks_ACU({ type: 'all' });
-          logDebug_ACU('[剧情推进] 获取到的角色世界书:', charLorebooks);
-          if (charLorebooks.primary) bookNames.push(charLorebooks.primary);
-          if (charLorebooks.additional?.length) bookNames.push(...charLorebooks.additional);
+          bookNames = await resolveCharacterLorebookNamesStable_ACU();
         } catch (error) {
-          logError_ACU('[剧情推进] 获取角色世界书失败:', error);
+          logError_ACU('[剧情推进] 获取角色世界书失败:', {
+            phase: 'resolve_character',
+            scope: summarizePlotRuntimeScope_ACU(capturePlotRuntimeScope_ACU()),
+            error: summarizePlotRuntimeError_ACU(error),
+          });
           return '';
         }
       }
@@ -944,7 +1026,11 @@ import { hasUsableWorldbookSkillMeta_ACU, resolveAgentWorldbookFilterAvailabilit
           entryStateSnapshot = resolvedSnapshot.snapshot;
           entryStateSnapshotSignature = resolvedSnapshot.expectedSignature;
         } catch (error) {
-          logWarn_ACU('[剧情推进] 无法读取 Agent 世界书接管快照，普通剧情世界书将使用 live 状态。', error);
+          logWarn_ACU('[剧情推进] 无法读取 Agent 世界书接管快照，普通剧情世界书将使用 live 状态。', {
+            phase: 'read_pre_takeover_snapshot',
+            scope: summarizePlotRuntimeScope_ACU(capturePlotRuntimeScope_ACU()),
+            error: summarizePlotRuntimeError_ACU(error),
+          });
         }
       }
 
@@ -1010,7 +1096,11 @@ import { hasUsableWorldbookSkillMeta_ACU, resolveAgentWorldbookFilterAvailabilit
         },
       });
     } catch (error) {
-      logError_ACU('[剧情推进] 处理世界书内容时发生错误:', error);
+      logError_ACU('[剧情推进] 处理世界书内容时发生错误:', {
+        phase: 'process_worldbook_content',
+        scope: summarizePlotRuntimeScope_ACU(capturePlotRuntimeScope_ACU()),
+        error: summarizePlotRuntimeError_ACU(error),
+      });
       return '';
     }
   }
@@ -1023,12 +1113,10 @@ import { hasUsableWorldbookSkillMeta_ACU, resolveAgentWorldbookFilterAvailabilit
     if (worldbookSource === 'manual') {
       bookNames = plotCfg?.manualSelection || apiSettings.selectedWorldbooks || [];
     } else {
-      const charLorebooks = await getCharLorebooks_ACU({ type: 'all' });
-      if (charLorebooks.primary) bookNames.push(charLorebooks.primary);
-      if (charLorebooks.additional?.length) bookNames.push(...charLorebooks.additional);
+      bookNames = await resolveCharacterLorebookNamesStable_ACU();
     }
 
-    return [...new Set((Array.isArray(bookNames) ? bookNames : []).filter(Boolean))];
+    return [...new Set((Array.isArray(bookNames) ? bookNames : []).filter(Boolean).map(name => String(name).trim()).filter(Boolean))];
   }
 
   /**
@@ -1051,7 +1139,11 @@ import { hasUsableWorldbookSkillMeta_ACU, resolveAgentWorldbookFilterAvailabilit
       try {
         bookNames = await resolveAgentFinalPromptWorldbookNames_ACU(apiSettings);
       } catch (error) {
-        logError_ACU('[剧情推进] 获取角色世界书失败，无法收集 Agent 控制范围正文世界书条目:', error);
+        logError_ACU('[剧情推进] 获取角色世界书失败，无法收集 Agent 控制范围正文世界书条目:', {
+          phase: 'resolve_agent_final_prompt_character',
+          scope: summarizePlotRuntimeScope_ACU(capturePlotRuntimeScope_ACU()),
+          error: summarizePlotRuntimeError_ACU(error),
+        });
         return [];
       }
 
@@ -1070,7 +1162,11 @@ import { hasUsableWorldbookSkillMeta_ACU, resolveAgentWorldbookFilterAvailabilit
         },
       });
     } catch (error) {
-      logError_ACU('[剧情推进] 处理 Agent 控制范围正文世界书条目时发生错误:', error);
+      logError_ACU('[剧情推进] 处理 Agent 控制范围正文世界书条目时发生错误:', {
+        phase: 'process_agent_controlled_entries',
+        scope: summarizePlotRuntimeScope_ACU(capturePlotRuntimeScope_ACU()),
+        error: summarizePlotRuntimeError_ACU(error),
+      });
       return [];
     }
   }
@@ -1100,7 +1196,11 @@ import { hasUsableWorldbookSkillMeta_ACU, resolveAgentWorldbookFilterAvailabilit
       try {
         bookNames = await resolveAgentFinalPromptWorldbookNames_ACU(apiSettings);
       } catch (error) {
-        logError_ACU('[剧情推进] 获取角色世界书失败，无法注入 Agent 正文世界书绿灯:', error);
+        logError_ACU('[剧情推进] 获取角色世界书失败，无法注入 Agent 正文世界书绿灯:', {
+          phase: 'resolve_agent_greenlight_character',
+          scope: summarizePlotRuntimeScope_ACU(capturePlotRuntimeScope_ACU()),
+          error: summarizePlotRuntimeError_ACU(error),
+        });
         return [];
       }
 
@@ -1128,7 +1228,11 @@ import { hasUsableWorldbookSkillMeta_ACU, resolveAgentWorldbookFilterAvailabilit
         },
       });
     } catch (error) {
-      logError_ACU('[剧情推进] 处理 Agent 正文世界书绿灯时发生错误:', error);
+      logError_ACU('[剧情推进] 处理 Agent 正文世界书绿灯时发生错误:', {
+        phase: 'process_agent_greenlight_entries',
+        scope: summarizePlotRuntimeScope_ACU(capturePlotRuntimeScope_ACU()),
+        error: summarizePlotRuntimeError_ACU(error),
+      });
       return [];
     }
   }

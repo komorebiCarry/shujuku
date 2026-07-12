@@ -7,6 +7,9 @@ import { DEFAULT_PLOT_SETTINGS_ACU } from '../../../shared/defaults-json.js';
 import { abortController_ACU, loopState_ACU, planningGuard_ACU, settings_ACU, _set_abortController_ACU } from '../state-manager';
 import { logDebug_ACU, logError_ACU } from '../../../shared/utils';
 import { runPlotTasksRuntime_ACU } from './plot-task-engine';
+import { capturePlotRuntimeScope_ACU, summarizePlotRuntimeError_ACU, summarizePlotRuntimeScope_ACU } from './plot-runtime-scope';
+
+const PLOT_RUNTIME_BUILD_VERSION_ACU = (globalThis as any).__ACU_BUILD_VERSION__ || 'unknown';
 
   /**
    * 核心优化逻辑（纯 service 层：读数据→业务决策→写数据→构造返回值）。
@@ -14,6 +17,7 @@ import { runPlotTasksRuntime_ACU } from './plot-task-engine';
   export async function runOptimizationLogic_ACU(userMessage: any, options: any = {}) {
     const { originalUserInput, hasExistingUserMessage = false } = options;
     const inputForHash = originalUserInput || userMessage;
+    const initialScope = capturePlotRuntimeScope_ACU();
 
     if (loopState_ACU.isRetrying) {
         logDebug_ACU('[剧情推进] 当前处于重试流程，跳过剧情规划逻辑。');
@@ -105,12 +109,17 @@ import { runPlotTasksRuntime_ACU } from './plot-task-engine';
       if (error?.name === 'AbortError' || String(error?.message || '').toLowerCase().includes('aborted')) {
           return { success: false, aborted: true, manual: true, restoreText: originalUserInputForAbort_ACU };
       }
-      logError_ACU('[剧情推进] 在核心优化逻辑中发生错误:', error);
+      logError_ACU('[剧情推进] 在核心优化逻辑中发生错误:', {
+        phase: 'top_level',
+        build: PLOT_RUNTIME_BUILD_VERSION_ACU,
+        initialScope: summarizePlotRuntimeScope_ACU(initialScope),
+        errorScope: summarizePlotRuntimeScope_ACU(capturePlotRuntimeScope_ACU()),
+        error: summarizePlotRuntimeError_ACU(error),
+      });
       return {
         success: false,
         errorType: 'exception',
         errorMessage: '剧情规划大师在处理时发生错误。',
-        error: String(error?.message || error),
       };
     } finally {
         planningGuard_ACU.inProgress = false;
