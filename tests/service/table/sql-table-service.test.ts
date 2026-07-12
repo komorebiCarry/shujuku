@@ -524,6 +524,45 @@ describe('SqlTableService', () => {
       expect(canonicalData.sheet_0.content[1]).toEqual(['1', '铁剑', '3']);
     });
 
+    it('从错序旧 chronicle snapshot hydrate 后保持 SQLite ready 与字段语义', async () => {
+      const canonicalData = JSON.parse(JSON.stringify(testTableData));
+      canonicalData.sheet_0.uid = 'chronicle';
+      canonicalData.sheet_0.name = '纪要表';
+      canonicalData.sheet_0.sourceData.ddl = `CREATE TABLE chronicle (
+  row_id INTEGER PRIMARY KEY, -- 行号
+  code_index TEXT NOT NULL, -- 编码索引
+  chronicle_text TEXT NOT NULL -- 纪要
+);`;
+      canonicalData.sheet_0.content = [
+        ['row_id', '纪要', '编码索引'],
+        ['1', '完整纪要正文', 'AM0001'],
+      ];
+
+      const result = await service.loadFromData(canonicalData);
+
+      expect(result).toEqual({ loaded: true, source: 'merged' });
+      expect(service.isReady()).toBe(true);
+      expect(service.executeQuery('SELECT code_index, chronicle_text FROM chronicle WHERE row_id = 1').values).toEqual([
+        ['AM0001', '完整纪要正文'],
+      ]);
+      expect(canonicalData.sheet_0.content[1]).toEqual(['1', '完整纪要正文', 'AM0001']);
+    });
+
+    it('strict hydrate 遇到非空未映射旧字段时清理 runtime 并保持 not ready', async () => {
+      const invalidData = JSON.parse(JSON.stringify(testTableData));
+      invalidData.sheet_0.content = [
+        ['row_id', 'item_name', 'quantity', '旧字段'],
+        ['1', '铁剑', '3', '不能丢失'],
+      ];
+
+      const result = await service.loadFromData(invalidData);
+
+      expect(result.loaded).toBe(false);
+      expect(result.error).toContain('sqlite_hydrate_failed');
+      expect(service.isReady()).toBe(false);
+      expect(invalidData.sheet_0.content[1]).toEqual(['1', '铁剑', '3', '不能丢失']);
+    });
+
     it('strict hydrate 失败时清理部分 runtime，且不修改调用方快照', async () => {
       const invalidData = JSON.parse(JSON.stringify(testTableData));
       invalidData.sheet_0.sourceData.ddl = 'CREATE TABLE broken (';

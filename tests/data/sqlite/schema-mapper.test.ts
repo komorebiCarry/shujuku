@@ -14,6 +14,7 @@ import {
   parseDDLColumnNames,
   parseDDLColumnComments,
   buildColumnNameMap,
+  parseDDLColumnInfos_ACU,
 } from '../../../src/data/sqlite/schema-mapper';
 import type { Sheet_ACU } from '../../../src/shared/models/table-data';
 
@@ -171,6 +172,43 @@ describe('buildColumnNameMap', () => {
 });
 
 // ═══════════════════════════════════════════════════════════════
+// parseDDLColumnInfos_ACU
+// ═══════════════════════════════════════════════════════════════
+describe('parseDDLColumnInfos_ACU', () => {
+  it('保留含逗号字符串 DEFAULT 的完整列定义与约束信息', () => {
+    const ddl = `CREATE TABLE inventory (
+      row_id INTEGER PRIMARY KEY, -- 行号
+      item_name TEXT NOT NULL, -- 名称
+      status TEXT NOT NULL DEFAULT 'pending, review' -- 状态
+    );`;
+
+    expect(parseDDLColumnInfos_ACU(ddl)).toEqual([
+      { index: 0, sqlName: 'row_id', declaredType: 'INTEGER', comment: '行号', isPrimaryKey: true, isNotNull: false, hasDefault: false },
+      { index: 1, sqlName: 'item_name', declaredType: 'TEXT', comment: '名称', isPrimaryKey: false, isNotNull: true, hasDefault: false },
+      { index: 2, sqlName: 'status', declaredType: 'TEXT', comment: '状态', isPrimaryKey: false, isNotNull: true, hasDefault: true },
+    ]);
+  });
+
+  it('CHECK 字符串中的 DEFAULT 不会被误判为列级默认值', () => {
+    const ddl = `CREATE TABLE inventory (
+      row_id INTEGER PRIMARY KEY, -- 行号
+      name TEXT NOT NULL CHECK(name <> 'DEFAULT') -- 名称
+    );`;
+
+    expect(parseDDLColumnInfos_ACU(ddl)[1]).toMatchObject({ declaredType: 'TEXT', isNotNull: true, hasDefault: false });
+  });
+
+  it('块注释中的 DEFAULT 不会被误判为列级默认值', () => {
+    const ddl = `CREATE TABLE inventory (
+      row_id INTEGER PRIMARY KEY, -- 行号
+      name TEXT NOT NULL /* DEFAULT 仅为说明 */ -- 名称
+    );`;
+
+    expect(parseDDLColumnInfos_ACU(ddl)[1]).toMatchObject({ declaredType: 'TEXT', isNotNull: true, hasDefault: false });
+  });
+});
+
+// ═══════════════════════════════════════════════════════════════
 // generateDDL
 // ═══════════════════════════════════════════════════════════════
 describe('generateDDL', () => {
@@ -277,6 +315,240 @@ describe('generateInserts', () => {
     });
     const inserts = generateInserts(sheet, 'test_table');
     expect(inserts[0]).toContain("it''s a test");
+  });
+
+  it('DDL 列顺序与旧中文表头错位时，按注释映射源值而不是按数组位置', () => {
+    const sheet = makeSheet({
+      uid: 'chronicle',
+      sourceData: {
+        note: '', initNode: '', deleteNode: '', updateNode: '', insertNode: '',
+        ddl: `CREATE TABLE chronicle (
+  row_id INTEGER PRIMARY KEY, -- 行号
+  code_index TEXT, -- 编码索引
+  time_span TEXT, -- 时间跨度
+  summary TEXT, -- 概览
+  chronicle_text TEXT, -- 纪要
+  key_dialogue TEXT -- 重要对话
+);`,
+      },
+      content: [
+        ['row_id', '纪要', '编码索引', '时间跨度', '概览', '重要对话'],
+        ['1', '完整纪要正文', 'AM0001', '2026-10-15 14:30 ~ 2026-10-15 15:00', '摘要', null],
+      ],
+    });
+
+    const inserts = generateInserts(sheet, 'chronicle');
+
+    expect(inserts).toEqual([
+      "INSERT OR REPLACE INTO chronicle (row_id, code_index, time_span, summary, chronicle_text, key_dialogue) VALUES (1, 'AM0001', '2026-10-15 14:30 ~ 2026-10-15 15:00', '摘要', '完整纪要正文', NULL);",
+    ]);
+  });
+
+  it('缺少有 DEFAULT 的新增列时省略该 INSERT 列以保留 SQL 默认值', () => {
+    const sheet = makeSheet({
+      sourceData: {
+        note: '', initNode: '', deleteNode: '', updateNode: '', insertNode: '',
+        ddl: `CREATE TABLE inventory (
+  row_id INTEGER PRIMARY KEY, -- 行号
+  item_name TEXT NOT NULL, -- 名称
+  quantity INTEGER DEFAULT 1 -- 数量
+);`,
+      },
+      content: [
+        ['row_id', '名称'],
+        ['1', '铁剑'],
+      ],
+    });
+
+    expect(generateInserts(sheet, 'inventory')).toEqual([
+      "INSERT OR REPLACE INTO inventory (row_id, item_name) VALUES (1, '铁剑');",
+    ]);
+  });
+
+  it('重复中文表头无法唯一映射时拒绝生成 INSERT', () => {
+    const sheet = makeSheet({
+      sourceData: {
+        note: '', initNode: '', deleteNode: '', updateNode: '', insertNode: '',
+        ddl: `CREATE TABLE inventory (
+  row_id INTEGER PRIMARY KEY, -- 行号
+  item_name TEXT NOT NULL -- 名称
+);`,
+      },
+      content: [
+        ['row_id', '名称', '名称'],
+        ['1', '铁剑', '重复值'],
+      ],
+    });
+
+    expect(() => generateInserts(sheet, 'inventory')).toThrow('snapshot 表头存在重复列');
+  });
+
+  it('未映射表头存在非空数据时拒绝静默丢弃', () => {
+    const sheet = makeSheet({
+      sourceData: {
+        note: '', initNode: '', deleteNode: '', updateNode: '', insertNode: '',
+        ddl: `CREATE TABLE inventory (
+  row_id INTEGER PRIMARY KEY, -- 行号
+  item_name TEXT NOT NULL -- 名称
+);`,
+      },
+      content: [
+        ['row_id', '名称', '旧字段'],
+        ['1', '铁剑', '不能丢失'],
+      ],
+    });
+
+    expect(() => generateInserts(sheet, 'inventory')).toThrow('拒绝丢弃非空数据');
+  });
+
+  it('仅 row_id 可识别时，即使等宽也拒绝猜测未知业务表头的位置', () => {
+    const sheet = makeSheet({
+      sourceData: {
+        note: '', initNode: '', deleteNode: '', updateNode: '', insertNode: '',
+        ddl: `CREATE TABLE legacy_inventory (
+  row_id INTEGER PRIMARY KEY, -- 行号
+  item_name TEXT NOT NULL, -- 名称
+  quantity INTEGER NOT NULL -- 数量
+);`,
+      },
+      content: [
+        ['行号', '旧名称', '旧数量'],
+        ['1', '铁剑', '3'],
+      ],
+    });
+
+    expect(() => generateInserts(sheet, 'legacy_inventory')).toThrow('缺少必需 DDL 列');
+  });
+
+  it('未知业务表头即使看似保持 DDL 顺序也拒绝位置猜测', () => {
+    const sheet = makeSheet({
+      sourceData: {
+        note: '', initNode: '', deleteNode: '', updateNode: '', insertNode: '',
+        ddl: `CREATE TABLE legacy_inventory (
+  row_id INTEGER PRIMARY KEY, -- 行号
+  item_name TEXT NOT NULL, -- 名称
+  quantity INTEGER NOT NULL -- 数量
+);`,
+      },
+      content: [
+        ['row_id', '旧名称', '旧数量'],
+        ['1', '铁剑', '3'],
+      ],
+    });
+
+    expect(() => generateInserts(sheet, 'legacy_inventory')).toThrow('缺少必需 DDL 列');
+  });
+
+  it('行号别名与完整 DDL 注释表头可确定性映射', () => {
+    const sheet = makeSheet({
+      sourceData: {
+        note: '', initNode: '', deleteNode: '', updateNode: '', insertNode: '',
+        ddl: `CREATE TABLE inventory (
+  row_id INTEGER PRIMARY KEY, -- 行号
+  item_name TEXT NOT NULL, -- 名称
+  quantity INTEGER NOT NULL -- 数量
+);`,
+      },
+      content: [
+        ['行号', '名称', '数量'],
+        ['1', '铁剑', '3'],
+      ],
+    });
+
+    expect(generateInserts(sheet, 'inventory')).toEqual([
+      "INSERT OR REPLACE INTO inventory (row_id, item_name, quantity) VALUES (1, '铁剑', 3);",
+    ]);
+  });
+
+  it('表级复合 PRIMARY KEY 不符合 canonical row_id 首列契约时拒绝 hydrate', () => {
+    const sheet = makeSheet({
+      sourceData: {
+        note: '', initNode: '', deleteNode: '', updateNode: '', insertNode: '',
+        ddl: `CREATE TABLE inventory (
+  row_id INTEGER, -- 行号
+  item_name TEXT NOT NULL, -- 名称
+  PRIMARY KEY (row_id, item_name)
+);`,
+      },
+      content: [
+        ['row_id', '名称'],
+        ['1', '铁剑'],
+      ],
+    });
+
+    expect(() => generateInserts(sheet, 'inventory')).toThrow('DDL 必须以 row_id INTEGER PRIMARY KEY 作为首列');
+  });
+
+  it('row_id 不是 INTEGER 时拒绝 canonical hydrate', () => {
+    const sheet = makeSheet({
+      sourceData: {
+        note: '', initNode: '', deleteNode: '', updateNode: '', insertNode: '',
+        ddl: `CREATE TABLE inventory (
+  row_id TEXT PRIMARY KEY, -- 行号
+  item_name TEXT NOT NULL -- 名称
+);`,
+      },
+      content: [
+        ['row_id', '名称'],
+        ['1', '铁剑'],
+      ],
+    });
+
+    expect(() => generateInserts(sheet, 'inventory')).toThrow('DDL 必须以 row_id INTEGER PRIMARY KEY 作为首列');
+  });
+
+  it('CHECK 字符串含 DEFAULT 的 NOT NULL 列缺失表头时仍拒绝 hydrate', () => {
+    const sheet = makeSheet({
+      sourceData: {
+        note: '', initNode: '', deleteNode: '', updateNode: '', insertNode: '',
+        ddl: `CREATE TABLE inventory (
+  row_id INTEGER PRIMARY KEY, -- 行号
+  name TEXT NOT NULL CHECK(name <> 'DEFAULT') -- 名称
+);`,
+      },
+      content: [
+        ['row_id'],
+        ['1'],
+      ],
+    });
+
+    expect(() => generateInserts(sheet, 'inventory')).toThrow('缺少必需 DDL 列「name」');
+  });
+
+  it('块注释含 DEFAULT 的 NOT NULL 列缺失表头时仍拒绝 hydrate', () => {
+    const sheet = makeSheet({
+      sourceData: {
+        note: '', initNode: '', deleteNode: '', updateNode: '', insertNode: '',
+        ddl: `CREATE TABLE inventory (
+  row_id INTEGER PRIMARY KEY, -- 行号
+  name TEXT NOT NULL /* DEFAULT 仅为说明 */ -- 名称
+);`,
+      },
+      content: [
+        ['row_id'],
+        ['1'],
+      ],
+    });
+
+    expect(() => generateInserts(sheet, 'inventory')).toThrow('缺少必需 DDL 列「name」');
+  });
+
+  it('quoted row_id 不属于 canonical hydrate 支持的裸标识符契约时拒绝', () => {
+    const sheet = makeSheet({
+      sourceData: {
+        note: '', initNode: '', deleteNode: '', updateNode: '', insertNode: '',
+        ddl: `CREATE TABLE inventory (
+  "row_id" INTEGER PRIMARY KEY, -- 行号
+  item_name TEXT NOT NULL -- 名称
+);`,
+      },
+      content: [
+        ['row_id', '名称'],
+        ['1', '铁剑'],
+      ],
+    });
+
+    expect(() => generateInserts(sheet, 'inventory')).toThrow('DDL 必须以 row_id INTEGER PRIMARY KEY 作为首列');
   });
 
   it('空 content 返回空数组', () => {

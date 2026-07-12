@@ -9,7 +9,7 @@
  */
 
 import { SqliteEngine } from './sqlite-engine';
-import { generateDDL, generateInserts, resultToContent, parseDDLTableName, parseDDLColumnNames, buildColumnNameMap, validateDDLAgainstHeaders } from './schema-mapper';
+import { createSheetInsertPlan, generateDDL, generateInserts, resultToContent, parseDDLTableName, parseDDLColumnNames, buildColumnNameMap } from './schema-mapper';
 import type { TableDataObject_ACU, Sheet_ACU, Mate_ACU } from '../../shared/models/table-data';
 import { logDebug_ACU, logError_ACU, logWarn_ACU } from '../../shared/utils';
 
@@ -56,7 +56,9 @@ export class SyncBridge {
       try {
         this._loadSheet(key, sheet);
       } catch (e: any) {
-        const message = `[SyncBridge] 加载表 ${key} (${sheet.name}) 失败: ${e?.message || e}`;
+        const errorMessage = e?.message || String(e);
+        const reason = /^第 \d+ 条语句失败:/.test(errorMessage) ? 'SQLite 写入失败' : errorMessage;
+        const message = `[SyncBridge] 加载表 ${key} (${sheet.name}) 失败: ${reason}`;
         logError_ACU(message);
         if (options.strict) {
           throw new Error(message);
@@ -126,40 +128,31 @@ export class SyncBridge {
       throw new Error(`无法从 DDL 中解析表名: ${ddl.substring(0, 100)}`);
     }
 
-    // [6.7.1] DDL 与 content 表头校验
-    const headers = sheet.content?.[0];
-    if (headers && Array.isArray(headers) && sheet.sourceData?.ddl) {
-      const validation = validateDDLAgainstHeaders(sheet.sourceData.ddl, headers);
-      if (!validation.valid) {
-        logWarn_ACU(
-          `[SyncBridge] 表 "${sheet.name}" (${sheetKey}) DDL 与表头不匹配:\n` +
-          validation.mismatches.map(m => `  - ${m}`).join('\n') +
-          `\n将按位置映射继续加载，多余列数据可能丢失。`
-        );
-      }
-    }
+    // INSERT 的目标列与 snapshot 源表头必须先完成同一套确定性映射。
+    // 不能在建表后才发现错位，否则会把部分错误数据留在 runtime。
+    const plan = createSheetInsertPlan(sheet);
 
-    // 建表
-    this.engine.run(ddl);
+    // 先完整生成 INSERT，以便行值校验失败时不留下已创建的空表。
+    const inserts = generateInserts(sheet, tableName, plan);
 
-    // 灌入数据
-    const inserts = generateInserts(sheet, tableName);
-    if (inserts.length > 0) {
-      this.engine.runBatch(inserts);
-    }
-
-    // 写入元数据
-    this.engine.run(
-      `INSERT OR REPLACE INTO ${META_TABLE_NAME} (sheet_key, uid, name, order_no, source_data_json, update_config_json, export_config_json) VALUES (?, ?, ?, ?, ?, ?, ?);`,
+    // 单张表的 DDL、数据和元数据必须在同一事务提交。
+    // 任何 SQLite 执行期失败都不能留下用户表或 metadata 残骸。
+    const metaSql = `INSERT OR REPLACE INTO ${META_TABLE_NAME} (sheet_key, uid, name, order_no, source_data_json, update_config_json, export_config_json) VALUES (?, ?, ?, ?, ?, ?, ?);`;
+    this.engine.runBatch(
+      [ddl, ...inserts, metaSql],
       [
-        sheetKey,
-        sheet.uid || sheetKey,
-        sheet.name || sheetKey,
-        sheet.orderNo ?? 0,
-        JSON.stringify(sheet.sourceData || {}),
-        JSON.stringify(sheet.updateConfig || {}),
-        JSON.stringify(sheet.exportConfig || {}),
-      ]
+        undefined,
+        ...new Array<undefined>(inserts.length).fill(undefined),
+        [
+          sheetKey,
+          sheet.uid || sheetKey,
+          sheet.name || sheetKey,
+          sheet.orderNo ?? 0,
+          JSON.stringify(sheet.sourceData || {}),
+          JSON.stringify(sheet.updateConfig || {}),
+          JSON.stringify(sheet.exportConfig || {}),
+        ],
+      ],
     );
   }
 

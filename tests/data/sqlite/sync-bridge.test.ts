@@ -152,6 +152,119 @@ describe('SyncBridge', () => {
       expect(result.values[0][0]).toBe('');
     });
 
+    it('旧 chronicle 表头错序时按 DDL 注释写入正确物理列并保持 round-trip', () => {
+      const chronicleSheet = makeSheet({
+        uid: 'chronicle',
+        name: '纪要表',
+        sourceData: {
+          note: '', initNode: '', deleteNode: '', updateNode: '', insertNode: '',
+          ddl: `CREATE TABLE chronicle ( -- 纪要表
+  row_id INTEGER PRIMARY KEY, -- 行号
+  code_index TEXT, -- 编码索引
+  time_span TEXT, -- 时间跨度
+  summary TEXT, -- 概览
+  chronicle_text TEXT, -- 纪要
+  key_dialogue TEXT -- 重要对话
+);`,
+        },
+        content: [
+          ['row_id', '纪要', '编码索引', '时间跨度', '概览', '重要对话'],
+          ['1', '完整纪要正文', 'AM0001', '2026-10-15 14:30 ~ 2026-10-15 15:00', '摘要', null],
+        ],
+      });
+
+      bridge.loadFromTableData(makeTableData({ sheet_chronicle: chronicleSheet }), { strict: true });
+
+      expect(engine.query(
+        'SELECT code_index, time_span, summary, chronicle_text, key_dialogue FROM chronicle WHERE row_id = 1;'
+      ).values).toEqual([
+        ['AM0001', '2026-10-15 14:30 ~ 2026-10-15 15:00', '摘要', '完整纪要正文', null],
+      ]);
+
+      const exported = bridge.exportToTableData(makeMate()).sheet_chronicle as Sheet_ACU;
+      expect(exported.content).toEqual([
+        ['row_id', '编码索引', '时间跨度', '概览', '纪要', '重要对话'],
+        ['1', 'AM0001', '2026-10-15 14:30 ~ 2026-10-15 15:00', '摘要', '完整纪要正文', null],
+      ]);
+    });
+
+    it('非 strict 模式下必需值缺失时不留下半建表状态', () => {
+      const invalidSheet = makeSheet({
+        uid: 'required_value',
+        name: '必填值表',
+        sourceData: {
+          note: '', initNode: '', deleteNode: '', updateNode: '', insertNode: '',
+          ddl: `CREATE TABLE required_value (
+  row_id INTEGER PRIMARY KEY, -- 行号
+  name TEXT NOT NULL -- 名称
+);`,
+        },
+        content: [
+          ['row_id', '名称'],
+          ['1', null],
+        ],
+      });
+
+      expect(() => bridge.loadFromTableData(makeTableData({ sheet_invalid: invalidSheet }))).not.toThrow();
+      expect(engine.getTableNames()).not.toContain('required_value');
+    });
+
+    it('非 strict 模式下失败表不写 meta，后续合法表仍完整加载', () => {
+      const invalidSheet = makeSheet({
+        uid: 'required_value',
+        name: '必填值表',
+        sourceData: {
+          note: '', initNode: '', deleteNode: '', updateNode: '', insertNode: '',
+          ddl: `CREATE TABLE required_value (
+  row_id INTEGER PRIMARY KEY, -- 行号
+  name TEXT NOT NULL -- 名称
+);`,
+        },
+        content: [
+          ['row_id', '名称'],
+          ['1', null],
+        ],
+      });
+
+      bridge.loadFromTableData(makeTableData({ sheet_invalid: invalidSheet, sheet_valid: makeSheet() }));
+
+      expect(engine.getTableNames()).not.toContain('required_value');
+      expect(engine.query("SELECT sheet_key FROM _acu_sheet_meta WHERE sheet_key = 'sheet_invalid';").values).toEqual([]);
+      expect(engine.getTableNames()).toContain('inventory');
+      expect(engine.query('SELECT item_name FROM inventory ORDER BY row_id;').values).toEqual([
+        ['铁剑'],
+        ['治疗药水'],
+      ]);
+    });
+
+    it('非 strict 模式下 INSERT 约束失败会回滚用户表和 meta，后续表继续加载', () => {
+      const invalidSheet = makeSheet({
+        uid: 'checked_value',
+        name: '受约束表',
+        sourceData: {
+          note: '', initNode: '', deleteNode: '', updateNode: '', insertNode: '',
+          ddl: `CREATE TABLE checked_value (
+  row_id INTEGER PRIMARY KEY, -- 行号
+  name TEXT NOT NULL CHECK(length(name) >= 3) -- 名称
+);`,
+        },
+        content: [
+          ['row_id', '名称'],
+          ['1', '短'],
+        ],
+      });
+
+      bridge.loadFromTableData(makeTableData({ sheet_invalid: invalidSheet, sheet_valid: makeSheet() }));
+
+      expect(engine.getTableNames()).not.toContain('checked_value');
+      expect(engine.query("SELECT sheet_key FROM _acu_sheet_meta WHERE sheet_key = 'sheet_invalid';").values).toEqual([]);
+      expect(engine.getTableNames()).toContain('inventory');
+      expect(engine.query('SELECT item_name FROM inventory ORDER BY row_id;').values).toEqual([
+        ['铁剑'],
+        ['治疗药水'],
+      ]);
+    });
+
     it('单张表加载失败不影响其他表', () => {
       // 第一张表 DDL 有语法错误
       const badSheet = makeSheet({

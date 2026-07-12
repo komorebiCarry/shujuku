@@ -125,21 +125,137 @@ export function buildColumnNameMap(ddl: string): {
 export interface DDLColumnInfo_ACU {
   index: number;
   sqlName: string;
+  declaredType: string | null;
   comment: string | null;
+  isPrimaryKey: boolean;
+  isNotNull: boolean;
+  hasDefault: boolean;
 }
 
 export function parseDDLColumnInfos_ACU(ddl: string): DDLColumnInfo_ACU[] {
   const columnNames = parseDDLColumnNames(ddl);
   const comments = parseDDLColumnComments(ddl);
+  const bodyMatch = ddl.match(/\(([^]*)\)/);
+  const definitions = bodyMatch ? splitColumnDefinitions(bodyMatch[1]) : [];
+  const definitionsByName = new Map<string, string>();
+  for (const definition of definitions) {
+    const withoutComments = stripSqlLineComments_ACU(definition).trim();
+    const nameMatch = withoutComments.match(/^([^\s,()]+)/);
+    if (nameMatch) definitionsByName.set(nameMatch[1], withoutComments);
+  }
   return columnNames.map((sqlName, index) => {
     const rawComment = comments.get(sqlName);
     const comment = typeof rawComment === 'string' && rawComment.trim() ? rawComment.trim() : null;
+    const definition = definitionsByName.get(sqlName) || '';
+    const tokens = extractTopLevelSqlTokens_ACU(definition);
     return {
       index,
       sqlName,
+      declaredType: tokens[1] || null,
       comment,
+      isPrimaryKey: hasSequentialTokens_ACU(tokens, 'PRIMARY', 'KEY'),
+      isNotNull: hasSequentialTokens_ACU(tokens, 'NOT', 'NULL'),
+      hasDefault: tokens.includes('DEFAULT'),
     };
   });
+}
+
+function hasSequentialTokens_ACU(tokens: string[], first: string, second: string): boolean {
+  return tokens.some((token, index) => token === first && tokens[index + 1] === second);
+}
+
+function stripSqlLineComments_ACU(value: string): string {
+  let result = '';
+  let quote: "'" | '"' | '`' | '[' | null = null;
+  let inBlockComment = false;
+  for (let index = 0; index < value.length; index += 1) {
+    const char = value[index];
+    if (inBlockComment) {
+      if (char === '*' && value[index + 1] === '/') {
+        inBlockComment = false;
+        index += 1;
+      } else if (char === '\n') {
+        result += '\n';
+      }
+      continue;
+    }
+    if (quote) {
+      result += char;
+      if (quote === '[' ? char === ']' : char === quote) quote = null;
+      continue;
+    }
+    if (char === "'" || char === '"' || char === '`' || char === '[') {
+      quote = char;
+      result += char;
+      continue;
+    }
+    if (char === '/' && value[index + 1] === '*') {
+      inBlockComment = true;
+      index += 1;
+      continue;
+    }
+    if (char === '-' && value[index + 1] === '-') {
+      while (index < value.length && value[index] !== '\n') index += 1;
+      if (index < value.length) result += '\n';
+      continue;
+    }
+    result += char;
+  }
+  return result;
+}
+
+function extractTopLevelSqlTokens_ACU(definition: string): string[] {
+  const tokens: string[] = [];
+  let current = '';
+  let depth = 0;
+  let quote: "'" | '"' | '`' | '[' | null = null;
+  let inBlockComment = false;
+  const flush = () => {
+    if (current) tokens.push(current.toUpperCase());
+    current = '';
+  };
+  for (let index = 0; index < definition.length; index += 1) {
+    const char = definition[index];
+    if (inBlockComment) {
+      if (char === '*' && definition[index + 1] === '/') {
+        inBlockComment = false;
+        index += 1;
+      }
+      continue;
+    }
+    if (quote) {
+      if (quote === '[' ? char === ']' : char === quote) quote = null;
+      continue;
+    }
+    if (char === "'" || char === '"' || char === '`' || char === '[') {
+      flush();
+      quote = char;
+      continue;
+    }
+    if (char === '/' && definition[index + 1] === '*') {
+      flush();
+      inBlockComment = true;
+      index += 1;
+      continue;
+    }
+    if (char === '(') {
+      flush();
+      depth += 1;
+      continue;
+    }
+    if (char === ')') {
+      flush();
+      depth = Math.max(0, depth - 1);
+      continue;
+    }
+    if (depth === 0 && /[A-Za-z0-9_]/.test(char)) {
+      current += char;
+    } else {
+      flush();
+    }
+  }
+  flush();
+  return tokens;
 }
 
 function isAsciiOnly_ACU(value: string): boolean {
@@ -302,9 +418,44 @@ function splitColumnDefinitions(body: string): string[] {
   let current = '';
   let depth = 0;
   let inLineComment = false;
+  let inBlockComment = false;
+  let quote: "'" | '"' | '`' | '[' | null = null;
 
   for (let i = 0; i < body.length; i++) {
     const char = body[i];
+
+    if (quote) {
+      current += char;
+      if (quote === '[') {
+        if (char === ']') quote = null;
+        continue;
+      }
+      if (char === quote) {
+        if (i + 1 < body.length && body[i + 1] === quote) {
+          current += body[i + 1];
+          i += 1;
+        } else {
+          quote = null;
+        }
+      }
+      continue;
+    }
+
+    if (inBlockComment) {
+      current += char;
+      if (char === '*' && i + 1 < body.length && body[i + 1] === '/') {
+        current += body[i + 1];
+        i += 1;
+        inBlockComment = false;
+      }
+      continue;
+    }
+
+    if (char === '/' && i + 1 < body.length && body[i + 1] === '*') {
+      inBlockComment = true;
+      current += char;
+      continue;
+    }
 
     // 检测 -- 行注释开始
     if (!inLineComment && char === '-' && i + 1 < body.length && body[i + 1] === '-') {
@@ -322,6 +473,12 @@ function splitColumnDefinitions(body: string): string[] {
 
     // 在行注释内，所有字符直接追加（包括逗号）
     if (inLineComment) {
+      current += char;
+      continue;
+    }
+
+    if (char === "'" || char === '"' || char === '`' || char === '[') {
+      quote = char;
       current += char;
       continue;
     }

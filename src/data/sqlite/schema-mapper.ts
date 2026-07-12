@@ -25,6 +25,7 @@ export {
   validateDDLTextAgainstHeaders_ACU,
 } from '../../shared/ddl-utils';
 import {
+  parseDDLColumnInfos_ACU,
   parseDDLTableName,
   parseDDLColumnNames,
   validateDDLTextAgainstHeaders_ACU,
@@ -119,7 +120,7 @@ export function generateFallbackDDL(tableName: string, headers: (string | null)[
  * @param tableName SQL 表名（如果不传，从 DDL 解析或用 sheet.uid）
  * @returns INSERT 语句数组（每行一条）
  */
-export function generateInserts(sheet: Sheet_ACU, tableName?: string): string[] {
+export function generateInserts(sheet: Sheet_ACU, tableName?: string, plan?: SheetInsertPlan_ACU): string[] {
   const content = sheet.content;
   if (!Array.isArray(content) || content.length < 2) return [];
 
@@ -134,12 +135,8 @@ export function generateInserts(sheet: Sheet_ACU, tableName?: string): string[] 
 
   logDebug_ACU(`[Schema] generateInserts: 表=${tblName}, 数据行数=${content.length - 1}`);
 
-  // 确定列名（从 DDL 解析，或从表头生成）
-  const ddlColumns = sheet.sourceData?.ddl ? parseDDLColumnNames(sheet.sourceData.ddl) : null;
-  const columnNames = ddlColumns || headers.map((h, i) => {
-    if (h === 'row_id') return 'row_id';
-    return h ? chineseToIdentifier(h) : `col_${i}`;
-  });
+  const resolvedPlan = plan || createSheetInsertPlan(sheet);
+  const columnNames = resolvedPlan.mappings.map(mapping => mapping.sqlName);
 
   const statements: string[] = [];
 
@@ -148,10 +145,13 @@ export function generateInserts(sheet: Sheet_ACU, tableName?: string): string[] 
     if (!Array.isArray(row)) continue;
 
     const values: string[] = [];
-    for (let c = 0; c < columnNames.length; c++) {
-      const val = c < row.length ? row[c] : null;
+    for (const mapping of resolvedPlan.mappings) {
+      const val = mapping.sourceIndex < row.length ? row[mapping.sourceIndex] : null;
+      if (mapping.required && (val === null || val === undefined)) {
+        throw new Error(`第 ${r} 行缺少必需列「${mapping.sqlName}」的值`);
+      }
       // 对白名单约束字段做值规范化（如 code_index 的大小写/全角数字）
-      const normalizedVal = normalizeConstrainedValue(columnNames[c], val);
+      const normalizedVal = normalizeConstrainedValue(mapping.sqlName, val);
       values.push(escapeValue(normalizedVal));
     }
 
@@ -163,6 +163,101 @@ export function generateInserts(sheet: Sheet_ACU, tableName?: string): string[] 
   }
 
   return statements;
+}
+
+/**
+ * 供 hydrate 校验与 INSERT 生成共同消费的单次映射计划。
+ * 只接受 DDL 物理列名、DDL 注释和 row_id/行号别名；不猜测未知旧表头的位置。
+ */
+export interface SheetInsertPlan_ACU {
+  mappings: readonly InsertColumnMapping[];
+}
+
+export function createSheetInsertPlan(sheet: Sheet_ACU): SheetInsertPlan_ACU {
+  const headers = sheet.content?.[0];
+  if (!Array.isArray(headers) || headers.length === 0) {
+    throw new Error('snapshot 缺少表头，无法安全 hydrate');
+  }
+  return { mappings: resolveInsertColumnMappings(sheet, headers) };
+}
+
+interface InsertColumnMapping {
+  sqlName: string;
+  sourceIndex: number;
+  required: boolean;
+}
+
+function resolveInsertColumnMappings(sheet: Sheet_ACU, headers: (string | null)[]): InsertColumnMapping[] {
+  const ddl = sheet.sourceData?.ddl?.trim();
+  if (!ddl) {
+    return headers.map((header, index) => ({
+      sqlName: header === 'row_id' ? 'row_id' : header ? chineseToIdentifier(header) : `col_${index}`,
+      sourceIndex: index,
+      required: index === 0 && header === 'row_id',
+    }));
+  }
+
+  const columns = parseDDLColumnInfos_ACU(ddl);
+  const firstColumn = columns[0];
+  if (!firstColumn || firstColumn.sqlName !== 'row_id' || firstColumn.declaredType !== 'INTEGER' || !firstColumn.isPrimaryKey) {
+    throw new Error('DDL 必须以 row_id INTEGER PRIMARY KEY 作为首列，无法安全 hydrate');
+  }
+
+  const normalizedHeaders = headers.map(header => String(header ?? '').trim());
+  if (new Set(normalizedHeaders.filter(Boolean)).size !== normalizedHeaders.filter(Boolean).length) {
+    throw new Error('snapshot 表头存在重复列，无法安全 hydrate');
+  }
+  const mappings: InsertColumnMapping[] = [];
+  const usedSourceIndexes = new Set<number>();
+
+  for (const column of columns) {
+    const candidates = normalizedHeaders
+      .map((header, index) => ({ header, index }))
+      .filter(({ header }) => matchesSheetHeader(column.sqlName, column.comment, header));
+
+    if (candidates.length > 1) {
+      throw new Error(`DDL 列「${column.sqlName}」匹配到多个表头，无法安全 hydrate`);
+    }
+    if (candidates.length === 1) {
+      const sourceIndex = candidates[0].index;
+      if (usedSourceIndexes.has(sourceIndex)) {
+        throw new Error(`表头「${normalizedHeaders[sourceIndex]}」被多个 DDL 列使用，无法安全 hydrate`);
+      }
+      usedSourceIndexes.add(sourceIndex);
+      mappings.push({
+        sqlName: column.sqlName,
+        sourceIndex,
+        required: column.isPrimaryKey || (column.isNotNull && !column.hasDefault),
+      });
+    }
+  }
+
+  for (const column of columns) {
+    const mapped = mappings.some(mapping => mapping.sqlName === column.sqlName);
+    const required = column.isPrimaryKey || (column.isNotNull && !column.hasDefault);
+    if (!mapped && required) {
+      throw new Error(`缺少必需 DDL 列「${column.sqlName}」对应的表头，无法安全 hydrate`);
+    }
+  }
+
+  const unusedSourceIndexes = normalizedHeaders
+    .map((_, index) => index)
+    .filter(index => !usedSourceIndexes.has(index));
+  for (const index of unusedSourceIndexes) {
+    const hasBusinessValue = (sheet.content || []).slice(1).some(row =>
+      Array.isArray(row) && row[index] !== null && row[index] !== undefined && row[index] !== '',
+    );
+    if (hasBusinessValue) {
+      throw new Error(`表头「${normalizedHeaders[index] || `第 ${index + 1} 列`}」没有对应的 DDL 列，拒绝丢弃非空数据`);
+    }
+  }
+
+  return mappings;
+}
+
+function matchesSheetHeader(sqlName: string, comment: string | null, header: string): boolean {
+  if (!header) return false;
+  return header === sqlName || (sqlName === 'row_id' && header === '行号') || header === comment;
 }
 
 // ═══════════════════════════════════════════════════════════════
