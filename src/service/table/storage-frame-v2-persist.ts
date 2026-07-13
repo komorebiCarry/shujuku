@@ -377,7 +377,7 @@ function getValidatedFrameLastLogSeq_ACU(frame: TableStorageFrameV2_ACU): number
 }
 
 function checkpointDataContainsSheet_ACU(checkpoint: TableCheckpointV2_ACU | null | undefined, sheetKey: string): boolean {
-  return Boolean(checkpoint.data && Object.prototype.hasOwnProperty.call(checkpoint.data, sheetKey));
+  return Boolean(checkpoint?.data && Object.prototype.hasOwnProperty.call(checkpoint.data, sheetKey));
 }
 
 function recordContainsSheet_ACU(value: unknown, sheetKey: string): boolean {

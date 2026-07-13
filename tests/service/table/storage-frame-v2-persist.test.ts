@@ -448,6 +448,33 @@ describe('commitCurrentFloorTemplateChanges_ACU', () => {
     });
   });
 
+  it('前序合法 V2 history frame 缺少 checkpoint 时仍允许 introduction', async () => {
+    const historicalMessage = seedFrame({
+      checkpoint: undefined,
+      logEntries: [],
+      perSheetCheckpoints: {},
+    });
+    const targetMessage = seedFrame({ logEntries: [], perSheetCheckpoints: {} });
+    mocks.chat.splice(0, mocks.chat.length, historicalMessage, targetMessage);
+    mocks.loadReplayState.mockResolvedValue(targetMessage.TavernDB_ACU_IsolatedData[''].storageFrame.checkpoint.data);
+    const introducedSheet = { ...sheetB, uid: 'no-history-checkpoint', name: '无根 checkpoint 的历史后新增表' };
+
+    const result = await commitCurrentFloorTemplateChanges_ACU({
+      isolationKey: '',
+      sheetCheckpoints: [{ sheetKey: 'sheet_new', sheetData: introducedSheet, isNewSheet: true }],
+      guideData: { sheet_a: { name: 'A' }, sheet_b: { name: 'B' }, sheet_new: { name: '无根 checkpoint 的历史后新增表' } },
+      createdAt: 30,
+    });
+
+    expect(result.saved).toBe(true);
+    expect(mocks.saveChatStrict).toHaveBeenCalledOnce();
+    expect(targetMessage.TavernDB_ACU_IsolatedData[''].storageFrame.perSheetCheckpoints.sheet_new).toMatchObject({
+      kind: 'sheet_full',
+      sheetKey: 'sheet_new',
+      timeline: { kind: 'sheet_introduction', activateAtMessageIndex: 1, afterSeq: 0 },
+    });
+  });
+
   it('既有 full checkpoint 或当前 shard 的 sheet 被标为新增时受控拒绝且零写入', async () => {
     const message = seedFrame({ logEntries: [] });
     const originalIsolatedData = message.TavernDB_ACU_IsolatedData;
