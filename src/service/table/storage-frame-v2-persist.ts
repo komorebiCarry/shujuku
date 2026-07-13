@@ -7,7 +7,7 @@ import { getCurrentIsolationKey_ACU, settings_ACU } from '../runtime/state-manag
 import { setChatSheetGuideDataForIsolationKey_ACU } from '../template/chat-scope';
 import type { ManualRefillProgressV2_ACU, TableMutationEventV2_ACU, TableMutationLogEntryV2_ACU, TableMutationSourceV2_ACU, TableStorageFrameV2_ACU, TableCheckpointV2_ACU, TableMutationWriteSetV2_ACU, TableMutationOperationV2_ACU, TableSheetCheckpointV2_ACU } from './storage-frame-v2-types';
 import { isV2TagData_ACU } from './storage-strategy-resolver';
-import { collectScheduleSummaryFromFramesV2_ACU } from './storage-frame-v2-replay';
+import { collectScheduleSummaryFromFramesV2_ACU, loadTableStateFromFramesV2_ACU } from './storage-frame-v2-replay';
 import { runTableWriteTransaction_ACU, type TableWriteTransactionContext_ACU } from './table-write-transaction';
 import { formatCanonicalRowIssues_ACU, normalizeCanonicalTableRows_ACU } from '../../shared/canonical-row-normalizer';
 import { createSheetInsertPlan, generateDDL, validateDDLTextAgainstHeaders_ACU } from '../../data/sqlite/schema-mapper';
@@ -83,6 +83,8 @@ export interface CommitCurrentFloorTemplateChangesOptions_ACU {
   sheetCheckpoints: Array<{
     sheetKey: string;
     sheetData: Sheet_ACU;
+    /** 由模板差异分类器确认的新表；writer 据此按 frame 尾部时序写 introduction shard。 */
+    isNewSheet?: boolean;
     event?: TableMutationEventV2_ACU;
   }>;
   guideData: Record<string, any>;
@@ -357,6 +359,315 @@ function logEntryConflictsWithSheetCheckpoint_ACU(entry: TableMutationLogEntryV2
   }
 
   return (entry.patches || []).some(patch => patch.sheetKey === sheetKey);
+}
+
+function getValidatedFrameLastLogSeq_ACU(frame: TableStorageFrameV2_ACU): number {
+  let previousSeq = -1;
+  for (const [index, entry] of frame.logEntries.entries()) {
+    const seq = entry?.seq;
+    if (!Number.isInteger(seq) || seq < 0) {
+      throw new Error(`V2 当前楼层模板提交包含非法 log seq: index=${index}, seq=${String(seq)}。`);
+    }
+    if (seq <= previousSeq) {
+      throw new Error(`V2 当前楼层模板提交要求 log seq 唯一且严格递增: previous=${previousSeq}, current=${seq}。`);
+    }
+    previousSeq = seq;
+  }
+  return Math.max(0, previousSeq);
+}
+
+function checkpointDataContainsSheet_ACU(checkpoint: TableCheckpointV2_ACU | null | undefined, sheetKey: string): boolean {
+  return Boolean(checkpoint.data && Object.prototype.hasOwnProperty.call(checkpoint.data, sheetKey));
+}
+
+function recordContainsSheet_ACU(value: unknown, sheetKey: string): boolean {
+  return isObjectRecord_ACU(value) && Object.prototype.hasOwnProperty.call(value, sheetKey);
+}
+
+function hasV2HistoryMarker_ACU(tagData: unknown): boolean {
+  return isObjectRecord_ACU(tagData)
+    && (tagData._acu_storage_version === 2 || tagData.storageFrame?.version === 2);
+}
+
+const CHECKPOINT_REASONS_FOR_INTRODUCTION_HISTORY_ACU = new Set([
+  'init', 'periodic', 'manual', 'schema_change', 'compaction', 'import', 'migration', 'integrity_repair',
+]);
+
+function isFiniteNonNegativeNumber_ACU(value: unknown): value is number {
+  return typeof value === 'number' && Number.isFinite(value) && value >= 0;
+}
+
+function isFiniteNonNegativeInteger_ACU(value: unknown): value is number {
+  return Number.isInteger(value) && (value as number) >= 0;
+}
+
+const MUTATION_SOURCES_FOR_INTRODUCTION_HISTORY_ACU = new Set<TableMutationSourceV2_ACU>([
+  'auto_fill', 'manual_fill', 'group_fill', 'manual_crud', 'raw_sql_mutation', 'raw_sql_batch', 'import', 'merge_summary', 'template_assistant', 'system',
+]);
+
+function isStringArray_ACU(value: unknown): value is string[] {
+  return Array.isArray(value) && value.every(item => typeof item === 'string');
+}
+
+function eventIsValidForIntroductionHistory_ACU(value: unknown): boolean {
+  return value === undefined || (
+    isObjectRecord_ACU(value)
+    && isStringArray_ACU(value.filledSheetKeys)
+    && isStringArray_ACU(value.changedSheetKeys)
+    && (value.groupKeys === undefined || isStringArray_ACU(value.groupKeys))
+    && (value.requestId === undefined || typeof value.requestId === 'string')
+    && (value.batchId === undefined || typeof value.batchId === 'string')
+    && (value.error === undefined || typeof value.error === 'string')
+  );
+}
+
+function scheduleSummaryIsValidForIntroductionHistory_ACU(value: unknown): boolean {
+  return value === undefined || (
+    isObjectRecord_ACU(value)
+    && Object.values(value).every(summary => isObjectRecord_ACU(summary)
+      && (summary.lastFilledAiFloor === undefined || isFiniteNonNegativeNumber_ACU(summary.lastFilledAiFloor))
+      && (summary.lastChangedAiFloor === undefined || isFiniteNonNegativeNumber_ACU(summary.lastChangedAiFloor)))
+  );
+}
+
+function manualRefillProgressIsValidForIntroductionHistory_ACU(value: unknown): boolean {
+  return value === undefined || (
+    isObjectRecord_ACU(value)
+    && value.kind === 'manual_refill'
+    && (value.status === 'in_progress' || value.status === 'complete')
+    && isStringArray_ACU(value.selectedSheetKeys)
+    && Array.isArray(value.contextMessageIndices) && value.contextMessageIndices.every(Number.isInteger)
+    && ['originalStartMessageIndex', 'targetMessageIndex', 'batchSize', 'completedUntilMessageIndex', 'updatedAt']
+      .every(key => isFiniteNonNegativeNumber_ACU(value[key]))
+    && (value.completedSheetMessageIndexByKey === undefined || (
+      isObjectRecord_ACU(value.completedSheetMessageIndexByKey)
+      && Object.values(value.completedSheetMessageIndexByKey).every(Number.isInteger)
+    ))
+  );
+}
+
+function timelineIsValidForIntroductionHistory_ACU(value: unknown): boolean {
+  return value === undefined || (
+    isObjectRecord_ACU(value)
+    && value.kind === 'sheet_introduction'
+    && Number.isInteger(value.activateAtMessageIndex) && value.activateAtMessageIndex >= 0
+    && Number.isInteger(value.afterSeq) && value.afterSeq >= 0
+  );
+}
+
+function sheetIsValidForIntroductionHistory_ACU(value: unknown): boolean {
+  return isObjectRecord_ACU(value)
+    && typeof value.uid === 'string'
+    && typeof value.name === 'string'
+    && isObjectRecord_ACU(value.sourceData)
+    && Array.isArray(value.content)
+    && value.content.every(row => Array.isArray(row) && row.every(cell => cell === null || typeof cell === 'string'))
+    && isObjectRecord_ACU(value.updateConfig)
+    && isObjectRecord_ACU(value.exportConfig)
+    && typeof value.orderNo === 'number' && Number.isFinite(value.orderNo);
+}
+
+function schemaDescriptorIsValidForIntroductionHistory_ACU(value: unknown, version: 1 | 2): boolean {
+  if (!isObjectRecord_ACU(value)
+    || value.descriptorVersion !== version
+    || !['uid', 'tableName', 'ddl', 'normalizedSql', 'tableSuffix'].every(key => typeof value[key] === 'string')
+    || !Array.isArray(value.headers) || !value.headers.every(header => header === null || typeof header === 'string')
+    || !isStringArray_ACU(value.tableConstraints)
+    || !Array.isArray(value.columns)
+  ) return false;
+
+  return value.columns.every(column => isObjectRecord_ACU(column)
+    && isFiniteNonNegativeInteger_ACU(column.index)
+    && ['physicalName', 'displayHeader', 'normalizedDefinition'].every(key => typeof column[key] === 'string')
+    && (version === 1 || column.defaultExpression === null || typeof column.defaultExpression === 'string'));
+}
+
+function migrationIsValidForIntroductionHistory_ACU(operation: Record<string, any>): boolean {
+  if (typeof operation.sheetKey !== 'string'
+    || ![1, 2].includes(operation.contractVersion)
+    || typeof operation.beforeSchemaDigest !== 'string'
+    || typeof operation.targetSchemaDigest !== 'string'
+    || !schemaDescriptorIsValidForIntroductionHistory_ACU(operation.beforeSchema, operation.contractVersion)
+    || !schemaDescriptorIsValidForIntroductionHistory_ACU(operation.targetSchema, operation.contractVersion)
+  ) return false;
+
+  if (operation.contractVersion === 1) {
+    return Array.isArray(operation.columnChanges)
+      && operation.columnChanges.every(change => isObjectRecord_ACU(change)
+        && ['rename_display', 'add', 'drop'].includes(change.kind)
+        && typeof change.physicalName === 'string'
+        && ((change.kind === 'rename_display' && typeof change.fromHeader === 'string' && typeof change.toHeader === 'string')
+          || (change.kind === 'add' && typeof change.header === 'string' && isFiniteNonNegativeInteger_ACU(change.index))
+          || (change.kind === 'drop' && typeof change.header === 'string' && isFiniteNonNegativeInteger_ACU(change.index))))
+      && isObjectRecord_ACU(operation.migrationPolicy)
+      && typeof operation.migrationPolicy.destructiveChangeConfirmed === 'boolean';
+  }
+
+  return Array.isArray(operation.physicalColumnMappings)
+    && operation.physicalColumnMappings.every(mapping => isObjectRecord_ACU(mapping)
+      && typeof mapping.fromPhysicalName === 'string' && typeof mapping.toPhysicalName === 'string')
+    && isObjectRecord_ACU(operation.fills)
+    && Array.isArray(operation.conversions)
+    && operation.conversions.every(conversion => isObjectRecord_ACU(conversion)
+      && typeof conversion.fromPhysicalName === 'string'
+      && typeof conversion.toPhysicalName === 'string'
+      && isObjectRecord_ACU(conversion.policy)
+      && ['identity', 'stringify', 'integer_strict', 'real_strict'].includes(conversion.policy.kind))
+    && isObjectRecord_ACU(operation.dryRun)
+    && ['convertedRowCount', 'failedRowCount', 'lossyRowCount'].every(key => isFiniteNonNegativeInteger_ACU(operation.dryRun[key]))
+    && isObjectRecord_ACU(operation.migrationPolicy)
+    && typeof operation.migrationPolicy.destructiveChangeConfirmed === 'boolean'
+    && typeof operation.migrationPolicy.lossyConversionConfirmed === 'boolean';
+}
+
+function logEntryIsValidForIntroductionHistory_ACU(value: unknown): value is Record<string, any> {
+  return isObjectRecord_ACU(value)
+    && isFiniteNonNegativeInteger_ACU(value.seq)
+    && typeof value.entryId === 'string'
+    && isFiniteNonNegativeNumber_ACU(value.createdAt)
+    && typeof value.source === 'string' && MUTATION_SOURCES_FOR_INTRODUCTION_HISTORY_ACU.has(value.source as TableMutationSourceV2_ACU)
+    && isFiniteNonNegativeInteger_ACU(value.targetMessageIndex)
+    && isFiniteNonNegativeInteger_ACU(value.aiFloor)
+    && eventIsValidForIntroductionHistory_ACU(value)
+    && Array.isArray(value.operations)
+    && (value.baseRevision === undefined || value.baseRevision === null || typeof value.baseRevision === 'string')
+    && (value.parentRevision === undefined || value.parentRevision === null || typeof value.parentRevision === 'string')
+    && (value.commitRevision === undefined || typeof value.commitRevision === 'string');
+}
+
+function checkpointIsValidForIntroductionHistory_ACU(value: unknown): value is TableCheckpointV2_ACU {
+  return isObjectRecord_ACU(value)
+    && value.kind === 'full'
+    && isFiniteNonNegativeNumber_ACU(value.createdAt)
+    && typeof value.reason === 'string' && CHECKPOINT_REASONS_FOR_INTRODUCTION_HISTORY_ACU.has(value.reason)
+    && isObjectRecord_ACU(value.data)
+    && scheduleSummaryIsValidForIntroductionHistory_ACU(value.scheduleSummary)
+    && eventIsValidForIntroductionHistory_ACU(value.event)
+    && manualRefillProgressIsValidForIntroductionHistory_ACU(value.manualRefillProgress);
+}
+
+function sheetCheckpointMapIsValidForIntroductionHistory_ACU(value: unknown): value is Record<string, TableSheetCheckpointV2_ACU> {
+  return isObjectRecord_ACU(value)
+    && Object.entries(value).every(([sheetKey, checkpoint]) => (
+      sheetKey.startsWith('sheet_')
+      && isObjectRecord_ACU(checkpoint)
+      && checkpoint.kind === 'sheet_full'
+      && checkpoint.sheetKey === sheetKey
+      && isFiniteNonNegativeNumber_ACU(checkpoint.createdAt)
+      && typeof checkpoint.reason === 'string' && CHECKPOINT_REASONS_FOR_INTRODUCTION_HISTORY_ACU.has(checkpoint.reason)
+      && isObjectRecord_ACU(checkpoint.data)
+      && scheduleSummaryIsValidForIntroductionHistory_ACU(checkpoint.scheduleSummary)
+      && eventIsValidForIntroductionHistory_ACU(checkpoint.event)
+      && manualRefillProgressIsValidForIntroductionHistory_ACU(checkpoint.manualRefillProgress)
+      && (checkpoint.baseRevision === undefined || checkpoint.baseRevision === null || typeof checkpoint.baseRevision === 'string')
+      && timelineIsValidForIntroductionHistory_ACU(checkpoint.timeline)
+    ));
+}
+
+function operationContainsOrCannotDisproveSheet_ACU(operation: unknown, sheetKey: string): boolean {
+  if (!isObjectRecord_ACU(operation)) return true;
+  switch (operation.kind) {
+    case 'data_replace':
+      return !isObjectRecord_ACU(operation.data) || recordContainsSheet_ACU(operation.data, sheetKey);
+    case 'sql_sheet_batch':
+      return typeof operation.sheetKey !== 'string'
+        || !isStringArray_ACU(operation.statements)
+        || (operation.params !== undefined && (!Array.isArray(operation.params)
+          || !operation.params.every(params => Array.isArray(params)
+            && params.every(value => value === null || typeof value === 'string' || typeof value === 'number'))))
+        || (operation.tableName !== undefined && typeof operation.tableName !== 'string')
+        || (operation.reason !== undefined && !['manual_crud', 'import', 'system'].includes(operation.reason))
+        || operation.sheetKey === sheetKey;
+    case 'sheet_replace':
+      return typeof operation.sheetKey !== 'string'
+        || !sheetIsValidForIntroductionHistory_ACU(operation.sheet)
+        || !['manual_crud', 'import', 'system'].includes(operation.reason)
+        || operation.sheetKey === sheetKey;
+    case 'sheet_schema_migrate':
+      return !migrationIsValidForIntroductionHistory_ACU(operation) || operation.sheetKey === sheetKey;
+    case 'row_upsert':
+      return typeof operation.sheetKey !== 'string'
+        || typeof operation.rowId !== 'string'
+        || !Array.isArray(operation.cells) || !operation.cells.every(value => value === null || typeof value === 'string')
+        || operation.sheetKey === sheetKey;
+    case 'row_delete':
+      return typeof operation.sheetKey !== 'string'
+        || typeof operation.rowId !== 'string'
+        || operation.sheetKey === sheetKey;
+    case 'meta_update':
+      return typeof operation.sheetKey !== 'string'
+        || !isObjectRecord_ACU(operation.meta)
+        || operation.sheetKey === sheetKey;
+    // sql_batch and table_edit_dsl are global replay operations; all unknown
+    // kinds are future or malformed persisted contracts and must fail closed.
+    default:
+      return true;
+  }
+}
+
+function patchContainsOrCannotDisproveSheet_ACU(patch: unknown, sheetKey: string): boolean {
+  if (!isObjectRecord_ACU(patch)) return true;
+  switch (patch.kind) {
+    case 'sheet_replace':
+      return typeof patch.sheetKey !== 'string'
+        || !sheetIsValidForIntroductionHistory_ACU(patch.sheet)
+        || !['schema_change', 'unstable_row_id', 'raw_sql_export', 'import', 'fallback'].includes(patch.reason)
+        || patch.sheetKey === sheetKey;
+    case 'row_upsert':
+      return typeof patch.sheetKey !== 'string'
+        || typeof patch.rowId !== 'string'
+        || !Array.isArray(patch.cells) || !patch.cells.every(value => value === null || typeof value === 'string')
+        || patch.sheetKey === sheetKey;
+    case 'row_delete':
+      return typeof patch.sheetKey !== 'string'
+        || typeof patch.rowId !== 'string'
+        || patch.sheetKey === sheetKey;
+    case 'meta_update':
+      return typeof patch.sheetKey !== 'string'
+        || !isObjectRecord_ACU(patch.meta)
+        || patch.sheetKey === sheetKey;
+    default:
+      return true;
+  }
+}
+
+/**
+ * Introduction shards can only represent genuinely new tables. This scans the
+ * persisted V2 history rather than trusting the final replay state, because a
+ * later data_replace may have removed a table that existed earlier.
+ */
+function historyContainsOrCannotDisproveSheet_ACU(
+  chat: any[],
+  isolationKey: string,
+  maxMessageIndex: number,
+  sheetKey: string,
+): boolean {
+  for (let messageIndex = 0; messageIndex <= maxMessageIndex; messageIndex += 1) {
+    const tagData = chat[messageIndex]?.TavernDB_ACU_IsolatedData?.[isolationKey];
+    if (!hasV2HistoryMarker_ACU(tagData)) continue;
+
+    const frame = tagData.storageFrame as unknown;
+    if (!isObjectRecord_ACU(frame) || frame.version !== 2 || !Array.isArray(frame.logEntries)) return true;
+    if (frame.checkpoint !== undefined && !checkpointIsValidForIntroductionHistory_ACU(frame.checkpoint)) return true;
+    if (checkpointDataContainsSheet_ACU(frame.checkpoint, sheetKey)) return true;
+    if (frame.perSheetCheckpoints !== undefined && !sheetCheckpointMapIsValidForIntroductionHistory_ACU(frame.perSheetCheckpoints)) return true;
+    if (recordContainsSheet_ACU(frame.perSheetCheckpoints, sheetKey)) return true;
+
+    for (const entry of frame.logEntries) {
+      if (!logEntryIsValidForIntroductionHistory_ACU(entry)) return true;
+
+      for (const operation of entry.operations) {
+        if (operationContainsOrCannotDisproveSheet_ACU(operation, sheetKey)) return true;
+      }
+
+      if (entry.patches === undefined) continue;
+      if (!Array.isArray(entry.patches)) return true;
+      for (const patch of entry.patches) {
+        if (patchContainsOrCannotDisproveSheet_ACU(patch, sheetKey)) return true;
+      }
+    }
+  }
+  return false;
 }
 
 function validateSheetCheckpointInput_ACU(
@@ -830,6 +1141,9 @@ export async function commitCurrentFloorTemplateChanges_ACU(
         throw new Error(`当前楼层模板提交缺少可恢复 Sheet：${item.sheetKey}。`);
       }
       const sheetData = deepClone_ACU(item.sheetData);
+      if (item.isNewSheet === true && sheetData.content?.length !== 1) {
+        throw new Error(`V2 sheet introduction only accepts a header-only sheet: sheetKey=${item.sheetKey}.`);
+      }
       const normalization = normalizeCanonicalTableRows_ACU({ [item.sheetKey]: sheetData });
       removedNullRowCount += normalization.removedRows.length;
       if (normalization.errors.length > 0) {
@@ -856,10 +1170,25 @@ export async function commitCurrentFloorTemplateChanges_ACU(
     if (!isV2TagData_ACU(isolatedData[isolationKey]) || !frame) {
       throw new Error('目标 V2 storage frame 在模板提交准备期间发生变化。');
     }
+    const activeReplayState = await loadTableStateFromFramesV2_ACU(chat, isolationKey, { maxMessageIndex: target.index, updateRuntimeState: false });
+    if (!activeReplayState) {
+      throw new Error('V2 当前楼层模板提交无法解析 active full checkpoint replay state。');
+    }
     const checkpoints: TableSheetCheckpointV2_ACU[] = [];
     const scheduleSummaryBySheet = collectScheduleSummaryFromFramesV2_ACU(chat, isolationKey, { maxMessageIndex: target.index });
+    const targetFrameLastLogSeq = getValidatedFrameLastLogSeq_ACU(frame);
     for (const item of requestedCheckpoints) {
-      const conflictingEntry = (frame.logEntries || []).find((entry: TableMutationLogEntryV2_ACU) => logEntryConflictsWithSheetCheckpoint_ACU(entry, item.sheetKey));
+      const isIntroducedSheet = item.isNewSheet === true;
+      if (isIntroducedSheet && (
+        historyContainsOrCannotDisproveSheet_ACU(chat, isolationKey, target.index, item.sheetKey)
+        || Object.prototype.hasOwnProperty.call(activeReplayState, item.sheetKey)
+        || Object.prototype.hasOwnProperty.call(frame.perSheetCheckpoints || {}, item.sheetKey)
+      )) {
+        throw new Error(`V2 sheet introduction requires a genuinely new sheet: sheetKey=${item.sheetKey} already exists in the active checkpoint state.`);
+      }
+      const conflictingEntry = isIntroducedSheet
+        ? undefined
+        : (frame.logEntries || []).find((entry: TableMutationLogEntryV2_ACU) => logEntryConflictsWithSheetCheckpoint_ACU(entry, item.sheetKey));
       if (conflictingEntry) {
         throw new Error(`V2 sheet checkpoint cannot be inserted before an existing target-sheet log entry: sheetKey=${item.sheetKey}, entryId=${conflictingEntry.entryId}.`);
       }
@@ -876,6 +1205,13 @@ export async function commitCurrentFloorTemplateChanges_ACU(
         data: normalizedSheets.get(item.sheetKey)!,
         ...(scheduleSummary ? { scheduleSummary: deepClone_ACU(scheduleSummary) } : {}),
         event: deepClone_ACU(item.event || { filledSheetKeys: [], changedSheetKeys: [item.sheetKey] }),
+        ...(isIntroducedSheet ? {
+          timeline: {
+            kind: 'sheet_introduction' as const,
+            activateAtMessageIndex: target.index,
+            afterSeq: targetFrameLastLogSeq,
+          },
+        } : {}),
         baseRevision: options.baseRevision !== undefined ? options.baseRevision : transactionContext.baseRevision,
       });
     }

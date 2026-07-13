@@ -514,6 +514,7 @@ export function useVisualizerSave(interactions: VisualizerSaveInteractions = {})
         sheetCheckpoints: changedSheetKeys.map(sheetKey => ({
           sheetKey,
           sheetData: orderedData[sheetKey],
+          isNewSheet: changes.addedSheetKeys.includes(sheetKey),
           event: { filledSheetKeys: [] as string[], changedSheetKeys: [sheetKey] },
         })),
         guideData,

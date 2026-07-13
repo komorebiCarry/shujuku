@@ -556,7 +556,7 @@ export function collectScheduleSummaryFromFramesV2_ACU(
 export async function loadTableStateFromFramesV2_ACU(
   chatArg?: any[],
   isolationKeyArg?: string,
-  options: { maxMessageIndex?: number } = {},
+  options: { maxMessageIndex?: number; updateRuntimeState?: boolean } = {},
 ): Promise<TableDataObject_ACU | null> {
   const chat = chatArg || getChatArray_ACU();
   if (!Array.isArray(chat) || chat.length === 0) return null;
@@ -575,7 +575,9 @@ export async function loadTableStateFromFramesV2_ACU(
   const state: TableDataObject_ACU = deepClone_ACU(checkpoint.data);
   normalizeReplayState_ACU(state, 'full checkpoint');
   const replayStartMessageIndex = checkpointRef.messageIndex;
-  replayCheckpointSchedule_ACU(checkpoint, checkpointRef.aiFloor);
+  if (options.updateRuntimeState !== false) {
+    replayCheckpointSchedule_ACU(checkpoint, checkpointRef.aiFloor);
+  }
 
   const runtime: SqlReplayRuntime_ACU = {
     engine: new SqliteEngine(),
@@ -601,7 +603,9 @@ export async function loadTableStateFromFramesV2_ACU(
         if (due.length === 0) return;
         await applySheetCheckpointsForReplay_ACU(state, due, runtime);
         for (const checkpoint of due) {
-          replayEventForState_ACU(checkpoint.event, ref.aiFloor);
+          if (options.updateRuntimeState !== false) {
+            replayEventForState_ACU(checkpoint.event, ref.aiFloor);
+          }
           pendingIntroductions.splice(pendingIntroductions.indexOf(checkpoint), 1);
         }
       };
@@ -621,7 +625,9 @@ export async function loadTableStateFromFramesV2_ACU(
             normalizeReplayState_ACU(state, 'legacy patches');
             if (runtime.loaded) await reloadSqlReplayRuntime_ACU(runtime, state);
           }
-          replayEventForState_ACU(entry, ref.aiFloor);
+          if (options.updateRuntimeState !== false) {
+            replayEventForState_ACU(entry, ref.aiFloor);
+          }
         } catch (error) {
           logError_ACU(`[V2 Replay] 应用日志失败: messageIndex=${ref.messageIndex}, seq=${entry.seq}`, error);
           throw error;

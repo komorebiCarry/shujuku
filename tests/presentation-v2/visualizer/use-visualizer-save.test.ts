@@ -334,6 +334,28 @@ describe('useVisualizerSave', () => {
     expect(store.lastSavedTarget).toBe('template-chat');
   });
 
+  it('新增表保存时将新增性传给 V2 当前楼层 writer', async () => {
+    const { useVisualizerStore } = await import('../../../src/presentation-v2/stores/visualizer-store');
+    const { useVisualizerSave } = await import('../../../src/presentation-v2/composables/visualizer/useVisualizerSave');
+    const store = useVisualizerStore();
+    store.loadSnapshot({
+      mate: { type: 'chatSheets', version: 1 },
+      sheet_test_vz2: sheet('已有表'),
+    }, ['sheet_test_vz2']);
+    store.addSheet('sheet_new_vz2', { ...sheet('新增表'), uid: 'sheet_new_vz2' });
+
+    const saved = await useVisualizerSave().saveTemplateToCurrentChat();
+
+    expect(saved).toBe(true);
+    expect(serviceMock.commitCurrentFloorTemplateChanges_ACU).toHaveBeenCalledWith(expect.objectContaining({
+      sheetCheckpoints: expect.arrayContaining([expect.objectContaining({
+        sheetKey: 'sheet_new_vz2',
+        isNewSheet: true,
+        event: { filledSheetKeys: [], changedSheetKeys: ['sheet_new_vz2'] },
+      })]),
+    }));
+  });
+
   it('schema migration preflight 阻断时不创建 checkpoint 或推进模板状态', async () => {
     const { useVisualizerStore } = await import('../../../src/presentation-v2/stores/visualizer-store');
     const { useVisualizerSave } = await import('../../../src/presentation-v2/composables/visualizer/useVisualizerSave');

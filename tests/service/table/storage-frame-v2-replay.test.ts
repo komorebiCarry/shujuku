@@ -109,6 +109,40 @@ describe('loadTableStateFromFramesV2_ACU', () => {
     ]);
   });
 
+  it('只读回放保持数据结果但不更新 independentTableStates', async () => {
+    const previousIndependentStates = independentTableStates_ACU;
+    _set_independentTableStates_ACU({ sheet_existing: { lastUpdatedAiFloor: 99 } });
+    const chat = [{
+      is_user: false,
+      TavernDB_ACU_IsolatedData: {
+        '': {
+          _acu_storage_version: 2,
+          storageFrame: {
+            version: 2,
+            checkpoint: {
+              kind: 'full', createdAt: 1, reason: 'init', data: makeCheckpointData(),
+              event: { filledSheetKeys: ['sheet_0'], changedSheetKeys: ['sheet_0'], groupKeys: [] },
+            },
+            logEntries: [{
+              seq: 1, entryId: 'readonly-replay', createdAt: 2, source: 'auto_fill', targetMessageIndex: 0, aiFloor: 1,
+              filledSheetKeys: ['sheet_0'], changedSheetKeys: ['sheet_0'], groupKeys: [],
+              operations: [{ kind: 'sql_batch', statements: ["UPDATE inventory SET name = '钢剑' WHERE row_id = 1"] }],
+            }],
+          },
+        },
+      },
+    }];
+
+    try {
+      const result = await loadTableStateFromFramesV2_ACU(chat, '', { updateRuntimeState: false });
+
+      expect(result?.sheet_0.content[1]).toEqual(['1', '钢剑']);
+      expect(independentTableStates_ACU).toEqual({ sheet_existing: { lastUpdatedAiFloor: 99 } });
+    } finally {
+      _set_independentTableStates_ACU(previousIndependentStates);
+    }
+  });
+
   it('回放带参数绑定的 sql_batch', async () => {
     const chat = [
       {

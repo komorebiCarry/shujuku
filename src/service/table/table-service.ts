@@ -38,6 +38,11 @@ export interface TableChatPersistOptions_ACU {
    * 未传时沿用 targetSheetKeys，保持旧调用兼容。
    */
   trackingSheetKeys?: string[] | null;
+  /**
+   * 显式声明本次实际物化并完成填充的表。传入时优先于
+   * trackAsUpdate/updateGroupKeys，避免把结构或元数据变更伪造为 filled。
+   */
+  filledSheetKeys?: string[] | null;
   tableData?: TableDataObject_ACU | null;
   trackAsUpdate?: boolean;
   source?: TableMutationSourceV2_ACU;
@@ -118,6 +123,7 @@ async function persistTablesToChatMessageWithLockOption_ACU(
     targetSheetKeys = null,
     updateGroupKeys = null,
     trackingSheetKeys,
+    filledSheetKeys: explicitFilledSheetKeys,
     tableData: explicitTableData,
     trackAsUpdate = true,
     source,
@@ -185,6 +191,9 @@ async function persistTablesToChatMessageWithLockOption_ACU(
     const metadataOnlyUpdateGroupKeys = Array.isArray(updateGroupKeys)
       ? [...new Set(updateGroupKeys.filter(sheetKey => typeof sheetKey === 'string' && Boolean(effectiveTableData[sheetKey])))]
       : [];
+    const filledSheetKeys = explicitFilledSheetKeys !== undefined
+      ? [...new Set((explicitFilledSheetKeys || []).filter(sheetKey => typeof sheetKey === 'string' && Boolean(effectiveTableData[sheetKey])))]
+      : (trackAsUpdate ? metadataOnlyUpdateGroupKeys : []);
 
     try {
       const existingGuide = getChatSheetGuideDataForIsolationKey_ACU(currentIsolationKey);
@@ -209,7 +218,7 @@ async function persistTablesToChatMessageWithLockOption_ACU(
         source: source || (metadataOnlyUpdateGroupKeys.length > 0 ? 'group_fill' : 'system'),
         afterData: effectiveTableData,
         operations,
-        filledSheetKeys: trackAsUpdate ? metadataOnlyUpdateGroupKeys : [],
+        filledSheetKeys,
         candidateChangedSheetKeys: [...trackingKeySet],
         groupKeys: metadataOnlyUpdateGroupKeys,
         requestId,

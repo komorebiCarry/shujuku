@@ -6,6 +6,7 @@ const mocks = vi.hoisted(() => ({
   saveChatStrict: vi.fn().mockResolvedValue(undefined),
   settings: { dataIsolationEnabled: false, dataIsolationCode: '' },
   collectSummary: vi.fn(() => ({ sheet_a: { lastFilledAiFloor: 7, lastChangedAiFloor: 6 } })),
+  loadReplayState: vi.fn(),
   scopeContainer: null as any,
   guideContainer: null as any,
   setGuide: vi.fn(() => true),
@@ -37,6 +38,7 @@ vi.mock('../../../src/service/table/storage-strategy-resolver', () => ({
 }));
 vi.mock('../../../src/service/table/storage-frame-v2-replay', () => ({
   collectScheduleSummaryFromFramesV2_ACU: mocks.collectSummary,
+  loadTableStateFromFramesV2_ACU: mocks.loadReplayState,
 }));
 vi.mock('../../../src/data/storage/chat-history', () => ({
   getChatScopedConfigContainer_ACU: vi.fn(() => mocks.scopeContainer),
@@ -75,6 +77,7 @@ function seedFrame(frameOverrides: Record<string, any> = {}): any {
   };
   const message = { is_user: false, TavernDB_ACU_IsolatedData: { '': { _acu_storage_version: 2, storageFrame: frame } } };
   mocks.chat.splice(0, mocks.chat.length, message);
+  mocks.loadReplayState.mockResolvedValue(frame.checkpoint?.data ?? null);
   return message;
 }
 
@@ -385,6 +388,7 @@ describe('commitCurrentFloorTemplateChanges_ACU', () => {
     mocks.settings.dataIsolationCode = '';
     mocks.scopeContainer = { version: 1, template: { '': { old: true } } };
     mocks.guideContainer = { version: 1, tags: { '': { data: { sheet_old: {} } } } };
+    mocks.loadReplayState.mockReset();
     mocks.setGuide.mockReset().mockImplementation(() => true);
   });
 
@@ -419,6 +423,247 @@ describe('commitCurrentFloorTemplateChanges_ACU', () => {
       kind: 'sheet_full', reason: 'schema_change', createdAt: 30, sheetKey: 'sheet_b',
       event: { filledSheetKeys: [], changedSheetKeys: ['sheet_b'] },
     });
+  });
+
+  it('新增 sheet 在目标 frame 尾部日志后写入 introduction timeline', async () => {
+    const introducedSheet = { ...sheetB, uid: 'introduced', name: '新增表' };
+    const message = seedFrame({
+      logEntries: [makeEntry({
+        seq: 7,
+        operations: [{ kind: 'data_replace', data: { mate: { type: 'acu' }, sheet_a: sheetA, sheet_b: sheetB }, reason: 'system' }],
+      })],
+    });
+
+    const result = await commitCurrentFloorTemplateChanges_ACU({
+      isolationKey: '',
+      sheetCheckpoints: [{ sheetKey: 'sheet_new', sheetData: introducedSheet, isNewSheet: true }],
+      guideData: { sheet_a: { name: 'A' }, sheet_b: { name: 'B' }, sheet_new: { name: '新增表' } },
+      createdAt: 30,
+    });
+
+    expect(result.saved).toBe(true);
+    expect(message.TavernDB_ACU_IsolatedData[''].storageFrame.perSheetCheckpoints.sheet_new).toMatchObject({
+      kind: 'sheet_full', sheetKey: 'sheet_new',
+      timeline: { kind: 'sheet_introduction', activateAtMessageIndex: 0, afterSeq: 7 },
+    });
+  });
+
+  it('既有 full checkpoint 或当前 shard 的 sheet 被标为新增时受控拒绝且零写入', async () => {
+    const message = seedFrame({ logEntries: [] });
+    const originalIsolatedData = message.TavernDB_ACU_IsolatedData;
+    const headerOnlySheetA = { ...sheetA, content: [sheetA.content[0]] };
+    const headerOnlySheetB = { ...sheetB, content: [sheetB.content[0]] };
+
+    const result = await commitCurrentFloorTemplateChanges_ACU({
+      isolationKey: '',
+      sheetCheckpoints: [
+        { sheetKey: 'sheet_a', sheetData: headerOnlySheetA, isNewSheet: true },
+        { sheetKey: 'sheet_b', sheetData: headerOnlySheetB, isNewSheet: true },
+      ],
+      guideData: { sheet_a: { name: 'A' }, sheet_b: { name: 'B' } },
+      createdAt: 30,
+    });
+
+    expect(result).toMatchObject({ saved: false, error: expect.stringContaining('genuinely new sheet') });
+    expect(mocks.saveChatStrict).not.toHaveBeenCalled();
+    expect(mocks.setGuide).not.toHaveBeenCalled();
+    expect(message.TavernDB_ACU_IsolatedData).toBe(originalIsolatedData);
+  });
+
+  it('replay state 已存在同名 sheet 但 target frame 无 shard 时拒绝 introduction 且零写入', async () => {
+    const message = seedFrame({ logEntries: [], perSheetCheckpoints: {} });
+    const originalIsolatedData = message.TavernDB_ACU_IsolatedData;
+    const introducedSheet = { ...sheetB, uid: 'replayed-sheet', name: '历史已存在表' };
+    mocks.loadReplayState.mockResolvedValue({
+      ...message.TavernDB_ACU_IsolatedData[''].storageFrame.checkpoint.data,
+      sheet_new: introducedSheet,
+    });
+
+    const result = await commitCurrentFloorTemplateChanges_ACU({
+      isolationKey: '',
+      sheetCheckpoints: [{ sheetKey: 'sheet_new', sheetData: introducedSheet, isNewSheet: true }],
+      guideData: { sheet_a: { name: 'A' }, sheet_b: { name: 'B' }, sheet_new: { name: '历史已存在表' } },
+      createdAt: 30,
+    });
+
+    expect(result).toMatchObject({ saved: false, error: expect.stringContaining('genuinely new sheet') });
+    expect(mocks.loadReplayState).toHaveBeenCalledWith(mocks.chat, '', { maxMessageIndex: 0, updateRuntimeState: false });
+    expect(mocks.saveChatStrict).not.toHaveBeenCalled();
+    expect(mocks.setGuide).not.toHaveBeenCalled();
+    expect(message.TavernDB_ACU_IsolatedData).toBe(originalIsolatedData);
+  });
+
+  it('历史 full checkpoint 曾存在且后续 data_replace 删除同名 sheet 时拒绝 introduction 且零写入', async () => {
+    const historicalSheet = { ...sheetB, uid: 'historical-sheet', name: '已删除历史表' };
+    const historicalMessage = seedFrame({
+      checkpoint: {
+        kind: 'full', createdAt: 1, reason: 'init',
+        data: { mate: { type: 'acu' }, sheet_a: sheetA, sheet_b: sheetB, sheet_new: historicalSheet },
+      },
+      logEntries: [],
+      perSheetCheckpoints: {},
+    });
+    const targetMessage = {
+      is_user: false,
+      TavernDB_ACU_IsolatedData: {
+        '': {
+          _acu_storage_version: 2,
+          storageFrame: {
+            version: 2,
+            checkpoint: {
+              kind: 'full', createdAt: 2, reason: 'system',
+              data: { mate: { type: 'acu' }, sheet_a: sheetA, sheet_b: sheetB },
+            },
+            logEntries: [makeEntry({
+              operations: [{ kind: 'data_replace', data: { mate: { type: 'acu' }, sheet_a: sheetA, sheet_b: sheetB }, reason: 'system' }],
+            })],
+            perSheetCheckpoints: {},
+          },
+        },
+      },
+    };
+    mocks.chat.splice(0, mocks.chat.length, historicalMessage, targetMessage);
+    mocks.loadReplayState.mockResolvedValue(targetMessage.TavernDB_ACU_IsolatedData[''].storageFrame.checkpoint.data);
+    const originalIsolatedData = targetMessage.TavernDB_ACU_IsolatedData;
+
+    const result = await commitCurrentFloorTemplateChanges_ACU({
+      isolationKey: '',
+      sheetCheckpoints: [{ sheetKey: 'sheet_new', sheetData: historicalSheet, isNewSheet: true }],
+      guideData: { sheet_a: { name: 'A' }, sheet_b: { name: 'B' }, sheet_new: { name: '已删除历史表' } },
+      createdAt: 30,
+    });
+
+    expect(result).toMatchObject({ saved: false, error: expect.stringContaining('genuinely new sheet') });
+    expect(mocks.saveChatStrict).not.toHaveBeenCalled();
+    expect(mocks.setGuide).not.toHaveBeenCalled();
+    expect(targetMessage.TavernDB_ACU_IsolatedData).toBe(originalIsolatedData);
+    expect(targetMessage.TavernDB_ACU_IsolatedData[''].storageFrame.perSheetCheckpoints.sheet_new).toBeUndefined();
+  });
+
+  it('带业务行的新 sheet 不能作为 introduction 且零写入', async () => {
+    const message = seedFrame({ logEntries: [] });
+    const originalIsolatedData = message.TavernDB_ACU_IsolatedData;
+    const sheetWithDataRow = { ...sheetB, uid: 'new-with-data', name: '含数据新表', content: [['row_id', 'value'], ['1', '业务数据']] };
+
+    const result = await commitCurrentFloorTemplateChanges_ACU({
+      isolationKey: '',
+      sheetCheckpoints: [{ sheetKey: 'sheet_new', sheetData: sheetWithDataRow, isNewSheet: true }],
+      guideData: { sheet_a: { name: 'A' }, sheet_b: { name: 'B' }, sheet_new: { name: '含数据新表' } },
+      createdAt: 30,
+    });
+
+    expect(result).toMatchObject({ saved: false, error: expect.stringContaining('header-only') });
+    expect(mocks.saveChatStrict).not.toHaveBeenCalled();
+    expect(mocks.setGuide).not.toHaveBeenCalled();
+    expect(message.TavernDB_ACU_IsolatedData).toBe(originalIsolatedData);
+    expect(message.TavernDB_ACU_IsolatedData[''].storageFrame.perSheetCheckpoints.sheet_new).toBeUndefined();
+  });
+
+  it.each([
+    ['伪造 sheetKey 的全局 sql_batch', { kind: 'sql_batch', sheetKey: 'sheet_other', statements: ['UPDATE any_table SET value = 1'] }],
+    ['伪造 sheetKey 的全局 table_edit_dsl', { kind: 'table_edit_dsl', sheetKey: 'sheet_other', text: '更新表格：任意表' }],
+    ['伪造 sheetKey 的未知 operation', { kind: 'future_unknown_operation', sheetKey: 'sheet_other' }],
+    ['缺少 rowId 的单表 operation', { kind: 'row_delete', sheetKey: 'sheet_other' }],
+  ])('无法证明安全的历史 %s 时拒绝 introduction 且零写入', async (_label, operation) => {
+    const message = seedFrame({
+      logEntries: [makeEntry({ operations: [operation] })],
+      perSheetCheckpoints: {},
+    });
+    const originalIsolatedData = message.TavernDB_ACU_IsolatedData;
+    const introducedSheet = { ...sheetB, uid: `unsafe-history-${_label}`, name: '新增表' };
+
+    const result = await commitCurrentFloorTemplateChanges_ACU({
+      isolationKey: '',
+      sheetCheckpoints: [{ sheetKey: 'sheet_new', sheetData: introducedSheet, isNewSheet: true }],
+      guideData: { sheet_a: { name: 'A' }, sheet_b: { name: 'B' }, sheet_new: { name: '新增表' } },
+      createdAt: 30,
+    });
+
+    expect(result).toMatchObject({ saved: false, error: expect.stringContaining('genuinely new sheet') });
+    expect(mocks.saveChatStrict).not.toHaveBeenCalled();
+    expect(mocks.setGuide).not.toHaveBeenCalled();
+    expect(message.TavernDB_ACU_IsolatedData).toBe(originalIsolatedData);
+    expect(message.TavernDB_ACU_IsolatedData[''].storageFrame.perSheetCheckpoints.sheet_new).toBeUndefined();
+  });
+
+  it.each([
+    ['logEntries 非数组', { logEntries: null }],
+    ['perSheetCheckpoints 非对象', { logEntries: [], perSheetCheckpoints: [] }],
+  ])('带 V2 标记的畸形历史 frame：%s 时拒绝 introduction 且零写入', async (_label, frameOverrides) => {
+    const historicalMessage = seedFrame(frameOverrides);
+    const targetMessage = seedFrame({ logEntries: [], perSheetCheckpoints: {} });
+    mocks.chat.splice(0, mocks.chat.length, historicalMessage, targetMessage);
+    mocks.loadReplayState.mockResolvedValue(targetMessage.TavernDB_ACU_IsolatedData[''].storageFrame.checkpoint.data);
+    const originalIsolatedData = targetMessage.TavernDB_ACU_IsolatedData;
+    const introducedSheet = { ...sheetB, uid: `malformed-history-${_label}`, name: '新增表' };
+
+    const result = await commitCurrentFloorTemplateChanges_ACU({
+      isolationKey: '',
+      sheetCheckpoints: [{ sheetKey: 'sheet_new', sheetData: introducedSheet, isNewSheet: true }],
+      guideData: { sheet_a: { name: 'A' }, sheet_b: { name: 'B' }, sheet_new: { name: '新增表' } },
+      createdAt: 30,
+    });
+
+    expect(result).toMatchObject({ saved: false, error: expect.stringContaining('genuinely new sheet') });
+    expect(mocks.saveChatStrict).not.toHaveBeenCalled();
+    expect(mocks.setGuide).not.toHaveBeenCalled();
+    expect(targetMessage.TavernDB_ACU_IsolatedData).toBe(originalIsolatedData);
+    expect(targetMessage.TavernDB_ACU_IsolatedData[''].storageFrame.perSheetCheckpoints.sheet_new).toBeUndefined();
+  });
+
+  it.each([
+    ['缺少 createdAt 的 full checkpoint', { checkpoint: { kind: 'full', reason: 'init', data: { mate: { type: 'acu' }, sheet_a: sheetA, sheet_b: sheetB } } }],
+    ['缺少 reason 的 sheet checkpoint', { perSheetCheckpoints: { sheet_other: { kind: 'sheet_full', sheetKey: 'sheet_other', createdAt: 1, data: sheetB } } }],
+    ['V2 marker 与 frame version 不一致', { version: 1, logEntries: [] }],
+    ['缺少 entry 必填字段', { logEntries: [{ operations: [{ kind: 'row_delete', sheetKey: 'sheet_other', rowId: '1' }] }] }],
+    ['空 sheet_replace sheet', { logEntries: [makeEntry({ operations: [{ kind: 'sheet_replace', sheetKey: 'sheet_other', sheet: {}, reason: 'system' }] })] }],
+    ['空 schema migration descriptor', { logEntries: [makeEntry({ operations: [{ kind: 'sheet_schema_migrate', sheetKey: 'sheet_other', contractVersion: 1, beforeSchemaDigest: 'before', targetSchemaDigest: 'after', beforeSchema: {}, targetSchema: {}, columnChanges: [], migrationPolicy: { destructiveChangeConfirmed: false } }] })] }],
+    ['畸形 sql_sheet_batch', { logEntries: [makeEntry({ operations: [{ kind: 'sql_sheet_batch', sheetKey: 'sheet_other', statements: [123] }] })] }],
+    ['畸形 schema migration', { logEntries: [makeEntry({ operations: [{ kind: 'sheet_schema_migrate', sheetKey: 'sheet_other', contractVersion: 999 }] })] }],
+    ['畸形 row_upsert cells', { logEntries: [makeEntry({ operations: [{ kind: 'row_upsert', sheetKey: 'sheet_other', rowId: '1', cells: [1] }] })] }],
+    ['未知 legacy patch', { logEntries: [makeEntry({ patches: [{ kind: 'future_unknown_patch', sheetKey: 'sheet_other' }] })] }],
+  ])('不完整的历史 persisted contract：%s 时拒绝 introduction 且零写入', async (_label, frameOverrides) => {
+    const historicalMessage = seedFrame(frameOverrides);
+    const targetMessage = seedFrame({ logEntries: [], perSheetCheckpoints: {} });
+    mocks.chat.splice(0, mocks.chat.length, historicalMessage, targetMessage);
+    mocks.loadReplayState.mockResolvedValue(targetMessage.TavernDB_ACU_IsolatedData[''].storageFrame.checkpoint.data);
+    const originalIsolatedData = targetMessage.TavernDB_ACU_IsolatedData;
+    const introducedSheet = { ...sheetB, uid: `incomplete-contract-${_label}`, name: '新增表' };
+
+    const result = await commitCurrentFloorTemplateChanges_ACU({
+      isolationKey: '',
+      sheetCheckpoints: [{ sheetKey: 'sheet_new', sheetData: introducedSheet, isNewSheet: true }],
+      guideData: { sheet_a: { name: 'A' }, sheet_b: { name: 'B' }, sheet_new: { name: '新增表' } },
+      createdAt: 30,
+    });
+
+    expect(result).toMatchObject({ saved: false, error: expect.stringContaining('genuinely new sheet') });
+    expect(mocks.saveChatStrict).not.toHaveBeenCalled();
+    expect(mocks.setGuide).not.toHaveBeenCalled();
+    expect(targetMessage.TavernDB_ACU_IsolatedData).toBe(originalIsolatedData);
+    expect(targetMessage.TavernDB_ACU_IsolatedData[''].storageFrame.perSheetCheckpoints.sheet_new).toBeUndefined();
+  });
+
+  it.each([
+    { label: '重复', entries: [makeEntry({ seq: 7 }), makeEntry({ seq: 7, entryId: 'entry-2' })], error: '唯一且严格递增' },
+    { label: '倒序', entries: [makeEntry({ seq: 8 }), makeEntry({ seq: 7, entryId: 'entry-2' })], error: '唯一且严格递增' },
+    { label: '非法', entries: [makeEntry({ seq: -1 })], error: '非法 log seq' },
+  ])('目标 frame log seq $label 时拒绝 introduction 且零写入', async ({ entries, error }) => {
+    const message = seedFrame({ logEntries: entries });
+    const originalIsolatedData = message.TavernDB_ACU_IsolatedData;
+    const introducedSheet = { ...sheetB, uid: `introduced-${entries[0].seq}`, name: '新增表' };
+
+    const result = await commitCurrentFloorTemplateChanges_ACU({
+      isolationKey: '',
+      sheetCheckpoints: [{ sheetKey: 'sheet_new', sheetData: introducedSheet, isNewSheet: true }],
+      guideData: { sheet_a: { name: 'A' }, sheet_b: { name: 'B' }, sheet_new: { name: '新增表' } },
+      createdAt: 30,
+    });
+
+    expect(result).toMatchObject({ saved: false, error: expect.stringContaining(error) });
+    expect(mocks.saveChatStrict).not.toHaveBeenCalled();
+    expect(mocks.setGuide).not.toHaveBeenCalled();
+    expect(message.TavernDB_ACU_IsolatedData).toBe(originalIsolatedData);
   });
 
   it('严格保存失败时回滚 shard、identity、guide 与 scope', async () => {
