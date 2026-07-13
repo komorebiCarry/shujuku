@@ -22,6 +22,7 @@ const {
   mockReorderDataBySheetKeys, mockGetChatSheetGuideDataForIsolationKey,
   mockGetImportBatchPrefix, mockGetImportStablePrefix,
   mockLogDebug, mockLogError, mockLogWarn,
+  mockGetCurrentCharacterId,
   mockParseTableTemplateJson, mockIsEntryBlocked,
   mockFormatJsonToReadable, mockMaybeLiftWorldbookSuppression,
   mockMergeAllIndependentTables, mockShouldSuppressWorldbookInjection,
@@ -74,6 +75,7 @@ const {
     mockGetChatSheetGuideDataForIsolationKey: vi.fn(() => null),
     mockGetImportBatchPrefix: vi.fn(() => '外部导入-'),
     mockGetImportStablePrefix: vi.fn(() => '外部导入-'),
+    mockGetCurrentCharacterId: vi.fn(() => 'test-character'),
     mockLogDebug: vi.fn(),
     mockLogError: vi.fn(),
     mockLogWarn: vi.fn(),
@@ -157,6 +159,10 @@ vi.mock('../../../src/data/gateways/character-gateway', () => ({
   getChatMessages_ACU: mockGetChatMessages,
 }));
 
+vi.mock('../../../src/data/gateways/host-state-gateway', () => ({
+  getCurrentCharacterId_ACU: mockGetCurrentCharacterId,
+}));
+
 vi.mock('../../../src/data/gateways/chat-gateway', () => ({
   getChatLength_ACU: mockGetChatLength,
 }));
@@ -223,6 +229,7 @@ import {
   getWorldbookEntryPlaceholderSortKey_ACU,
   compareWorldbookEntriesForPlaceholder_ACU,
   getWorldbookNames_ACU,
+  getLorebookEntriesStrict_ACU,
   getLorebookEntriesByNames_ACU,
   getWorldBooks_ACU,
   loadAllChatMessages_ACU,
@@ -233,6 +240,7 @@ import {
   getCombinedWorldbookContent_ACU,
   updateReadableLorebookEntry_ACU,
 } from '../../../src/service/worldbook/pipeline';
+import { createPlotWorldbookReadContext_ACU } from '../../../src/service/runtime/plot-runtime/plot-worldbook-read-context';
 
 beforeEach(() => {
   vi.clearAllMocks();
@@ -533,6 +541,258 @@ describe('getLorebookEntriesByNames_ACU', () => {
     ]);
     const result = await getLorebookEntriesByNames_ACU(['书A']);
     expect(result['书A']).toHaveLength(1);
+  });
+});
+
+describe('getLorebookEntriesStrict_ACU', () => {
+  it('trusted_direct 直接读取受信名称，不调用非原子列表预检', async () => {
+    mockListLorebooks.mockRejectedValue(new Error('列表暂不可用'));
+    mockGwGetLorebookEntries.mockResolvedValue([{ uid: 1, content: '正文' }]);
+
+    const result = await getLorebookEntriesStrict_ACU(['角色主书'], {
+      source: 'plot_runtime',
+      validationPolicy: 'trusted_direct',
+      runId: 'run-1',
+    });
+
+    expect(mockListLorebooks).not.toHaveBeenCalled();
+    expect(mockGwGetLorebookEntries).toHaveBeenCalledTimes(1);
+    expect(result.status).toBe('success');
+    expect(result.entriesByBook['角色主书']).toEqual([{ uid: 1, content: '正文', book: '角色主书' }]);
+  });
+
+  it('validate_list 对不存在的手动选择返回 invalid_selection，不读取宿主条目', async () => {
+    mockListLorebooks.mockResolvedValue(['存在的书']);
+
+    const result = await getLorebookEntriesStrict_ACU(['残留配置书'], {
+      source: 'manual_validation',
+      validationPolicy: 'validate_list',
+      runId: 'run-1',
+    });
+
+    expect(result.status).toBe('invalid_selection');
+    expect(result.invalidBookNames).toEqual(['残留配置书']);
+    expect(mockGwGetLorebookEntries).not.toHaveBeenCalled();
+  });
+
+  it('同一 context 内同名宿主读取合并 in-flight Promise，并向调用方提供独立快照', async () => {
+    let releaseRead: (() => void) | undefined;
+    mockGwGetLorebookEntries.mockImplementation(() => new Promise(resolve => {
+      releaseRead = () => resolve([{ uid: 7, content: '原始正文' }]);
+    }));
+    const context = { bookEntriesPromises: new Map<string, Promise<any>>(), runId: 'run-1' };
+
+    const first = getLorebookEntriesStrict_ACU(['剧情书'], {
+      source: 'plot_runtime', validationPolicy: 'trusted_direct', runId: 'run-1', context,
+    });
+    const second = getLorebookEntriesStrict_ACU(['剧情书'], {
+      source: 'agent_runtime', validationPolicy: 'trusted_direct', runId: 'run-1', context,
+    });
+    await Promise.resolve();
+    releaseRead?.();
+    const [firstResult, secondResult] = await Promise.all([first, second]);
+
+    expect(mockGwGetLorebookEntries).toHaveBeenCalledTimes(1);
+    firstResult.entriesByBook['剧情书'][0].content = '派生修改';
+    expect(secondResult.entriesByBook['剧情书'][0].content).toBe('原始正文');
+  });
+
+  it('同一 context 内并发 enumerate_all 只枚举一次且每本书只读取一次', async () => {
+    mockListLorebooks.mockResolvedValue(['书A', '书B']);
+    mockGwGetLorebookEntries.mockImplementation(async (bookName: string) => [{ uid: bookName, content: `${bookName}正文` }]);
+    let availableBookNamesPromise: Promise<string[]> | undefined;
+    const context = {
+      bookEntriesPromises: new Map<string, Promise<any>>(),
+      runId: 'run-enumerate',
+      get availableBookNamesPromise() {
+        if (!availableBookNamesPromise) availableBookNamesPromise = mockListLorebooks();
+        return availableBookNamesPromise;
+      },
+    };
+
+    const [first, second] = await Promise.all([
+      getLorebookEntriesStrict_ACU([], {
+        source: 'plot_table_index', validationPolicy: 'enumerate_all', runId: 'run-enumerate', context,
+      }),
+      getLorebookEntriesStrict_ACU([], {
+        source: 'plot_table_index', validationPolicy: 'enumerate_all', runId: 'run-enumerate', context,
+      }),
+    ]);
+
+    expect(mockListLorebooks).toHaveBeenCalledTimes(1);
+    expect(mockGwGetLorebookEntries).toHaveBeenCalledTimes(2);
+    expect(mockGwGetLorebookEntries).toHaveBeenCalledWith('书A');
+    expect(mockGwGetLorebookEntries).toHaveBeenCalledWith('书B');
+    first.entriesByBook['书A'][0].content = '派生修改';
+    expect(second.entriesByBook['书A'][0].content).toBe('书A正文');
+  });
+
+  it('不同 context 的 enumerate_all 不复用上一轮列表或条目 Promise', async () => {
+    mockListLorebooks.mockResolvedValue(['书A']);
+    mockGwGetLorebookEntries.mockResolvedValue([{ uid: 1, content: '正文' }]);
+    const createContext = (runId: string) => {
+      let availableBookNamesPromise: Promise<string[]> | undefined;
+      return {
+        bookEntriesPromises: new Map<string, Promise<any>>(),
+        runId,
+        get availableBookNamesPromise() {
+          if (!availableBookNamesPromise) availableBookNamesPromise = mockListLorebooks();
+          return availableBookNamesPromise;
+        },
+      };
+    };
+
+    await getLorebookEntriesStrict_ACU([], {
+      source: 'plot_table_index', validationPolicy: 'enumerate_all', runId: 'run-1', context: createContext('run-1'),
+    });
+    await getLorebookEntriesStrict_ACU([], {
+      source: 'plot_table_index', validationPolicy: 'enumerate_all', runId: 'run-2', context: createContext('run-2'),
+    });
+
+    expect(mockListLorebooks).toHaveBeenCalledTimes(2);
+    expect(mockGwGetLorebookEntries).toHaveBeenCalledTimes(2);
+  });
+
+  it('宿主读取 reject 后优先报告 aborted 而不是 read_failed', async () => {
+    let aborted = false;
+    mockGwGetLorebookEntries.mockImplementation(async () => {
+      aborted = true;
+      throw new Error('host read failed');
+    });
+
+    const result = await getLorebookEntriesStrict_ACU(['剧情书'], {
+      source: 'plot_runtime', validationPolicy: 'trusted_direct', runId: 'run-abort',
+      context: { bookEntriesPromises: new Map<string, Promise<any>>(), runId: 'run-abort', isAborted: () => aborted },
+    });
+
+    expect(result.status).toBe('aborted');
+    expect(result.failedBookNames).toEqual([]);
+  });
+
+  it('宿主读取 reject 后在作用域变化时报告 scope_changed 而不是 read_failed', async () => {
+    let active = true;
+    mockGwGetLorebookEntries.mockImplementation(async () => {
+      active = false;
+      throw new Error('host read failed');
+    });
+
+    const result = await getLorebookEntriesStrict_ACU(['剧情书'], {
+      source: 'plot_runtime', validationPolicy: 'trusted_direct', runId: 'run-scope',
+      context: { bookEntriesPromises: new Map<string, Promise<any>>(), runId: 'run-scope', isActive: () => active },
+    });
+
+    expect(result.status).toBe('scope_changed');
+    expect(result.failedBookNames).toEqual([]);
+  });
+
+  it('真实 Plot context 在多表 scope 中只枚举一次且每本书只读取一次', async () => {
+    mockListLorebooks.mockResolvedValue(['书A', '书B']);
+    mockGwGetLorebookEntries.mockImplementation(async (bookName: string) => (
+      bookName === '书A'
+        ? [{ uid: 1, comment: 'TavernDB-ACU-CustomExport-关系档案' }]
+        : [{ uid: 2, comment: 'TavernDB-ACU-CustomExport-道具档案' }]
+    ));
+    const tableData = {
+      relation_sheet: { name: '关系档案', exportConfig: { entryName: '关系档案' } },
+      item_sheet: { name: '道具档案', exportConfig: { entryName: '道具档案' } },
+    };
+    const context = createPlotWorldbookReadContext_ACU(async () => []);
+
+    const [index, relationKeys, itemKeys, repeatedRelationKeys] = await Promise.all([
+      context.tableWorldbookIndexPromise,
+      context.getTableWorldbookScopedKeys('关系档案', tableData),
+      context.getTableWorldbookScopedKeys('道具档案', tableData),
+      context.getTableWorldbookScopedKeys('关系档案', tableData),
+    ]);
+
+    expect(mockListLorebooks).toHaveBeenCalledTimes(1);
+    expect(mockGwGetLorebookEntries).toHaveBeenCalledTimes(2);
+    expect(mockGwGetLorebookEntries).toHaveBeenCalledWith('书A');
+    expect(mockGwGetLorebookEntries).toHaveBeenCalledWith('书B');
+    expect(index.entriesByBook).toEqual(expect.objectContaining({ 书A: expect.any(Array), 书B: expect.any(Array) }));
+    expect(relationKeys).toEqual(new Set(['书A\u00001']));
+    expect(itemKeys).toEqual(new Set(['书B\u00002']));
+    expect(repeatedRelationKeys).toBe(relationKeys);
+  });
+
+  it('真实 Plot context 按 tableData 对象和 run 隔离表 scope 与 gateway 读取', async () => {
+    mockListLorebooks.mockResolvedValue(['书A']);
+    mockGwGetLorebookEntries.mockResolvedValue([{ uid: 1, comment: 'TavernDB-ACU-CustomExport-关系档案' }]);
+    const firstTableData = { relation_sheet: { name: '关系档案', exportConfig: { entryName: '关系档案' } } };
+    const secondTableData = { relation_sheet: { name: '关系档案', exportConfig: { entryName: '关系档案-另一配置' } } };
+    const firstContext = createPlotWorldbookReadContext_ACU(async () => []);
+
+    const firstKeys = await firstContext.getTableWorldbookScopedKeys('关系档案', firstTableData);
+    const secondKeys = await firstContext.getTableWorldbookScopedKeys('关系档案', secondTableData);
+    expect(firstKeys).toEqual(new Set(['书A\u00001']));
+    expect(secondKeys).toEqual(new Set());
+    expect(secondKeys).not.toBe(firstKeys);
+    expect(mockListLorebooks).toHaveBeenCalledTimes(1);
+    expect(mockGwGetLorebookEntries).toHaveBeenCalledTimes(1);
+
+    firstContext.dispose();
+    const secondContext = createPlotWorldbookReadContext_ACU(async () => []);
+    const secondRunKeys = await secondContext.getTableWorldbookScopedKeys('关系档案', firstTableData);
+
+    expect(secondRunKeys).toEqual(new Set(['书A\u00001']));
+    expect(mockListLorebooks).toHaveBeenCalledTimes(2);
+    expect(mockGwGetLorebookEntries).toHaveBeenCalledTimes(2);
+  });
+
+  it('真实 Plot context dispose 后飞行索引以 aborted 失败，不能返回正文快照', async () => {
+    let releaseEntries: (() => void) | undefined;
+    let markGatewayStarted: (() => void) | undefined;
+    const gatewayStarted = new Promise<void>(resolve => {
+      markGatewayStarted = resolve;
+    });
+    mockListLorebooks.mockResolvedValue(['书A']);
+    mockGwGetLorebookEntries.mockImplementation(() => new Promise(resolve => {
+      markGatewayStarted?.();
+      releaseEntries = () => resolve([{ uid: 1, content: '不得泄漏' }]);
+    }));
+    const context = createPlotWorldbookReadContext_ACU(async () => []);
+    const indexPromise = context.tableWorldbookIndexPromise;
+    await gatewayStarted;
+    context.dispose();
+    releaseEntries?.();
+
+    await expect(indexPromise).rejects.toThrow('StrictLorebookRead:aborted');
+    expect(mockGwGetLorebookEntries).toHaveBeenCalledTimes(1);
+  });
+
+  it('宿主 reject 后 abort 与 scope change 同时发生时优先报告 aborted', async () => {
+    let aborted = false;
+    let active = true;
+    mockGwGetLorebookEntries.mockImplementation(async () => {
+      aborted = true;
+      active = false;
+      throw new Error('host read failed');
+    });
+
+    const result = await getLorebookEntriesStrict_ACU(['剧情书'], {
+      source: 'plot_runtime', validationPolicy: 'trusted_direct', runId: 'run-priority',
+      context: {
+        bookEntriesPromises: new Map<string, Promise<any>>(),
+        runId: 'run-priority',
+        isAborted: () => aborted,
+        isActive: () => active,
+      },
+    });
+
+    expect(result.status).toBe('aborted');
+    expect(result.failedBookNames).toEqual([]);
+  });
+
+  it('受信 runtime 读取失败返回 read_failed 而不是伪装为空数组', async () => {
+    mockGwGetLorebookEntries.mockRejectedValue(new Error('host read failed'));
+
+    const result = await getLorebookEntriesStrict_ACU(['剧情书'], {
+      source: 'plot_runtime', validationPolicy: 'trusted_direct', runId: 'run-1',
+    });
+
+    expect(result.status).toBe('read_failed');
+    expect(result.failedBookNames).toEqual(['剧情书']);
+    expect(result.entriesByBook).toEqual({});
   });
 });
 

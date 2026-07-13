@@ -713,6 +713,144 @@ export   async function getWorldbookNames_ACU() {
       return normalizeWorldbookListNames_ACU(bookNames);
   }
 
+export type LorebookReadSource_ACU = 'plot_runtime' | 'plot_table_index' | 'agent_runtime' | 'ui' | 'global_enumeration' | 'manual_validation';
+export type LorebookValidationPolicy_ACU = 'trusted_direct' | 'validate_list' | 'enumerate_all';
+export type StrictLorebookReadStatus_ACU = 'success' | 'invalid_selection' | 'read_failed' | 'scope_changed' | 'aborted';
+
+export interface StrictLorebookBookReadResult_ACU {
+  bookName: string;
+  status: Extract<StrictLorebookReadStatus_ACU, 'success' | 'read_failed' | 'scope_changed' | 'aborted'>;
+  entries: any[];
+}
+
+export interface StrictLorebookReadContext_ACU {
+  runId: string;
+  bookEntriesPromises: Map<string, Promise<StrictLorebookBookReadResult_ACU>>;
+  availableBookNamesPromise?: Promise<string[]>;
+  isActive?: () => boolean;
+  isAborted?: () => boolean;
+}
+
+export interface StrictLorebookReadOptions_ACU {
+  source: LorebookReadSource_ACU;
+  validationPolicy: LorebookValidationPolicy_ACU;
+  runId: string;
+  context?: StrictLorebookReadContext_ACU;
+}
+
+export interface StrictLorebookReadResult_ACU {
+  status: StrictLorebookReadStatus_ACU;
+  source: LorebookReadSource_ACU;
+  validationPolicy: LorebookValidationPolicy_ACU;
+  runId: string;
+  entriesByBook: Record<string, any[]>;
+  invalidBookNames: string[];
+  failedBookNames: string[];
+}
+
+function normalizeRequestedLorebookNames_ACU(bookNames: unknown): string[] {
+  return [...new Set((Array.isArray(bookNames) ? bookNames : [])
+    .map(name => String(name || '').trim())
+    .filter(Boolean))];
+}
+
+function cloneLorebookReadValue_ACU(value: any): any {
+  if (Array.isArray(value)) return value.map(cloneLorebookReadValue_ACU);
+  if (!value || typeof value !== 'object') return value;
+  const copy: Record<string, any> = {};
+  for (const [key, item] of Object.entries(value)) copy[key] = cloneLorebookReadValue_ACU(item);
+  return copy;
+}
+
+function cloneLorebookEntriesForRead_ACU(entries: any[], bookName: string): any[] {
+  return (Array.isArray(entries) ? entries : []).map(entry => ({
+    ...cloneLorebookReadValue_ACU(entry),
+    book: bookName,
+  }));
+}
+
+function getStrictLorebookContextStatus_ACU(context: StrictLorebookReadContext_ACU | undefined): Extract<StrictLorebookReadStatus_ACU, 'scope_changed' | 'aborted'> | null {
+  if (!context) return null;
+  if (context.isAborted?.()) return 'aborted';
+  if (context.isActive && !context.isActive()) return 'scope_changed';
+  return null;
+}
+
+async function readStrictLorebookBook_ACU(bookName: string, context?: StrictLorebookReadContext_ACU): Promise<StrictLorebookBookReadResult_ACU> {
+  const beforeStatus = getStrictLorebookContextStatus_ACU(context);
+  if (beforeStatus) return { bookName, status: beforeStatus, entries: [] };
+  try {
+    const entries = await gwGetLorebookEntries_ACU(bookName);
+    const afterStatus = getStrictLorebookContextStatus_ACU(context);
+    if (afterStatus) return { bookName, status: afterStatus, entries: [] };
+    return { bookName, status: 'success', entries: cloneLorebookEntriesForRead_ACU(entries, bookName) };
+  } catch {
+    const failureStatus = getStrictLorebookContextStatus_ACU(context);
+    if (failureStatus) return { bookName, status: failureStatus, entries: [] };
+    return { bookName, status: 'read_failed', entries: [] };
+  }
+}
+
+async function getStrictLorebookBookRead_ACU(bookName: string, context?: StrictLorebookReadContext_ACU): Promise<StrictLorebookBookReadResult_ACU> {
+  if (!context) return readStrictLorebookBook_ACU(bookName);
+  const existing = context.bookEntriesPromises.get(bookName);
+  if (existing) return existing;
+  const promise = readStrictLorebookBook_ACU(bookName, context);
+  context.bookEntriesPromises.set(bookName, promise);
+  return promise;
+}
+
+async function getStrictLorebookAvailableBookNames_ACU(context?: StrictLorebookReadContext_ACU): Promise<string[]> {
+  const availableBookNames = await (context?.availableBookNamesPromise ?? listLorebooks_ACU());
+  return normalizeWorldbookListNames_ACU(availableBookNames);
+}
+
+export async function getLorebookEntriesStrict_ACU(bookNames: string[] = [], options: StrictLorebookReadOptions_ACU): Promise<StrictLorebookReadResult_ACU> {
+  let requestedBookNames = normalizeRequestedLorebookNames_ACU(bookNames);
+  const baseResult = {
+    source: options.source,
+    validationPolicy: options.validationPolicy,
+    runId: options.runId,
+    entriesByBook: {} as Record<string, any[]>,
+    invalidBookNames: [] as string[],
+    failedBookNames: [] as string[],
+  };
+  const initialStatus = getStrictLorebookContextStatus_ACU(options.context);
+  if (initialStatus) return { ...baseResult, status: initialStatus };
+
+  if (options.validationPolicy === 'enumerate_all') {
+    try {
+      requestedBookNames = await getStrictLorebookAvailableBookNames_ACU(options.context);
+    } catch {
+      const failureStatus = getStrictLorebookContextStatus_ACU(options.context);
+      return { ...baseResult, status: failureStatus || 'read_failed' };
+    }
+  } else if (options.validationPolicy === 'validate_list') {
+    try {
+      const availableBookNames = new Set(await getStrictLorebookAvailableBookNames_ACU(options.context));
+      baseResult.invalidBookNames = requestedBookNames.filter(name => !availableBookNames.has(name));
+      requestedBookNames = requestedBookNames.filter(name => availableBookNames.has(name));
+      if (baseResult.invalidBookNames.length > 0) return { ...baseResult, status: 'invalid_selection' };
+    } catch {
+      const failureStatus = getStrictLorebookContextStatus_ACU(options.context);
+      return { ...baseResult, status: failureStatus || 'read_failed' };
+    }
+  }
+
+  const reads = await Promise.all(requestedBookNames.map(name => getStrictLorebookBookRead_ACU(name, options.context)));
+  for (const read of reads) {
+    if (read.status === 'success') {
+      baseResult.entriesByBook[read.bookName] = cloneLorebookEntriesForRead_ACU(read.entries, read.bookName);
+      continue;
+    }
+    if (read.status === 'scope_changed' || read.status === 'aborted') return { ...baseResult, status: read.status };
+    baseResult.failedBookNames.push(read.bookName);
+  }
+  return baseResult.failedBookNames.length > 0
+    ? { ...baseResult, status: 'read_failed' }
+    : { ...baseResult, status: 'success' };
+}
+
 
 export   async function getLorebookEntriesByNames_ACU(bookNames: string[] = []) {
       let uniqueNames = [...new Set((Array.isArray(bookNames) ? bookNames : []).map((name: string) => String(name || '').trim()).filter(Boolean))];
@@ -913,11 +1051,16 @@ export   async function collectCombinedWorldbookEntriesByStrategy_ACU(options: a
           return [];
       }
 
-      const entriesMap: any = await getLorebookEntriesByNames_ACU(bookNames);
+      const providedEntriesMap = options?.entriesByBook;
+      const entriesMap: any = providedEntriesMap && typeof providedEntriesMap === 'object'
+        ? providedEntriesMap
+        : await getLorebookEntriesByNames_ACU(bookNames);
       let allEntries: any[] = [];
       let placeholderOriginalIndex = 0;
       for (const bookName of bookNames) {
-          const bookEntries = Array.isArray(entriesMap[bookName]) ? entriesMap[bookName] : [];
+          const bookEntries = Array.isArray(entriesMap[bookName])
+            ? cloneLorebookEntriesForRead_ACU(entriesMap[bookName], bookName)
+            : [];
           logDebug_ACU(`${logPrefix} 世界书 "${bookName}" 条目数量:`, bookEntries.length);
           bookEntries.forEach(entry => {
               entryCount++;

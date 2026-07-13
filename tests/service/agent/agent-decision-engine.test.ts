@@ -3,10 +3,12 @@ import { describe, expect, it, vi, beforeEach } from 'vitest';
 const {
   mockCallAIWithPreset,
   mockGetLorebookEntries,
+  mockGetLorebookEntriesStrict,
   mockRefreshPlotAgentWorldbookSnapshot,
 } = vi.hoisted(() => ({
   mockCallAIWithPreset: vi.fn(),
   mockGetLorebookEntries: vi.fn(),
+  mockGetLorebookEntriesStrict: vi.fn(),
   mockRefreshPlotAgentWorldbookSnapshot: vi.fn(),
 }));
 
@@ -20,6 +22,10 @@ vi.mock('../../../src/data/gateways/worldbook-gateway', () => ({
 
 vi.mock('../../../src/service/agent/agent-worldbook-takeover', () => ({
   refreshPlotAgentWorldbookSnapshotFromWorldbooks_ACU: mockRefreshPlotAgentWorldbookSnapshot,
+}));
+
+vi.mock('../../../src/service/worldbook/pipeline', () => ({
+  getLorebookEntriesStrict_ACU: mockGetLorebookEntriesStrict,
 }));
 
 vi.mock('../../../src/service/agent/agent-skillify-service', () => ({
@@ -46,6 +52,14 @@ describe('runAgentDecisionForPlot_ACU', () => {
     mockGetLorebookEntries.mockResolvedValue([
       { uid: 12, comment: `陈默人物档案\n\n${skillMetaBlock}`, keys: ['陈默'], content: '陈默内容', enabled: true },
     ]);
+    mockGetLorebookEntriesStrict.mockResolvedValue({
+      status: 'success',
+      entriesByBook: {
+        剧情书: [{ uid: 12, comment: `陈默人物档案\n\n${skillMetaBlock}`, keys: ['陈默'], content: '陈默内容', enabled: true }],
+      },
+      invalidBookNames: [],
+      failedBookNames: [],
+    });
   });
 
   it('keeps plot greenlights keyed by normalized task id', async () => {
@@ -76,6 +90,30 @@ describe('runAgentDecisionForPlot_ACU', () => {
     expect(result.finalGenerationGreenlights).toEqual([
       { bookName: '剧情书', uid: 12, reason: '最终生成' },
     ]);
+  });
+
+  it('通过 sharedContext 的 request context 读取 Agent 快照条目', async () => {
+    mockCallAIWithPreset.mockResolvedValue(JSON.stringify({
+      taskPlan: [{ taskId: 'task_id', run: true, effectiveStage: 1, effectiveOrder: 0 }],
+      plotGreenlights: { task_id: [{ entries: [1], reason: '人物模板' }] },
+      finalGenerationGreenlights: [],
+      fallbackMode: false,
+      reason: 'ok',
+    }));
+    const readContext = { runId: 'plot-agent-test', bookEntriesPromises: new Map() };
+
+    const result = await runAgentDecisionForPlot_ACU({
+      plotSettings: { agentWorldbookControl: { enabled: true, mode: 'agent' } },
+      userMessage: '敲门',
+      sharedContext: { worldbookReadContext: readContext },
+      enabledTasks: [{ id: 'task id', name: '默认任务', description: '需要判断的剧情任务', enabled: true, promptGroup: { messages: [] } }],
+    });
+
+    expect(result.active).toBe(true);
+    expect(mockGetLorebookEntries).not.toHaveBeenCalled();
+    expect(mockGetLorebookEntriesStrict).toHaveBeenCalledWith(['剧情书'], expect.objectContaining({
+      source: 'agent_runtime', validationPolicy: 'trusted_direct', runId: 'plot-agent-test', context: readContext,
+    }));
   });
 
   it('renders decision context by AI layers with paired user turns and selectable task filtering', async () => {

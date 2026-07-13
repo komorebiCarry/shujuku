@@ -1,6 +1,7 @@
 import type { AgentWorldbookControl_ACU } from '../../shared/models/agent-worldbook-model';
 import { getChatArray_ACU } from '../../data/gateways/chat-gateway';
 import { getLorebookEntries_ACU } from '../../data/gateways/worldbook-gateway';
+import { getLorebookEntriesStrict_ACU, type StrictLorebookReadContext_ACU } from '../worldbook/pipeline';
 import { normalizeNonNegativeInteger_ACU, normalizePositiveInteger_ACU, logWarn_ACU } from '../../shared/utils';
 import { estimateTextTk_ACU, normalizeTkBudgetNumber_ACU } from '../../shared/token-estimate';
 import { callAIWithPreset_ACU } from '../ai/api-call';
@@ -215,15 +216,31 @@ function buildFallbackWorldbookSummaryText_ACU(entry: Record<string, any>, comme
   return { description, triggerWhen };
 }
 
+async function getAgentRuntimeLorebookEntries_ACU(
+  bookName: string,
+  readContext?: StrictLorebookReadContext_ACU,
+): Promise<any[]> {
+  if (!readContext) return getLorebookEntries_ACU(bookName);
+  const result = await getLorebookEntriesStrict_ACU([bookName], {
+    source: 'agent_runtime',
+    validationPolicy: 'trusted_direct',
+    runId: readContext.runId,
+    context: readContext,
+  });
+  if (result.status !== 'success') throw new Error(`StrictLorebookRead:${result.status}`);
+  return result.entriesByBook[bookName] || [];
+}
+
 async function collectWorldbookSummariesFromSnapshot_ACU(
   contextSettings: ReturnType<typeof normalizeAgentContextSettings_ACU>,
+  readContext?: StrictLorebookReadContext_ACU,
 ): Promise<{ summaries: AgentWorldbookSummary_ACU[]; allowedKeys: Set<string> }> {
   const snapshot = await refreshPlotAgentWorldbookSnapshotFromWorldbooks_ACU();
   const summaries: AgentWorldbookSummary_ACU[] = [];
   const allowedKeys = new Set<string>();
 
   for (const [bookName, snapshotEntries] of Object.entries(snapshot.books || {})) {
-    const entries = await getLorebookEntries_ACU(bookName);
+    const entries = await getAgentRuntimeLorebookEntries_ACU(bookName, readContext);
     const list = Array.isArray(snapshotEntries) ? snapshotEntries : [];
     for (const snapshotEntry of list) {
       const uid = snapshotEntry?.uid;
@@ -567,7 +584,8 @@ export async function runAgentDecisionForPlot_ACU(params: {
     const effectivePlotSettings = { ...params.plotSettings, agentWorldbookControl: control };
     const contextSettings = normalizeAgentContextSettings_ACU(control.contextSettings);
     const maxAiAttempts = Math.max(1, Math.min(10, Math.trunc(Number(contextSettings.agentAiMaxRetries) || 1)));
-    const { summaries, allowedKeys } = await collectWorldbookSummariesFromSnapshot_ACU(contextSettings);
+    const readContext = params.sharedContext?.worldbookReadContext as StrictLorebookReadContext_ACU | undefined;
+    const { summaries, allowedKeys } = await collectWorldbookSummariesFromSnapshot_ACU(contextSettings, readContext);
     if (allowedKeys.size === 0) return emptyDecision_ACU(originalTasks, 'empty_worldbook_scope');
     const agentDecidableTasks = originalTasks.filter(task => shouldSendPlotTaskToAgent_ACU(normalizePlotTask_ACU(task, { fallbackTask: task })));
     const userOrderedTasks = originalTasks.filter(task => !shouldSendPlotTaskToAgent_ACU(normalizePlotTask_ACU(task, { fallbackTask: task })) && task?.agentControl?.selectable !== false);

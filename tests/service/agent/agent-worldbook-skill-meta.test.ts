@@ -1,7 +1,8 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-const { mockEntriesByBook, mockSetLorebookEntries } = vi.hoisted(() => ({
+const { mockEntriesByBook, mockGetLorebookEntriesStrict, mockSetLorebookEntries } = vi.hoisted(() => ({
   mockEntriesByBook: new Map<string, any[]>(),
+  mockGetLorebookEntriesStrict: vi.fn(),
   mockSetLorebookEntries: vi.fn(async (bookName: string, patches: any[]) => {
     const patchByUid = new Map((patches || []).map(patch => [String(patch.uid), patch]));
     const entries = mockEntriesByBook.get(bookName) || [];
@@ -15,6 +16,10 @@ const { mockEntriesByBook, mockSetLorebookEntries } = vi.hoisted(() => ({
 vi.mock('../../../src/data/gateways/worldbook-gateway', () => ({
   getLorebookEntries_ACU: vi.fn(async (bookName: string) => mockEntriesByBook.get(bookName) || []),
   setLorebookEntries_ACU: mockSetLorebookEntries,
+}));
+
+vi.mock('../../../src/service/worldbook/pipeline', () => ({
+  getLorebookEntriesStrict_ACU: mockGetLorebookEntriesStrict,
 }));
 
 vi.mock('../../../src/service/agent/agent-worldbook-config-meta', () => ({
@@ -91,6 +96,7 @@ describe('resolveAgentWorldbookFilterAvailability_ACU', () => {
     mockSetLorebookEntries.mockClear();
     vi.mocked(readAgentWorldbookControlFromWorldbooks_ACU).mockReset();
     vi.mocked(resolveAgentWorldbookScopeBookNames_ACU).mockReset();
+    mockGetLorebookEntriesStrict.mockReset();
   });
 
   it('agent 模式且世界书范围非空时 skillMetas 为空仍可用', async () => {
@@ -113,5 +119,28 @@ describe('resolveAgentWorldbookFilterAvailability_ACU', () => {
     expect(result.skillCount).toBe(0);
     expect(result.skillMetas).toEqual([]);
     expect(result.bookNames).toEqual(['角色A世界书']);
+  });
+
+  it('通过 request context 读取 Skill metadata，避免直接宿主读取', async () => {
+    vi.mocked(readAgentWorldbookControlFromWorldbooks_ACU).mockResolvedValue({
+      control: { mode: 'agent' }, source: 'worldbook', bookName: '角色A世界书', duplicateCount: 0, writableBookName: '角色A世界书',
+    } as any);
+    vi.mocked(resolveAgentWorldbookScopeBookNames_ACU).mockResolvedValue(['角色A世界书']);
+    mockGetLorebookEntriesStrict.mockResolvedValue({
+      status: 'success',
+      entriesByBook: {
+        角色A世界书: [{ uid: 1, comment: `条目\n${skillBlock}`, enabled: true }],
+      },
+      invalidBookNames: [],
+      failedBookNames: [],
+    });
+    const readContext = { runId: 'plot-agent-meta-test', bookEntriesPromises: new Map() };
+
+    const result = await resolveAgentWorldbookFilterAvailability_ACU(readContext);
+
+    expect(result.skillCount).toBe(1);
+    expect(mockGetLorebookEntriesStrict).toHaveBeenCalledWith(['角色A世界书'], expect.objectContaining({
+      source: 'agent_runtime', validationPolicy: 'trusted_direct', runId: 'plot-agent-meta-test', context: readContext,
+    }));
   });
 });
