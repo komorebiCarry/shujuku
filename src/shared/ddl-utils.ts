@@ -17,10 +17,8 @@ import { logWarn_ACU } from './utils';
  * @returns 表名，解析失败返回 null
  */
 export function parseDDLTableName(ddl: string): string | null {
-  if (!ddl) return null;
-  // 匹配 CREATE TABLE [IF NOT EXISTS] table_name
-  const match = ddl.match(/CREATE\s+TABLE\s+(?:IF\s+NOT\s+EXISTS\s+)?([^\s(]+)/i);
-  return match ? match[1] : null;
+  const bounds = findCreateTableDefinitionBounds_ACU(String(ddl || ''));
+  return bounds?.tableName || null;
 }
 
 /**
@@ -46,11 +44,8 @@ export function parseDDLColumnNames(ddl: string): string[] {
   if (!ddl) return [];
   const columns: string[] = [];
 
-  // 提取括号内的列定义部分
-  const bodyMatch = ddl.match(/\(([^]*)\)/);
-  if (!bodyMatch) return [];
-
-  const body = bodyMatch[1];
+  const body = getCreateTableDefinitionBody_ACU(ddl);
+  if (body === null) return [];
   // 按逗号分割（但要注意括号内和注释内的逗号）
   const lines = splitColumnDefinitions(body);
 
@@ -80,10 +75,8 @@ export function parseDDLColumnComments(ddl: string): Map<string, string> {
   const comments = new Map<string, string>();
   if (!ddl) return comments;
 
-  const bodyMatch = ddl.match(/\(([^]*)\)/);
-  if (!bodyMatch) return comments;
-
-  const body = bodyMatch[1];
+  const body = getCreateTableDefinitionBody_ACU(ddl);
+  if (body === null) return comments;
   // 按行分割（注释是行级概念，标准 SQL 中 `-- 注释` 到行尾）
   // 而非按 splitColumnDefinitions 分割（逗号在注释之前，会截断注释）
   const lines = body.split('\n');
@@ -122,21 +115,33 @@ export function buildColumnNameMap(ddl: string): {
   return { sqlToChinese, chineseToSql };
 }
 
+export type DDLSafeDefaultLiteral_ACU =
+  | { kind: 'null'; sql: 'NULL'; value: null }
+  | { kind: 'integer'; sql: string; value: number }
+  | { kind: 'real'; sql: string; value: number }
+  | { kind: 'string'; sql: string; value: string }
+  | { kind: 'blob'; sql: string; value: string }
+  | { kind: 'boolean'; sql: 'TRUE' | 'FALSE'; value: boolean };
+
 export interface DDLColumnInfo_ACU {
   index: number;
   sqlName: string;
   declaredType: string | null;
   comment: string | null;
+  /** 移除注释并压缩空白后的完整列定义，用于 schema contract 比较。 */
+  normalizedDefinition: string;
   isPrimaryKey: boolean;
   isNotNull: boolean;
   hasDefault: boolean;
+  /** Exact DEFAULT expression, or null when the definition has no DEFAULT. */
+  defaultExpression: string | null;
 }
 
 export function parseDDLColumnInfos_ACU(ddl: string): DDLColumnInfo_ACU[] {
   const columnNames = parseDDLColumnNames(ddl);
   const comments = parseDDLColumnComments(ddl);
-  const bodyMatch = ddl.match(/\(([^]*)\)/);
-  const definitions = bodyMatch ? splitColumnDefinitions(bodyMatch[1]) : [];
+  const body = getCreateTableDefinitionBody_ACU(ddl);
+  const definitions = body === null ? [] : splitColumnDefinitions(body);
   const definitionsByName = new Map<string, string>();
   for (const definition of definitions) {
     const withoutComments = stripSqlLineComments_ACU(definition).trim();
@@ -148,20 +153,226 @@ export function parseDDLColumnInfos_ACU(ddl: string): DDLColumnInfo_ACU[] {
     const comment = typeof rawComment === 'string' && rawComment.trim() ? rawComment.trim() : null;
     const definition = definitionsByName.get(sqlName) || '';
     const tokens = extractTopLevelSqlTokens_ACU(definition);
+    const defaultExpression = extractDDLDefaultExpression_ACU(definition);
     return {
       index,
       sqlName,
       declaredType: tokens[1] || null,
       comment,
+      normalizedDefinition: definition.replace(/\s+/g, ' ').trim(),
       isPrimaryKey: hasSequentialTokens_ACU(tokens, 'PRIMARY', 'KEY'),
       isNotNull: hasSequentialTokens_ACU(tokens, 'NOT', 'NULL'),
-      hasDefault: tokens.includes('DEFAULT'),
+      hasDefault: defaultExpression !== null,
+      defaultExpression,
     };
   });
 }
 
+/**
+ * Parses only literal defaults that can be replayed without evaluating SQL.
+ * SQLite expressions, parenthesized values and CURRENT_* are intentionally
+ * rejected by returning null.
+ */
+export function parseDDLSafeDefaultLiteral_ACU(expression: string | null | undefined): DDLSafeDefaultLiteral_ACU | null {
+  const value = String(expression || '').trim();
+  if (!value) return null;
+  if (/^NULL$/i.test(value)) return { kind: 'null', sql: 'NULL', value: null };
+  if (/^TRUE$/i.test(value)) return { kind: 'boolean', sql: 'TRUE', value: true };
+  if (/^FALSE$/i.test(value)) return { kind: 'boolean', sql: 'FALSE', value: false };
+  if (/^X'(?:[0-9A-F]{2})*'$/i.test(value)) return { kind: 'blob', sql: value.toUpperCase(), value: value.slice(2, -1).toUpperCase() };
+  if (/^[+-]?\d+$/.test(value)) {
+    const numeric = Number(value);
+    return Number.isSafeInteger(numeric) ? { kind: 'integer', sql: value, value: numeric } : null;
+  }
+  if (/^[+-]?(?:\d+\.\d*|\d*\.\d+)(?:[eE][+-]?\d+)?$|^[+-]?\d+[eE][+-]?\d+$/.test(value)) {
+    const numeric = Number(value);
+    return Number.isFinite(numeric) ? { kind: 'real', sql: value, value: numeric } : null;
+  }
+  if (value.startsWith("'") && value.endsWith("'")) {
+    const inner = value.slice(1, -1);
+    if (!/(^|[^'])'(?!')/.test(inner)) return { kind: 'string', sql: value, value: inner.replace(/''/g, "'") };
+  }
+  return null;
+}
+
+function extractDDLDefaultExpression_ACU(definition: string): string | null {
+  const value = stripSqlLineComments_ACU(definition);
+  let quote: "'" | '"' | '`' | '[' | null = null;
+  let depth = 0;
+  for (let index = 0; index < value.length; index += 1) {
+    const char = value[index];
+    if (quote) {
+      if (char === (quote === '[' ? ']' : quote)) {
+        if (quote !== '[' && value[index + 1] === quote) index += 1;
+        else quote = null;
+      }
+      continue;
+    }
+    if (char === "'" || char === '"' || char === '`' || char === '[') { quote = char; continue; }
+    if (char === '(') { depth += 1; continue; }
+    if (char === ')') { depth = Math.max(0, depth - 1); continue; }
+    if (depth !== 0 || value.slice(index, index + 7).toUpperCase() !== 'DEFAULT') continue;
+    if (/[A-Z0-9_$]/i.test(value[index - 1] || '') || /[A-Z0-9_$]/i.test(value[index + 7] || '')) continue;
+    const start = skipSqlTrivia_ACU(value, index + 7);
+    const parsed = consumeDefaultLiteralToken_ACU(value, start);
+    return parsed?.token || value.slice(start).trim() || null;
+  }
+  return null;
+}
+
+function consumeDefaultLiteralToken_ACU(value: string, start: number): { token: string; end: number } | null {
+  if (value[start] === "'") {
+    let index = start + 1;
+    while (index < value.length) {
+      if (value[index] === "'") {
+        if (value[index + 1] === "'") { index += 2; continue; }
+        return { token: value.slice(start, index + 1), end: index + 1 };
+      }
+      index += 1;
+    }
+    return null;
+  }
+  const blob = value.slice(start).match(/^X'(?:[0-9A-F]{2})*'/i);
+  if (blob) return { token: blob[0], end: start + blob[0].length };
+  const scalar = value.slice(start).match(/^(?:NULL|TRUE|FALSE|[+-]?(?:\d+\.\d*|\d*\.\d+|\d+)(?:[eE][+-]?\d+)?)/i);
+  return scalar ? { token: scalar[0], end: start + scalar[0].length } : null;
+}
+
 function hasSequentialTokens_ACU(tokens: string[], first: string, second: string): boolean {
   return tokens.some((token, index) => token === first && tokens[index + 1] === second);
+}
+
+/** Removes comments and insignificant whitespace while preserving SQL literals. */
+export function normalizeDDLForSchemaDescriptor_ACU(ddl: string): string {
+  return stripSqlLineComments_ACU(String(ddl || '')).replace(/\s+/g, ' ').trim();
+}
+
+/**
+ * Returns normalized table-level constraints without attempting to interpret
+ * them. Schema migration V1 compares them verbatim and rejects any change.
+ */
+export function parseDDLTableConstraints_ACU(ddl: string): string[] {
+  const body = getCreateTableDefinitionBody_ACU(ddl);
+  if (body === null) return [];
+  return splitColumnDefinitions(body)
+    .map(definition => stripSqlLineComments_ACU(definition).replace(/\s+/g, ' ').trim())
+    .filter(definition => /^(?:PRIMARY\s+KEY|FOREIGN\s+KEY|UNIQUE|CHECK|CONSTRAINT)\b/i.test(definition));
+}
+
+/** Returns normalized CREATE TABLE options following the closing definition bracket. */
+export function parseDDLTableSuffix_ACU(ddl: string): string {
+  const value = String(ddl || '');
+  const bounds = findCreateTableDefinitionBounds_ACU(value);
+  return bounds
+    ? stripSqlLineComments_ACU(value.slice(bounds.closingIndex + 1)).replace(/;\s*$/, '').replace(/\s+/g, ' ').trim()
+    : '';
+}
+
+function getCreateTableDefinitionBody_ACU(ddl: string): string | null {
+  const value = String(ddl || '');
+  const bounds = findCreateTableDefinitionBounds_ACU(value);
+  return bounds ? value.slice(bounds.openingIndex + 1, bounds.closingIndex) : null;
+}
+
+function findCreateTableDefinitionBounds_ACU(value: string): { tableName: string; openingIndex: number; closingIndex: number } | null {
+  let index = skipSqlTrivia_ACU(value, 0);
+  index = consumeSqlKeyword_ACU(value, index, 'CREATE');
+  if (index < 0) return null;
+  index = consumeSqlKeyword_ACU(value, skipSqlTrivia_ACU(value, index), 'TABLE');
+  if (index < 0) return null;
+  index = skipSqlTrivia_ACU(value, index);
+  const afterIf = consumeSqlKeyword_ACU(value, index, 'IF');
+  if (afterIf >= 0) {
+    const afterNot = consumeSqlKeyword_ACU(value, skipSqlTrivia_ACU(value, afterIf), 'NOT');
+    const afterExists = afterNot < 0 ? -1 : consumeSqlKeyword_ACU(value, skipSqlTrivia_ACU(value, afterNot), 'EXISTS');
+    if (afterExists < 0) return null;
+    index = skipSqlTrivia_ACU(value, afterExists);
+  }
+  const tableNameStart = index;
+  const tableNameEnd = skipSqlIdentifier_ACU(value, index);
+  if (tableNameEnd <= tableNameStart) return null;
+  index = tableNameEnd;
+  index = skipSqlTrivia_ACU(value, index);
+  if (value[index] !== '(') return null;
+  const openingIndex = index;
+  let depth = 0;
+  let quote: "'" | '"' | '`' | '[' | null = null;
+  for (; index < value.length; index += 1) {
+    const char = value[index];
+    if (quote) {
+      if (quote === '[') {
+        if (char === ']') {
+          if (value[index + 1] === ']') index += 1;
+          else quote = null;
+        }
+      } else if (char === quote) {
+        if (value[index + 1] === quote) index += 1;
+        else quote = null;
+      }
+      continue;
+    }
+    if (char === '-' && value[index + 1] === '-') {
+      index = skipSqlTrivia_ACU(value, index);
+      index -= 1;
+      continue;
+    }
+    if (char === '/' && value[index + 1] === '*') {
+      index = skipSqlTrivia_ACU(value, index);
+      index -= 1;
+      continue;
+    }
+    if (char === "'" || char === '"' || char === '`' || char === '[') {
+      quote = char;
+      continue;
+    }
+    if (char === '(') depth += 1;
+    if (char === ')' && --depth === 0) return { tableName: value.slice(tableNameStart, tableNameEnd), openingIndex, closingIndex: index };
+  }
+  return null;
+}
+
+function skipSqlTrivia_ACU(value: string, start: number): number {
+  let index = start;
+  while (index < value.length) {
+    if (/\s/.test(value[index])) { index += 1; continue; }
+    if (value[index] === '-' && value[index + 1] === '-') {
+      index += 2;
+      while (index < value.length && value[index] !== '\n' && value[index] !== '\r') index += 1;
+      continue;
+    }
+    if (value[index] === '/' && value[index + 1] === '*') {
+      const end = value.indexOf('*/', index + 2);
+      if (end < 0) return value.length;
+      index = end + 2;
+      continue;
+    }
+    break;
+  }
+  return index;
+}
+
+function consumeSqlKeyword_ACU(value: string, start: number, keyword: string): number {
+  const end = start + keyword.length;
+  return value.slice(start, end).toUpperCase() === keyword && !/[A-Z0-9_$]/i.test(value[start - 1] || '') && !/[A-Z0-9_$]/i.test(value[end] || '') ? end : -1;
+}
+
+function skipSqlIdentifier_ACU(value: string, start: number): number {
+  const quote = value[start];
+  if (quote === '"' || quote === '`' || quote === '[') {
+    const close = quote === '[' ? ']' : quote;
+    let index = start + 1;
+    while (index < value.length) {
+      if (value[index] === close) {
+        if (value[index + 1] === close) { index += 2; continue; }
+        return index + 1;
+      }
+      index += 1;
+    }
+    return value.length;
+  }
+  let index = start;
+  while (index < value.length && !/\s|\(/.test(value[index])) index += 1;
+  return index;
 }
 
 function stripSqlLineComments_ACU(value: string): string {

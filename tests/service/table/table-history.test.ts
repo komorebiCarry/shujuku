@@ -171,6 +171,38 @@ describe('resolveTableHistoryStateFromChat_ACU', () => {
     expect(state.lastTrackedUpdateAiFloor).toBe(1);
   });
 
+  it('将 sheet_schema_migrate 视为该 sheet 的结构化数据操作，但不把 changedSheetKeys 当作填表', () => {
+    const chat = [
+      v2Message({
+        version: 2,
+        logEntries: [{
+          seq: 1,
+          entryId: 'schema_1',
+          createdAt: 2,
+          source: 'manual_crud',
+          targetMessageIndex: 0,
+          aiFloor: 1,
+          filledSheetKeys: [],
+          changedSheetKeys: ['sheet_0'],
+          groupKeys: [],
+          operations: [{ kind: 'sheet_schema_migrate', sheetKey: 'sheet_0' }],
+        }],
+      }),
+    ];
+
+    const state = resolveTableHistoryStateFromChat_ACU(chat, {
+      sheetKey: 'sheet_0',
+      isSummaryTable: false,
+      isolationKey: '',
+      settings,
+    });
+
+    expect(state.hasAnyData).toBe(true);
+    expect(state.latestDataAiFloor).toBe(1);
+    expect(state.hasTrackedUpdate).toBe(false);
+    expect(state.lastTrackedUpdateAiFloor).toBe(0);
+  });
+
   it('不把 data_replace 覆盖范围视为已填表更新', () => {
     const chat = [
       v2Message({

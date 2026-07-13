@@ -337,6 +337,32 @@ describe('compileTemplateAssistantDraft_ACU', () => {
     expect(result.diff.patchedSchemaSheets[0]?.changes).toContain('DDL 已更新');
   });
 
+  it('patch_sheet_schema 将 migrationIntent 原样克隆到 compile result', () => {
+    const migrationIntent = {
+      physicalColumnMappings: [{ fromPhysicalName: 'name', toPhysicalName: 'character_name' }],
+      fills: {},
+      conversions: [],
+      migrationPolicy: { destructiveChangeConfirmed: false, lossyConversionConfirmed: false },
+    };
+    const result = compileTemplateAssistantDraft_ACU({
+      tempData: buildTempData_ACU(),
+      sheetOrder: ['sheet_a', 'sheet_b', 'sheet_summary'],
+      currentSheetKey: 'sheet_a',
+      draft: {
+        protocolVersion: 2,
+        selectedSheetKey: 'sheet_a',
+        operations: [{
+          op: 'patch_sheet_schema',
+          sheetKey: 'sheet_a',
+          patch: { renameColumns: [{ from: '姓名', to: '角色名' }], migrationIntent },
+        }],
+      },
+    });
+
+    expect(result.schemaMigrationIntents.sheet_a).toEqual(migrationIntent);
+    expect(result.schemaMigrationIntents.sheet_a).not.toBe(migrationIntent);
+  });
+
   it('patch_sheet_schema.ddl 拒绝中文物理列名，即使带同名中文注释', () => {
     const tempData = buildTempData_ACU();
     tempData.sheet_a.content = [['row_id', '物品名称', '数量', '备注']];

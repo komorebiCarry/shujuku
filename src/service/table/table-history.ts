@@ -65,6 +65,7 @@ function v2EntryAiFloor_ACU(entry: any, fallbackAiFloor: number): number {
 function v2OperationTouchesSheet_ACU(operation: any, sheetKey: string): boolean {
     if (!operation || typeof operation !== 'object') return false;
     if (operation.kind === 'sheet_replace') return operation.sheetKey === sheetKey;
+    if (operation.kind === 'sheet_schema_migrate') return operation.sheetKey === sheetKey;
     if (operation.kind === 'row_upsert' || operation.kind === 'row_delete' || operation.kind === 'meta_update') return operation.sheetKey === sheetKey;
     if (operation.kind === 'data_replace') return !!operation.data?.[sheetKey];
     return false;

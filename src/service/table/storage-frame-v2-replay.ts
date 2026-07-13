@@ -10,6 +10,7 @@ import { isV2TagData_ACU } from './storage-strategy-resolver';
 import { readIsolatedTagData_ACU } from '../../data/repositories/chat-message-data-repo';
 import { getSortedSheetKeys_ACU } from '../template/chat-scope';
 import { formatCanonicalRowIssues_ACU, isEmptyCanonicalRowId_ACU, normalizeCanonicalTableRows_ACU } from '../../shared/canonical-row-normalizer';
+import { applySheetSchemaMigrationOperation_ACU } from './table-schema-migration';
 
 interface V2FrameRef_ACU {
   messageIndex: number;
@@ -106,8 +107,50 @@ function getValidatedSheetCheckpoints_ACU(frame: TableStorageFrameV2_ACU): Table
     if (!checkpoint.data || typeof checkpoint.data !== 'object' || Array.isArray(checkpoint.data)) {
       throw new Error(`perSheetCheckpoints.${recordKey} 缺少有效的单表 data`);
     }
+    if (checkpoint.timeline !== undefined) {
+      const timeline = checkpoint.timeline;
+      if (timeline.kind !== 'sheet_introduction'
+        || !Number.isInteger(timeline.activateAtMessageIndex)
+        || timeline.activateAtMessageIndex < 0
+        || !Number.isInteger(timeline.afterSeq)
+        || timeline.afterSeq < 0) {
+        throw new Error(`perSheetCheckpoints.${recordKey} 包含非法 introduction timeline`);
+      }
+    }
     return checkpoint;
+  }).sort((left, right) => left.sheetKey.localeCompare(right.sheetKey));
+}
+
+function getValidatedFrameLogEntries_ACU(frame: TableStorageFrameV2_ACU): TableMutationLogEntryV2_ACU[] {
+  const entries = frame.logEntries;
+  if (entries === undefined) return [];
+  if (!Array.isArray(entries)) throw new Error('logEntries 必须是数组');
+
+  let previousSeq = -1;
+  return entries.map((entry, index) => {
+    const seq = entry?.seq;
+    if (!Number.isInteger(seq) || seq < 0) {
+      throw new Error(`logEntries[${index}] 包含非法 seq: ${String(seq)}`);
+    }
+    if (seq <= previousSeq) {
+      throw new Error(`logEntries 必须按唯一且严格递增的 seq 排列: previous=${previousSeq}, current=${seq}`);
+    }
+    previousSeq = seq;
+    return entry;
   });
+}
+
+function getValidatedIntroductionsForFrame_ACU(
+  checkpoints: TableSheetCheckpointV2_ACU[],
+  messageIndex: number,
+): TableSheetCheckpointV2_ACU[] {
+  const introductions = checkpoints.filter(checkpoint => checkpoint.timeline !== undefined);
+  for (const checkpoint of introductions) {
+    if (checkpoint.timeline!.activateAtMessageIndex !== messageIndex) {
+      throw new Error(`[V2 Replay] introduction shard messageIndex 不匹配: sheetKey=${checkpoint.sheetKey}, expected=${checkpoint.timeline!.activateAtMessageIndex}, actual=${messageIndex}`);
+    }
+  }
+  return introductions;
 }
 
 function splitSqlStatementsForReplay_ACU(sql: string): string[] {
@@ -172,11 +215,16 @@ async function ensureSqlReplayRuntime_ACU(runtime: SqlReplayRuntime_ACU, state: 
   runtime.loaded = true;
 }
 
+function getExportedSqlReplayRuntimeState_ACU(runtime: SqlReplayRuntime_ACU, state: TableDataObject_ACU): TableDataObject_ACU {
+  if (!runtime.loaded) return deepClone_ACU(state);
+  const next = runtime.syncBridge.exportToTableData((state.mate || { type: 'acu', version: 1 }) as Mate_ACU);
+  normalizeReplayState_ACU(next, 'SQL 导出结果');
+  return next;
+}
+
 function exportSqlReplayRuntime_ACU(runtime: SqlReplayRuntime_ACU, state: TableDataObject_ACU): void {
   if (!runtime.loaded) return;
-  const next = runtime.syncBridge.exportToTableData((state.mate || { type: 'acu', version: 1 }) as Mate_ACU);
-  replaceState_ACU(state, next);
-  normalizeReplayState_ACU(state, 'SQL 导出结果');
+  replaceState_ACU(state, getExportedSqlReplayRuntimeState_ACU(runtime, state));
 }
 
 async function reloadSqlReplayRuntime_ACU(runtime: SqlReplayRuntime_ACU, state: TableDataObject_ACU): Promise<void> {
@@ -188,10 +236,9 @@ async function reloadSqlReplayRuntime_ACU(runtime: SqlReplayRuntime_ACU, state: 
 
 async function applySheetCheckpointsForReplay_ACU(
   state: TableDataObject_ACU,
-  frame: TableStorageFrameV2_ACU,
+  checkpoints: TableSheetCheckpointV2_ACU[],
   runtime: SqlReplayRuntime_ACU,
 ): Promise<void> {
-  const checkpoints = getValidatedSheetCheckpoints_ACU(frame);
   if (checkpoints.length === 0) return;
   if (runtime.loaded) exportSqlReplayRuntime_ACU(runtime, state);
   for (const checkpoint of checkpoints) {
@@ -211,6 +258,16 @@ async function applySqlBatchOperationV2_ACU(
   await ensureSqlReplayRuntime_ACU(runtime, state);
   const params = Array.isArray(operation.params) ? operation.params : undefined;
   runtime.engine.runBatch(statements, params);
+}
+
+function assertMetaUpdateDoesNotChangeDdl_ACU(patch: Extract<TablePatchV2_ACU, { kind: 'meta_update' }>): void {
+  const sourceData = patch.meta?.sourceData;
+  if (sourceData && typeof sourceData === 'object' && !Array.isArray(sourceData)
+    && Object.prototype.hasOwnProperty.call(sourceData, 'ddl')) {
+    throw new Error(
+      '[V2 Replay] legacy meta_update.sourceData.ddl 无法安全回放；该结构变更需要迁移为 sheet_schema_migrate 或 sheet_replace。',
+    );
+  }
 }
 
 export function applyTablePatchV2_ACU(state: TableDataObject_ACU, patch: TablePatchV2_ACU): void {
@@ -246,7 +303,16 @@ export function applyTablePatchV2_ACU(state: TableDataObject_ACU, patch: TablePa
   }
 
   if (patch.kind === 'meta_update') {
-    Object.assign(sheet, deepClone_ACU(patch.meta));
+    const meta = deepClone_ACU(patch.meta || {});
+    assertMetaUpdateDoesNotChangeDdl_ACU(patch);
+    const sourceData = meta.sourceData;
+    if (meta.name !== undefined) sheet.name = meta.name;
+    if (meta.orderNo !== undefined) sheet.orderNo = meta.orderNo;
+    if (meta.updateConfig !== undefined) sheet.updateConfig = meta.updateConfig;
+    if (meta.exportConfig !== undefined) sheet.exportConfig = meta.exportConfig;
+    if (sourceData !== undefined) {
+      sheet.sourceData = { ...sheet.sourceData, ...(sourceData as Record<string, unknown>) };
+    }
   }
 }
 
@@ -371,7 +437,9 @@ export async function applyTableOperationV2_ACU(
   operation: TableMutationOperationV2_ACU,
   runtime?: SqlReplayRuntime_ACU,
 ): Promise<void> {
-  if (!operation) return;
+  if (!operation || typeof operation !== 'object' || typeof (operation as any).kind !== 'string') {
+    throw new Error('[V2 Replay] operation 缺少有效 kind。');
+  }
   const ownedRuntime = !runtime && (operation.kind === 'sql_batch' || operation.kind === 'sql_sheet_batch')
     ? { engine: new SqliteEngine(), syncBridge: null as unknown as SyncBridge, loaded: false }
     : null;
@@ -391,6 +459,18 @@ export async function applyTableOperationV2_ACU(
       await applySqlBatchOperationV2_ACU(state, operation, effectiveRuntime);
       return;
     }
+    if (operation.kind === 'sheet_schema_migrate') {
+      const sourceState = effectiveRuntime?.loaded
+        ? getExportedSqlReplayRuntimeState_ACU(effectiveRuntime, state)
+        : state;
+      const candidate = await applySheetSchemaMigrationOperation_ACU(sourceState, operation);
+      normalizeReplayState_ACU(candidate, 'sheet_schema_migrate');
+      if (effectiveRuntime?.loaded) {
+        await reloadSqlReplayRuntime_ACU(effectiveRuntime, candidate);
+      }
+      replaceState_ACU(state, candidate);
+      return;
+    }
     if (operation.kind === 'sheet_replace') {
       if (effectiveRuntime?.loaded) exportSqlReplayRuntime_ACU(effectiveRuntime, state);
       state[operation.sheetKey] = deepClone_ACU(operation.sheet);
@@ -399,6 +479,9 @@ export async function applyTableOperationV2_ACU(
       return;
     }
     if (operation.kind === 'row_upsert' || operation.kind === 'row_delete' || operation.kind === 'meta_update') {
+      if (operation.kind === 'meta_update') {
+        assertMetaUpdateDoesNotChangeDdl_ACU(operation);
+      }
       if (effectiveRuntime?.loaded) exportSqlReplayRuntime_ACU(effectiveRuntime, state);
       applyTablePatchV2_ACU(state, operation);
       normalizeReplayState_ACU(state, operation.kind);
@@ -410,7 +493,10 @@ export async function applyTableOperationV2_ACU(
       applyTableEditDslOperationV2_ACU(state, operation.text);
       normalizeReplayState_ACU(state, 'table_edit_dsl');
       if (effectiveRuntime?.loaded) await reloadSqlReplayRuntime_ACU(effectiveRuntime, state);
+      return;
     }
+
+    throw new Error(`[V2 Replay] 不支持的 operation kind: ${(operation as any).kind}`);
   } finally {
     if (ownedRuntime) ownedRuntime.engine.dispose();
   }
@@ -437,7 +523,9 @@ export function collectScheduleSummaryFromFramesV2_ACU(
 
   for (const ref of frameRefs) {
     if (checkpointRef && ref.messageIndex < checkpointRef.messageIndex) continue;
-    for (const sheetCheckpoint of getValidatedSheetCheckpoints_ACU(ref.frame)) {
+    const checkpoints = getValidatedSheetCheckpoints_ACU(ref.frame);
+    const introductions = getValidatedIntroductionsForFrame_ACU(checkpoints, ref.messageIndex);
+    for (const sheetCheckpoint of checkpoints.filter(checkpoint => checkpoint.timeline === undefined)) {
       summary[sheetCheckpoint.sheetKey] = deepClone_ACU(sheetCheckpoint.scheduleSummary || {});
       applyEventToScheduleSummary_ACU(
         summary,
@@ -445,10 +533,21 @@ export function collectScheduleSummaryFromFramesV2_ACU(
         ref.aiFloor,
       );
     }
-    const entries = [...(ref.frame.logEntries || [])].sort((a, b) => a.seq - b.seq);
+    const entries = getValidatedFrameLogEntries_ACU(ref.frame);
+    const pendingIntroductions = [...introductions];
+    const applyDueIntroductions = (nextSeq: number): void => {
+      const due = pendingIntroductions.filter(checkpoint => checkpoint.timeline!.afterSeq < nextSeq);
+      for (const checkpoint of due) {
+        summary[checkpoint.sheetKey] = deepClone_ACU(checkpoint.scheduleSummary || {});
+        applyEventToScheduleSummary_ACU(summary, checkpoint.event, ref.aiFloor);
+        pendingIntroductions.splice(pendingIntroductions.indexOf(checkpoint), 1);
+      }
+    };
     for (const entry of entries) {
+      applyDueIntroductions(entry.seq);
       applyEventToScheduleSummary_ACU(summary, entry, ref.aiFloor);
     }
+    applyDueIntroductions(Number.POSITIVE_INFINITY);
   }
 
   return summary;
@@ -488,10 +587,27 @@ export async function loadTableStateFromFramesV2_ACU(
   try {
     for (const ref of frameRefs) {
       if (ref.messageIndex < replayStartMessageIndex) continue;
-      await applySheetCheckpointsForReplay_ACU(state, ref.frame, runtime);
-      const entries = [...(ref.frame.logEntries || [])].sort((a, b) => a.seq - b.seq);
+      const checkpoints = getValidatedSheetCheckpoints_ACU(ref.frame);
+      const introductions = getValidatedIntroductionsForFrame_ACU(checkpoints, ref.messageIndex);
+      await applySheetCheckpointsForReplay_ACU(
+        state,
+        checkpoints.filter(checkpoint => checkpoint.timeline === undefined),
+        runtime,
+      );
+      const entries = getValidatedFrameLogEntries_ACU(ref.frame);
+      const pendingIntroductions = [...introductions];
+      const applyDueIntroductions = async (nextSeq: number): Promise<void> => {
+        const due = pendingIntroductions.filter(checkpoint => checkpoint.timeline!.afterSeq < nextSeq);
+        if (due.length === 0) return;
+        await applySheetCheckpointsForReplay_ACU(state, due, runtime);
+        for (const checkpoint of due) {
+          replayEventForState_ACU(checkpoint.event, ref.aiFloor);
+          pendingIntroductions.splice(pendingIntroductions.indexOf(checkpoint), 1);
+        }
+      };
       for (const entry of entries) {
         try {
+          await applyDueIntroductions(entry.seq);
           if (Array.isArray(entry.operations) && entry.operations.length > 0) {
             for (const operation of entry.operations) {
               await applyTableOperationV2_ACU(state, operation, runtime);
@@ -511,6 +627,7 @@ export async function loadTableStateFromFramesV2_ACU(
           throw error;
         }
       }
+      await applyDueIntroductions(Number.POSITIVE_INFINITY);
     }
 
     if (runtime.loaded) exportSqlReplayRuntime_ACU(runtime, state);

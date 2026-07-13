@@ -11,6 +11,7 @@ const { mockGetTableLocks, mockSaveTableLocks, mockSetSpecialIndexLockEnabled } 
   mockSaveTableLocks: vi.fn(),
   mockSetSpecialIndexLockEnabled: vi.fn(),
 }));
+const mockPreflightSchemaMigrations = vi.hoisted(() => vi.fn());
 
 const { state } = vi.hoisted(() => ({
   state: {
@@ -67,6 +68,10 @@ vi.mock('../../src/service/template-assistant/service', () => ({
   }),
 }));
 
+vi.mock('../../src/service/table/schema-migration-preflight', () => ({
+  preflightSchemaMigrations_ACU: mockPreflightSchemaMigrations,
+}));
+
 import { buildTemplateAssistantFingerprint_ACU } from '../../src/service/template-assistant/service';
 import { applyTemplateAssistantDraftToVisualizer_ACU } from '../../src/presentation/pages/visualizer-template-assistant-apply';
 
@@ -95,6 +100,8 @@ describe('applyTemplateAssistantDraftToVisualizer_ACU', () => {
     mockSaveTableLocks.mockReset();
     mockSetSpecialIndexLockEnabled.mockReset();
     mockGetTableLocks.mockReturnValue({ rows: new Set<number>(), cols: new Set<number>(), cells: new Set<string>() });
+    mockPreflightSchemaMigrations.mockReset();
+    mockPreflightSchemaMigrations.mockResolvedValue({ changedSheetKeys: [], blockers: [], operations: [] });
     state.tempData = {
       mate: { type: 'chatSheets', version: 1, globalInjectionConfig: { readableEntryPlacement: { position: 'before_character_definition', depth: 2, order: 99981 }, wrapperPlacement: { position: 'before_character_definition', depth: 2, order: 99980 } } },
       sheet_a: { uid: 'sheet_a', name: 'A表', orderNo: 0, content: [['row_id', '姓名']], sourceData: { note: 'a', initNode: '', insertNode: '', updateNode: '', deleteNode: '' }, updateConfig: { uiSentinel: -1, contextDepth: -1, updateFrequency: -1, batchSize: -1, skipFloors: -1, sendLatestRows: -1, groupId: -1 }, exportConfig: { enabled: false, splitByRow: false, entryName: 'A表', entryType: 'constant', keywords: '', preventRecursion: true, injectionTemplate: '', extraIndexEnabled: false, extraIndexEntryName: 'A表-索引', extraIndexColumns: [], extraIndexColumnModes: {}, extraIndexInjectionTemplate: '', entryPlacement: { position: 'at_depth_as_system', depth: 2, order: 10000 }, extraIndexPlacement: { position: 'at_depth_as_system', depth: 2, order: 10010 }, fixedEntryPlacement: { position: 'at_depth_as_system', depth: 2, order: 99990 }, fixedIndexPlacement: { position: 'at_depth_as_system', depth: 2, order: 99991 } } },
@@ -104,8 +111,8 @@ describe('applyTemplateAssistantDraftToVisualizer_ACU', () => {
     state.deletedSheetKeys = ['legacy_deleted'];
   });
 
-  it('按 originalBaseFingerprint 校验并同步 tempData/sheetOrder/currentSheetKey/deletedSheetKeys', () => {
-    const ok = applyTemplateAssistantDraftToVisualizer_ACU(buildApplyResult_ACU({
+  it('按 originalBaseFingerprint 校验并同步 tempData/sheetOrder/currentSheetKey/deletedSheetKeys', async () => {
+    const ok = await applyTemplateAssistantDraftToVisualizer_ACU(buildApplyResult_ACU({
       draft: { baseFingerprint: 'acu-struct:working-session' },
       compileResult: {
         candidateData: {
@@ -126,8 +133,8 @@ describe('applyTemplateAssistantDraftToVisualizer_ACU', () => {
     expect(mockRenderMain).toHaveBeenCalledTimes(1);
   });
 
-  it('原始 baseline fingerprint 不一致时阻止应用，即使 draft.baseFingerprint 看似可用', () => {
-    const ok = applyTemplateAssistantDraftToVisualizer_ACU(buildApplyResult_ACU({
+  it('原始 baseline fingerprint 不一致时阻止应用，即使 draft.baseFingerprint 看似可用', async () => {
+    const ok = await applyTemplateAssistantDraftToVisualizer_ACU(buildApplyResult_ACU({
       originalBaseFingerprint: 'acu-struct:stale',
       draft: { baseFingerprint: buildTemplateAssistantFingerprint_ACU(state.tempData) },
     }));
@@ -136,9 +143,94 @@ describe('applyTemplateAssistantDraftToVisualizer_ACU', () => {
     expect(mockRenderSidebar).not.toHaveBeenCalled();
   });
 
-  it('未提供 originalBaseFingerprint 时回退到 draft.baseFingerprint', () => {
+  it('schema migration preflight 有 blocker 时阻止应用且不污染运行时状态', async () => {
+    const stateBeforeApply = JSON.parse(JSON.stringify(state));
+    mockPreflightSchemaMigrations.mockResolvedValueOnce({
+      changedSheetKeys: ['sheet_a'],
+      blockers: ['sheet_a: 缺少显式 V2 intent'],
+      operations: [],
+    });
+
+    const ok = await applyTemplateAssistantDraftToVisualizer_ACU(buildApplyResult_ACU({
+      compileResult: {
+        candidateData: {
+          ...state.tempData,
+          sheet_b: { ...state.tempData.sheet_a, uid: 'sheet_b', name: 'B表', orderNo: 1 },
+        },
+        orderedSheetKeys: ['sheet_a', 'sheet_b'],
+        deletedSheetKeys: ['sheet_a'],
+        focusSheetKey: 'sheet_b',
+      },
+    }));
+
+    expect(ok).toBe(false);
+    expect(mockPreflightSchemaMigrations).toHaveBeenCalledTimes(1);
+    expect(mockShowToastr).toHaveBeenCalledWith('warning', expect.stringContaining('schema migration preflight'));
+    expect(state).toEqual(stateBeforeApply);
+    expect(mockRenderSidebar).not.toHaveBeenCalled();
+    expect(mockRenderMain).not.toHaveBeenCalled();
+    expect(mockSaveTableLocks).not.toHaveBeenCalled();
+    expect(mockSetSpecialIndexLockEnabled).not.toHaveBeenCalled();
+  });
+
+  it('schema migration preflight 期间结构变化时不覆盖并发编辑', async () => {
+    let resolvePreflight: (value: { changedSheetKeys: string[]; blockers: string[]; operations: any[] }) => void;
+    mockPreflightSchemaMigrations.mockImplementationOnce(() => new Promise((resolve) => {
+      resolvePreflight = resolve;
+    }));
+    const applying = applyTemplateAssistantDraftToVisualizer_ACU(buildApplyResult_ACU({
+      compileResult: {
+        candidateData: {
+          ...state.tempData,
+          sheet_b: { ...state.tempData.sheet_a, uid: 'sheet_b', name: '草稿新增表', orderNo: 1 },
+        },
+        orderedSheetKeys: ['sheet_a', 'sheet_b'],
+        deletedSheetKeys: [],
+        focusSheetKey: 'sheet_b',
+      },
+    }));
+    state.tempData = {
+      ...state.tempData,
+      sheet_concurrent: { ...state.tempData.sheet_a, uid: 'sheet_concurrent', name: '并发编辑表', orderNo: 1 },
+    };
+    state.sheetOrder = ['sheet_a', 'sheet_concurrent'];
+    resolvePreflight!({ changedSheetKeys: [], blockers: [], operations: [] });
+
+    await expect(applying).resolves.toBe(false);
+    expect(state.tempData.sheet_concurrent).toBeTruthy();
+    expect(state.tempData.sheet_b).toBeUndefined();
+    expect(state.sheetOrder).toEqual(['sheet_a', 'sheet_concurrent']);
+    expect(mockRenderSidebar).not.toHaveBeenCalled();
+    expect(mockRenderMain).not.toHaveBeenCalled();
+    expect(mockShowToastr).toHaveBeenCalledWith('warning', expect.stringContaining('preflight 期间已变化'));
+  });
+
+  it('schema migration preflight 期间 deletedSheetKeys 单独变化时不覆盖并发编辑', async () => {
+    let resolvePreflight: (value: { changedSheetKeys: string[]; blockers: string[]; operations: any[] }) => void;
+    mockPreflightSchemaMigrations.mockImplementationOnce(() => new Promise((resolve) => {
+      resolvePreflight = resolve;
+    }));
+    const applying = applyTemplateAssistantDraftToVisualizer_ACU(buildApplyResult_ACU({
+      compileResult: {
+        candidateData: state.tempData,
+        orderedSheetKeys: ['sheet_a'],
+        deletedSheetKeys: ['sheet_a'],
+        focusSheetKey: null,
+      },
+    }));
+    state.deletedSheetKeys = ['legacy_deleted', 'sheet_concurrent_deleted'];
+    resolvePreflight!({ changedSheetKeys: [], blockers: [], operations: [] });
+
+    await expect(applying).resolves.toBe(false);
+    expect(state.deletedSheetKeys).toEqual(['legacy_deleted', 'sheet_concurrent_deleted']);
+    expect(mockRenderSidebar).not.toHaveBeenCalled();
+    expect(mockRenderMain).not.toHaveBeenCalled();
+    expect(mockShowToastr).toHaveBeenCalledWith('warning', expect.stringContaining('preflight 期间已变化'));
+  });
+
+  it('未提供 originalBaseFingerprint 时回退到 draft.baseFingerprint', async () => {
     const fp = buildTemplateAssistantFingerprint_ACU(state.tempData);
-    const ok = applyTemplateAssistantDraftToVisualizer_ACU({
+    const ok = await applyTemplateAssistantDraftToVisualizer_ACU({
       draft: { baseFingerprint: fp } as any,
       compileResult: { candidateData: state.tempData, orderedSheetKeys: ['sheet_a'], deletedSheetKeys: [], focusSheetKey: 'sheet_a', lockChanges: [] },
     } as any);
@@ -146,9 +238,9 @@ describe('applyTemplateAssistantDraftToVisualizer_ACU', () => {
     expect(ok).toBe(true);
   });
 
-  it('多轮结果缺少 originalBaseFingerprint 时阻止应用', () => {
+  it('多轮结果缺少 originalBaseFingerprint 时阻止应用', async () => {
     const fp = buildTemplateAssistantFingerprint_ACU(state.tempData);
-    const ok = applyTemplateAssistantDraftToVisualizer_ACU({
+    const ok = await applyTemplateAssistantDraftToVisualizer_ACU({
       draft: { baseFingerprint: fp } as any,
       session: { stopReason: 'empty_operations' } as any,
       compileResult: {
@@ -167,8 +259,8 @@ describe('applyTemplateAssistantDraftToVisualizer_ACU', () => {
     expect(mockRenderSidebar).not.toHaveBeenCalled();
   });
 
-  it('删除当前表后优先回退到 focusSheetKey', () => {
-    const ok = applyTemplateAssistantDraftToVisualizer_ACU(buildApplyResult_ACU({
+  it('删除当前表后优先回退到 focusSheetKey', async () => {
+    const ok = await applyTemplateAssistantDraftToVisualizer_ACU(buildApplyResult_ACU({
       compileResult: {
         candidateData: {
           mate: state.tempData.mate,
@@ -184,8 +276,8 @@ describe('applyTemplateAssistantDraftToVisualizer_ACU', () => {
     expect(state.currentSheetKey).toBe('sheet_b');
   });
 
-  it('删除当前表且无可用 focus 时回退到 null', () => {
-    const ok = applyTemplateAssistantDraftToVisualizer_ACU(buildApplyResult_ACU({
+  it('删除当前表且无可用 focus 时回退到 null', async () => {
+    const ok = await applyTemplateAssistantDraftToVisualizer_ACU(buildApplyResult_ACU({
       compileResult: {
         candidateData: { mate: state.tempData.mate },
         orderedSheetKeys: [],
@@ -199,8 +291,8 @@ describe('applyTemplateAssistantDraftToVisualizer_ACU', () => {
     expect(state.currentSheetKey).toBeNull();
   });
 
-  it('应用 lockChanges 到运行时锁状态', () => {
-    const ok = applyTemplateAssistantDraftToVisualizer_ACU(buildApplyResult_ACU({
+  it('应用 lockChanges 到运行时锁状态', async () => {
+    const ok = await applyTemplateAssistantDraftToVisualizer_ACU(buildApplyResult_ACU({
       compileResult: {
         candidateData: state.tempData,
         orderedSheetKeys: ['sheet_a'],

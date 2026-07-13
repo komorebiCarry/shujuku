@@ -497,6 +497,7 @@ describe('purgeSheetKeysFromMessage_ACU', () => {
                   { kind: 'row_upsert', sheetKey: 'sheet_0', rowId: 'r0', cells: ['r0'] },
                   { kind: 'row_upsert', sheetKey: 'sheet_1', rowId: 'r1', cells: ['r1'] },
                   { kind: 'meta_update', sheetKey: 'sheet_0', meta: { name: '旧名' } },
+                  { kind: 'sheet_schema_migrate', sheetKey: 'sheet_0', contractVersion: 1 },
                   { kind: 'table_edit_dsl', text: 'update sheet_0 but text is not structured' },
                 ],
                 patches: [

@@ -1,6 +1,7 @@
 import { TABLE_ORDER_FIELD_ACU } from '../../shared/constants';
 import { parseDDLColumnNames, updateDDLColumnComment, validateDDLTextAgainstHeaders_ACU } from '../../shared/ddl-utils';
 import { isSummaryOrOutlineTable_ACU } from '../../shared/utils';
+import type { SchemaMigrationPreflightIntent_ACU } from '../table/schema-migration-preflight';
 import { applySummaryIndexSequenceToTable_ACU, getSummaryIndexColumnIndex_ACU, isSpecialIndexLockEnabled_ACU } from '../runtime/helpers-remaining';
 import { getSortedSheetKeys_ACU } from '../template/chat-scope';
 import { buildDefaultExportConfig_ACU, ensureGlobalInjectionConfigDefaults_ACU, ensureSheetExportConfigDefaults_ACU } from '../worldbook/injection-engine';
@@ -58,6 +59,7 @@ export interface TemplateAssistantCompileResult_ACU {
     diff: TemplateAssistantDiff_ACU;
     highRiskItems: TemplateAssistantHighRiskItem_ACU[];
     lockChanges: TemplateAssistantLockChange_ACU[];
+    schemaMigrationIntents: Record<string, SchemaMigrationPreflightIntent_ACU | undefined>;
 }
 
 export interface TemplateAssistantCumulativeCompileInput_ACU {
@@ -467,7 +469,7 @@ function applySheetSchemaPatch_ACU(sheet: any, sheetKey: string, rawPatch: any) 
     if (!isObject_ACU(rawPatch)) {
         throw new Error('patch_sheet_schema.patch 必须是对象');
     }
-    const allowedKeys = new Set(['renameColumns', 'addColumns', 'deleteColumns', 'ddl']);
+    const allowedKeys = new Set(['renameColumns', 'addColumns', 'deleteColumns', 'ddl', 'migrationIntent']);
     Object.keys(rawPatch).forEach((key) => {
         if (!allowedKeys.has(key)) {
             throw new Error(`patch_sheet_schema.patch 包含未知字段: ${key}`);
@@ -698,6 +700,7 @@ export function compileTemplateAssistantDraft_ACU(input: {
     const deletedSheetKeys: string[] = [];
     const highRiskItems: TemplateAssistantHighRiskItem_ACU[] = [];
     const lockChanges: TemplateAssistantLockChange_ACU[] = [];
+    const schemaMigrationIntents: Record<string, SchemaMigrationPreflightIntent_ACU | undefined> = {};
     const diff = createEmptyDiff_ACU();
     const specialIndexLockOverrides: Record<string, boolean> = {};
     let focusSheetKey = input?.currentSheetKey || draft?.selectedSheetKey || null;
@@ -797,6 +800,9 @@ export function compileTemplateAssistantDraft_ACU(input: {
             const sheet = ensureSheetExists_ACU(candidateData, op.sheetKey);
             const schemaResult = applySheetSchemaPatch_ACU(sheet, op.sheetKey, op.patch);
             maybeApplySpecialIndexSequenceToSheet_ACU(sheet, op.sheetKey, specialIndexLockOverrides);
+            if (Object.prototype.hasOwnProperty.call(op.patch || {}, 'migrationIntent')) {
+                schemaMigrationIntents[op.sheetKey] = clone_ACU(op.patch.migrationIntent);
+            }
             diff.patchedSchemaSheets.push({ sheetKey: op.sheetKey, name: String(sheet.name || op.sheetKey), changes: schemaResult.changes });
             schemaResult.highRiskLabels.forEach((label) => {
                 highRiskItems.push({ type: 'patch_sheet_schema', label });
@@ -852,6 +858,7 @@ export function compileTemplateAssistantDraft_ACU(input: {
         diff,
         highRiskItems,
         lockChanges,
+        schemaMigrationIntents,
     };
 }
 
@@ -957,5 +964,6 @@ export function buildTemplateAssistantCumulativeCompileResult_ACU(input: Templat
         diff,
         highRiskItems,
         lockChanges: [],
+        schemaMigrationIntents: {},
     };
 }

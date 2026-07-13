@@ -431,6 +431,7 @@ function purgeOperationV2_ACU(operation: any, sheetKeys: Set<string>, targetSqlT
 
     if (
         (operation.kind === 'sheet_replace'
+            || operation.kind === 'sheet_schema_migrate'
             || operation.kind === 'row_upsert'
             || operation.kind === 'row_delete'
             || operation.kind === 'meta_update'

@@ -1,8 +1,9 @@
 import { describe, expect, it, vi, beforeEach } from 'vitest';
 
-const { mockCallAIWithPreset, mockLogError, mockCompileTemplateAssistantDraft, mockBuildTemplateAssistantCumulativeCompileResult } = vi.hoisted(() => ({
+const { mockCallAIWithPreset, mockLogError, mockCompileTemplateAssistantDraft, mockBuildTemplateAssistantCumulativeCompileResult, mockPreflightSchemaMigrations } = vi.hoisted(() => ({
   mockCallAIWithPreset: vi.fn(),
   mockLogError: vi.fn(),
+  mockPreflightSchemaMigrations: vi.fn(async () => ({ changedSheetKeys: [], blockers: [], operations: [] })),
   mockCompileTemplateAssistantDraft: vi.fn((input: any) => ({
     candidateData: input.tempData,
     orderedSheetKeys: input.sheetOrder || [],
@@ -11,6 +12,7 @@ const { mockCallAIWithPreset, mockLogError, mockCompileTemplateAssistantDraft, m
     diff: { addedSheets: [], deletedSheets: [], renamedSheets: [], movedSheets: [], patchedSourceDataSheets: [], patchedUpdateConfigSheets: [], patchedExportConfigSheets: [], patchedContentSheets: [], patchedSchemaSheets: [], patchedLockSheets: [], globalInjectionChanged: false },
     highRiskItems: [],
     lockChanges: [],
+    schemaMigrationIntents: {},
   })),
   mockBuildTemplateAssistantCumulativeCompileResult: vi.fn((input: any) => ({
     candidateData: input.candidateData,
@@ -20,6 +22,7 @@ const { mockCallAIWithPreset, mockLogError, mockCompileTemplateAssistantDraft, m
     diff: { addedSheets: [], deletedSheets: [], renamedSheets: [], movedSheets: [], patchedSourceDataSheets: [], patchedUpdateConfigSheets: [], patchedExportConfigSheets: [], patchedContentSheets: [], patchedSchemaSheets: [], patchedLockSheets: [], globalInjectionChanged: false },
     highRiskItems: [],
     lockChanges: [],
+    schemaMigrationIntents: {},
   })),
 }));
 
@@ -53,6 +56,10 @@ vi.mock('../../../src/service/worldbook/injection-engine', async () => {
 vi.mock('../../../src/service/template-assistant/compiler', () => ({
   compileTemplateAssistantDraft_ACU: mockCompileTemplateAssistantDraft,
   buildTemplateAssistantCumulativeCompileResult_ACU: mockBuildTemplateAssistantCumulativeCompileResult,
+}));
+
+vi.mock('../../../src/service/table/schema-migration-preflight', () => ({
+  preflightSchemaMigrations_ACU: mockPreflightSchemaMigrations,
 }));
 
 import {
@@ -91,6 +98,8 @@ describe('template assistant service', () => {
     mockCallAIWithPreset.mockReset();
     mockLogError.mockReset();
     mockCompileTemplateAssistantDraft.mockReset();
+    mockPreflightSchemaMigrations.mockReset();
+    mockPreflightSchemaMigrations.mockResolvedValue({ changedSheetKeys: [], blockers: [], operations: [] });
     mockCompileTemplateAssistantDraft.mockImplementation((input: any) => ({
       candidateData: input.tempData,
       orderedSheetKeys: input.sheetOrder || [],
@@ -99,6 +108,7 @@ describe('template assistant service', () => {
       diff: { addedSheets: [], deletedSheets: [], renamedSheets: [], movedSheets: [], patchedSourceDataSheets: [], patchedUpdateConfigSheets: [], patchedExportConfigSheets: [], patchedContentSheets: [], patchedSchemaSheets: [], patchedLockSheets: [], globalInjectionChanged: false },
       highRiskItems: [],
       lockChanges: [],
+      schemaMigrationIntents: {},
     }));
   });
 
@@ -207,6 +217,65 @@ describe('template assistant service', () => {
     })).toThrow(/patch_sheet_source_data\.patch 不能直接修改 ddl/);
   });
 
+  it.each([
+    ['缺少必填字段', {}, /physicalColumnMappings 必须是数组/],
+    ['未知顶层字段', {
+      physicalColumnMappings: [], fills: {}, conversions: [], migrationPolicy: { destructiveChangeConfirmed: false, lossyConversionConfirmed: false }, unexpected: true,
+    }, /migrationIntent 包含未知字段: unexpected/],
+    ['错误 mapping', {
+      physicalColumnMappings: [{ fromPhysicalName: 'name' }], fills: {}, conversions: [], migrationPolicy: { destructiveChangeConfirmed: false, lossyConversionConfirmed: false },
+    }, /toPhysicalName 必须是非空字符串/],
+    ['错误 fill kind', {
+      physicalColumnMappings: [], fills: { added: { kind: 'computed', literal: { kind: 'string', sql: "'x'", value: 'x' } } }, conversions: [], migrationPolicy: { destructiveChangeConfirmed: false, lossyConversionConfirmed: false },
+    }, /fills\.added\.kind 不受支持/],
+    ['错误 conversion policy', {
+      physicalColumnMappings: [], fills: {}, conversions: [{ fromPhysicalName: 'name', toPhysicalName: 'renamed', policy: { kind: 'rename' } }], migrationPolicy: { destructiveChangeConfirmed: false, lossyConversionConfirmed: false },
+    }, /policy\.kind 不受支持/],
+    ['缺少 migrationPolicy 确认值', {
+      physicalColumnMappings: [], fills: {}, conversions: [], migrationPolicy: { destructiveChangeConfirmed: false },
+    }, /必须提供 destructiveChangeConfirmed 和 lossyConversionConfirmed 两个 boolean/],
+  ])('patch_sheet_schema 的 migrationIntent %s 时在草稿校验阶段拒绝', (_caseName, migrationIntent, error) => {
+    expect(() => validateTemplateAssistantDraft_ACU({
+      protocolVersion: 2,
+      mode: 'modify_current_template_incremental',
+      requestId: 'req-invalid-migration-intent',
+      baseFingerprint: 'acu-struct:1',
+      atomic: true,
+      selectedSheetKey: 'sheet_a',
+      summary: '修改列名',
+      warnings: [],
+      operations: [{
+        op: 'patch_sheet_schema',
+        sheetKey: 'sheet_a',
+        patch: {
+          renameColumns: [{ from: '姓名', to: '角色名' }],
+          migrationIntent,
+        },
+      }],
+    })).toThrow(error);
+  });
+
+  it('V1-compatible schema 变更携带畸形 migrationIntent 时不会被 preflight 快路径静默接受', () => {
+    expect(() => validateTemplateAssistantDraft_ACU({
+      protocolVersion: 2,
+      mode: 'modify_current_template_incremental',
+      requestId: 'req-v1-bypass',
+      baseFingerprint: 'acu-struct:1',
+      atomic: true,
+      selectedSheetKey: 'sheet_a',
+      summary: '新增列',
+      warnings: [],
+      operations: [{
+        op: 'patch_sheet_schema',
+        sheetKey: 'sheet_a',
+        patch: {
+          addColumns: [{ name: '备注' }],
+          migrationIntent: { physicalColumnMappings: [], fills: {}, conversions: [], migrationPolicy: 'confirmed' },
+        },
+      }],
+    })).toThrow(/migrationPolicy 必须是普通对象/);
+  });
+
   it('v2 允许跨表 patch op', async () => {
     const tempData = {
       ...buildTempData_ACU(),
@@ -308,6 +377,11 @@ describe('template assistant service', () => {
     expect(systemPrompt).toContain('即使是 row_id INTEGER PRIMARY KEY 这一行，也必须保留 `-- 行号` 注释');
     expect(systemPrompt).toContain('这种把中文表头直接写成物理列名的 ddl 会被拒绝');
     expect(systemPrompt).toContain('即使再写 `-- 物品名称` 这类同名注释也不合法');
+    expect(systemPrompt).toContain('patch_sheet_schema.patch 只允许使用 renameColumns、addColumns、deleteColumns、ddl、migrationIntent');
+    expect(systemPrompt).toContain('physicalColumnMappings（每项 {fromPhysicalName,toPhysicalName}）');
+    expect(systemPrompt).toContain('destructiveChangeConfirmed,lossyConversionConfirmed');
+    expect(systemPrompt).toContain('"fromPhysicalName":"name","toPhysicalName":"item_name"');
+    expect(systemPrompt).toContain('ddl_literal_default');
     expect(systemPrompt).toContain('不要为刚 add_sheet 的新表生成依赖真实 sheetKey 的 follow-up patch');
     expect(systemPrompt).toContain('operations 输出空数组');
     expect(systemPrompt).toContain('{"op":"add_sheet","sheetName":"角色关系表","headers":["角色A","角色B","关系","备注"]}');
@@ -322,6 +396,50 @@ describe('template assistant service', () => {
     expect(systemPrompt).toContain('· 只能用英文、数字、下划线');
     expect(systemPrompt).toContain('· 不能用中文');
     expect(systemPrompt).toContain('如果你写了 {[db...]} 结果屏幕上原样显示没变成数字，就是模式没开。');
+  });
+
+  it('生成阶段将 compiler 收集的 migration intent 传给共享 preflight', async () => {
+    const tempData = buildTempData_ACU();
+    const fp = buildTemplateAssistantFingerprint_ACU(tempData);
+    const migrationIntent = {
+      physicalColumnMappings: [{ fromPhysicalName: 'name', toPhysicalName: 'character_name' }],
+      fills: {},
+      conversions: [],
+      migrationPolicy: { destructiveChangeConfirmed: false, lossyConversionConfirmed: false },
+    };
+    mockCallAIWithPreset.mockResolvedValue(`<templateAssistantDraft>${JSON.stringify({
+      protocolVersion: 2,
+      mode: 'modify_current_template_incremental',
+      requestId: 'req-migration-intent',
+      baseFingerprint: fp,
+      atomic: true,
+      selectedSheetKey: 'sheet_a',
+      summary: '改列名',
+      warnings: [],
+      operations: [{
+        op: 'patch_sheet_schema',
+        sheetKey: 'sheet_a',
+        patch: { renameColumns: [{ from: '姓名', to: '角色名' }], migrationIntent },
+      }],
+    })}</templateAssistantDraft>`);
+    mockCompileTemplateAssistantDraft.mockReturnValueOnce({
+      candidateData: tempData,
+      orderedSheetKeys: ['sheet_a'],
+      deletedSheetKeys: [],
+      focusSheetKey: 'sheet_a',
+      diff: { addedSheets: [], deletedSheets: [], renamedSheets: [], movedSheets: [], patchedSourceDataSheets: [], patchedUpdateConfigSheets: [], patchedExportConfigSheets: [], patchedContentSheets: [], patchedSchemaSheets: [], patchedLockSheets: [], globalInjectionChanged: false },
+      highRiskItems: [],
+      lockChanges: [],
+      schemaMigrationIntents: { sheet_a: migrationIntent },
+    });
+
+    await generateTemplateAssistantDraft_ACU({ tempData, currentSheetKey: 'sheet_a', sheetOrder: ['sheet_a'], userRequest: '把姓名改为角色名' });
+
+    expect(mockPreflightSchemaMigrations).toHaveBeenCalledWith(expect.objectContaining({
+      baselineData: tempData,
+      candidateData: tempData,
+      intents: { sheet_a: migrationIntent },
+    }));
   });
 
   it('构建 messages 时会携带 prior-turn 历史', async () => {
@@ -368,6 +486,12 @@ describe('template assistant service', () => {
     expect(result.rounds).toHaveLength(1);
     expect(result.rounds[0]?.messages[1]).toEqual({ role: 'user', content: '上一轮需求' });
     expect(result.rounds[0]?.messages[2]).toEqual({ role: 'assistant', content: '上一轮结果' });
+    expect(mockPreflightSchemaMigrations).toHaveBeenCalledTimes(2);
+    expect(mockPreflightSchemaMigrations.mock.calls[1][0]).toEqual(expect.objectContaining({
+      baselineData: tempData,
+      candidateData: result.compileResult.candidateData,
+      intents: result.compileResult.schemaMigrationIntents,
+    }));
   });
 
   it('session loop 每轮完成后都会触发一次 onRoundComplete', async () => {
@@ -401,6 +525,7 @@ describe('template assistant service', () => {
         diff: { addedSheets: [{ sheetKey: 'sheet_b', name: 'B表' }], deletedSheets: [], renamedSheets: [], movedSheets: [], patchedSourceDataSheets: [], patchedUpdateConfigSheets: [], patchedExportConfigSheets: [], patchedContentSheets: [], patchedSchemaSheets: [], patchedLockSheets: [], globalInjectionChanged: false },
         highRiskItems: [],
         lockChanges: [],
+        schemaMigrationIntents: {},
       }))
       .mockImplementationOnce((input: any) => ({
         candidateData: input.tempData,
@@ -410,6 +535,7 @@ describe('template assistant service', () => {
         diff: { addedSheets: [], deletedSheets: [], renamedSheets: [], movedSheets: [], patchedSourceDataSheets: [], patchedUpdateConfigSheets: [], patchedExportConfigSheets: [], patchedContentSheets: [], patchedSchemaSheets: [], patchedLockSheets: [], globalInjectionChanged: false },
         highRiskItems: [],
         lockChanges: [],
+        schemaMigrationIntents: {},
       }));
 
     const result = await runTemplateAssistantSession_ACU({
@@ -430,6 +556,58 @@ describe('template assistant service', () => {
     expect(onRoundComplete.mock.calls[1][0].rounds).toHaveLength(2);
     expect(result.session.roundsExecuted).toBe(2);
     expect(result.session.stopReason).toBe('empty_operations');
+  });
+
+  it('session loop 拒绝同一张表跨轮重复 schema migration', async () => {
+    const tempData = buildTempData_ACU();
+    const fp = buildTemplateAssistantFingerprint_ACU(tempData);
+    const afterRoundOne = {
+      ...tempData,
+      sheet_a: {
+        ...tempData.sheet_a,
+        updateConfig: { ...tempData.sheet_a.updateConfig, contextDepth: 1 },
+      },
+    };
+    const fpAfterRoundOne = buildTemplateAssistantFingerprint_ACU(afterRoundOne);
+    const afterRoundTwo = {
+      ...afterRoundOne,
+      sheet_a: {
+        ...afterRoundOne.sheet_a,
+        updateConfig: { ...afterRoundOne.sheet_a.updateConfig, contextDepth: 2 },
+      },
+    };
+    mockCallAIWithPreset
+      .mockResolvedValueOnce(`<templateAssistantDraft>{"protocolVersion":2,"mode":"modify_current_template_incremental","requestId":"req-schema-round-1","baseFingerprint":"${fp}","atomic":true,"selectedSheetKey":"sheet_a","summary":"第一轮","warnings":[],"operations":[{"op":"patch_sheet_update_config","sheetKey":"sheet_a","patch":{"contextDepth":1}}]}</templateAssistantDraft>`)
+      .mockResolvedValueOnce(`<templateAssistantDraft>{"protocolVersion":2,"mode":"modify_current_template_incremental","requestId":"req-schema-round-2","baseFingerprint":"${fpAfterRoundOne}","atomic":true,"selectedSheetKey":"sheet_a","summary":"第二轮","warnings":[],"operations":[{"op":"patch_sheet_update_config","sheetKey":"sheet_a","patch":{"contextDepth":2}}]}</templateAssistantDraft>`);
+    mockCompileTemplateAssistantDraft
+      .mockImplementationOnce(() => ({
+        candidateData: afterRoundOne,
+        orderedSheetKeys: ['sheet_a'],
+        deletedSheetKeys: [],
+        focusSheetKey: 'sheet_a',
+        diff: { addedSheets: [], deletedSheets: [], renamedSheets: [], movedSheets: [], patchedSourceDataSheets: [], patchedUpdateConfigSheets: [], patchedExportConfigSheets: [], patchedContentSheets: [], patchedSchemaSheets: [{ sheetKey: 'sheet_a', name: 'A表', changes: ['第一轮 schema'] }], patchedLockSheets: [], globalInjectionChanged: false },
+        highRiskItems: [],
+        lockChanges: [],
+        schemaMigrationIntents: {},
+      }))
+      .mockImplementationOnce(() => ({
+        candidateData: afterRoundTwo,
+        orderedSheetKeys: ['sheet_a'],
+        deletedSheetKeys: [],
+        focusSheetKey: 'sheet_a',
+        diff: { addedSheets: [], deletedSheets: [], renamedSheets: [], movedSheets: [], patchedSourceDataSheets: [], patchedUpdateConfigSheets: [], patchedExportConfigSheets: [], patchedContentSheets: [], patchedSchemaSheets: [{ sheetKey: 'sheet_a', name: 'A表', changes: ['第二轮 schema'] }], patchedLockSheets: [], globalInjectionChanged: false },
+        highRiskItems: [],
+        lockChanges: [],
+        schemaMigrationIntents: {},
+      }));
+
+    await expect(runTemplateAssistantSession_ACU({
+      tempData,
+      currentSheetKey: 'sheet_a',
+      sheetOrder: ['sheet_a'],
+      userRequest: '分两轮修改结构',
+      maxRounds: 2,
+    })).rejects.toThrow(/同一张表跨轮重复 schema migration/);
   });
 
   it('session loop 在 working fingerprint 重复时停止', async () => {

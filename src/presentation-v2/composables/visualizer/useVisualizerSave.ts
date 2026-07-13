@@ -33,6 +33,7 @@ import {
 } from '../../../service/table/table-history';
 import { isSqliteMode } from '../../../service/table/storage-mode';
 import { commitCurrentFloorTemplateChanges_ACU } from '../../../service/table/storage-frame-v2-persist';
+import { preflightSchemaMigrations_ACU } from '../../../service/table/schema-migration-preflight';
 import { normalizeCanonicalTableRows_ACU } from '../../../shared/canonical-row-normalizer';
 import { reloadStorageProvider } from '../../../service/table/table-storage-strategy';
 import { applyTemplateScopeForCurrentChat_ACU } from '../../../service/settings/settings-service';
@@ -461,6 +462,40 @@ export function useVisualizerSave(interactions: VisualizerSaveInteractions = {})
         }
         toastStore.info('模板结构没有变化。', { muteable: false });
         return false;
+      }
+      if (changes.schemaChangedSheetKeys.length > 0 && visualizer.templateBaseData) {
+        const preflightSnapshot = {
+          tempData: cloneData(visualizer.tempData),
+          sheetOrder: [...visualizer.sheetOrder],
+          templateBaseData: cloneData(visualizer.templateBaseData),
+          templateBaseSheetOrder: [...visualizer.templateBaseSheetOrder],
+          deletedSheetKeys: [...visualizer.deletedSheetKeys],
+          tableLockDrafts: cloneData(visualizer.tableLockDrafts),
+          pendingLockChanges: cloneData(visualizer.pendingLockChanges),
+          lockDraftsDirty: visualizer.lockDraftsDirty,
+        };
+        const preflight = await preflightSchemaMigrations_ACU({
+          baselineData: visualizer.templateBaseData as any,
+          candidateData: orderedData as any,
+        });
+        if (preflight.blockers.length > 0) {
+          toastStore.error(`模板结构未通过 schema migration preflight：${preflight.blockers.join('；')}`, { muteable: false });
+          return false;
+        }
+        const currentPreflightSnapshot = {
+          tempData: cloneData(visualizer.tempData),
+          sheetOrder: [...visualizer.sheetOrder],
+          templateBaseData: cloneData(visualizer.templateBaseData),
+          templateBaseSheetOrder: [...visualizer.templateBaseSheetOrder],
+          deletedSheetKeys: [...visualizer.deletedSheetKeys],
+          tableLockDrafts: cloneData(visualizer.tableLockDrafts),
+          pendingLockChanges: cloneData(visualizer.pendingLockChanges),
+          lockDraftsDirty: visualizer.lockDraftsDirty,
+        };
+        if (!sameTemplateValue_ACU(preflightSnapshot, currentPreflightSnapshot)) {
+          toastStore.warning('模板结构在 schema migration preflight 期间已变化；请重新保存。', { muteable: false });
+          return false;
+        }
       }
       const guideIsolationKey = getCurrentIsolationKey_ACU();
       const existingGuide = getChatSheetGuideDataForIsolationKey_ACU(guideIsolationKey);

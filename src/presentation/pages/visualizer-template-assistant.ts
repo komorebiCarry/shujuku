@@ -896,7 +896,7 @@ function bindEvents_ACU() {
         }
     });
 
-    $host.find('#acu-vis-assistant-apply').on('click', function() {
+    $host.find('#acu-vis-assistant-apply').on('click', async function() {
         const turnId = readDataAttrFromElement_ACU(this, 'turn-id');
         const turn = assistantUiState_ACU.transcript.find(t => t.id === turnId && t.type === 'assistant') as ChatTurnAssistant | undefined;
         if (!turn || !isFinalAssistantTurn_ACU(turn)) return;
@@ -905,7 +905,7 @@ function bindEvents_ACU() {
             return;
         }
         
-        const applied = applyTemplateAssistantDraftToVisualizer_ACU(turn.result);
+        const applied = await applyTemplateAssistantDraftToVisualizer_ACU(turn.result);
         if (!applied) return;
         captureScrollState_ACU('preserve');
         renderVisualizerTemplateAssistantPanel_ACU();

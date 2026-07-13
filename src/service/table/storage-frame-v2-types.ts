@@ -50,6 +50,14 @@ export interface TableCheckpointV2_ACU {
 }
 
 /** 同一 V2 frame 内的单表恢复基底；不承担 mate 或其他根级元数据。 */
+export interface TableSheetIntroductionTimelineV2_ACU {
+  kind: 'sheet_introduction';
+  /** introduction shard 所在的 AI message index。 */
+  activateAtMessageIndex: number;
+  /** 同一 frame 中在该 seq 之后才将新表加入 replay state。 */
+  afterSeq: number;
+}
+
 export interface TableSheetCheckpointV2_ACU {
   kind: 'sheet_full';
   createdAt: number;
@@ -60,6 +68,7 @@ export interface TableSheetCheckpointV2_ACU {
   event?: TableMutationEventV2_ACU;
   manualRefillProgress?: ManualRefillProgressV2_ACU;
   baseRevision?: string | null;
+  timeline?: TableSheetIntroductionTimelineV2_ACU;
 }
 
 export type TableMutationOperationV2_ACU =
@@ -69,6 +78,7 @@ export type TableMutationOperationV2_ACU =
   | TableRowUpsertPatchV2_ACU
   | TableRowDeletePatchV2_ACU
   | TableMetaPatchV2_ACU
+  | TableSheetSchemaMigrateOperation_ACU
   | TableSheetReplaceOperationV2_ACU
   | TableDataReplaceOperationV2_ACU;
 
@@ -142,8 +152,141 @@ export interface TableSheetReplacePatchV2_ACU {
 export interface TableMetaPatchV2_ACU {
   kind: 'meta_update';
   sheetKey: string;
-  meta: Partial<Pick<Sheet_ACU, 'name' | 'orderNo' | 'updateConfig' | 'exportConfig' | 'sourceData'>>;
+  /** 仅限非结构元数据；content、uid 与 sourceData.ddl 不得通过此 operation 修改。 */
+  meta: Partial<Pick<Sheet_ACU, 'name' | 'orderNo' | 'updateConfig' | 'exportConfig'>>
+    & { sourceData?: Partial<Omit<Sheet_ACU['sourceData'], 'ddl'>> };
 }
+
+export type TableSchemaColumnChangeV2_ACU =
+  | { kind: 'rename_display'; physicalName: string; fromHeader: string; toHeader: string }
+  | { kind: 'add'; physicalName: string; header: string; index: number }
+  | { kind: 'drop'; physicalName: string; header: string; index: number };
+
+/**
+ * V1 reader contract uses the normalized original column definition as its
+ * semantic boundary. P2 may decompose definitions for conversion, but V1
+ * must reject any definition change rather than pretend to understand it.
+ */
+export interface TableSchemaColumnDescriptorV2_ACU {
+  index: number;
+  physicalName: string;
+  displayHeader: string;
+  normalizedDefinition: string;
+}
+
+export interface TableSheetSchemaDescriptorV2_ACU {
+  descriptorVersion: 1;
+  uid: string;
+  tableName: string;
+  headers: (string | null)[];
+  ddl: string;
+  normalizedSql: string;
+  columns: TableSchemaColumnDescriptorV2_ACU[];
+  tableConstraints: string[];
+  tableSuffix: string;
+}
+
+/** P2 descriptor is deliberately separate from descriptorVersion: 1 because
+ * both descriptor bodies are hashed as persisted replay contracts. */
+export interface TableSchemaColumnDescriptorV2Contract_ACU {
+  index: number;
+  physicalName: string;
+  displayHeader: string;
+  normalizedDefinition: string;
+  defaultExpression: string | null;
+}
+
+export interface TableSheetSchemaDescriptorV2Contract_ACU {
+  descriptorVersion: 2;
+  uid: string;
+  tableName: string;
+  headers: (string | null)[];
+  ddl: string;
+  normalizedSql: string;
+  columns: TableSchemaColumnDescriptorV2Contract_ACU[];
+  tableConstraints: string[];
+  tableSuffix: string;
+}
+
+export type TableSchemaDefaultLiteralV2_ACU =
+  | { kind: 'null'; sql: 'NULL'; value: null }
+  | { kind: 'integer'; sql: string; value: number }
+  | { kind: 'real'; sql: string; value: number }
+  | { kind: 'string'; sql: string; value: string }
+  | { kind: 'blob'; sql: string; value: string }
+  | { kind: 'boolean'; sql: 'TRUE' | 'FALSE'; value: boolean };
+
+export type TableSchemaFillStrategyV2_ACU =
+  | { kind: 'literal'; literal: TableSchemaDefaultLiteralV2_ACU }
+  | { kind: 'ddl_literal_default'; literal: TableSchemaDefaultLiteralV2_ACU };
+
+export interface TableSchemaPhysicalColumnMappingV2_ACU {
+  fromPhysicalName: string;
+  toPhysicalName: string;
+}
+
+/** Deliberately finite: persisted migrations must never execute arbitrary code. */
+export type TableSchemaConversionPolicyV2_ACU =
+  | { kind: 'identity' }
+  | { kind: 'stringify' }
+  | { kind: 'integer_strict' }
+  | { kind: 'real_strict' };
+
+export interface TableSchemaColumnConversionV2_ACU {
+  fromPhysicalName: string;
+  toPhysicalName: string;
+  policy: TableSchemaConversionPolicyV2_ACU;
+}
+
+export interface TableSchemaDryRunSummaryV2_ACU {
+  convertedRowCount: number;
+  failedRowCount: number;
+  lossyRowCount: number;
+}
+
+export interface TableSchemaMigrationPolicyV2Contract_ACU {
+  destructiveChangeConfirmed: boolean;
+  lossyConversionConfirmed: boolean;
+}
+
+export interface TableSchemaMigrationPolicyV2_ACU {
+  /** V1 中 drop 是唯一允许的破坏性变更，且必须显式确认。 */
+  destructiveChangeConfirmed: boolean;
+}
+
+export interface TableSheetSchemaMigrateOperationV1_ACU {
+  kind: 'sheet_schema_migrate';
+  contractVersion: 1;
+  sheetKey: string;
+  beforeSchemaDigest: string;
+  targetSchemaDigest: string;
+  beforeSchema: TableSheetSchemaDescriptorV2_ACU;
+  targetSchema: TableSheetSchemaDescriptorV2_ACU;
+  columnChanges: TableSchemaColumnChangeV2_ACU[];
+  migrationPolicy: TableSchemaMigrationPolicyV2_ACU;
+}
+
+export interface TableSheetSchemaMigrateOperationV2Contract_ACU {
+  kind: 'sheet_schema_migrate';
+  contractVersion: 2;
+  sheetKey: string;
+  beforeSchemaDigest: string;
+  targetSchemaDigest: string;
+  beforeSchema: TableSheetSchemaDescriptorV2Contract_ACU;
+  targetSchema: TableSheetSchemaDescriptorV2Contract_ACU;
+  physicalColumnMappings: TableSchemaPhysicalColumnMappingV2_ACU[];
+  fills: Record<string, TableSchemaFillStrategyV2_ACU>;
+  conversions: TableSchemaColumnConversionV2_ACU[];
+  dryRun: TableSchemaDryRunSummaryV2_ACU;
+  migrationPolicy: TableSchemaMigrationPolicyV2Contract_ACU;
+}
+
+/** Historical exported name is retained for the contractVersion: 1 reader. */
+export type TableSheetSchemaMigrateOperationV2_ACU = TableSheetSchemaMigrateOperationV1_ACU;
+
+export type TableSheetSchemaMigrateOperation_ACU =
+  | TableSheetSchemaMigrateOperationV1_ACU
+  | TableSheetSchemaMigrateOperationV2Contract_ACU;
 
 export type TableWriteConflictUnitV2_ACU =
   | { kind: 'sheet'; sheetKey: string }

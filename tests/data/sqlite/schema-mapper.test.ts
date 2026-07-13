@@ -16,6 +16,7 @@ import {
   buildColumnNameMap,
   parseDDLColumnInfos_ACU,
 } from '../../../src/data/sqlite/schema-mapper';
+import { parseDDLTableSuffix_ACU, parseDDLSafeDefaultLiteral_ACU } from '../../../src/shared/ddl-utils';
 import type { Sheet_ACU } from '../../../src/shared/models/table-data';
 
 // ═══════════════════════════════════════════════════════════════
@@ -48,6 +49,17 @@ describe('parseDDLTableName', () => {
 
   it('解析带 IF NOT EXISTS 的表名', () => {
     expect(parseDDLTableName('CREATE TABLE IF NOT EXISTS my_table (id INTEGER);')).toBe('my_table');
+  });
+
+  it('跳过前置注释并保留含括号的 quoted identifier', () => {
+    expect(parseDDLTableName(`-- CREATE TABLE decoy (
+      CREATE TABLE IF NOT EXISTS "inventory(x)" (row_id INTEGER PRIMARY KEY);`)).toBe('"inventory(x)"');
+    expect(parseDDLTableName(`/* CREATE TABLE decoy ( */
+      CREATE TABLE [inventory(x)]]archive] (row_id INTEGER PRIMARY KEY);`)).toBe('[inventory(x)]]archive]');
+  });
+
+  it('保留 escaped backtick identifier', () => {
+    expect(parseDDLTableName('CREATE TABLE `inventory(x)``archive` (row_id INTEGER PRIMARY KEY);')).toBe('`inventory(x)``archive`');
   });
 
   it('空字符串返回 null', () => {
@@ -182,11 +194,11 @@ describe('parseDDLColumnInfos_ACU', () => {
       status TEXT NOT NULL DEFAULT 'pending, review' -- 状态
     );`;
 
-    expect(parseDDLColumnInfos_ACU(ddl)).toEqual([
-      { index: 0, sqlName: 'row_id', declaredType: 'INTEGER', comment: '行号', isPrimaryKey: true, isNotNull: false, hasDefault: false },
-      { index: 1, sqlName: 'item_name', declaredType: 'TEXT', comment: '名称', isPrimaryKey: false, isNotNull: true, hasDefault: false },
-      { index: 2, sqlName: 'status', declaredType: 'TEXT', comment: '状态', isPrimaryKey: false, isNotNull: true, hasDefault: true },
-    ]);
+    expect(parseDDLColumnInfos_ACU(ddl)).toEqual(expect.arrayContaining([
+      expect.objectContaining({ index: 0, sqlName: 'row_id', declaredType: 'INTEGER', comment: '行号', isPrimaryKey: true, isNotNull: false, hasDefault: false, normalizedDefinition: 'row_id INTEGER PRIMARY KEY' }),
+      expect.objectContaining({ index: 1, sqlName: 'item_name', declaredType: 'TEXT', comment: '名称', isPrimaryKey: false, isNotNull: true, hasDefault: false, normalizedDefinition: 'item_name TEXT NOT NULL' }),
+      expect.objectContaining({ index: 2, sqlName: 'status', declaredType: 'TEXT', comment: '状态', isPrimaryKey: false, isNotNull: true, hasDefault: true, normalizedDefinition: "status TEXT NOT NULL DEFAULT 'pending, review'" }),
+    ]));
   });
 
   it('CHECK 字符串中的 DEFAULT 不会被误判为列级默认值', () => {
@@ -205,6 +217,61 @@ describe('parseDDLColumnInfos_ACU', () => {
     );`;
 
     expect(parseDDLColumnInfos_ACU(ddl)[1]).toMatchObject({ declaredType: 'TEXT', isNotNull: true, hasDefault: false });
+  });
+
+  it('保留 DEFAULT 的精确 literal，并拒绝需要执行 SQL 的表达式', () => {
+    const ddl = `CREATE TABLE inventory (
+      row_id INTEGER PRIMARY KEY,
+      title TEXT DEFAULT 'it''s, safe',
+      amount REAL DEFAULT -1.25e+2,
+      enabled INTEGER DEFAULT TRUE,
+      payload BLOB DEFAULT X'00FF',
+      created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+      random_value INTEGER DEFAULT (abs(-1))
+    );`;
+    const columns = parseDDLColumnInfos_ACU(ddl);
+
+    expect(columns[1]).toMatchObject({ hasDefault: true, defaultExpression: "'it''s, safe'" });
+    expect(columns[2]).toMatchObject({ hasDefault: true, defaultExpression: '-1.25e+2' });
+    expect(columns[3]).toMatchObject({ hasDefault: true, defaultExpression: 'TRUE' });
+    expect(columns[4]).toMatchObject({ hasDefault: true, defaultExpression: "X'00FF'" });
+    expect(columns[5]).toMatchObject({ hasDefault: true, defaultExpression: 'CURRENT_TIMESTAMP' });
+    expect(columns[6]).toMatchObject({ hasDefault: true, defaultExpression: '(abs(-1))' });
+    expect(parseDDLSafeDefaultLiteral_ACU(columns[1].defaultExpression)).toEqual({ kind: 'string', sql: "'it''s, safe'", value: "it's, safe" });
+    expect(parseDDLSafeDefaultLiteral_ACU(columns[2].defaultExpression)).toEqual({ kind: 'real', sql: '-1.25e+2', value: -125 });
+    expect(parseDDLSafeDefaultLiteral_ACU(columns[3].defaultExpression)).toEqual({ kind: 'boolean', sql: 'TRUE', value: true });
+    expect(parseDDLSafeDefaultLiteral_ACU(columns[4].defaultExpression)).toEqual({ kind: 'blob', sql: "X'00FF'", value: '00FF' });
+    expect(parseDDLSafeDefaultLiteral_ACU(columns[5].defaultExpression)).toBeNull();
+    expect(parseDDLSafeDefaultLiteral_ACU(columns[6].defaultExpression)).toBeNull();
+  });
+
+  it('DEFAULT 后的约束不属于 defaultExpression', () => {
+    const ddl = 'CREATE TABLE inventory (row_id INTEGER PRIMARY KEY, score INTEGER DEFAULT 0 NOT NULL CHECK(score >= 0));';
+    expect(parseDDLColumnInfos_ACU(ddl)[1]).toMatchObject({ hasDefault: true, defaultExpression: '0' });
+  });
+});
+
+// ═══════════════════════════════════════════════════════════════
+// parseDDLTableSuffix_ACU
+// ═══════════════════════════════════════════════════════════════
+describe('parseDDLTableSuffix_ACU', () => {
+  it.each([
+    ['空 suffix', 'CREATE TABLE inventory (row_id INTEGER PRIMARY KEY);', ''],
+    ['STRICT 与空白分号', 'CREATE TABLE inventory (row_id INTEGER PRIMARY KEY)   STRICT  ;  ', 'STRICT'],
+    ['WITHOUT ROWID', 'CREATE TABLE inventory (row_id INTEGER PRIMARY KEY) WITHOUT ROWID;', 'WITHOUT ROWID'],
+    ['前置行注释和带括号 quoted identifier', `-- misleading ( before CREATE TABLE
+      CREATE TABLE IF NOT EXISTS "inventory(x)" (row_id INTEGER PRIMARY KEY) STRICT;`, 'STRICT'],
+    ['前置块注释和 bracket identifier', `/* misleading ) ( */
+      CREATE TABLE [inventory(x)]]archive] (row_id INTEGER PRIMARY KEY) WITHOUT ROWID;`, 'WITHOUT ROWID'],
+    ['组合 suffix', 'CREATE TABLE `inventory(x)` (row_id INTEGER PRIMARY KEY) STRICT, WITHOUT ROWID;', 'STRICT, WITHOUT ROWID'],
+    ['嵌套 CHECK、引号和注释', `CREATE TABLE inventory (
+      row_id INTEGER PRIMARY KEY,
+      value TEXT CHECK (value IN ('(', ')')), -- ) must not close the table
+      note TEXT /* ) must not close the table */
+    ) STRICT -- suffix comment
+    ;`, 'STRICT'],
+  ])('%s 被稳定规范化', (_name, ddl, expected) => {
+    expect(parseDDLTableSuffix_ACU(ddl)).toBe(expected);
   });
 });
 

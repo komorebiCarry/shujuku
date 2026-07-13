@@ -67,6 +67,7 @@ const serviceMock = vi.hoisted(() => ({
   refreshMergedDataAndNotify_ACU: vi.fn(async () => undefined),
   updateReadableLorebookEntry_ACU: vi.fn(async () => undefined),
   enqueueSummaryVectorIndexFlush_ACU: vi.fn(async () => undefined),
+  preflightSchemaMigrations_ACU: vi.fn(async () => ({ changedSheetKeys: [], blockers: [], operations: [] })),
 }));
 
 const toastMock = vi.hoisted(() => ({
@@ -138,6 +139,9 @@ vi.mock('../../../src/service/worldbook/pipeline', () => ({
 vi.mock('../../../src/service/vector/summary-vector-index-flush-queue', () => ({
   enqueueSummaryVectorIndexFlush_ACU: serviceMock.enqueueSummaryVectorIndexFlush_ACU,
 }));
+vi.mock('../../../src/service/table/schema-migration-preflight', () => ({
+  preflightSchemaMigrations_ACU: serviceMock.preflightSchemaMigrations_ACU,
+}));
 vi.mock('../../../src/presentation-v2/stores/toast-store', () => ({
   useToastStore: () => toastMock,
 }));
@@ -163,6 +167,8 @@ describe('useVisualizerSave', () => {
     setActivePinia(createPinia());
     runtimeMock.resetCurrentData();
     vi.clearAllMocks();
+    serviceMock.preflightSchemaMigrations_ACU.mockReset();
+    serviceMock.preflightSchemaMigrations_ACU.mockResolvedValue({ changedSheetKeys: [], blockers: [], operations: [] });
   });
 
   it('保存数据到当前消息会提交数据增量并清理 dirty', async () => {
@@ -326,6 +332,72 @@ describe('useVisualizerSave', () => {
     }));
     expect(serviceMock.refreshMergedDataAndNotify_ACU).toHaveBeenCalled();
     expect(store.lastSavedTarget).toBe('template-chat');
+  });
+
+  it('schema migration preflight 阻断时不创建 checkpoint 或推进模板状态', async () => {
+    const { useVisualizerStore } = await import('../../../src/presentation-v2/stores/visualizer-store');
+    const { useVisualizerSave } = await import('../../../src/presentation-v2/composables/visualizer/useVisualizerSave');
+    const store = useVisualizerStore();
+    store.loadSnapshot({
+      mate: { type: 'chatSheets', version: 1 },
+      sheet_test_vz2: sheet('旧表名'),
+    }, ['sheet_test_vz2']);
+    const baseDataBeforeSave = JSON.parse(JSON.stringify(store.templateBaseData));
+    store.currentSheet.content = [['row_id', '姓名', '状态', '职业'], ['1', 'A', '平静', '战士']];
+    store.setDirty(true);
+    serviceMock.preflightSchemaMigrations_ACU.mockResolvedValueOnce({
+      changedSheetKeys: ['sheet_test_vz2'],
+      blockers: ['sheet_test_vz2: 缺少显式 V2 intent'],
+      operations: [],
+    });
+
+    const saved = await useVisualizerSave().saveTemplateToCurrentChat();
+
+    expect(saved).toBe(false);
+    expect(serviceMock.preflightSchemaMigrations_ACU).toHaveBeenCalledWith(expect.objectContaining({
+      baselineData: store.templateBaseData,
+      candidateData: expect.objectContaining({ sheet_test_vz2: expect.any(Object) }),
+    }));
+    expect(toastMock.error).toHaveBeenCalledWith(expect.stringContaining('schema migration preflight'), { muteable: false });
+    expect(serviceMock.commitCurrentFloorTemplateChanges_ACU).not.toHaveBeenCalled();
+    expect(serviceMock.applyTemplateScopeForCurrentChat_ACU).not.toHaveBeenCalled();
+    expect(runtimeMock._set_currentJsonTableData_ACU).not.toHaveBeenCalled();
+    expect(store.templateBaseData).toEqual(baseDataBeforeSave);
+    expect(store.lastSavedTarget).toBeNull();
+    expect(store.dirty).toBe(true);
+    expect(store.isSaving).toBe(false);
+  });
+
+  it('schema migration preflight 期间模板变化时不提交陈旧 checkpoint', async () => {
+    const { useVisualizerStore } = await import('../../../src/presentation-v2/stores/visualizer-store');
+    const { useVisualizerSave } = await import('../../../src/presentation-v2/composables/visualizer/useVisualizerSave');
+    const store = useVisualizerStore();
+    store.loadSnapshot({
+      mate: { type: 'chatSheets', version: 1 },
+      sheet_test_vz2: sheet('旧表名'),
+    }, ['sheet_test_vz2']);
+    store.currentSheet.content = [['row_id', '姓名', '状态', '职业'], ['1', 'A', '平静', '战士']];
+    store.setDirty(true);
+    let resolvePreflight: (value: { changedSheetKeys: string[]; blockers: string[]; operations: any[] }) => void;
+    serviceMock.preflightSchemaMigrations_ACU.mockImplementationOnce(() => new Promise((resolve) => {
+      resolvePreflight = resolve;
+    }));
+
+    const saving = useVisualizerSave().saveTemplateToCurrentChat();
+    store.currentSheet.name = 'preflight 期间的新表名';
+    store.setDirty(true);
+    resolvePreflight!({ changedSheetKeys: ['sheet_test_vz2'], blockers: [], operations: [] });
+
+    await expect(saving).resolves.toBe(false);
+    expect(serviceMock.commitCurrentFloorTemplateChanges_ACU).not.toHaveBeenCalled();
+    expect(serviceMock.applyTemplateScopeForCurrentChat_ACU).not.toHaveBeenCalled();
+    expect(runtimeMock._set_currentJsonTableData_ACU).not.toHaveBeenCalled();
+    expect(store.currentSheet.name).toBe('preflight 期间的新表名');
+    expect(store.templateBaseData.sheet_test_vz2.name).toBe('旧表名');
+    expect(store.lastSavedTarget).toBeNull();
+    expect(store.dirty).toBe(true);
+    expect(store.isSaving).toBe(false);
+    expect(toastMock.warning).toHaveBeenCalledWith('模板结构在 schema migration preflight 期间已变化；请重新保存。', { muteable: false });
   });
 
   it('当前聊天模板原子提交失败时不推进运行时、基线、scope 或锁草稿', async () => {

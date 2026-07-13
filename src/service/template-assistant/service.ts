@@ -5,6 +5,7 @@ import { getGlobalInjectionConfigFromData_ACU } from '../worldbook/injection-eng
 import { safeJsonStringify_ACU } from '../../shared/json-helpers';
 import { hashUserInput_ACU, logError_ACU } from '../../shared/utils';
 import { buildTemplateAssistantCumulativeCompileResult_ACU, compileTemplateAssistantDraft_ACU, type TemplateAssistantCompileResult_ACU } from './compiler';
+import { preflightSchemaMigrations_ACU, type SchemaMigrationPreflightIntent_ACU } from '../table/schema-migration-preflight';
 import { buildTemplateAssistantEmbeddedReferenceText_ACU } from './reference-docs';
 
 type AnyRecord = Record<string, any>;
@@ -88,6 +89,7 @@ export interface TemplateAssistantPatchSheetSchemaPatch_ACU {
     addColumns?: TemplateAssistantSchemaAddColumn_ACU[];
     deleteColumns?: string[];
     ddl?: string;
+    migrationIntent?: SchemaMigrationPreflightIntent_ACU;
 }
 
 export interface TemplateAssistantLockRowPatch_ACU {
@@ -519,9 +521,106 @@ function validateTemplateAssistantContentPatch_ACU(op: any) {
     }
 }
 
+function assertTemplateAssistantPlainObject_ACU(value: unknown, path: string): asserts value is Record<string, any> {
+    if (!value || typeof value !== 'object' || Array.isArray(value) || Object.getPrototypeOf(value) !== Object.prototype) {
+        throw new Error(`${path} 必须是普通对象`);
+    }
+}
+
+function assertTemplateAssistantAllowedKeys_ACU(value: Record<string, any>, allowedKeys: string[], path: string) {
+    const allowedKeySet = new Set(allowedKeys);
+    Object.keys(value).forEach((key) => {
+        if (!allowedKeySet.has(key)) {
+            throw new Error(`${path} 包含未知字段: ${key}`);
+        }
+    });
+}
+
+function assertTemplateAssistantNonEmptyString_ACU(value: unknown, path: string) {
+    if (typeof value !== 'string' || !value.trim()) {
+        throw new Error(`${path} 必须是非空字符串`);
+    }
+}
+
+function validateTemplateAssistantMigrationLiteral_ACU(value: unknown, path: string) {
+    assertTemplateAssistantPlainObject_ACU(value, path);
+    assertTemplateAssistantAllowedKeys_ACU(value, ['kind', 'sql', 'value'], path);
+    const kind = value.kind;
+    if (!['null', 'integer', 'real', 'string', 'blob', 'boolean'].includes(kind)) {
+        throw new Error(`${path}.kind 不受支持: ${String(kind)}`);
+    }
+    if (kind === 'null') {
+        if (value.sql !== 'NULL' || value.value !== null) {
+            throw new Error(`${path} 的 null literal 必须使用 sql="NULL" 且 value=null`);
+        }
+        return;
+    }
+    if (kind === 'boolean') {
+        if ((value.sql !== 'TRUE' && value.sql !== 'FALSE') || typeof value.value !== 'boolean') {
+            throw new Error(`${path} 的 boolean literal 必须使用 TRUE/FALSE SQL 和 boolean value`);
+        }
+        return;
+    }
+    if (typeof value.sql !== 'string' || !value.sql.trim()) {
+        throw new Error(`${path}.sql 必须是非空字符串`);
+    }
+    if ((kind === 'integer' || kind === 'real') && (typeof value.value !== 'number' || !Number.isFinite(value.value))) {
+        throw new Error(`${path}.${kind} literal 的 value 必须是有限数字`);
+    }
+    if ((kind === 'string' || kind === 'blob') && typeof value.value !== 'string') {
+        throw new Error(`${path}.${kind} literal 的 value 必须是字符串`);
+    }
+}
+
+function validateTemplateAssistantMigrationIntent_ACU(value: unknown, path: string) {
+    assertTemplateAssistantPlainObject_ACU(value, path);
+    assertTemplateAssistantAllowedKeys_ACU(value, ['physicalColumnMappings', 'fills', 'conversions', 'migrationPolicy'], path);
+    if (!Array.isArray(value.physicalColumnMappings)) {
+        throw new Error(`${path}.physicalColumnMappings 必须是数组`);
+    }
+    value.physicalColumnMappings.forEach((mapping: unknown, index: number) => {
+        const mappingPath = `${path}.physicalColumnMappings[${index}]`;
+        assertTemplateAssistantPlainObject_ACU(mapping, mappingPath);
+        assertTemplateAssistantAllowedKeys_ACU(mapping, ['fromPhysicalName', 'toPhysicalName'], mappingPath);
+        assertTemplateAssistantNonEmptyString_ACU(mapping.fromPhysicalName, `${mappingPath}.fromPhysicalName`);
+        assertTemplateAssistantNonEmptyString_ACU(mapping.toPhysicalName, `${mappingPath}.toPhysicalName`);
+    });
+    assertTemplateAssistantPlainObject_ACU(value.fills, `${path}.fills`);
+    Object.entries(value.fills).forEach(([physicalName, fill]) => {
+        const fillPath = `${path}.fills.${physicalName}`;
+        assertTemplateAssistantNonEmptyString_ACU(physicalName, `${path}.fills 的 physical column key`);
+        assertTemplateAssistantPlainObject_ACU(fill, fillPath);
+        assertTemplateAssistantAllowedKeys_ACU(fill, ['kind', 'literal'], fillPath);
+        if (fill.kind !== 'literal' && fill.kind !== 'ddl_literal_default') {
+            throw new Error(`${fillPath}.kind 不受支持: ${String(fill.kind)}`);
+        }
+        validateTemplateAssistantMigrationLiteral_ACU(fill.literal, `${fillPath}.literal`);
+    });
+    if (!Array.isArray(value.conversions)) {
+        throw new Error(`${path}.conversions 必须是数组`);
+    }
+    value.conversions.forEach((conversion: unknown, index: number) => {
+        const conversionPath = `${path}.conversions[${index}]`;
+        assertTemplateAssistantPlainObject_ACU(conversion, conversionPath);
+        assertTemplateAssistantAllowedKeys_ACU(conversion, ['fromPhysicalName', 'toPhysicalName', 'policy'], conversionPath);
+        assertTemplateAssistantNonEmptyString_ACU(conversion.fromPhysicalName, `${conversionPath}.fromPhysicalName`);
+        assertTemplateAssistantNonEmptyString_ACU(conversion.toPhysicalName, `${conversionPath}.toPhysicalName`);
+        assertTemplateAssistantPlainObject_ACU(conversion.policy, `${conversionPath}.policy`);
+        assertTemplateAssistantAllowedKeys_ACU(conversion.policy, ['kind'], `${conversionPath}.policy`);
+        if (!['identity', 'stringify', 'integer_strict', 'real_strict'].includes(conversion.policy.kind)) {
+            throw new Error(`${conversionPath}.policy.kind 不受支持: ${String(conversion.policy.kind)}`);
+        }
+    });
+    assertTemplateAssistantPlainObject_ACU(value.migrationPolicy, `${path}.migrationPolicy`);
+    assertTemplateAssistantAllowedKeys_ACU(value.migrationPolicy, ['destructiveChangeConfirmed', 'lossyConversionConfirmed'], `${path}.migrationPolicy`);
+    if (typeof value.migrationPolicy.destructiveChangeConfirmed !== 'boolean' || typeof value.migrationPolicy.lossyConversionConfirmed !== 'boolean') {
+        throw new Error(`${path}.migrationPolicy 必须提供 destructiveChangeConfirmed 和 lossyConversionConfirmed 两个 boolean`);
+    }
+}
+
 function validateTemplateAssistantSchemaPatch_ACU(op: any) {
     const patch = op?.patch;
-    const allowedKeys = new Set(['renameColumns', 'addColumns', 'deleteColumns', 'ddl']);
+    const allowedKeys = new Set(['renameColumns', 'addColumns', 'deleteColumns', 'ddl', 'migrationIntent']);
     Object.keys(patch).forEach((key) => {
         if (!allowedKeys.has(key)) {
             throw new Error(`patch_sheet_schema.patch 包含未知字段: ${key}`);
@@ -585,6 +684,9 @@ function validateTemplateAssistantSchemaPatch_ACU(op: any) {
 
     if (ddl != null && (typeof ddl !== 'string' || !ddl.trim())) {
         throw new Error('patch_sheet_schema.patch.ddl 必须是非空字符串');
+    }
+    if (patch?.migrationIntent != null) {
+        validateTemplateAssistantMigrationIntent_ACU(patch.migrationIntent, 'patch_sheet_schema.patch.migrationIntent');
     }
 }
 
@@ -804,7 +906,8 @@ function buildSystemPrompt_ACU() {
         '错误示例：CREATE TABLE loot_table (\n  row_id INTEGER PRIMARY KEY,\n  物品名称 TEXT,\n  数量 INTEGER\n); 这种把中文表头直接写成物理列名的 ddl 会被拒绝；即使再写 `-- 物品名称` 这类同名注释也不合法。',
         '不要为刚 add_sheet 的新表生成依赖真实 sheetKey 的 follow-up patch 来补 DDL 或 starter rows；当前同一份 draft 无法可靠引用尚未落地的新表。',
         'patch_sheet_content.patch 只允许使用 updateCells、addRows、deleteRows；其中 rowNumber 必须使用 1-based 行号，列使用 columnName。',
-        'patch_sheet_schema.patch 只允许使用 renameColumns、addColumns、deleteColumns、ddl。',
+        'patch_sheet_schema.patch 只允许使用 renameColumns、addColumns、deleteColumns、ddl、migrationIntent；migrationIntent 仅用于明确声明无法由 V1 安全子集表达的 schema migration 契约，不能替代实际 schema 修改。',
+        'migrationIntent 必须完整提供 physicalColumnMappings（每项 {fromPhysicalName,toPhysicalName}）、fills、conversions、migrationPolicy（{destructiveChangeConfirmed,lossyConversionConfirmed}）。physical rename 示例：{"physicalColumnMappings":[{"fromPhysicalName":"name","toPhysicalName":"item_name"}],"fills":{},"conversions":[],"migrationPolicy":{"destructiveChangeConfirmed":false,"lossyConversionConfirmed":false}}。新增 physical 列时 fills 必须覆盖每个新增列，格式为 {"列名":{"kind":"literal","literal":{"kind":"string","sql":"\'normal\'","value":"normal"}}} 或与目标 DDL DEFAULT 对应的 ddl_literal_default；类型变更时 conversions 必须使用 identity、stringify、integer_strict 或 real_strict。',
         'patch_sheet_locks.patch 只允许使用 rows、columns、cells、specialIndexLocked；rows/cells 使用 1-based rowNumber，列使用 columnName，所有锁变更都必须显式给出 locked 布尔值。',
         'move_sheet 只能提供 beforeSheetKey 或 afterSheetKey 之一。',
         'add_sheet 不要生成最终 sheetKey，本地会自动生成。',
@@ -961,6 +1064,7 @@ function aggregateCompileResults_ACU(params: {
         },
         highRiskItems: [],
         lockChanges: [],
+        schemaMigrationIntents: {},
     };
     params.rounds.forEach((round) => {
         appendUniqueByJson_ACU(aggregated.deletedSheetKeys, round.perRoundCompileResult.deletedSheetKeys || []);
@@ -979,6 +1083,19 @@ function aggregateCompileResults_ACU(params: {
         }
         appendUniqueByJson_ACU(aggregated.highRiskItems, round.perRoundCompileResult.highRiskItems || []);
         appendUniqueByJson_ACU(aggregated.lockChanges, round.perRoundCompileResult.lockChanges || []);
+        const schemaPatchedSheetKeys = new Set((round.perRoundCompileResult.diff?.patchedSchemaSheets || []).map((item) => item.sheetKey));
+        for (const sheetKey of schemaPatchedSheetKeys) {
+            const wasPatchedInEarlierRound = params.rounds
+                .filter((earlierRound) => earlierRound.round < round.round)
+                .some((earlierRound) => (earlierRound.perRoundCompileResult.diff?.patchedSchemaSheets || [])
+                    .some((item) => item.sheetKey === sheetKey));
+            if (wasPatchedInEarlierRound) {
+                throw new Error(`多轮会话不支持同一张表跨轮重复 schema migration：${sheetKey}。请在同一轮完成该表的结构修改。`);
+            }
+        }
+        Object.entries(round.perRoundCompileResult.schemaMigrationIntents || {}).forEach(([sheetKey, intent]) => {
+            aggregated.schemaMigrationIntents[sheetKey] = clone_ACU(intent);
+        });
         if (round.perRoundCompileResult.focusSheetKey) {
             aggregated.focusSheetKey = round.perRoundCompileResult.focusSheetKey;
         }
@@ -1081,6 +1198,12 @@ export async function generateTemplateAssistantDraft_ACU(input: TemplateAssistan
         currentSheetKey: input.currentSheetKey,
         draft,
     });
+    const preflight = await preflightSchemaMigrations_ACU({
+        baselineData: tempData as any,
+        candidateData: compileResult.candidateData as any,
+        intents: compileResult.schemaMigrationIntents,
+    });
+    if (preflight.blockers.length > 0) throw new Error(`schema migration preflight 失败：${preflight.blockers.join('；')}`);
 
     return {
         draft,
@@ -1217,6 +1340,12 @@ export async function runTemplateAssistantSession_ACU(input: TemplateAssistantSe
             candidateSheetOrder: workingSheetOrder,
             focusSheetKey: workingCurrentSheetKey,
         });
+    const finalPreflight = await preflightSchemaMigrations_ACU({
+        baselineData: originalTempData as any,
+        candidateData: compileResult.candidateData as any,
+        intents: compileResult.schemaMigrationIntents,
+    });
+    if (finalPreflight.blockers.length > 0) throw new Error(`schema migration 最终 preflight 失败：${finalPreflight.blockers.join('；')}`);
     const finalDraft = lastResult?.draft || buildTemplateAssistantNoopDraft_ACU(originalBaseFingerprint, currentSheetKey);
     const finalWorkingFingerprint = buildTemplateAssistantFingerprint_ACU(compileResult.candidateData || workingTempData);
 
