@@ -1,5 +1,4 @@
 import { getChatArray_ACU } from '../../data/gateways/chat-gateway';
-import { getChatSheetGuideContainer_ACU } from '../../data/storage/chat-history';
 import { getCurrentIsolationKey_ACU, independentTableStates_ACU } from '../runtime/state-manager';
 import type { TableDataObject_ACU, Sheet_ACU, Mate_ACU } from '../../shared/models/table-data';
 import { logError_ACU, logWarn_ACU } from '../../shared/utils';
@@ -9,7 +8,8 @@ import { normalizeSqlStructure, normalizeStatementValues } from '../../data/sqli
 import type { TableCheckpointV2_ACU, TableMutationLogEntryV2_ACU, TableMutationOperationV2_ACU, TablePatchV2_ACU, TableSheetCheckpointV2_ACU, TableStorageFrameV2_ACU } from './storage-frame-v2-types';
 import { isV2TagData_ACU } from './storage-strategy-resolver';
 import { readIsolatedTagData_ACU } from '../../data/repositories/chat-message-data-repo';
-import { getSortedSheetKeys_ACU, materializeDataFromSheetGuide_ACU } from '../template/chat-scope';
+import { getSortedSheetKeys_ACU } from '../template/chat-scope';
+import { formatCanonicalRowIssues_ACU, isEmptyCanonicalRowId_ACU, normalizeCanonicalTableRows_ACU } from '../../shared/canonical-row-normalizer';
 
 interface V2FrameRef_ACU {
   messageIndex: number;
@@ -110,64 +110,6 @@ function getValidatedSheetCheckpoints_ACU(frame: TableStorageFrameV2_ACU): Table
   });
 }
 
-function getReplayGuideData_ACU(chat: any[], isolationKey: string): Record<string, any> | null {
-  const container = getChatSheetGuideContainer_ACU(chat as any);
-  const slot = container?.tags && typeof container.tags === 'object'
-    ? (container.tags as Record<string, any>)[String(isolationKey ?? '')]
-    : null;
-  if (slot?.data && typeof slot.data === 'object') return slot.data as Record<string, any>;
-  return null;
-}
-
-function applyGuideStructureBeforeReplay_ACU(state: TableDataObject_ACU, guideData: Record<string, any> | null): void {
-  if (!guideData || typeof guideData !== 'object') return;
-  const guided = materializeDataFromSheetGuide_ACU(guideData, { includeSeedRows: false }) as TableDataObject_ACU;
-  const guideKeys = getSortedSheetKeys_ACU(guided as any, { ignoreChatGuide: true, includeMissingFromGuide: true });
-  for (const sheetKey of guideKeys) {
-    if (!sheetKey || !String(sheetKey).startsWith('sheet_')) continue;
-    const guideSheet = guided[sheetKey] as Sheet_ACU | undefined;
-    if (!guideSheet || typeof guideSheet !== 'object') continue;
-    const targetSheet = state[sheetKey] as Sheet_ACU | undefined;
-    if (!targetSheet || typeof targetSheet !== 'object') {
-      state[sheetKey] = deepClone_ACU(guideSheet) as any;
-      continue;
-    }
-    if (guideSheet.uid) targetSheet.uid = guideSheet.uid;
-    if (guideSheet.name) targetSheet.name = guideSheet.name;
-    if ((guideSheet as any).sourceData && typeof (guideSheet as any).sourceData === 'object') {
-      (targetSheet as any).sourceData = deepClone_ACU((guideSheet as any).sourceData);
-    }
-    if ((guideSheet as any).updateConfig && typeof (guideSheet as any).updateConfig === 'object') {
-      (targetSheet as any).updateConfig = deepClone_ACU((guideSheet as any).updateConfig);
-    }
-    if ((guideSheet as any).exportConfig && typeof (guideSheet as any).exportConfig === 'object') {
-      (targetSheet as any).exportConfig = deepClone_ACU((guideSheet as any).exportConfig);
-    }
-    if ((guideSheet as any).orderNo !== undefined) (targetSheet as any).orderNo = (guideSheet as any).orderNo;
-    if (Array.isArray((guideSheet as any).content?.[0])) {
-      if (!Array.isArray((targetSheet as any).content)) (targetSheet as any).content = [];
-      (targetSheet as any).content[0] = deepClone_ACU((guideSheet as any).content[0]);
-      const targetLen = (targetSheet as any).content[0].length;
-      for (let rowIndex = 1; rowIndex < (targetSheet as any).content.length; rowIndex += 1) {
-        const row = (targetSheet as any).content[rowIndex];
-        if (!Array.isArray(row)) continue;
-        const hasAutoMergedTag = row.length > 0 && row[row.length - 1] === 'auto_merged';
-        if (row.length < targetLen) {
-          while (row.length < targetLen) row.push('');
-          if (hasAutoMergedTag && row[row.length - 1] !== 'auto_merged') row.push('auto_merged');
-        } else if (row.length > targetLen) {
-          row.splice(targetLen);
-          if (hasAutoMergedTag) row.push('auto_merged');
-        }
-      }
-    }
-    if (Array.isArray((guideSheet as any).seedRows)) (targetSheet as any).seedRows = deepClone_ACU((guideSheet as any).seedRows);
-  }
-  for (const sheetKey of Object.keys(state)) {
-    if (sheetKey.startsWith('sheet_') && !guideKeys.includes(sheetKey)) delete (state as any)[sheetKey];
-  }
-}
-
 function splitSqlStatementsForReplay_ACU(sql: string): string[] {
   const statements: string[] = [];
   let current = '';
@@ -215,8 +157,16 @@ interface SqlReplayRuntime_ACU {
   loaded: boolean;
 }
 
+function normalizeReplayState_ACU(state: TableDataObject_ACU, context: string): void {
+  const normalization = normalizeCanonicalTableRows_ACU(state);
+  if (normalization.errors.length > 0) {
+    throw new Error(`[V2 Replay] ${context} 行标识不合法：${formatCanonicalRowIssues_ACU(normalization.errors)}`);
+  }
+}
+
 async function ensureSqlReplayRuntime_ACU(runtime: SqlReplayRuntime_ACU, state: TableDataObject_ACU): Promise<void> {
   if (runtime.loaded) return;
+  normalizeReplayState_ACU(state, 'snapshot');
   await runtime.engine.init();
   runtime.syncBridge.loadFromTableData(state, { strict: true });
   runtime.loaded = true;
@@ -226,6 +176,7 @@ function exportSqlReplayRuntime_ACU(runtime: SqlReplayRuntime_ACU, state: TableD
   if (!runtime.loaded) return;
   const next = runtime.syncBridge.exportToTableData((state.mate || { type: 'acu', version: 1 }) as Mate_ACU);
   replaceState_ACU(state, next);
+  normalizeReplayState_ACU(state, 'SQL 导出结果');
 }
 
 async function reloadSqlReplayRuntime_ACU(runtime: SqlReplayRuntime_ACU, state: TableDataObject_ACU): Promise<void> {
@@ -239,7 +190,6 @@ async function applySheetCheckpointsForReplay_ACU(
   state: TableDataObject_ACU,
   frame: TableStorageFrameV2_ACU,
   runtime: SqlReplayRuntime_ACU,
-  guideData: Record<string, any> | null,
 ): Promise<void> {
   const checkpoints = getValidatedSheetCheckpoints_ACU(frame);
   if (checkpoints.length === 0) return;
@@ -247,7 +197,7 @@ async function applySheetCheckpointsForReplay_ACU(
   for (const checkpoint of checkpoints) {
     state[checkpoint.sheetKey] = deepClone_ACU(checkpoint.data);
   }
-  applyGuideStructureBeforeReplay_ACU(state, guideData);
+  normalizeReplayState_ACU(state, '单表 checkpoint');
   if (runtime.loaded) await reloadSqlReplayRuntime_ACU(runtime, state);
 }
 
@@ -278,6 +228,10 @@ export function applyTablePatchV2_ACU(state: TableDataObject_ACU, patch: TablePa
   if (patch.kind === 'row_upsert') {
     const rowIndex = sheet.content.findIndex(row => Array.isArray(row) && row[0] === patch.rowId);
     const nextCells = deepClone_ACU(patch.cells);
+    if (isEmptyCanonicalRowId_ACU(nextCells[0])) {
+      sheet.content = sheet.content.filter(row => !(Array.isArray(row) && row[0] === patch.rowId));
+      return;
+    }
     if (rowIndex >= 0) {
       sheet.content[rowIndex] = nextCells;
     } else {
@@ -428,6 +382,7 @@ export async function applyTableOperationV2_ACU(
     if (operation.kind === 'data_replace') {
       if (effectiveRuntime?.loaded) exportSqlReplayRuntime_ACU(effectiveRuntime, state);
       replaceState_ACU(state, operation.data);
+      normalizeReplayState_ACU(state, 'data_replace');
       if (effectiveRuntime?.loaded) await reloadSqlReplayRuntime_ACU(effectiveRuntime, state);
       return;
     }
@@ -439,18 +394,21 @@ export async function applyTableOperationV2_ACU(
     if (operation.kind === 'sheet_replace') {
       if (effectiveRuntime?.loaded) exportSqlReplayRuntime_ACU(effectiveRuntime, state);
       state[operation.sheetKey] = deepClone_ACU(operation.sheet);
+      normalizeReplayState_ACU(state, 'sheet_replace');
       if (effectiveRuntime?.loaded) await reloadSqlReplayRuntime_ACU(effectiveRuntime, state);
       return;
     }
     if (operation.kind === 'row_upsert' || operation.kind === 'row_delete' || operation.kind === 'meta_update') {
       if (effectiveRuntime?.loaded) exportSqlReplayRuntime_ACU(effectiveRuntime, state);
       applyTablePatchV2_ACU(state, operation);
+      normalizeReplayState_ACU(state, operation.kind);
       if (effectiveRuntime?.loaded) await reloadSqlReplayRuntime_ACU(effectiveRuntime, state);
       return;
     }
     if (operation.kind === 'table_edit_dsl') {
       if (effectiveRuntime?.loaded) exportSqlReplayRuntime_ACU(effectiveRuntime, state);
       applyTableEditDslOperationV2_ACU(state, operation.text);
+      normalizeReplayState_ACU(state, 'table_edit_dsl');
       if (effectiveRuntime?.loaded) await reloadSqlReplayRuntime_ACU(effectiveRuntime, state);
     }
   } finally {
@@ -499,7 +457,7 @@ export function collectScheduleSummaryFromFramesV2_ACU(
 export async function loadTableStateFromFramesV2_ACU(
   chatArg?: any[],
   isolationKeyArg?: string,
-  options: { maxMessageIndex?: number; guideDataOverride?: Record<string, any> | null } = {},
+  options: { maxMessageIndex?: number } = {},
 ): Promise<TableDataObject_ACU | null> {
   const chat = chatArg || getChatArray_ACU();
   if (!Array.isArray(chat) || chat.length === 0) return null;
@@ -516,10 +474,7 @@ export async function loadTableStateFromFramesV2_ACU(
 
   const checkpoint = checkpointRef.frame.checkpoint;
   const state: TableDataObject_ACU = deepClone_ACU(checkpoint.data);
-  const replayGuideData = Object.prototype.hasOwnProperty.call(options, 'guideDataOverride')
-    ? options.guideDataOverride || null
-    : getReplayGuideData_ACU(chat, isolationKey);
-  applyGuideStructureBeforeReplay_ACU(state, replayGuideData);
+  normalizeReplayState_ACU(state, 'full checkpoint');
   const replayStartMessageIndex = checkpointRef.messageIndex;
   replayCheckpointSchedule_ACU(checkpoint, checkpointRef.aiFloor);
 
@@ -533,7 +488,7 @@ export async function loadTableStateFromFramesV2_ACU(
   try {
     for (const ref of frameRefs) {
       if (ref.messageIndex < replayStartMessageIndex) continue;
-      await applySheetCheckpointsForReplay_ACU(state, ref.frame, runtime, replayGuideData);
+      await applySheetCheckpointsForReplay_ACU(state, ref.frame, runtime);
       const entries = [...(ref.frame.logEntries || [])].sort((a, b) => a.seq - b.seq);
       for (const entry of entries) {
         try {
@@ -547,6 +502,7 @@ export async function loadTableStateFromFramesV2_ACU(
             for (const patch of entry.patches || []) {
               applyTablePatchV2_ACU(state, patch);
             }
+            normalizeReplayState_ACU(state, 'legacy patches');
             if (runtime.loaded) await reloadSqlReplayRuntime_ACU(runtime, state);
           }
           replayEventForState_ACU(entry, ref.aiFloor);
@@ -564,16 +520,13 @@ export async function loadTableStateFromFramesV2_ACU(
   }
 }
 
-export async function validateCurrentChatTableRecoveryWithGuide_ACU(
-  guideData: Record<string, any> | null | undefined,
+export async function validateCurrentChatTableRecovery_ACU(
   options: { chat?: any[]; isolationKey?: string } = {},
 ): Promise<{ success: true } | { success: false; error: string }> {
   const chat = options.chat || getChatArray_ACU();
   if (!Array.isArray(chat) || chat.length === 0) return { success: true };
   try {
-    await loadTableStateFromFramesV2_ACU(chat, options.isolationKey ?? getCurrentIsolationKey_ACU(), {
-      guideDataOverride: guideData || null,
-    });
+    await loadTableStateFromFramesV2_ACU(chat, options.isolationKey ?? getCurrentIsolationKey_ACU());
     return { success: true };
   } catch (error) {
     return {

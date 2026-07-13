@@ -20,46 +20,17 @@ import { loadTableStateFromFramesV2_ACU } from '../table/storage-frame-v2-replay
 import { persistTableMutationLogV2_ACU } from '../table/storage-frame-v2-persist';
 import { migrateLegacyStorageToV2OnLoad_ACU } from '../table/storage-v2-migration';
 import { runTableWriteTransaction_ACU } from '../table/table-write-transaction';
+import { normalizeCanonicalTableRows_ACU } from '../../shared/canonical-row-normalizer';
 
-  /**
-   * 旧数据兼容层：将 content 数组中的 null 占位列迁移为行号 row_id
-   * - 表头行 content[0][0]：null → "row_id"
-   * - 数据行 content[i][0]：null → 行号字符串 ("1", "2", "3"...)
-   * - 幂等：已迁移过的数据不会重复处理
-   */
-  export function migrateContentNullToRowId(data: Record<string, any> | null): Record<string, any> | null {
-      if (!data || typeof data !== 'object') return data;
-      Object.keys(data).forEach(k => {
-          if (!k.startsWith('sheet_')) return;
-          const sheet = data[k];
-          if (!sheet || !Array.isArray(sheet.content) || sheet.content.length === 0) return;
-          const headerRow = sheet.content[0];
-          if (!Array.isArray(headerRow) || headerRow.length === 0) return;
-          // 幂等检查：如果表头已经是 "row_id"，说明已迁移过
-          if (headerRow[0] === 'row_id') return;
-          // 只处理表头第一列为 null 的情况
-          if (headerRow[0] !== null) return;
-          // 迁移表头行
-          headerRow[0] = 'row_id';
-          // 迁移数据行
-          for (let i = 1; i < sheet.content.length; i++) {
-              const row = sheet.content[i];
-              if (Array.isArray(row) && row[0] === null) {
-                  row[0] = String(i);
-              }
-          }
-          // 迁移 seedRows（如果存在）
-          if (Array.isArray(sheet.seedRows)) {
-              for (let i = 0; i < sheet.seedRows.length; i++) {
-                  const row = sheet.seedRows[i];
-                  if (Array.isArray(row) && row[0] === null) {
-                      row[0] = String(i + 1);
-                  }
-              }
-          }
-      });
-      return data;
-  }
+/**
+ * Legacy entry point retained for callers that need in-place normalization.
+ * Empty canonical row_id values mean deletion; they must not be fabricated
+ * from array positions because that would create a false row identity.
+ */
+export function migrateContentNullToRowId(data: Record<string, any> | null): Record<string, any> | null {
+    normalizeCanonicalTableRows_ACU(data);
+    return data;
+}
 
   function hasUsableSheetGuide_ACU(sheetGuideData: any): boolean {
       return !!(sheetGuideData && typeof sheetGuideData === 'object' && Object.keys(sheetGuideData).some(k => k.startsWith('sheet_')));
@@ -379,7 +350,7 @@ import { runTableWriteTransaction_ACU } from '../table/table-write-transaction';
               const orderedKeys = getSortedSheetKeys_ACU(mergedData);
               return migrateContentNullToRowId(reorderDataBySheetKeys_ACU(mergedData, orderedKeys));
           }
-          return mergedData;
+          return migrateContentNullToRowId(mergedData);
       }
 
       if (strategy.mode === 'legacy-v1' && strategy.warning) {
@@ -407,10 +378,10 @@ import { runTableWriteTransaction_ACU } from '../table/table-write-transaction';
           if (postStrategy.mode !== 'v2') {
               throw new Error(`旧存储迁移后二次校验失败：当前模式=${postStrategy.mode}${postStrategy.mode === 'legacy-v1' ? `，reason=${postStrategy.reason}` : ''}`);
           }
-          return mergedLegacyData;
+          return migrateContentNullToRowId(mergedLegacyData);
       }
 
-      return mergeAllIndependentTablesLegacyV1_ACU();
+      return migrateContentNullToRowId(await mergeAllIndependentTablesLegacyV1_ACU());
   }
 
   // [重构] 刷新合并数据并通知前端和更新世界书

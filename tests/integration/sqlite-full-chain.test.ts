@@ -38,7 +38,7 @@ describe('I5: SQLite 模式完整链路（纯函数层）', () => {
     ],
     sourceData: {
       note: '背包物品',
-      ddl: 'CREATE TABLE "背包物品表" (\n  "row_id" TEXT PRIMARY KEY,\n  "物品名" TEXT,\n  "数量" INTEGER,\n  "品质" TEXT\n)',
+      ddl: 'CREATE TABLE inventory (\n  row_id INTEGER PRIMARY KEY, -- 行号\n  item_name TEXT, -- 物品名\n  quantity INTEGER, -- 数量\n  quality TEXT -- 品质\n)',
       initNode: '', deleteNode: '', updateNode: '', insertNode: '',
     },
   };
@@ -47,8 +47,8 @@ describe('I5: SQLite 模式完整链路（纯函数层）', () => {
     it('有 sourceData.ddl 时直接使用 DDL', () => {
       const ddl = generateDDL(testSheet as any);
       expect(ddl).toContain('CREATE TABLE');
-      // generateDDL 直接使用 sourceData.ddl
-      expect(ddl).toContain('背包物品表');
+      // generateDDL 直接使用 sourceData.ddl 中的 canonical 物理表名
+      expect(ddl).toContain('inventory');
     });
 
     it('无 DDL 时使用 fallback DDL 生成', () => {

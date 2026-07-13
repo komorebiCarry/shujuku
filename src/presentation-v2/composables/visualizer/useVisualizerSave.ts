@@ -1,6 +1,5 @@
 import { TABLE_ORDER_FIELD_ACU } from '../../../shared/constants';
 import { topLevelWindow_ACU } from '../../../shared/env';
-import { safeJsonStringify_ACU } from '../../../shared/json-helpers';
 import {
   applySheetOrderNumbers_ACU,
   ensureSheetOrderNumbers_ACU,
@@ -13,7 +12,7 @@ import {
   isDefaultTemplatePresetSelection_ACU,
   normalizeTemplatePresetSelectionValue_ACU,
 } from '../../../shared/template-preset-utils';
-import { deleteLocalDataInChatCore_ACU, getChatArray_ACU, saveChatToHost_ACU } from '../../../service/chat/chat-service';
+import { getChatArray_ACU } from '../../../service/chat/chat-service';
 import {
   currentJsonTableData_ACU,
   getCurrentIsolationKey_ACU,
@@ -33,7 +32,8 @@ import {
   resolveTableHistoryStateFromChat_ACU,
 } from '../../../service/table/table-history';
 import { isSqliteMode } from '../../../service/table/storage-mode';
-import { validateCurrentChatTableRecoveryWithGuide_ACU } from '../../../service/table/storage-frame-v2-replay';
+import { commitCurrentFloorTemplateChanges_ACU } from '../../../service/table/storage-frame-v2-persist';
+import { normalizeCanonicalTableRows_ACU } from '../../../shared/canonical-row-normalizer';
 import { reloadStorageProvider } from '../../../service/table/table-storage-strategy';
 import { applyTemplateScopeForCurrentChat_ACU } from '../../../service/settings/settings-service';
 import {
@@ -41,10 +41,9 @@ import {
   getChatSheetGuideDataForIsolationKey_ACU,
   getGlobalTemplateSnapshotForCurrentProfile_ACU,
   getSortedSheetKeys_ACU,
-  materializeDataFromSheetGuide_ACU,
   sanitizeTemplateSnapshotForChat_ACU,
-  setChatSheetGuideDataForIsolationKey_ACU,
 } from '../../../service/template/chat-scope';
+import { generateDDL, validateDDLTextAgainstHeaders_ACU } from '../../../data/sqlite/schema-mapper';
 import {
   applyTemplatePresetToCurrent_ACU,
   resolveActiveTemplatePresetName_ACU,
@@ -61,7 +60,6 @@ import {
   hasVisualizerPendingDataOps_ACU,
 } from '../../../service/visualizer/visualizer-data-ops';
 import { useToastStore } from '../../stores/toast-store';
-import { ensureTemplateRecoveryOrDeleteCurrentIsolationData_ACU } from '../useTemplateRecoveryGuard';
 import { useVisualizerStore, type VisualizerLockDraft, type VisualizerSaveTarget } from '../../stores/visualizer-store';
 
 export interface VisualizerSaveInteractions {
@@ -123,42 +121,81 @@ function saveLockDrafts(drafts: Record<string, VisualizerLockDraft>): void {
   });
 }
 
-type ChatSheetGuideSyncPayload = {
-  isolationKey: string;
-  guideData: Record<string, any>;
+type VisualizerTemplateChanges_ACU = {
+  addedSheetKeys: string[];
+  schemaChangedSheetKeys: string[];
+  metadataChangedSheetKeys: string[];
+  deletedSheetKeys: string[];
 };
 
-function buildChatSheetGuideSyncPayload(orderedData: Record<string, any>, orderedKeys: string[]): ChatSheetGuideSyncPayload | null {
-  const guideIsolationKey = getCurrentIsolationKey_ACU();
-  const existingGuide = getChatSheetGuideDataForIsolationKey_ACU(guideIsolationKey);
-  const templateObjForSeed = parseTableTemplateJson_ACU({ stripSeedRows: false });
-  const guideData = buildChatSheetGuideDataFromData_ACU(orderedData, {
-    preserveSeedRowsFromGuideData: existingGuide,
-    seedRowsFromTemplateObj: templateObjForSeed,
-    orderedKeys,
-  });
-  if (!guideData || !Object.keys(guideData).some(key => key.startsWith('sheet_'))) return null;
-  return { isolationKey: guideIsolationKey, guideData };
+function sortForComparison_ACU(value: any): any {
+  if (Array.isArray(value)) return value.map(sortForComparison_ACU);
+  if (!value || typeof value !== 'object') return value;
+  return Object.keys(value).sort().reduce<Record<string, any>>((result, key) => {
+    result[key] = sortForComparison_ACU(value[key]);
+    return result;
+  }, {});
 }
 
-function persistChatSheetGuideSyncPayload(payload: ChatSheetGuideSyncPayload | null, saveToTemplate: boolean): void {
-  if (!payload) return;
-  try {
-    const syncTemplateScope = !saveToTemplate;
-    const templateScopeSource = materializeDataFromSheetGuide_ACU(payload.guideData, { includeSeedRows: true });
-    setChatSheetGuideDataForIsolationKey_ACU(payload.isolationKey, payload.guideData, {
-      reason: 'visualizer_v2_save',
-      syncTemplateScope,
-      templateSource: templateScopeSource,
-      presetName: resolveActiveTemplatePresetName_ACU({
-        fallbackToGlobal: true,
-        isolationKey: payload.isolationKey,
-      }),
-      source: 'visualizer_v2_save',
-    });
-  } catch (error) {
-    logWarn_ACU('[ACU-V2 Visualizer] Failed to sync chat sheet guide:', error);
+function sameTemplateValue_ACU(left: any, right: any): boolean {
+  return JSON.stringify(sortForComparison_ACU(left)) === JSON.stringify(sortForComparison_ACU(right));
+}
+
+function projectSheetTemplate_ACU(sheet: any): Record<string, any> {
+  const projected = cloneData(sheet || {});
+  if (Array.isArray(projected.content)) projected.content = [cloneData(projected.content[0] || [])];
+  delete projected.seedRows;
+  return projected;
+}
+
+function projectSheetSchema_ACU(sheet: any): Record<string, any> {
+  return {
+    uid: sheet?.uid,
+    headers: Array.isArray(sheet?.content?.[0]) ? cloneData(sheet.content[0]) : [],
+    ddl: sheet?.sourceData?.ddl || '',
+  };
+}
+
+function classifyVisualizerTemplateChanges_ACU(
+  baseData: Record<string, any> | null,
+  baseOrder: string[],
+  nextData: Record<string, any>,
+  nextOrder: string[],
+): VisualizerTemplateChanges_ACU {
+  const baseKeys = Object.keys(baseData || {}).filter(key => key.startsWith('sheet_'));
+  const nextKeys = Object.keys(nextData || {}).filter(key => key.startsWith('sheet_'));
+  const addedSheetKeys = nextKeys.filter(key => !baseKeys.includes(key));
+  const deletedSheetKeys = baseKeys.filter(key => !nextKeys.includes(key));
+  const schemaChangedSheetKeys = nextKeys.filter(key => baseData?.[key]
+    && !sameTemplateValue_ACU(projectSheetSchema_ACU(baseData[key]), projectSheetSchema_ACU(nextData[key])));
+  const sheetOrderChanged = !sameTemplateValue_ACU(baseOrder, nextOrder);
+  const metadataChangedSheetKeys = nextKeys.filter(key => baseData?.[key]
+    && !schemaChangedSheetKeys.includes(key)
+    && (sheetOrderChanged || !sameTemplateValue_ACU(projectSheetTemplate_ACU(baseData[key]), projectSheetTemplate_ACU(nextData[key]))));
+  return { addedSheetKeys, schemaChangedSheetKeys, metadataChangedSheetKeys, deletedSheetKeys };
+}
+
+function prepareTemplateSheetsForCommit_ACU(
+  data: Record<string, any>,
+  sheetKeys: string[],
+): { removedNullRowCount: number } {
+  const scopedData = Object.fromEntries(sheetKeys.map(sheetKey => [sheetKey, data[sheetKey]]));
+  const normalization = normalizeCanonicalTableRows_ACU(scopedData);
+  if (normalization.errors.length > 0) {
+    throw new Error(`模板保存被拒绝：存在无法自动合并的 row_id 问题。`);
   }
+  for (const sheetKey of sheetKeys) {
+    const sheet = data[sheetKey];
+    const headers = sheet?.content?.[0];
+    if (!sheet || !Array.isArray(headers) || headers[0] !== 'row_id') {
+      throw new Error(`模板保存被拒绝：${sheetKey} 缺少 row_id 表头。`);
+    }
+    if (!sheet.sourceData || typeof sheet.sourceData !== 'object') sheet.sourceData = {};
+    if (!String(sheet.sourceData.ddl || '').trim()) sheet.sourceData.ddl = generateDDL(sheet, sheet.uid || sheetKey);
+    const ddlValidation = validateDDLTextAgainstHeaders_ACU(sheet.sourceData.ddl, headers);
+    if (!ddlValidation.valid) throw new Error(`模板保存被拒绝：${sheetKey} 的 DDL 无法 strict hydrate：${ddlValidation.message}`);
+  }
+  return { removedNullRowCount: normalization.removedRows.length };
 }
 
 async function saveGlobalTemplateSnapshot(
@@ -400,27 +437,108 @@ export function useVisualizerSave(interactions: VisualizerSaveInteractions = {})
         return false;
       }
       const orderedData = buildOrderedData(visualizer.tempData, visualizer.sheetOrder, visualizer.tableLockDrafts);
-      const guidePayload = buildChatSheetGuideSyncPayload(orderedData, [...visualizer.sheetOrder]);
-      const recoveryGuard = await ensureTemplateRecoveryOrDeleteCurrentIsolationData_ACU(
-        guidePayload?.guideData || null,
-        'save-template',
+      const changes = classifyVisualizerTemplateChanges_ACU(
+        visualizer.templateBaseData,
+        visualizer.templateBaseSheetOrder,
+        orderedData,
+        visualizer.sheetOrder,
       );
-      if (!recoveryGuard.success) return false;
-      const dataWasResetForTemplateSave = recoveryGuard.dataWasReset;
-      persistChatSheetGuideSyncPayload(guidePayload, false);
-      applyTemplateScopeForCurrentChat_ACU();
-      _set_currentJsonTableData_ACU(dataWasResetForTemplateSave && guidePayload
-        ? materializeDataFromSheetGuide_ACU(guidePayload.guideData, { includeSeedRows: true })
-        : cloneData(orderedData));
-      await saveChatToHost_ACU();
-      saveLockDrafts(visualizer.tableLockDrafts);
-      if (isSqliteMode()) await reloadStorageProvider();
-      await refreshMergedDataAndNotify_ACU();
+      if (changes.deletedSheetKeys.length > 0) {
+        toastStore.error('模板保存不处理删表；请使用数据保存执行现有硬删除流程。', { muteable: false });
+        return false;
+      }
+      const changedSheetKeys = [...new Set([
+        ...changes.addedSheetKeys,
+        ...changes.schemaChangedSheetKeys,
+        ...changes.metadataChangedSheetKeys,
+      ])];
+      if (changedSheetKeys.length === 0) {
+        if (visualizer.pendingLockChanges.length > 0 || visualizer.lockDraftsDirty) {
+          saveLockDrafts(visualizer.tableLockDrafts);
+          visualizer.markSaved('template-chat');
+          toastStore.success('表格锁定设置已保存。', { muteable: false });
+          return true;
+        }
+        toastStore.info('模板结构没有变化。', { muteable: false });
+        return false;
+      }
+      const guideIsolationKey = getCurrentIsolationKey_ACU();
+      const existingGuide = getChatSheetGuideDataForIsolationKey_ACU(guideIsolationKey);
+      const guideData = buildChatSheetGuideDataFromData_ACU(orderedData, {
+        preserveSeedRowsFromGuideData: existingGuide,
+        seedRowsFromTemplateObj: parseTableTemplateJson_ACU({ stripSeedRows: false }),
+        orderedKeys: [...visualizer.sheetOrder],
+      });
+      if (!guideData || !Object.keys(guideData).some(key => key.startsWith('sheet_'))) {
+        throw new Error('无法为当前模板结构生成聊天指导表。');
+      }
+      const preparation = prepareTemplateSheetsForCommit_ACU(orderedData, changedSheetKeys);
+      const templateScopeSource = cloneData(orderedData);
+      const commitResult = await commitCurrentFloorTemplateChanges_ACU({
+        isolationKey: guideIsolationKey,
+        sheetCheckpoints: changedSheetKeys.map(sheetKey => ({
+          sheetKey,
+          sheetData: orderedData[sheetKey],
+          event: { filledSheetKeys: [] as string[], changedSheetKeys: [sheetKey] },
+        })),
+        guideData,
+        syncTemplateScope: true,
+        templateSource: templateScopeSource,
+        presetName: resolveActiveTemplatePresetName_ACU({ fallbackToGlobal: true, isolationKey: guideIsolationKey }),
+        source: 'visualizer_v2_save',
+        reason: 'visualizer_v2_schema_change',
+      });
+      if (!commitResult.saved) {
+        toastStore.error(commitResult.error || '模板/结构保存失败。', { muteable: false });
+        return false;
+      }
+      try {
+        applyTemplateScopeForCurrentChat_ACU();
+      } catch (error) {
+        logWarn_ACU('[ACU-V2 Visualizer] template commit saved but applyTemplateScopeForCurrentChat failed:', error);
+        toastStore.warning('模板已保存，但模板作用域运行时同步失败；请重新载入当前聊天后重试。', { muteable: false });
+      }
+      try {
+        _set_currentJsonTableData_ACU(cloneData(orderedData));
+      } catch (error) {
+        logWarn_ACU('[ACU-V2 Visualizer] template commit saved but runtime data synchronization failed:', error);
+        toastStore.warning('模板已保存，但运行时数据同步失败；请重新载入当前聊天后重试。', { muteable: false });
+      }
+      let lockSaveFailed = false;
+      const hasPendingLocks = visualizer.lockDraftsDirty || visualizer.pendingLockChanges.length > 0;
+      if (hasPendingLocks) try {
+        saveLockDrafts(visualizer.tableLockDrafts);
+      } catch (error) {
+        lockSaveFailed = true;
+        logWarn_ACU('[ACU-V2 Visualizer] template commit saved but lock drafts failed:', error);
+        toastStore.warning('模板已保存，但表格锁定设置未保存；请重试保存。', { muteable: false });
+      }
+      if (isSqliteMode()) {
+        try {
+          await reloadStorageProvider();
+        } catch (error) {
+          logWarn_ACU('[ACU-V2 Visualizer] template commit saved but reloadStorageProvider failed:', error);
+          toastStore.warning('模板已保存，但 SQLite 运行时刷新失败；请重新载入当前聊天后重试。', { muteable: false });
+        }
+      }
+      try {
+        await refreshMergedDataAndNotify_ACU();
+      } catch (error) {
+        logWarn_ACU('[ACU-V2 Visualizer] template commit saved but refreshMergedDataAndNotify failed:', error);
+        toastStore.warning('模板已保存，但合并数据刷新失败；请重新载入当前聊天后重试。', { muteable: false });
+      }
       try {
         (topLevelWindow_ACU as any).AutoCardUpdaterAPI?._notifyTableUpdate?.();
       } catch {}
-      visualizer.markSaved('template-chat');
-      toastStore.success('模板/结构已保存到当前聊天。', { muteable: false });
+      if (lockSaveFailed && (visualizer.lockDraftsDirty || visualizer.pendingLockChanges.length > 0)) {
+        visualizer.markTemplateSavedWithPendingLocks();
+      } else {
+        visualizer.markSaved('template-chat');
+      }
+      const removedCount = preparation.removedNullRowCount + (commitResult.removedNullRowCount || 0);
+      toastStore.success(
+        removedCount > 0 ? `模板/结构已保存到当前聊天，已移除 ${removedCount} 条缺少 row_id 的数据行。` : '模板/结构已保存到当前聊天。',
+        { muteable: false });
       return true;
     });
   }

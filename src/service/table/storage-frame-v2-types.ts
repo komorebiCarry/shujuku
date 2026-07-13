@@ -42,7 +42,7 @@ export interface ManualRefillProgressV2_ACU {
 export interface TableCheckpointV2_ACU {
   kind: 'full';
   createdAt: number;
-  reason: 'init' | 'periodic' | 'manual' | 'schema_change' | 'compaction' | 'import' | 'migration';
+  reason: 'init' | 'periodic' | 'manual' | 'schema_change' | 'compaction' | 'import' | 'migration' | 'integrity_repair';
   data: TableDataObject_ACU;
   scheduleSummary?: Record<string, TableCheckpointScheduleSummaryV2_ACU>;
   event?: TableMutationEventV2_ACU;

@@ -78,9 +78,12 @@ interface VisualizerState {
   currentSheetKey: string | null;
   tempData: Record<string, any> | null;
   sheetOrder: string[];
+  templateBaseData: Record<string, any> | null;
+  templateBaseSheetOrder: string[];
   deletedSheetKeys: string[];
   pendingDataOps: any;
   pendingLockChanges: any[];
+  lockDraftsDirty: boolean;
   tableLockDrafts: Record<string, VisualizerLockDraft>;
   isLoading: boolean;
   loadError: string;
@@ -160,9 +163,12 @@ export const useVisualizerStore = defineStore('acu-v2-visualizer', {
     currentSheetKey: null,
     tempData: null,
     sheetOrder: [],
+    templateBaseData: null,
+    templateBaseSheetOrder: [],
     deletedSheetKeys: [],
     pendingDataOps: null,
     pendingLockChanges: [],
+    lockDraftsDirty: false,
     tableLockDrafts: {},
     isLoading: false,
     loadError: '',
@@ -251,9 +257,12 @@ export const useVisualizerStore = defineStore('acu-v2-visualizer', {
 
       this.tempData = nextData;
       this.sheetOrder = nextOrder;
+      this.templateBaseData = cloneData(nextData);
+      this.templateBaseSheetOrder = [...nextOrder];
       this.deletedSheetKeys = [];
       resetVisualizerPendingDataOps_ACU(this);
       this.pendingLockChanges = [];
+      this.lockDraftsDirty = false;
       this.tableLockDrafts = {};
       this.currentSheetKey = nextOrder.includes(this.currentSheetKey || '')
         ? this.currentSheetKey
@@ -270,6 +279,7 @@ export const useVisualizerStore = defineStore('acu-v2-visualizer', {
     },
     loadLockDrafts(drafts: Record<string, VisualizerLockDraft>): void {
       this.tableLockDrafts = cloneData(drafts || {});
+      this.lockDraftsDirty = false;
     },
     clearAssistantDraftState(): void {
       this.assistantIsRunning = false;
@@ -363,12 +373,25 @@ export const useVisualizerStore = defineStore('acu-v2-visualizer', {
       this.setDirty(true);
     },
     markSaved(target: VisualizerSaveTarget): void {
+      this.templateBaseData = cloneData(this.tempData);
+      this.templateBaseSheetOrder = [...this.sheetOrder];
       this.deletedSheetKeys = [];
       resetVisualizerPendingDataOps_ACU(this);
       this.pendingLockChanges = [];
+      this.lockDraftsDirty = false;
       this.lastSavedTarget = target;
       this.lastSavedAt = Date.now();
       this.setDirty(false);
+    },
+    markTemplateSavedWithPendingLocks(): void {
+      this.templateBaseData = cloneData(this.tempData);
+      this.templateBaseSheetOrder = [...this.sheetOrder];
+      this.deletedSheetKeys = [];
+      resetVisualizerPendingDataOps_ACU(this);
+      this.lastSavedTarget = 'template-chat';
+      this.lastSavedAt = Date.now();
+      this.lockDraftsDirty = true;
+      this.setDirty(true);
     },
     getLockDraft(sheetKey: string | null | undefined): VisualizerLockDraft {
       const key = String(sheetKey || '').trim();
@@ -397,6 +420,7 @@ export const useVisualizerStore = defineStore('acu-v2-visualizer', {
       lock.rows = lock.rows.includes(value)
         ? lock.rows.filter(item => item !== value)
         : [...lock.rows, value];
+      this.lockDraftsDirty = true;
       this.setDirty(true);
     },
     toggleColumnLock(sheetKey: string | null | undefined, columnIndex: number): void {
@@ -406,6 +430,7 @@ export const useVisualizerStore = defineStore('acu-v2-visualizer', {
       lock.cols = lock.cols.includes(value)
         ? lock.cols.filter(item => item !== value)
         : [...lock.cols, value];
+      this.lockDraftsDirty = true;
       this.setDirty(true);
     },
     toggleCellLock(sheetKey: string | null | undefined, rowIndex: number, columnIndex: number): void {
@@ -414,6 +439,7 @@ export const useVisualizerStore = defineStore('acu-v2-visualizer', {
       lock.cells = lock.cells.includes(key)
         ? lock.cells.filter(item => item !== key)
         : [...lock.cells, key];
+      this.lockDraftsDirty = true;
       this.setDirty(true);
     },
     applyLockChangesToDraft(changes: any[]): void {
@@ -452,7 +478,10 @@ export const useVisualizerStore = defineStore('acu-v2-visualizer', {
           lock.specialIndexLocked = change.specialIndexLocked;
         }
       });
-      if (changes.length) this.setDirty(true);
+      if (changes.length) {
+        this.lockDraftsDirty = true;
+        this.setDirty(true);
+      }
     },
     queueLockChanges(changes: any[]): void {
       if (!Array.isArray(changes) || changes.length === 0) return;
@@ -482,9 +511,12 @@ export const useVisualizerStore = defineStore('acu-v2-visualizer', {
       this.currentSheetKey = null;
       this.tempData = null;
       this.sheetOrder = [];
+      this.templateBaseData = null;
+      this.templateBaseSheetOrder = [];
       this.deletedSheetKeys = [];
       resetVisualizerPendingDataOps_ACU(this);
       this.pendingLockChanges = [];
+      this.lockDraftsDirty = false;
       this.tableLockDrafts = {};
       this.isLoading = false;
       this.loadError = '';

@@ -165,6 +165,16 @@ const mockSaveIndependentTable = vi.fn().mockResolvedValue({ saved: true });
 const mockPersistTablesToChatMessage = vi.fn().mockResolvedValue({ saved: true, messageIndex: 0 });
 
 vi.mock('../../../src/service/table/table-service', () => ({
+  loadOrCreateJsonTableFromChatHistory_ACU: vi.fn(async () => {
+    const data = mockCurrentJsonTableData
+      ? JSON.parse(JSON.stringify(mockCurrentJsonTableData))
+      : null;
+    return {
+      loaded: Boolean(data),
+      source: data ? 'merged' : 'empty',
+      data,
+    };
+  }),
   checkIfFirstTimeInit_ACU: (...args: any[]) => mockCheckIfFirstTimeInit(...args),
   ensureLegacyStorageMigratedBeforeWrite_ACU: vi.fn().mockResolvedValue({ success: true, migrated: false }),
   persistTablesToChatMessage_ACU: (...args: any[]) => mockPersistTablesToChatMessage(...args),

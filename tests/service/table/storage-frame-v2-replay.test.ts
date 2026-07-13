@@ -200,7 +200,7 @@ describe('loadTableStateFromFramesV2_ACU', () => {
     ]);
   });
 
-  it('回放 sql_batch 前先套用当前聊天 guide 的新 DDL/CHECK', async () => {
+  it('同楼层单表 checkpoint 引入新 DDL/CHECK 后再回放 sql_batch', async () => {
     const oldData = {
       mate: { type: 'acu', version: 1 },
       sheet_MapElements: {
@@ -219,66 +219,72 @@ describe('loadTableStateFromFramesV2_ACU', () => {
         orderNo: 0,
       },
     } as any;
-    const newGuide = {
-      version: 2,
-      tags: {
-        '': {
-          data: {
-            mate: { type: 'chatSheets', version: 2 },
-            sheet_MapElements: {
-              uid: 'sheet_MapElements',
-              name: '地图元素表',
-              content: [['row_id', '元素名称', '元素类型']],
-              sourceData: {
-                ddl: `CREATE TABLE map_elements (
-                  row_id INTEGER PRIMARY KEY,
-                  element_name TEXT NOT NULL, -- 元素名称
-                  element_type TEXT NOT NULL CHECK(element_type IN ('地标','地形')) -- 元素类型
-                );`,
-              },
-              updateConfig: {},
-              exportConfig: {},
-              orderNo: 0,
-            },
-          },
-          templateScopeMode: 'chat_override',
-        },
+    const schemaChangeSheet = {
+      ...oldData.sheet_MapElements,
+      sourceData: {
+        ddl: `CREATE TABLE map_elements (
+          row_id INTEGER PRIMARY KEY,
+          element_name TEXT NOT NULL, -- 元素名称
+          element_type TEXT NOT NULL CHECK(element_type IN ('地标','地形')) -- 元素类型
+        );`,
       },
     };
-    const chat = [{
-      is_user: false,
-      TavernDB_ACU_InternalSheetGuide: newGuide,
-      TavernDB_ACU_IsolatedData: {
-        '': {
-          _acu_storage_version: 2,
-          storageFrame: {
-            version: 2,
-            checkpoint: {
-              kind: 'full',
-              createdAt: 1,
-              reason: 'init',
-              data: oldData,
-              event: { filledSheetKeys: [], changedSheetKeys: [], groupKeys: [] },
+    const chat = [
+      {
+        is_user: false,
+        TavernDB_ACU_IsolatedData: {
+          '': {
+            _acu_storage_version: 2,
+            storageFrame: {
+              version: 2,
+              checkpoint: {
+                kind: 'full',
+                createdAt: 1,
+                reason: 'init',
+                data: oldData,
+                event: { filledSheetKeys: [], changedSheetKeys: [], groupKeys: [] },
+              },
+              logEntries: [],
             },
-            logEntries: [{
-              seq: 1,
-              entryId: 'v2_sql_terrain',
-              createdAt: 2,
-              source: 'manual_crud',
-              targetMessageIndex: 0,
-              aiFloor: 1,
-              filledSheetKeys: [],
-              changedSheetKeys: ['sheet_MapElements'],
-              groupKeys: [],
-              operations: [{
-                kind: 'sql_batch',
-                statements: ["INSERT INTO map_elements (row_id, element_name, element_type) VALUES (2, '废弃集装箱', '地形')"],
-              }],
-            }],
           },
         },
       },
-    }];
+      {
+        is_user: false,
+        TavernDB_ACU_IsolatedData: {
+          '': {
+            _acu_storage_version: 2,
+            storageFrame: {
+              version: 2,
+              perSheetCheckpoints: {
+                sheet_MapElements: {
+                  kind: 'sheet_full',
+                  createdAt: 2,
+                  reason: 'schema_change',
+                  sheetKey: 'sheet_MapElements',
+                  data: schemaChangeSheet,
+                },
+              },
+              logEntries: [{
+                seq: 1,
+                entryId: 'v2_sql_terrain',
+                createdAt: 3,
+                source: 'manual_crud',
+                targetMessageIndex: 1,
+                aiFloor: 2,
+                filledSheetKeys: [],
+                changedSheetKeys: ['sheet_MapElements'],
+                groupKeys: [],
+                operations: [{
+                  kind: 'sql_batch',
+                  statements: ["INSERT INTO map_elements (row_id, element_name, element_type) VALUES (2, '废弃集装箱', '地形')"],
+                }],
+              }],
+            },
+          },
+        },
+      },
+    ];
 
     const result = await loadTableStateFromFramesV2_ACU(chat, '');
 
@@ -288,6 +294,41 @@ describe('loadTableStateFromFramesV2_ACU', () => {
       ['1', '旧点', '地标'],
       ['2', '废弃集装箱', '地形'],
     ]);
+  });
+
+  it('当前 guide 不改写历史 full checkpoint，也不凭空创建新表', async () => {
+    const oldData = makeCheckpointData();
+    const chat = [{
+      is_user: false,
+      TavernDB_ACU_InternalSheetGuide: {
+        version: 2,
+        tags: {
+          '': {
+            data: {
+              mate: { type: 'chatSheets', version: 2 },
+              sheet_0: { ...oldData.sheet_0, content: [['row_id', '未来名称']], sourceData: { ddl: 'CREATE TABLE inventory (row_id INTEGER PRIMARY KEY, future_name TEXT);' } },
+              sheet_future: { uid: 'future', name: '未来表', content: [['row_id', '值']], sourceData: {}, updateConfig: {}, exportConfig: {}, orderNo: 1 },
+            },
+          },
+        },
+      },
+      TavernDB_ACU_IsolatedData: {
+        '': {
+          _acu_storage_version: 2,
+          storageFrame: {
+            version: 2,
+            checkpoint: { kind: 'full', createdAt: 1, reason: 'init', data: oldData },
+            logEntries: [],
+          },
+        },
+      },
+    }];
+
+    const result = await loadTableStateFromFramesV2_ACU(chat, '');
+
+    expect(result?.sheet_0.content[0]).toEqual(['row_id', 'name']);
+    expect(result?.sheet_0.sourceData.ddl).toBe('CREATE TABLE inventory (row_id INTEGER PRIMARY KEY, name TEXT);');
+    expect(result).not.toHaveProperty('sheet_future');
   });
 
   it('回放无分号分隔且含前置文本的 table_edit_dsl', async () => {
@@ -334,6 +375,99 @@ describe('loadTableStateFromFramesV2_ACU', () => {
       ['row_id', '时间跨度', '地点', '纪要', '概要'],
       ['1', '第一天', '城镇(北区)', '记录包含括号(测试)，不应破坏命令切分。', '抵达城镇'],
     ]);
+  });
+
+  it('row_upsert 的空 row_id 删除目标行，重复 row_id 拒绝回放', async () => {
+    const makeChat = (cells: any[]) => [{
+      is_user: false,
+      TavernDB_ACU_IsolatedData: {
+        '': {
+          _acu_storage_version: 2,
+          storageFrame: {
+            version: 2,
+            checkpoint: { kind: 'full', createdAt: 1, reason: 'init', data: makeCheckpointData() },
+            logEntries: [{
+              seq: 1,
+              entryId: 'row-upsert',
+              createdAt: 2,
+              source: 'manual_crud',
+              targetMessageIndex: 0,
+              aiFloor: 1,
+              filledSheetKeys: [],
+              changedSheetKeys: ['sheet_0'],
+              groupKeys: [],
+              operations: [{ kind: 'row_upsert', sheetKey: 'sheet_0', rowId: '1', cells }],
+            }],
+          },
+        },
+      },
+    }];
+
+    const removed = await loadTableStateFromFramesV2_ACU(makeChat([' ', '不会保留']), '');
+    expect(removed?.sheet_0.content).toEqual([['row_id', 'name']]);
+
+    await expect(loadTableStateFromFramesV2_ACU(makeChat(['2', '冲突身份']), '')).resolves.toMatchObject({
+      sheet_0: expect.objectContaining({ content: [['row_id', 'name'], ['2', '冲突身份']] }),
+    });
+  });
+
+  it('旧 patches 与 DSL 生成的非法 canonical 行在 replay 边界被清理或拒绝', async () => {
+    const legacyPatchChat = [{
+      is_user: false,
+      TavernDB_ACU_IsolatedData: {
+        '': {
+          _acu_storage_version: 2,
+          storageFrame: {
+            version: 2,
+            checkpoint: { kind: 'full', createdAt: 1, reason: 'init', data: makeCheckpointData() },
+            logEntries: [{
+              seq: 1,
+              entryId: 'legacy-empty-row',
+              createdAt: 2,
+              source: 'manual_crud',
+              targetMessageIndex: 0,
+              aiFloor: 1,
+              filledSheetKeys: [],
+              changedSheetKeys: ['sheet_0'],
+              groupKeys: [],
+              patches: [{ kind: 'row_upsert', sheetKey: 'sheet_0', rowId: '1', cells: [null, '坏行'] }],
+            }],
+          },
+        },
+      },
+    }];
+
+    const legacyResult = await loadTableStateFromFramesV2_ACU(legacyPatchChat, '');
+    expect(legacyResult?.sheet_0.content).toEqual([['row_id', 'name']]);
+
+    const dslChat = [{
+      is_user: false,
+      TavernDB_ACU_IsolatedData: {
+        '': {
+          _acu_storage_version: 2,
+          storageFrame: {
+            version: 2,
+            checkpoint: { kind: 'full', createdAt: 1, reason: 'init', data: makeCheckpointData() },
+            logEntries: [{
+              seq: 1,
+              entryId: 'dsl-insert',
+              createdAt: 2,
+              source: 'manual_crud',
+              targetMessageIndex: 0,
+              aiFloor: 1,
+              filledSheetKeys: [],
+              changedSheetKeys: ['sheet_0'],
+              groupKeys: [],
+              operations: [{ kind: 'table_edit_dsl', text: 'insertRow(0, {"0":"药水"})' }],
+            }],
+          },
+        },
+      },
+    }];
+
+    await expect(loadTableStateFromFramesV2_ACU(dslChat, '')).resolves.toMatchObject({
+      sheet_0: expect.objectContaining({ content: [['row_id', 'name'], ['1', '铁剑'], ['2', '药水']] }),
+    });
   });
 
   it('无 full checkpoint 时拒绝从 data_replace/log-only 恢复不完整数据', async () => {

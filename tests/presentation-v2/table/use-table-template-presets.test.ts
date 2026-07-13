@@ -16,8 +16,6 @@ async function importComposable() {
   const restoreChatTemplateArchiveEntry_ACU = vi.fn(async (archiveKey: string) => ({ archiveKey, presetName: selectedChat }));
   const resolveTemplateForExport_ACU = vi.fn(() => ({ jsonData: { sheet_1: {} }, fromPresetName: selectedChat || '默认预设' }));
   const ensureTemplateRecoveryOrDeleteCurrentIsolationData_ACU = vi.fn(async () => ({ success: true, dataWasReset: false }));
-  const validateCurrentChatTableRecoveryWithGuide_ACU = vi.fn(async () => ({ success: true }));
-  const deleteLocalDataInChatCore_ACU = vi.fn(async () => 1);
 
   vi.doMock('../../../src/service/runtime/state-manager', () => ({
     settings_ACU: {},
@@ -27,12 +25,6 @@ async function importComposable() {
   }));
   vi.doMock('../../../src/service/table/table-storage-strategy', () => ({
     reloadStorageProvider: vi.fn(async () => undefined),
-  }));
-  vi.doMock('../../../src/service/table/storage-frame-v2-replay', () => ({
-    validateCurrentChatTableRecoveryWithGuide_ACU,
-  }));
-  vi.doMock('../../../src/service/chat/chat-service', () => ({
-    deleteLocalDataInChatCore_ACU,
   }));
   vi.doMock('../../../src/presentation-v2/composables/useTemplateRecoveryGuard', () => ({
     ensureTemplateRecoveryOrDeleteCurrentIsolationData_ACU,
@@ -82,8 +74,6 @@ async function importComposable() {
     restoreChatTemplateArchiveEntry_ACU,
     resolveTemplateForExport_ACU,
     ensureTemplateRecoveryOrDeleteCurrentIsolationData_ACU,
-    validateCurrentChatTableRecoveryWithGuide_ACU,
-    deleteLocalDataInChatCore_ACU,
     setSelectedGlobal: (value: string) => { selectedGlobal = value; },
     setSelectedChat: (value: string) => { selectedChat = value; },
     setActiveScope: (value: 'global' | 'chat') => { activeScope = value; activeMode = value === 'chat' ? 'chat_override' : 'inherit_global'; },

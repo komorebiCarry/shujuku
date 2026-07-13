@@ -34,6 +34,7 @@ const {
   mockNormalizePlacementConfig,
   mockUpdateCustomTableExports, mockUpdateImportantPersonsRelatedEntries,
   mockUpdateOutlineTableEntry, mockUpdateSummaryTableEntries,
+  mockPersistNullRowCleanupShards,
 } = vi.hoisted(() => {
   const mockSettings: any = {
     dataIsolationEnabled: false,
@@ -121,6 +122,7 @@ const {
     mockUpdateImportantPersonsRelatedEntries: vi.fn(async () => {}),
     mockUpdateOutlineTableEntry: vi.fn(async () => {}),
     mockUpdateSummaryTableEntries: vi.fn(async () => {}),
+    mockPersistNullRowCleanupShards: vi.fn(async () => ({ status: 'persisted', messageIndex: 3 })),
   };
 });
 
@@ -190,6 +192,10 @@ vi.mock('../../../src/service/runtime/helpers-remaining', () => ({
   shouldSuppressWorldbookInjection_ACU: mockShouldSuppressWorldbookInjection,
 }));
 
+vi.mock('../../../src/service/table/storage-frame-v2-persist', () => ({
+  persistNullRowCleanupShards_ACU: mockPersistNullRowCleanupShards,
+}));
+
 vi.mock('../../../src/service/worldbook/injection-engine', () => ({
   allocConsecutiveOrderBlock_ACU: mockAllocConsecutiveOrderBlock,
   applyPlacementToEntry_ACU: mockApplyPlacementToEntry,
@@ -230,6 +236,7 @@ import {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  mockMergeAllIndependentTables.mockReset();
   mockSettings.dataIsolationEnabled = false;
   mockSettings.dataIsolationCode = '';
   mockSettings.knownCustomEntryNames = [];
@@ -246,6 +253,7 @@ beforeEach(() => {
   mockGetCharLorebooks.mockResolvedValue({ primary: null, additional: [] });
   mockGetImportStablePrefix.mockReturnValue('外部导入-');
   mockGetImportBatchPrefix.mockReturnValue('外部导入-');
+  mockPersistNullRowCleanupShards.mockResolvedValue({ status: 'persisted', messageIndex: 3 });
 });
 
 // ═══════════════════════════════════════════════════
@@ -692,6 +700,130 @@ describe('refreshMergedDataAndNotify_ACU', () => {
     expect(result).toBeDefined();
   });
 
+  it('遇到空 row_id 和数值业务列时清理坏行且不调用 startsWith 造成崩溃', async () => {
+    const mergedData = {
+      mate: { type: 'chatSheets', version: 1 },
+      sheet_0: {
+        name: '测试表',
+        content: [
+          ['row_id', '数值'],
+          [null, 15],
+          ['2', 30],
+          ['3', 'AM-有效记录'],
+        ],
+      },
+    };
+    mockMergeAllIndependentTables.mockResolvedValue(mergedData);
+    mockGetSortedSheetKeys.mockReturnValue(['sheet_0']);
+    mockReorderDataBySheetKeys.mockImplementation((data: any) => data);
+
+    const result = await refreshMergedDataAndNotify_ACU();
+
+    expect(mergedData.sheet_0.content).toEqual([
+      ['row_id', '数值'],
+      ['2', 30],
+      ['3', 'AM-有效记录', 'auto_merged'],
+    ]);
+    expect(mockLogWarn).toHaveBeenCalledWith(expect.stringContaining('缺少 row_id'));
+    expect(mockPersistNullRowCleanupShards).toHaveBeenCalledWith(expect.objectContaining({
+      sheetDataByKey: expect.objectContaining({ sheet_0: expect.objectContaining({ content: [['row_id', '数值'], ['2', 30], ['3', 'AM-有效记录']] }) }),
+    }));
+    expect(result).toMatchObject({ removedNullRowCount: 1, nullRowCleanupPersisted: 'persisted', nullRowCleanupMessageIndex: 3, degraded: false });
+  });
+
+  it('存在无法自动合并的 canonical issue 时只清理内存并跳过持久化', async () => {
+    const mergedData = {
+      mate: { type: 'chatSheets', version: 1 },
+      sheet_0: { name: '测试表', content: [['row_id', '名称'], [null, '删除'], ['1', '甲'], ['1', '乙']] },
+    };
+    const staleReplaySnapshot = JSON.parse(JSON.stringify(mergedData));
+    mockMergeAllIndependentTables
+      .mockResolvedValueOnce(mergedData)
+      .mockResolvedValueOnce(staleReplaySnapshot);
+    mockGetSortedSheetKeys.mockReturnValue(['sheet_0']);
+    mockReorderDataBySheetKeys.mockImplementation((data: any) => data);
+
+    const result = await refreshMergedDataAndNotify_ACU();
+
+    expect(mockPersistNullRowCleanupShards).not.toHaveBeenCalled();
+    expect(mockMergeAllIndependentTables).toHaveBeenCalledTimes(1);
+    expect(mockFormatJsonToReadable).toHaveBeenCalledWith(expect.objectContaining({
+      sheet_0: expect.objectContaining({ content: [['row_id', '名称'], ['1', '甲'], ['1', '乙']] }),
+    }));
+    expect(result).toMatchObject({
+      removedNullRowCount: 1,
+      canonicalIssues: [expect.objectContaining({ reason: 'duplicate_row_id' })],
+      nullRowCleanupPersisted: 'skipped_invalid_data',
+      degraded: true,
+    });
+  });
+
+  it('自愈持久化失败不阻断内存加载，并明确标记 degraded', async () => {
+    const dirtyHistorySnapshot = { mate: { type: 'chatSheets', version: 1 }, sheet_0: { name: '测试表', content: [['row_id', '名称'], [null, '删除'], ['1', '保留']] } };
+    const staleReplaySnapshot = JSON.parse(JSON.stringify(dirtyHistorySnapshot));
+    mockMergeAllIndependentTables
+      .mockResolvedValueOnce(dirtyHistorySnapshot)
+      .mockResolvedValueOnce(staleReplaySnapshot);
+    mockGetSortedSheetKeys.mockReturnValue(['sheet_0']);
+    mockReorderDataBySheetKeys.mockImplementation((data: any) => data);
+    mockPersistNullRowCleanupShards.mockResolvedValueOnce({ status: 'failed', error: 'host save failed' });
+
+    const result = await refreshMergedDataAndNotify_ACU();
+
+    expect(mockMergeAllIndependentTables).toHaveBeenCalledTimes(1);
+    expect(mockFormatJsonToReadable).toHaveBeenCalledWith(expect.objectContaining({
+      sheet_0: expect.objectContaining({ content: [['row_id', '名称'], ['1', '保留']] }),
+    }));
+    expect(result).toMatchObject({ degraded: true, nullRowCleanupPersisted: 'failed', nullRowCleanupError: 'host save failed' });
+  });
+
+  it.each(['skipped_no_anchor', 'skipped_no_v2_target'] as const)('自愈持久化为 %s 时保留内存清理并标记 degraded', async (status) => {
+    const mergedData = {
+      mate: { type: 'chatSheets', version: 1 },
+      sheet_0: { name: '测试表', content: [['row_id', '名称'], [null, '删除'], ['1', '保留']] },
+    };
+    const staleReplaySnapshot = JSON.parse(JSON.stringify(mergedData));
+    mockMergeAllIndependentTables
+      .mockResolvedValueOnce(mergedData)
+      .mockResolvedValueOnce(staleReplaySnapshot);
+    mockGetSortedSheetKeys.mockReturnValue(['sheet_0']);
+    mockReorderDataBySheetKeys.mockImplementation((data: any) => data);
+    mockPersistNullRowCleanupShards.mockResolvedValueOnce({ status });
+
+    const result = await refreshMergedDataAndNotify_ACU();
+
+    expect(mergedData.sheet_0.content).toEqual([['row_id', '名称'], ['1', '保留']]);
+    expect(mockMergeAllIndependentTables).toHaveBeenCalledTimes(1);
+    expect(mockFormatJsonToReadable).toHaveBeenCalledWith(expect.objectContaining({
+      sheet_0: expect.objectContaining({ content: [['row_id', '名称'], ['1', '保留']] }),
+    }));
+    expect(result).toMatchObject({
+      removedNullRowCount: 1,
+      nullRowCleanupPersisted: status,
+      degraded: true,
+    });
+  });
+
+  it('仅存在重复 row_id 时标记 degraded，但不伪造 null-row 持久化状态', async () => {
+    const mergedData = {
+      mate: { type: 'chatSheets', version: 1 },
+      sheet_0: { name: '测试表', content: [['row_id', '名称'], ['1', '甲'], ['1', '乙']] },
+    };
+    mockMergeAllIndependentTables.mockResolvedValue(mergedData);
+    mockGetSortedSheetKeys.mockReturnValue(['sheet_0']);
+    mockReorderDataBySheetKeys.mockImplementation((data:any) => data);
+
+    const result = await refreshMergedDataAndNotify_ACU();
+
+    expect(mockPersistNullRowCleanupShards).not.toHaveBeenCalled();
+    expect(result).toMatchObject({
+      removedNullRowCount: 0,
+      canonicalIssues: [expect.objectContaining({ reason: 'duplicate_row_id' })],
+      nullRowCleanupPersisted: 'skipped_no_changes',
+      degraded: true,
+    });
+  });
+
   it('合并失败时使用指导表物化', async () => {
     mockMergeAllIndependentTables.mockResolvedValue(null);
     const guideData = { sheet_0: { name: '指导表' } };
@@ -733,6 +865,28 @@ describe('updateReadableLorebookEntry_ACU', () => {
     await updateReadableLorebookEntry_ACU(false, false);
     // 应该调用 deleteAllGeneratedEntries 但不调用 formatJsonToReadable
     expect(mockFormatJsonToReadable).not.toHaveBeenCalled();
+  });
+
+  it('使用 dataOverride 时深拷贝权威快照且不重新合并聊天历史', async () => {
+    const dataOverride = {
+      mate: { type: 'chatSheets', version: 1 },
+      sheet_0: { name: '测试表', content: [['row_id', '名称'], ['1', '清理后记录']] },
+    };
+    mockMergeAllIndependentTables.mockResolvedValue({
+      mate: { type: 'chatSheets', version: 1 },
+      sheet_0: { name: '旧历史', content: [['row_id', '名称'], [null, '脏行']] },
+    });
+
+    await updateReadableLorebookEntry_ACU(false, false, null, dataOverride);
+
+    const [storedSnapshot] = mockSetCurrentJsonTableData.mock.calls[0];
+    expect(mockMergeAllIndependentTables).not.toHaveBeenCalled();
+    expect(storedSnapshot).toEqual(dataOverride);
+    expect(storedSnapshot).not.toBe(dataOverride);
+    expect(storedSnapshot.sheet_0).not.toBe(dataOverride.sheet_0);
+    expect(storedSnapshot.sheet_0.content).not.toBe(dataOverride.sheet_0.content);
+    expect(storedSnapshot.sheet_0.content[1]).not.toBe(dataOverride.sheet_0.content[1]);
+    expect(mockFormatJsonToReadable).toHaveBeenCalledWith(storedSnapshot);
   });
 
   it('外部导入模式不检查抑制', async () => {

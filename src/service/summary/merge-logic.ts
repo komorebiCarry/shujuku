@@ -107,6 +107,25 @@ export async function executeAutoMergeBatch_ACU(
 
     const summaryTableObj = currentJsonTableData_ACU[summaryKey];
 
+    const usedSummaryRowIds = new Set<string>([
+        ...(Array.isArray(summaryTableObj?.content) ? summaryTableObj.content.slice(1) : []),
+        ...accumulatedSummary,
+    ].filter(Array.isArray).map((row: any[]) => String(row[0] ?? '').trim()).filter(Boolean));
+    let nextSummaryRowId = (() => {
+        const numericIds = [...usedSummaryRowIds]
+            .filter(rowId => /^\d+$/.test(rowId))
+            .map(rowId => Number(rowId))
+            .filter(Number.isSafeInteger);
+        return numericIds.length > 0 ? Math.max(...numericIds) + 1 : 1;
+    })();
+    const allocateSummaryRowId = (): string => {
+        while (usedSummaryRowIds.has(String(nextSummaryRowId))) nextSummaryRowId += 1;
+        const rowId = String(nextSummaryRowId);
+        usedSummaryRowIds.add(rowId);
+        nextSummaryRowId += 1;
+        return rowId;
+    };
+
     const formatRows = (rows: any[], globalStartIndex: number) => rows.map((r: any[], idx: number) => `[${globalStartIndex + idx}] ${r.slice(1).join(', ')}`).join('\n');
     const textA = batchRows.length > 0 ? formatRows(batchRows, globalStartOffset) : "(本批次无新增纪要数据)";
 
@@ -232,8 +251,10 @@ export async function executeAutoMergeBatch_ACU(
                         if (typeof rowData === 'object' && !Array.isArray(rowData)) {
                             const sortedKeys = Object.keys(rowData).sort((a: string, b: string) => parseInt(a) - parseInt(b));
                             const dataColumns = sortedKeys.map((k: string) => rowData[k]);
-                            rowData = [null, ...dataColumns]; // 行号占位，由 migrateContentNullToRowId 统一处理
+                            rowData = dataColumns;
                         }
+                        if (!Array.isArray(rowData)) throw new Error('insertRow 数据必须是对象或数组。');
+                        rowData = [allocateSummaryRowId(), ...rowData];
                         if (isAutoMode) {
                             rowData.push('auto_merged');
                         }

@@ -1,6 +1,7 @@
 import { ref } from 'vue';
 import { TABLE_ORDER_FIELD_ACU } from '../../../shared/constants';
 import { logWarn_ACU } from '../../../shared/utils';
+import { generateDDL } from '../../../data/sqlite/schema-mapper';
 import {
   currentJsonTableData_ACU,
   _set_currentJsonTableData_ACU,
@@ -41,21 +42,21 @@ function makeSheetKey(): string {
 }
 
 function createDefaultSheet(key: string, name: string): Record<string, any> {
-  return {
+  const sheet = {
     uid: key,
     name,
     domain: 'chat',
     type: 'dynamic',
     enable: true,
     required: false,
-    content: [[null, '列1', '列2']],
+    content: [['row_id', '列1', '列2']],
     sourceData: {
       note: '新表格说明',
       initNode: '',
       insertNode: '',
       updateNode: '',
       deleteNode: '',
-    },
+    } as { note: string; initNode: string; insertNode: string; updateNode: string; deleteNode: string; ddl?: string },
     updateConfig: {
       uiSentinel: -1,
       contextDepth: -1,
@@ -68,6 +69,8 @@ function createDefaultSheet(key: string, name: string): Record<string, any> {
     exportConfig: buildDefaultExportConfig_ACU(name),
     [TABLE_ORDER_FIELD_ACU]: 999999,
   };
+  sheet.sourceData.ddl = generateDDL(sheet as any, key);
+  return sheet;
 }
 
 function buildLockDrafts(orderedKeys: string[]): Record<string, VisualizerLockDraft> {

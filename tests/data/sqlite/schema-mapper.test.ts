@@ -246,10 +246,24 @@ describe('generateFallbackDDL', () => {
     expect(ddl).toContain('row_id INTEGER PRIMARY KEY');
   });
 
-  it('中文列名转为 SQL 标识符', () => {
+  it('ASCII 列名保留为 SQL 标识符', () => {
     const ddl = generateFallbackDDL('test_table', ['row_id', 'name', 'age']);
     expect(ddl).toContain('name TEXT');
     expect(ddl).toContain('age TEXT');
+  });
+
+  it('中文列名生成稳定且唯一的 ASCII 物理列名，并保留表头注释', () => {
+    const ddl = generateFallbackDDL('test_table', ['row_id', '姓名', '状态']);
+    expect(ddl).toContain('col_1 TEXT');
+    expect(ddl).toContain('-- 姓名');
+    expect(ddl).toContain('col_2 TEXT -- 状态');
+    expect(validateDDLAgainstHeaders(ddl, ['row_id', '姓名', '状态']).valid).toBe(true);
+  });
+
+  it('重复 ASCII 表头不会生成重复 DDL 列名', () => {
+    const ddl = generateFallbackDDL('test_table', ['row_id', 'name', 'name']);
+    expect(ddl).toContain('name TEXT');
+    expect(ddl).toContain('name_2 TEXT');
   });
 
   it('空 headers 生成最小 DDL', () => {

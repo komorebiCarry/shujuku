@@ -75,14 +75,15 @@ export function generateDDL(sheet: Sheet_ACU, fallbackTableName?: string): strin
  */
 export function generateFallbackDDL(tableName: string, headers: (string | null)[]): string {
   const lines: string[] = [];
+  const usedColumnNames = new Set<string>();
 
   for (let i = 0; i < headers.length; i++) {
     const colName = headers[i];
     if (colName === 'row_id') {
       lines.push('  row_id INTEGER PRIMARY KEY -- 行号');
+      usedColumnNames.add('row_id');
     } else if (colName) {
-      // 中文列名转为合法的 SQL 标识符
-      const sqlColName = chineseToIdentifier(colName);
+      const sqlColName = buildFallbackColumnName_ACU(colName, i, usedColumnNames);
       lines.push(`  ${sqlColName} TEXT -- ${colName}`);
     }
   }
@@ -190,11 +191,18 @@ interface InsertColumnMapping {
 function resolveInsertColumnMappings(sheet: Sheet_ACU, headers: (string | null)[]): InsertColumnMapping[] {
   const ddl = sheet.sourceData?.ddl?.trim();
   if (!ddl) {
-    return headers.map((header, index) => ({
-      sqlName: header === 'row_id' ? 'row_id' : header ? chineseToIdentifier(header) : `col_${index}`,
-      sourceIndex: index,
-      required: index === 0 && header === 'row_id',
-    }));
+    const usedColumnNames = new Set<string>();
+    return headers.map((header, index) => {
+      const sqlName = header === 'row_id'
+        ? 'row_id'
+        : buildFallbackColumnName_ACU(String(header || `col_${index}`), index, usedColumnNames);
+      if (sqlName === 'row_id') usedColumnNames.add('row_id');
+      return {
+        sqlName,
+        sourceIndex: index,
+        required: index === 0 && header === 'row_id',
+      };
+    });
   }
 
   const columns = parseDDLColumnInfos_ACU(ddl);
@@ -359,16 +367,21 @@ function sanitizeIdentifier(name: string): string {
 }
 
 /**
- * 将中文列名转为合法的 SQL 标识符
- * 使用拼音首字母或简单的 col_N 格式
+ * 为 fallback DDL 生成稳定的 ASCII 列名。
+ * 中文列名无法在不引入拼音依赖的前提下可靠转写，因此按表头索引命名，
+ * 原始表头通过 DDL 注释参与严格映射，不能再让多个中文列退化成 col_unknown。
  */
-function chineseToIdentifier(name: string): string {
-  if (!name) return '_unknown';
-  // 如果已经是合法标识符，直接返回
-  if (/^[a-zA-Z_][a-zA-Z0-9_]*$/.test(name)) return name;
-  // 中文名：用下划线连接的 ASCII 化
-  const ascii = name.replace(/[^a-zA-Z0-9]/g, '_').replace(/_+/g, '_').replace(/^_|_$/g, '');
-  if (ascii && /^[a-zA-Z_]/.test(ascii)) return ascii;
-  // 实在不行就用 col_ 前缀
-  return `col_${ascii || 'unknown'}`;
+function buildFallbackColumnName_ACU(name: string, index: number, usedNames: Set<string>): string {
+  const trimmed = String(name || '').trim();
+  const asciiCandidate = /^[a-zA-Z_][a-zA-Z0-9_]*$/.test(trimmed)
+    ? trimmed
+    : `col_${index}`;
+  let candidate = asciiCandidate;
+  let suffix = 2;
+  while (usedNames.has(candidate.toLowerCase())) {
+    candidate = `${asciiCandidate}_${suffix}`;
+    suffix += 1;
+  }
+  usedNames.add(candidate.toLowerCase());
+  return candidate;
 }

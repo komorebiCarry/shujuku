@@ -89,4 +89,24 @@ describe('storage-strategy-resolver', () => {
       aiMessage({ TavernDB_ACU_IsolatedData: { 'tag-a': tagData } }),
     ], 'tag-a', isolationConfig).mode).toBe('empty');
   });
+
+  it('跨消息混合 V2 与 legacy 时 legacy-v1 优先并保留审计原因', () => {
+    const result = resolveTableStorageStrategy_ACU([
+      aiMessage({
+        TavernDB_ACU_IsolatedData: {
+          'tag-a': { storageFrame: { version: 2, logEntries: [] }, _acu_storage_version: 2 },
+        },
+      }),
+      aiMessage({
+        TavernDB_ACU_Identity: 'tag-a',
+        TavernDB_ACU_IndependentData: { sheet_0: {} },
+      }),
+    ], 'tag-a', isolationConfig);
+
+    expect(result).toEqual({
+      mode: 'legacy-v1',
+      reason: 'message#1: legacy top-level table fields',
+      warning: 'mixed legacy-v1 and v2 data detected; legacy-v1 wins',
+    });
+  });
 });

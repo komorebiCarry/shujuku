@@ -23,7 +23,6 @@ import {
 import { deleteLocalDataInChatCore_ACU } from '../../service/chat/chat-service';
 import { settings_ACU } from '../../service/runtime/state-manager';
 import { isSqliteMode } from '../../service/table/storage-mode';
-import { validateCurrentChatTableRecoveryWithGuide_ACU } from '../../service/table/storage-frame-v2-replay';
 import { reloadStorageProvider } from '../../service/table/table-storage-strategy';
 import { safeJsonParse_ACU } from '../../shared/json-helpers';
 import { getCurrentTemplatePresetName_ACU, normalizeTemplatePresetSelectionValue_ACU, sanitizeFilenameComponent_ACU } from '../../shared/template-preset-utils';

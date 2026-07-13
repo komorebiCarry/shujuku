@@ -71,7 +71,7 @@ import { SqlTableService } from '../../src/service/table/sql-table-service';
 import { restoreTableCheckpointToLatestAi_ACU } from '../../src/service/table/table-checkpoint-transfer';
 
 describe('cp-07: Checkpoint 真实存储跨模式恢复', () => {
-  const tableData: TableDataObject_ACU = { mate: { type: 'acu', version: 1 } as any, sheet_0: { uid: 'inventory', name: '背包', content: [['row_id', 'name'], ['1', '铁剑']], sourceData: { ddl: 'CREATE TABLE inventory (row_id TEXT PRIMARY KEY, name TEXT)' }, updateConfig: {}, exportConfig: {}, orderNo: 0 } as any };
+  const tableData: TableDataObject_ACU = { mate: { type: 'acu', version: 1 } as any, sheet_0: { uid: 'inventory', name: '背包', content: [['row_id', 'name'], ['1', '铁剑']], sourceData: { ddl: 'CREATE TABLE inventory (row_id INTEGER PRIMARY KEY, name TEXT)' }, updateConfig: {}, exportConfig: {}, orderNo: 0 } as any };
   const checkpoint = (sourceStorageMode: 'native' | 'sqlite') => ({ format: 'acu-table-checkpoint', version: 1, createdAt: 1, source: { storageMode: sourceStorageMode }, tableSnapshot: tableData, templateSnapshot: { data: tableData, presetName: '测试预设' }, guideSnapshot: { data: tableData }, integrity: { algorithm: 'fnv1a', payloadHash: 'hash' } } as any);
 
   beforeEach(() => { h.chat = [{ is_user: true }, { is_user: false }]; h.data = null; h.scope = null; h.guide = null; h.sqliteMode = false; h.persistedTableData = null; h.provider = new NativeTableServiceAdapter(); });

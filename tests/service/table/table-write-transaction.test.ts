@@ -196,6 +196,23 @@ describe('table-write-transaction', () => {
     })).rejects.toThrow('表 sheet_0 已变化');
   });
 
+  it('全局写入后旧 all revision 提交被拒绝', async () => {
+    const staleRevision = captureTableRuntimeRevisionForWriteSet_ACU([{ kind: 'all' }]);
+
+    await runTableWriteTransaction_ACU({ source: 'import', reason: 'global commit', writeSet: [{ kind: 'all' }] }, async (ctx) => {
+      await ctx.runCommit(async () => 'ok');
+    });
+
+    await expect(runTableWriteTransaction_ACU({
+      source: 'import',
+      reason: 'stale global commit',
+      writeSet: [{ kind: 'all' }],
+      baseRevision: staleRevision,
+    }, async (ctx) => {
+      await ctx.runCommit(async () => 'should-fail');
+    })).rejects.toThrow('运行时数据已变化');
+  });
+
   it('不同表版本未变化时允许基于旧快照提交', async () => {
     const sheetBRevision = captureTableRuntimeRevisionForWriteSet_ACU(sheetWrite('sheet_b'));
 

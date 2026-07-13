@@ -142,39 +142,37 @@ describe('migrateContentNullToRowId', () => {
     expect(result!.sheet_0.content[0][0]).toBe('row_id');
   });
 
-  it('将数据行 null 替换为行号字符串', () => {
+  it('删除 row_id 为 null 的数据行，而不根据数组位置伪造行号', () => {
     const data = {
       sheet_0: {
         name: '测试表',
         content: [
           [null, '名称'],
           [null, '铁剑'],
-          [null, '药水'],
+          ['2', '药水'],
         ],
       },
     };
     const result = migrateContentNullToRowId(data);
-    expect(result!.sheet_0.content[1][0]).toBe('1');
-    expect(result!.sheet_0.content[2][0]).toBe('2');
+    expect(result!.sheet_0.content).toEqual([['row_id', '名称'], ['2', '药水']]);
   });
 
   it('多张表同时迁移', () => {
     const data = {
       sheet_0: {
         name: '表A',
-        content: [[null, 'col1'], [null, 'val1']],
+        content: [[null, 'col1'], ['1', 'val1']],
       },
       sheet_1: {
         name: '表B',
-        content: [[null, 'col2'], [null, 'val2'], [null, 'val3']],
+        content: [[null, 'col2'], ['2', 'val2'], [null, 'val3']],
       },
     };
     const result = migrateContentNullToRowId(data);
     expect(result!.sheet_0.content[0][0]).toBe('row_id');
     expect(result!.sheet_0.content[1][0]).toBe('1');
     expect(result!.sheet_1.content[0][0]).toBe('row_id');
-    expect(result!.sheet_1.content[1][0]).toBe('1');
-    expect(result!.sheet_1.content[2][0]).toBe('2');
+    expect(result!.sheet_1.content).toEqual([['row_id', 'col2'], ['2', 'val2']]);
   });
 
   // ═══════════════════════════════════════════════════════════════
@@ -214,20 +212,19 @@ describe('migrateContentNullToRowId', () => {
   // ═══════════════════════════════════════════════════════════════
   // seedRows 迁移
   // ═══════════════════════════════════════════════════════════════
-  it('迁移 seedRows 中的 null', () => {
+  it('删除 seedRows 中 row_id 为 null 的行', () => {
     const data = {
       sheet_0: {
         name: '测试表',
         content: [[null, '名称']],
         seedRows: [
           [null, '种子数据1'],
-          [null, '种子数据2'],
+          ['2', '种子数据2'],
         ],
       },
     };
     const result = migrateContentNullToRowId(data);
-    expect(result!.sheet_0.seedRows[0][0]).toBe('1');
-    expect(result!.sheet_0.seedRows[1][0]).toBe('2');
+    expect(result!.sheet_0.seedRows).toEqual([['2', '种子数据2']]);
   });
 
   it('seedRows 不存在时不报错', () => {
@@ -321,7 +318,7 @@ describe('migrateContentNullToRowId', () => {
     expect(result!.sheet_0.content.length).toBe(1);
   });
 
-  it('数据行第一列非 null 时保留原值', () => {
+  it('数据行第一列非 null 时保留原值，并删除空 row_id 行', () => {
     const data = {
       sheet_0: {
         name: '测试表',
@@ -334,7 +331,20 @@ describe('migrateContentNullToRowId', () => {
     };
     const result = migrateContentNullToRowId(data);
     expect(result!.sheet_0.content[1][0]).toBe('已有值');
-    expect(result!.sheet_0.content[2][0]).toBe('2');
+    expect(result!.sheet_0.content).toHaveLength(2);
+  });
+
+  it('表头已是 row_id 时仍删除空 row_id 行', () => {
+    const data = {
+      sheet_0: {
+        name: '已迁移表',
+        content: [['row_id', '数值'], [null, 15], ['0', 0], ['2', 30]],
+      },
+    };
+
+    const result = migrateContentNullToRowId(data);
+
+    expect(result!.sheet_0.content).toEqual([['row_id', '数值'], ['0', 0], ['2', 30]]);
   });
 });
 

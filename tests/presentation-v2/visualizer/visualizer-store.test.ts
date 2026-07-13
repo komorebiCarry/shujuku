@@ -79,6 +79,10 @@ describe('visualizer-store', () => {
 
     expect(store.currentSheet.content[1][2]).toBe('紧张');
     expect(store.dirty).toBe(true);
+    expect(store.templateBaseData?.sheet_a.content[1][2]).toBe('平静');
+    expect(store.templateBaseSheetOrder).toEqual(['sheet_a', 'sheet_b']);
+    store.markSaved('template-chat');
+    expect(store.templateBaseData?.sheet_a.content[1][2]).toBe('紧张');
   });
 
   it('新增、删除和排序表格会维护顺序与删除队列', () => {

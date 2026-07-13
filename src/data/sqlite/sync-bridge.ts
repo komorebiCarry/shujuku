@@ -12,6 +12,7 @@ import { SqliteEngine } from './sqlite-engine';
 import { createSheetInsertPlan, generateDDL, generateInserts, resultToContent, parseDDLTableName, parseDDLColumnNames, buildColumnNameMap } from './schema-mapper';
 import type { TableDataObject_ACU, Sheet_ACU, Mate_ACU } from '../../shared/models/table-data';
 import { logDebug_ACU, logError_ACU, logWarn_ACU } from '../../shared/utils';
+import { formatCanonicalRowIssues_ACU, normalizeCanonicalTableRows_ACU } from '../../shared/canonical-row-normalizer';
 
 /** 同步桥的元数据表名（内部使用，对用户和 AI 不可见） */
 const META_TABLE_NAME = '_acu_sheet_meta';
@@ -44,6 +45,12 @@ export class SyncBridge {
     }
 
     // 创建元数据表
+    const normalization = normalizeCanonicalTableRows_ACU(data);
+    if (normalization.errors.length > 0) {
+      const message = `[SyncBridge] snapshot 行标识不合法：${formatCanonicalRowIssues_ACU(normalization.errors)}`;
+      if (options.strict) throw new Error(message);
+      logWarn_ACU(message);
+    }
     this.engine.run(META_TABLE_DDL);
 
     // 遍历所有 sheet
@@ -101,6 +108,10 @@ export class SyncBridge {
       }
     }
 
+    const normalization = normalizeCanonicalTableRows_ACU(result);
+    if (normalization.errors.length > 0) {
+      logWarn_ACU(`[SyncBridge] 导出结果存在无法自动合并的行标识问题：${formatCanonicalRowIssues_ACU(normalization.errors)}`);
+    }
     return result;
   }
 

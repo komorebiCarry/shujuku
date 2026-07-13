@@ -47,7 +47,7 @@ const serviceMock = vi.hoisted(() => ({
   })),
   isSqliteMode: vi.fn(() => false),
   ensureTemplateRecoveryOrDeleteCurrentIsolationData_ACU: vi.fn(async () => ({ success: true, dataWasReset: false })),
-  validateCurrentChatTableRecoveryWithGuide_ACU: vi.fn(async () => ({ success: true })),
+  commitCurrentFloorTemplateChanges_ACU: vi.fn(async () => ({ saved: true, messageIndex: 0, checkpoints: [], removedNullRowCount: 0 })),
   reloadStorageProvider: vi.fn(async () => undefined),
   applyTemplateScopeForCurrentChat_ACU: vi.fn(() => ({ mode: 'chat_override' })),
   buildChatSheetGuideDataFromData_ACU: vi.fn((data: Record<string, any>) => data),
@@ -105,11 +105,8 @@ vi.mock('../../../src/service/table/table-history', () => ({
 vi.mock('../../../src/service/table/storage-mode', () => ({
   isSqliteMode: serviceMock.isSqliteMode,
 }));
-vi.mock('../../../src/service/table/storage-frame-v2-replay', () => ({
-  validateCurrentChatTableRecoveryWithGuide_ACU: serviceMock.validateCurrentChatTableRecoveryWithGuide_ACU,
-}));
-vi.mock('../../../src/presentation-v2/composables/useTemplateRecoveryGuard', () => ({
-  ensureTemplateRecoveryOrDeleteCurrentIsolationData_ACU: serviceMock.ensureTemplateRecoveryOrDeleteCurrentIsolationData_ACU,
+vi.mock('../../../src/service/table/storage-frame-v2-persist', () => ({
+  commitCurrentFloorTemplateChanges_ACU: serviceMock.commitCurrentFloorTemplateChanges_ACU,
 }));
 vi.mock('../../../src/service/settings/settings-service', () => ({
   applyTemplateScopeForCurrentChat_ACU: serviceMock.applyTemplateScopeForCurrentChat_ACU,
@@ -150,7 +147,14 @@ function sheet(name = '角色状态') {
     uid: 'sheet_test_vz2',
     name,
     orderNo: 0,
-    content: [[null, '姓名', '状态'], ['1', 'A', '平静']],
+    content: [['row_id', '姓名', '状态'], ['1', 'A', '平静']],
+    sourceData: {
+      ddl: `CREATE TABLE sheet_test_vz2 (
+  row_id INTEGER PRIMARY KEY, -- 行号
+  col_1 TEXT, -- 姓名
+  col_2 TEXT -- 状态
+);`,
+    },
   };
 }
 
@@ -236,7 +240,7 @@ describe('useVisualizerSave', () => {
     expect(serviceMock.upsertTemplatePreset_ACU).toHaveBeenCalledWith('现有预设', expect.any(String));
     const savedTemplate = JSON.parse(serviceMock.upsertTemplatePreset_ACU.mock.calls[0][1]);
     expect(savedTemplate.sheet_test_vz2.name).toBe('确认测试表');
-    expect(savedTemplate.sheet_test_vz2.content).toEqual([[null, '姓名', '状态']]);
+    expect(savedTemplate.sheet_test_vz2.content).toEqual([['row_id', '姓名', '状态']]);
     expect(savedTemplate.sheet_old).toBeUndefined();
     expect(serviceMock.applyTemplatePresetToCurrent_ACU).toHaveBeenCalledWith('现有预设', expect.objectContaining({
       source: 'visualizer_v2_save_to_global',
@@ -292,7 +296,7 @@ describe('useVisualizerSave', () => {
     );
   });
 
-  it('保存模板到当前聊天会写入聊天模板快照并刷新运行时结构', async () => {
+  it('保存模板到当前聊天会在当前楼层提交 shard 和 guide，不触发历史 recovery guard', async () => {
     const { useVisualizerStore } = await import('../../../src/presentation-v2/stores/visualizer-store');
     const { useVisualizerSave } = await import('../../../src/presentation-v2/composables/visualizer/useVisualizerSave');
     const store = useVisualizerStore();
@@ -306,12 +310,16 @@ describe('useVisualizerSave', () => {
     const saved = await useVisualizerSave().saveTemplateToCurrentChat();
 
     expect(saved).toBe(true);
-    expect(serviceMock.ensureTemplateRecoveryOrDeleteCurrentIsolationData_ACU).toHaveBeenCalledWith(expect.any(Object), 'save-template');
-    expect(serviceMock.setChatSheetGuideDataForIsolationKey_ACU).toHaveBeenCalledWith(
-      'iso-test',
-      expect.any(Object),
-      expect.objectContaining({ syncTemplateScope: true }),
-    );
+    expect(serviceMock.ensureTemplateRecoveryOrDeleteCurrentIsolationData_ACU).not.toHaveBeenCalled();
+    expect(serviceMock.commitCurrentFloorTemplateChanges_ACU).toHaveBeenCalledWith(expect.objectContaining({
+      isolationKey: 'iso-test',
+      guideData: expect.any(Object),
+      syncTemplateScope: true,
+      sheetCheckpoints: [expect.objectContaining({
+        sheetKey: 'sheet_test_vz2',
+        event: { filledSheetKeys: [], changedSheetKeys: ['sheet_test_vz2'] },
+      })],
+    }));
     expect(serviceMock.applyTemplateScopeForCurrentChat_ACU).toHaveBeenCalled();
     expect(runtimeMock._set_currentJsonTableData_ACU).toHaveBeenCalledWith(expect.objectContaining({
       sheet_test_vz2: expect.objectContaining({ name: '新表名' }),
@@ -320,41 +328,139 @@ describe('useVisualizerSave', () => {
     expect(store.lastSavedTarget).toBe('template-chat');
   });
 
-  it('保存聊天模板需要重置旧数据时，统一 guard 通过后继续保存', async () => {
+  it('当前聊天模板原子提交失败时不推进运行时、基线、scope 或锁草稿', async () => {
     const { useVisualizerStore } = await import('../../../src/presentation-v2/stores/visualizer-store');
     const { useVisualizerSave } = await import('../../../src/presentation-v2/composables/visualizer/useVisualizerSave');
     const store = useVisualizerStore();
     store.loadSnapshot({
       mate: { type: 'chatSheets', version: 1 },
-      sheet_test_vz2: sheet('结构变更表'),
+      sheet_test_vz2: sheet('旧表名'),
     }, ['sheet_test_vz2']);
-    store.setDirty(true);
-    serviceMock.ensureTemplateRecoveryOrDeleteCurrentIsolationData_ACU.mockResolvedValueOnce({ success: true, dataWasReset: true });
-
-    const saved = await useVisualizerSave().saveTemplateToCurrentChat();
-
-    expect(saved).toBe(true);
-    expect(serviceMock.ensureTemplateRecoveryOrDeleteCurrentIsolationData_ACU).toHaveBeenCalledWith(expect.any(Object), 'save-template');
-    expect(serviceMock.setChatSheetGuideDataForIsolationKey_ACU).toHaveBeenCalled();
-    expect(store.lastSavedTarget).toBe('template-chat');
-  });
-
-  it('保存聊天模板被统一 guard 拦截时，不保存模板', async () => {
-    const { useVisualizerStore } = await import('../../../src/presentation-v2/stores/visualizer-store');
-    const { useVisualizerSave } = await import('../../../src/presentation-v2/composables/visualizer/useVisualizerSave');
-    const store = useVisualizerStore();
-    store.loadSnapshot({
-      mate: { type: 'chatSheets', version: 1 },
-      sheet_test_vz2: sheet('结构变更表'),
-    }, ['sheet_test_vz2']);
-    store.setDirty(true);
-    serviceMock.ensureTemplateRecoveryOrDeleteCurrentIsolationData_ACU.mockResolvedValueOnce({ success: false, dataWasReset: false });
+    const baseDataBeforeSave = JSON.parse(JSON.stringify(store.templateBaseData));
+    const baseOrderBeforeSave = [...store.templateBaseSheetOrder];
+    store.currentSheet.name = '未提交的新表名';
+    store.queueLockChanges([
+      {
+        sheetKey: 'sheet_test_vz2',
+        rows: [{ rowIndex: 0, locked: true }],
+        columns: [],
+        cells: [],
+        specialIndexLocked: false,
+      },
+    ]);
+    serviceMock.commitCurrentFloorTemplateChanges_ACU.mockResolvedValueOnce({
+      saved: false,
+      error: '提交被业务层拒绝',
+    });
 
     const saved = await useVisualizerSave().saveTemplateToCurrentChat();
 
     expect(saved).toBe(false);
-    expect(serviceMock.setChatSheetGuideDataForIsolationKey_ACU).not.toHaveBeenCalled();
+    expect(serviceMock.commitCurrentFloorTemplateChanges_ACU).toHaveBeenCalledTimes(1);
+    expect(toastMock.error).toHaveBeenCalledWith('提交被业务层拒绝', { muteable: false });
+    expect(runtimeMock._set_currentJsonTableData_ACU).not.toHaveBeenCalled();
+    expect(serviceMock.applyTemplateScopeForCurrentChat_ACU).not.toHaveBeenCalled();
+    expect(serviceMock.saveTableLocksForSheet_ACU).not.toHaveBeenCalled();
+    expect(serviceMock.setSpecialIndexLockEnabled_ACU).not.toHaveBeenCalled();
+    expect(serviceMock.isSqliteMode).not.toHaveBeenCalled();
+    expect(serviceMock.reloadStorageProvider).not.toHaveBeenCalled();
+    expect(serviceMock.refreshMergedDataAndNotify_ACU).not.toHaveBeenCalled();
+    expect(store.templateBaseData).toEqual(baseDataBeforeSave);
+    expect(store.templateBaseSheetOrder).toEqual(baseOrderBeforeSave);
+    expect(store.pendingLockChanges).toHaveLength(1);
     expect(store.lastSavedTarget).toBeNull();
+    expect(store.dirty).toBe(true);
+    expect(store.isSaving).toBe(false);
+  });
+
+  it('SQLite 运行时刷新失败不会回滚成功的模板提交或重复提交 checkpoint', async () => {
+    const { useVisualizerStore } = await import('../../../src/presentation-v2/stores/visualizer-store');
+    const { useVisualizerSave } = await import('../../../src/presentation-v2/composables/visualizer/useVisualizerSave');
+    const store = useVisualizerStore();
+    store.loadSnapshot({
+      mate: { type: 'chatSheets', version: 1 },
+      sheet_test_vz2: sheet('旧表名'),
+    }, ['sheet_test_vz2']);
+    store.currentSheet.name = '已提交的新表名';
+    store.setDirty(true);
+    serviceMock.isSqliteMode.mockReturnValueOnce(true);
+    serviceMock.reloadStorageProvider.mockRejectedValueOnce(new Error('reload failed'));
+
+    const saved = await useVisualizerSave().saveTemplateToCurrentChat();
+
+    expect(saved).toBe(true);
+    expect(serviceMock.commitCurrentFloorTemplateChanges_ACU).toHaveBeenCalledTimes(1);
+    expect(serviceMock.reloadStorageProvider).toHaveBeenCalledTimes(1);
+    expect(toastMock.warning).toHaveBeenCalledWith(
+      '模板已保存，但 SQLite 运行时刷新失败；请重新载入当前聊天后重试。',
+      { muteable: false },
+    );
+    expect(serviceMock.applyTemplateScopeForCurrentChat_ACU).toHaveBeenCalledTimes(1);
+    expect(runtimeMock._set_currentJsonTableData_ACU).toHaveBeenCalledWith(expect.objectContaining({
+      sheet_test_vz2: expect.objectContaining({ name: '已提交的新表名' }),
+    }));
+    expect(serviceMock.refreshMergedDataAndNotify_ACU).toHaveBeenCalledTimes(1);
+    expect(store.templateBaseData.sheet_test_vz2.name).toBe('已提交的新表名');
+    expect(store.lastSavedTarget).toBe('template-chat');
+    expect(store.dirty).toBe(false);
+    expect(store.isSaving).toBe(false);
+  });
+
+  it('合并数据刷新失败不会把成功的模板提交伪装为保存失败', async () => {
+    const { useVisualizerStore } = await import('../../../src/presentation-v2/stores/visualizer-store');
+    const { useVisualizerSave } = await import('../../../src/presentation-v2/composables/visualizer/useVisualizerSave');
+    const store = useVisualizerStore();
+    store.loadSnapshot({
+      mate: { type: 'chatSheets', version: 1 },
+      sheet_test_vz2: sheet('旧表名'),
+    }, ['sheet_test_vz2']);
+    store.currentSheet.name = '已提交但刷新失败的新表名';
+    store.setDirty(true);
+    serviceMock.refreshMergedDataAndNotify_ACU.mockRejectedValueOnce(new Error('merged refresh failed'));
+
+    const saved = await useVisualizerSave().saveTemplateToCurrentChat();
+
+    expect(saved).toBe(true);
+    expect(serviceMock.commitCurrentFloorTemplateChanges_ACU).toHaveBeenCalledTimes(1);
+    expect(toastMock.warning).toHaveBeenCalledWith(
+      '模板已保存，但合并数据刷新失败；请重新载入当前聊天后重试。',
+      { muteable: false },
+    );
+    expect(store.templateBaseData.sheet_test_vz2.name).toBe('已提交但刷新失败的新表名');
+    expect(store.lastSavedTarget).toBe('template-chat');
+    expect(store.dirty).toBe(false);
+    expect(store.isSaving).toBe(false);
+  });
+
+  it('模板作用域运行时同步失败不会回滚成功的模板提交', async () => {
+    const { useVisualizerStore } = await import('../../../src/presentation-v2/stores/visualizer-store');
+    const { useVisualizerSave } = await import('../../../src/presentation-v2/composables/visualizer/useVisualizerSave');
+    const store = useVisualizerStore();
+    store.loadSnapshot({
+      mate: { type: 'chatSheets', version: 1 },
+      sheet_test_vz2: sheet('旧表名'),
+    }, ['sheet_test_vz2']);
+    store.currentSheet.name = '已提交但 scope 同步失败的新表名';
+    store.setDirty(true);
+    serviceMock.applyTemplateScopeForCurrentChat_ACU.mockImplementationOnce(() => {
+      throw new Error('scope sync failed');
+    });
+
+    const saved = await useVisualizerSave().saveTemplateToCurrentChat();
+
+    expect(saved).toBe(true);
+    expect(serviceMock.commitCurrentFloorTemplateChanges_ACU).toHaveBeenCalledTimes(1);
+    expect(toastMock.warning).toHaveBeenCalledWith(
+      '模板已保存，但模板作用域运行时同步失败；请重新载入当前聊天后重试。',
+      { muteable: false },
+    );
+    expect(runtimeMock._set_currentJsonTableData_ACU).toHaveBeenCalledWith(expect.objectContaining({
+      sheet_test_vz2: expect.objectContaining({ name: '已提交但 scope 同步失败的新表名' }),
+    }));
+    expect(store.templateBaseData.sheet_test_vz2.name).toBe('已提交但 scope 同步失败的新表名');
+    expect(store.lastSavedTarget).toBe('template-chat');
+    expect(store.dirty).toBe(false);
+    expect(store.isSaving).toBe(false);
   });
 
   it('保存时提交 AI 助手暂存的锁变化并在成功后清空队列', async () => {
@@ -389,6 +495,81 @@ describe('useVisualizerSave', () => {
     );
     expect(serviceMock.setSpecialIndexLockEnabled_ACU).toHaveBeenCalledWith('sheet_test_vz2', false);
     expect(store.pendingLockChanges).toEqual([]);
+  });
+
+  it('运行时数据同步失败时仍保存锁草稿并完成模板提交', async () => {
+    const { useVisualizerStore } = await import('../../../src/presentation-v2/stores/visualizer-store');
+    const { useVisualizerSave } = await import('../../../src/presentation-v2/composables/visualizer/useVisualizerSave');
+    const store = useVisualizerStore();
+    store.loadSnapshot({
+      mate: { type: 'chatSheets', version: 1 },
+      sheet_test_vz2: sheet('旧表名'),
+    }, ['sheet_test_vz2']);
+    store.currentSheet.name = '运行时同步失败的新表名';
+    store.queueLockChanges([
+      {
+        sheetKey: 'sheet_test_vz2',
+        rows: [{ rowIndex: 0, locked: true }],
+        columns: [],
+        cells: [],
+        specialIndexLocked: false,
+      },
+    ]);
+    runtimeMock._set_currentJsonTableData_ACU.mockImplementationOnce(() => {
+      throw new Error('runtime sync failed');
+    });
+
+    const saved = await useVisualizerSave().saveTemplateToCurrentChat();
+
+    expect(saved).toBe(true);
+    expect(serviceMock.commitCurrentFloorTemplateChanges_ACU).toHaveBeenCalledTimes(1);
+    expect(serviceMock.saveTableLocksForSheet_ACU).toHaveBeenCalledTimes(1);
+    expect(toastMock.warning).toHaveBeenCalledWith(
+      '模板已保存，但运行时数据同步失败；请重新载入当前聊天后重试。',
+      { muteable: false },
+    );
+    expect(store.pendingLockChanges).toEqual([]);
+    expect(store.lockDraftsDirty).toBe(false);
+    expect(store.dirty).toBe(false);
+    expect(store.lastSavedTarget).toBe('template-chat');
+  });
+
+  it('锁草稿保存失败时保留手动锁改动并在重试时不重复提交 checkpoint', async () => {
+    const { useVisualizerStore } = await import('../../../src/presentation-v2/stores/visualizer-store');
+    const { useVisualizerSave } = await import('../../../src/presentation-v2/composables/visualizer/useVisualizerSave');
+    const store = useVisualizerStore();
+    store.loadSnapshot({
+      mate: { type: 'chatSheets', version: 1 },
+      sheet_test_vz2: sheet('旧表名'),
+    }, ['sheet_test_vz2']);
+    store.currentSheet.name = '锁保存失败的新表名';
+    store.toggleRowLock('sheet_test_vz2', 0);
+    serviceMock.saveTableLocksForSheet_ACU.mockImplementationOnce(() => {
+      throw new Error('lock save failed');
+    });
+
+    const firstSaved = await useVisualizerSave().saveTemplateToCurrentChat();
+
+    expect(firstSaved).toBe(true);
+    expect(serviceMock.commitCurrentFloorTemplateChanges_ACU).toHaveBeenCalledTimes(1);
+    expect(toastMock.warning).toHaveBeenCalledWith(
+      '模板已保存，但表格锁定设置未保存；请重试保存。',
+      { muteable: false },
+    );
+    expect(store.templateBaseData.sheet_test_vz2.name).toBe('锁保存失败的新表名');
+    expect(store.pendingLockChanges).toEqual([]);
+    expect(store.lockDraftsDirty).toBe(true);
+    expect(store.isRowLocked('sheet_test_vz2', 0)).toBe(true);
+    expect(store.dirty).toBe(true);
+    expect(store.lastSavedTarget).toBe('template-chat');
+
+    const retrySaved = await useVisualizerSave().saveTemplateToCurrentChat();
+
+    expect(retrySaved).toBe(true);
+    expect(serviceMock.commitCurrentFloorTemplateChanges_ACU).toHaveBeenCalledTimes(1);
+    expect(serviceMock.saveTableLocksForSheet_ACU).toHaveBeenCalledTimes(2);
+    expect(store.lockDraftsDirty).toBe(false);
+    expect(store.dirty).toBe(false);
   });
 
   it('保存已删除表时只把 deletedSheetKeys 传给硬删除且不把删除表写入 V2 commit', async () => {

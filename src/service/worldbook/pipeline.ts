@@ -10,6 +10,8 @@ import { getImportBatchPrefix_ACU, getImportStablePrefix_ACU } from '../../share
 import { logDebug_ACU, logError_ACU, logWarn_ACU, parseTableTemplateJson_ACU } from '../../shared/utils';
 import { isEntryBlocked_ACU } from '../../shared/utils';
 import { formatJsonToReadable_ACU, maybeLiftWorldbookSuppression_ACU, mergeAllIndependentTables_ACU, shouldSuppressWorldbookInjection_ACU } from '../runtime/helpers-remaining';
+import { normalizeCanonicalTableRows_ACU } from '../../shared/canonical-row-normalizer';
+import { persistNullRowCleanupShards_ACU, type NullRowCleanupPersistStatus_ACU } from '../table/storage-frame-v2-persist';
 import { allocConsecutiveOrderBlock_ACU, applyPlacementToEntry_ACU, buildDefaultGlobalInjectionConfig_ACU, buildUsedOrderSet_ACU, ensureExportConfigDefaults_ACU, ensureGlobalInjectionConfigDefaults_ACU, getEntryOrderNumber_ACU, getFixedPlacementDefaultsForTable_ACU, getInjectionTargetLorebook_ACU, getIsolationPrefix_ACU, isEntryPlacementMatched_ACU, normalizeLorebookPosition_ACU, normalizePlacementConfig_ACU, updateCustomTableExports_ACU, updateImportantPersonsRelatedEntries_ACU, updateOutlineTableEntry_ACU, updateSummaryTableEntries_ACU } from './injection-engine';
 // pipeline.ts
 // 从 05_core_tail.js 迁入
@@ -550,6 +552,13 @@ export   async function deleteAllGeneratedEntries_ACU(targetLorebook: string | n
 export   async function refreshMergedDataAndNotify_ACU() {
       // 重新加载聊天记录
     await loadAllChatMessages_ACU();
+    let removedNullRowCount = 0;
+    let canonicalIssues: Array<{ sheetKey: string; rowIndex: number; reason: string }> = [];
+    let integrityFixed = false;
+    let degraded = false;
+    let nullRowCleanupPersisted: NullRowCleanupPersistStatus_ACU = 'skipped_no_changes';
+    let nullRowCleanupError: string | undefined;
+    let nullRowCleanupMessageIndex: number | undefined;
       
     // 合并数据 (使用新的独立表合并逻辑)
     let mergedData = await mergeAllIndependentTables_ACU();
@@ -572,7 +581,8 @@ export   async function refreshMergedDataAndNotify_ACU() {
                 _set_currentJsonTableData_ACU(templateData);
             } else {
                 // 极端兜底：模板也解析失败，设为空对象
-                _set_currentJsonTableData_ACU({ mate: { type: 'chatSheets', version: 1 } });
+                mergedData = { mate: { type: 'chatSheets', version: 1 } };
+                _set_currentJsonTableData_ACU(mergedData);
                 logWarn_ACU('[回溯空数据] 模板解析失败，currentJsonTableData_ACU 设为最小空结构。');
             }
         }
@@ -580,12 +590,27 @@ export   async function refreshMergedDataAndNotify_ACU() {
     } else {
         // 更新内存中的数据
         // [新增] 数据完整性检查：在加载数据时为AM编码的条目自动添加auto_merged标记
-        let integrityFixed = false;
+        const normalization = normalizeCanonicalTableRows_ACU(mergedData);
+        removedNullRowCount = normalization.removedRows.length;
+        canonicalIssues = normalization.errors.map(issue => ({ ...issue }));
+        const cleanupSheetDataByKey = Object.fromEntries(
+            [...new Set(normalization.removedRows.map(issue => issue.sheetKey))]
+                .filter(sheetKey => sheetKey.startsWith('sheet_') && mergedData[sheetKey])
+                .map(sheetKey => [sheetKey, JSON.parse(JSON.stringify(mergedData[sheetKey]))]),
+        );
+        if (normalization.removedRows.length > 0) {
+            logWarn_ACU(`[数据修复] 已移除 ${normalization.removedRows.length} 条缺少 row_id 的损坏数据行。`);
+            integrityFixed = true;
+        }
+        if (normalization.errors.length > 0) {
+            degraded = true;
+            logWarn_ACU(`[数据修复] 发现 ${normalization.errors.length} 条无法自动合并的表格行问题。`);
+        }
         Object.keys(mergedData).forEach((sheetKey: string) => {
             if (mergedData[sheetKey] && mergedData[sheetKey].content && Array.isArray(mergedData[sheetKey].content)) {
                 const table = mergedData[sheetKey];
                 table.content.slice(1).forEach((row: any, idx: number) => {
-                    if (row && row.length > 1 && row[1] && row[1].startsWith('AM') && row[row.length - 1] !== 'auto_merged') {
+                    if (Array.isArray(row) && row.length > 1 && typeof row[1] === 'string' && row[1].startsWith('AM') && row[row.length - 1] !== 'auto_merged') {
                         // 发现AM开头的条目缺少auto_merged标记，自动修复
                         row.push('auto_merged');
                         integrityFixed = true;
@@ -595,23 +620,58 @@ export   async function refreshMergedDataAndNotify_ACU() {
             }
         });
 
+        if (normalization.removedRows.length > 0) {
+            if (normalization.errors.length > 0) {
+                nullRowCleanupPersisted = 'skipped_invalid_data';
+            } else {
+                const cleanupResult = await persistNullRowCleanupShards_ACU({
+                    sheetDataByKey: cleanupSheetDataByKey,
+                    isolationKey: getCurrentIsolationKey_ACU(),
+                });
+                nullRowCleanupPersisted = cleanupResult.status;
+                nullRowCleanupError = cleanupResult.error;
+                nullRowCleanupMessageIndex = cleanupResult.messageIndex;
+                if (cleanupResult.status !== 'persisted') {
+                    degraded = true;
+                }
+                if (cleanupResult.status === 'failed') {
+                    logWarn_ACU('[数据修复] 空 row_id 已从内存数据移除，但 V2 shard 自愈持久化失败。', cleanupResult.error);
+                }
+            }
+        }
+
         if (integrityFixed) {
             logDebug_ACU('数据完整性已自动修复，添加了缺失的auto_merged标记');
         }
 
         // [修复] 强制稳定顺序（用户手动顺序优先，否则模板顺序）
         const stableKeys = getSortedSheetKeys_ACU(mergedData);
-        _set_currentJsonTableData_ACU(reorderDataBySheetKeys_ACU(mergedData, stableKeys));
+        mergedData = reorderDataBySheetKeys_ACU(mergedData, stableKeys);
+        _set_currentJsonTableData_ACU(mergedData);
         logDebug_ACU('Updated currentJsonTableData_ACU with independently merged data.');
         // UI 选择器刷新由 presentation 层调用方负责
     }
           
     // 更新世界书
-    await updateReadableLorebookEntry_ACU(true);
-    logDebug_ACU('Updated worldbook entries with merged data.');
+    try {
+        await updateReadableLorebookEntry_ACU(true, false, null, mergedData);
+        logDebug_ACU('Updated worldbook entries with merged data.');
+    } catch (error) {
+        degraded = true;
+        logWarn_ACU('[数据恢复] 表格数据已加载到内存，但世界书刷新失败；保留可读和可导出数据。', error);
+    }
 
     // 返回结果，UI 通知由 presentation 层调用方负责
-    return { mergedData: currentJsonTableData_ACU, integrityFixed: false };
+    return {
+        mergedData,
+        integrityFixed,
+        removedNullRowCount,
+        canonicalIssues,
+        degraded,
+        nullRowCleanupPersisted,
+        ...(nullRowCleanupError ? { nullRowCleanupError } : {}),
+        ...(nullRowCleanupMessageIndex !== undefined ? { nullRowCleanupMessageIndex } : {}),
+    };
   }
 
 
