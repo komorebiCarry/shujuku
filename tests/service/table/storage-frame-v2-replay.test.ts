@@ -1588,6 +1588,69 @@ describe('loadTableStateFromFramesV2_ACU', () => {
     });
   });
 
+  it('同一 frame 按 introduction 后 migration 再 meta_update 的顺序恢复最终持久化状态', async () => {
+    const checkpointData = makeCheckpointData();
+    const before = checkpointData.sheet_0;
+    const migrated = {
+      ...before,
+      content: [['row_id', 'name', 'marker'], ['1', '铁剑', null]],
+      sourceData: { ...before.sourceData, ddl: 'CREATE TABLE inventory (row_id INTEGER PRIMARY KEY, name TEXT, marker TEXT);' },
+    };
+    const migration = await buildSheetSchemaMigrationOperation_ACU('sheet_0', before, migrated);
+    const introducedSheet = {
+      uid: 'introduced', name: '新增表', orderNo: 2,
+      content: [['row_id', 'value']],
+      sourceData: { ddl: 'CREATE TABLE introduced (row_id INTEGER PRIMARY KEY, value TEXT);' },
+      updateConfig: {}, exportConfig: {},
+    };
+    const chat = [{
+      is_user: false,
+      TavernDB_ACU_IsolatedData: {
+        '': {
+          _acu_storage_version: 2,
+          storageFrame: {
+            version: 2,
+            checkpoint: { kind: 'full', createdAt: 1, reason: 'init', data: checkpointData },
+            perSheetCheckpoints: {
+              sheet_new: {
+                kind: 'sheet_full', createdAt: 2, reason: 'schema_change', sheetKey: 'sheet_new', data: introducedSheet,
+                timeline: { kind: 'sheet_introduction', activateAtMessageIndex: 0, afterSeq: 7 },
+              },
+            },
+            logEntries: [{
+              seq: 8, entryId: 'template-migration-meta', createdAt: 3, source: 'template_assistant', targetMessageIndex: 0, aiFloor: 1,
+              filledSheetKeys: [], changedSheetKeys: ['sheet_0'], groupKeys: [],
+              operations: [
+                migration,
+                {
+                  kind: 'meta_update', sheetKey: 'sheet_0',
+                  meta: {
+                    name: '新背包', orderNo: 4,
+                    sourceData: { provider: 'template' },
+                    updateConfig: { mode: 'manual' },
+                    exportConfig: { enabled: true },
+                  },
+                },
+              ],
+            }],
+          },
+        },
+      },
+    }];
+
+    const replayed = await loadTableStateFromFramesV2_ACU(chat, '', { updateRuntimeState: false });
+
+    expect(replayed?.sheet_new).toEqual(introducedSheet);
+    expect(replayed?.sheet_0).toEqual({
+      ...migrated,
+      name: '新背包', orderNo: 4,
+      sourceData: { ...migrated.sourceData, provider: 'template' },
+      updateConfig: { mode: 'manual' },
+      exportConfig: { enabled: true },
+    });
+    expect(replayed?.sheet_0.content[1][2]).toBeNull();
+  });
+
   it('未知或畸形 operation fail closed，且不返回伪成功 state', async () => {
     const previousIndependentStates = independentTableStates_ACU;
     _set_independentTableStates_ACU({});

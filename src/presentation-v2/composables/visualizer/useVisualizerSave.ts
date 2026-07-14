@@ -142,19 +142,23 @@ function sameTemplateValue_ACU(left: any, right: any): boolean {
   return JSON.stringify(sortForComparison_ACU(left)) === JSON.stringify(sortForComparison_ACU(right));
 }
 
-function projectSheetTemplate_ACU(sheet: any): Record<string, any> {
-  const projected = cloneData(sheet || {});
-  if (Array.isArray(projected.content)) projected.content = [cloneData(projected.content[0] || [])];
-  delete projected.seedRows;
-  return projected;
-}
-
 function projectSheetSchema_ACU(sheet: any): Record<string, any> {
   return {
     uid: sheet?.uid,
     headers: Array.isArray(sheet?.content?.[0]) ? cloneData(sheet.content[0]) : [],
     ddl: sheet?.sourceData?.ddl || '',
   };
+}
+
+function projectSheetPersistentMetadata_ACU(sheet: any): Record<string, any> {
+  const sourceData = cloneData(sheet?.sourceData || {});
+  delete sourceData.ddl;
+  const metadata: Record<string, any> = { sourceData };
+  if (sheet?.name !== undefined) metadata.name = sheet.name;
+  if (sheet?.orderNo !== undefined) metadata.orderNo = sheet.orderNo;
+  if (sheet?.updateConfig !== undefined) metadata.updateConfig = cloneData(sheet.updateConfig);
+  if (sheet?.exportConfig !== undefined) metadata.exportConfig = cloneData(sheet.exportConfig);
+  return metadata;
 }
 
 function classifyVisualizerTemplateChanges_ACU(
@@ -168,8 +172,7 @@ function classifyVisualizerTemplateChanges_ACU(
   const schemaChangedSheetKeys = nextKeys.filter(key => baseData?.[key]
     && !sameTemplateValue_ACU(projectSheetSchema_ACU(baseData[key]), projectSheetSchema_ACU(nextData[key])));
   const metadataChangedSheetKeys = nextKeys.filter(key => baseData?.[key]
-    && !schemaChangedSheetKeys.includes(key)
-    && !sameTemplateValue_ACU(projectSheetTemplate_ACU(baseData[key]), projectSheetTemplate_ACU(nextData[key])));
+    && !sameTemplateValue_ACU(projectSheetPersistentMetadata_ACU(baseData[key]), projectSheetPersistentMetadata_ACU(nextData[key])));
   return { addedSheetKeys, schemaChangedSheetKeys, metadataChangedSheetKeys, deletedSheetKeys };
 }
 
@@ -458,6 +461,7 @@ export function useVisualizerSave(interactions: VisualizerSaveInteractions = {})
         toastStore.info('模板结构没有变化。', { muteable: false });
         return false;
       }
+      let schemaOperations: any[] = [];
       if (changes.schemaChangedSheetKeys.length > 0 && visualizer.templateBaseData) {
         const preflightSnapshot = {
           tempData: cloneData(visualizer.tempData),
@@ -477,6 +481,19 @@ export function useVisualizerSave(interactions: VisualizerSaveInteractions = {})
           toastStore.error(`模板结构未通过 schema migration preflight：${preflight.blockers.join('；')}`, { muteable: false });
           return false;
         }
+        const operationKeys = preflight.operations.map(operation => String(operation?.sheetKey || ''));
+        const preflightChangedKeys = [...preflight.changedSheetKeys].sort();
+        const expectedSchemaKeys = [...changes.schemaChangedSheetKeys].sort();
+        if (
+          !sameTemplateValue_ACU(preflightChangedKeys, expectedSchemaKeys)
+          || operationKeys.length !== expectedSchemaKeys.length
+          || new Set(operationKeys).size !== operationKeys.length
+          || operationKeys.some(sheetKey => !expectedSchemaKeys.includes(sheetKey))
+        ) {
+          toastStore.error('模板结构预检未返回与变更 Sheet 一一对应的 migration operation，已拒绝保存。', { muteable: false });
+          return false;
+        }
+        schemaOperations = preflight.operations.map(operation => cloneData(operation));
         const currentPreflightSnapshot = {
           tempData: cloneData(visualizer.tempData),
           sheetOrder: [...visualizer.sheetOrder],
@@ -504,14 +521,34 @@ export function useVisualizerSave(interactions: VisualizerSaveInteractions = {})
       }
       const preparation = prepareTemplateSheetsForCommit_ACU(orderedData, changedSheetKeys);
       const templateScopeSource = cloneData(orderedData);
+      const schemaOperationBySheetKey = new Map(schemaOperations.map(operation => [operation.sheetKey, operation]));
+      const sheetChanges = changedSheetKeys.map(sheetKey => {
+        if (changes.addedSheetKeys.includes(sheetKey)) {
+          return { kind: 'introduction' as const, sheetKey, sheetData: orderedData[sheetKey] };
+        }
+        const operations: any[] = [];
+        const schemaOperation = schemaOperationBySheetKey.get(sheetKey);
+        if (schemaOperation) operations.push(schemaOperation);
+        if (changes.metadataChangedSheetKeys.includes(sheetKey)) {
+          operations.push({
+            kind: 'meta_update' as const,
+            sheetKey,
+            meta: projectSheetPersistentMetadata_ACU(orderedData[sheetKey]),
+          });
+        }
+        if (operations.length === 0) {
+          throw new Error(`模板保存缺少可持久化的变更 operation：${sheetKey}。`);
+        }
+        return {
+          kind: 'operations' as const,
+          sheetKey,
+          targetSheetData: orderedData[sheetKey],
+          operations,
+        };
+      });
       const commitResult = await commitCurrentFloorTemplateChanges_ACU({
         isolationKey: guideIsolationKey,
-        sheetCheckpoints: changedSheetKeys.map(sheetKey => ({
-          sheetKey,
-          sheetData: orderedData[sheetKey],
-          isNewSheet: changes.addedSheetKeys.includes(sheetKey),
-          event: { filledSheetKeys: [] as string[], changedSheetKeys: [sheetKey] },
-        })),
+        sheetChanges,
         guideData,
         syncTemplateScope: true,
         templateSource: templateScopeSource,

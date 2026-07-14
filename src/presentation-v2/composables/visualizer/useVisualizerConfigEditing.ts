@@ -223,7 +223,7 @@ export function useVisualizerConfigEditing() {
       const content = ensureSheetContent(sheet);
       content[0].push(normalizedName);
       content.slice(1).forEach((row: any) => {
-        if (Array.isArray(row)) row.push('');
+        if (Array.isArray(row)) row.push(null);
       });
     });
   }

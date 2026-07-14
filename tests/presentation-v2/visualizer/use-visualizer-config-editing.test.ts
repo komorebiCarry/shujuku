@@ -95,11 +95,11 @@ describe('useVisualizerConfigEditing', () => {
 
     config.addColumn('品质');
     expect(store.currentSheet.content[0]).toEqual([null, '旧物品', '数量', '品质']);
-    expect(store.currentSheet.content[1]).toEqual([null, '苹果', '2', '']);
+    expect(store.currentSheet.content[1]).toEqual([null, '苹果', '2', null]);
 
     config.deleteColumn(1);
     expect(store.currentSheet.content[0]).toEqual([null, '旧物品', '品质']);
-    expect(store.currentSheet.content[1]).toEqual([null, '苹果', '']);
+    expect(store.currentSheet.content[1]).toEqual([null, '苹果', null]);
   });
 
   it('全局注入配置作为模板级草稿写入 mate.globalInjectionConfig', async () => {

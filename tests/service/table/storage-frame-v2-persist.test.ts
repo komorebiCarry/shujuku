@@ -36,7 +36,8 @@ vi.mock('../../../src/service/runtime/state-manager', () => ({
 vi.mock('../../../src/service/table/storage-strategy-resolver', () => ({
   isV2TagData_ACU: vi.fn((tagData: any) => tagData?.storageFrame?.version === 2 && Array.isArray(tagData.storageFrame.logEntries)),
 }));
-vi.mock('../../../src/service/table/storage-frame-v2-replay', () => ({
+vi.mock('../../../src/service/table/storage-frame-v2-replay', async importOriginal => ({
+  ...(await importOriginal<typeof import('../../../src/service/table/storage-frame-v2-replay')>()),
   collectScheduleSummaryFromFramesV2_ACU: mocks.collectSummary,
   loadTableStateFromFramesV2_ACU: mocks.loadReplayState,
 }));
@@ -54,6 +55,7 @@ vi.mock('../../../src/service/table/table-write-transaction', () => ({
 }));
 
 import { commitCurrentFloorTemplateChanges_ACU, persistNullRowCleanupShards_ACU, persistTableSheetCheckpointV2_ACU } from '../../../src/service/table/storage-frame-v2-persist';
+import { buildSheetSchemaMigrationOperation_ACU } from '../../../src/service/table/table-schema-migration';
 
 const sheetA = { uid: 'a', name: 'A', sourceData: {}, content: [['row_id', 'value'], ['1', 'new']], updateConfig: {}, exportConfig: {}, orderNo: 1 } as any;
 const sheetB = { uid: 'b', name: 'B', sourceData: {}, content: [['row_id', 'value']], updateConfig: {}, exportConfig: {}, orderNo: 2 } as any;
@@ -392,16 +394,15 @@ describe('commitCurrentFloorTemplateChanges_ACU', () => {
     mocks.setGuide.mockReset().mockImplementation(() => true);
   });
 
-  it('在最新 AI 楼层原子写入多个 shard 与 guide，并且严格保存一次', async () => {
+  it('在最新 AI 楼层原子追加多个既有 Sheet operation 与 guide，并且严格保存一次', async () => {
     const message = seedFrame({ logEntries: [] });
     const guideData = { sheet_a: { name: 'A' }, sheet_b: { name: 'B' } };
-    const event = { filledSheetKeys: [], changedSheetKeys: ['sheet_a'] };
 
     const result = await commitCurrentFloorTemplateChanges_ACU({
       isolationKey: '',
-      sheetCheckpoints: [
-        { sheetKey: 'sheet_a', sheetData: sheetA, event },
-        { sheetKey: 'sheet_b', sheetData: sheetB },
+      sheetChanges: [
+        { kind: 'operations', sheetKey: 'sheet_a', targetSheetData: sheetA, operations: [{ kind: 'meta_update', sheetKey: 'sheet_a', meta: { name: 'A' } }] },
+        { kind: 'operations', sheetKey: 'sheet_b', targetSheetData: sheetB, operations: [{ kind: 'meta_update', sheetKey: 'sheet_b', meta: { name: 'B' } }] },
       ],
       guideData,
       syncTemplateScope: true,
@@ -416,13 +417,117 @@ describe('commitCurrentFloorTemplateChanges_ACU', () => {
       syncTemplateScope: true,
       updatedAt: 30,
     }));
-    expect(message.TavernDB_ACU_IsolatedData[''].storageFrame.perSheetCheckpoints.sheet_a).toMatchObject({
-      kind: 'sheet_full', reason: 'schema_change', createdAt: 30, sheetKey: 'sheet_a', event,
+    const frame = message.TavernDB_ACU_IsolatedData[''].storageFrame;
+    expect(frame.perSheetCheckpoints.sheet_a).toBeUndefined();
+    expect(frame.perSheetCheckpoints.sheet_b).toBeDefined();
+    expect(frame.logEntries).toHaveLength(1);
+    expect(frame.logEntries[0]).toMatchObject({
+      seq: 1, source: 'template_assistant', filledSheetKeys: [], changedSheetKeys: ['sheet_a', 'sheet_b'], groupKeys: [],
+      operations: [
+        { kind: 'meta_update', sheetKey: 'sheet_a', meta: { name: 'A' } },
+        { kind: 'meta_update', sheetKey: 'sheet_b', meta: { name: 'B' } },
+      ],
     });
-    expect(message.TavernDB_ACU_IsolatedData[''].storageFrame.perSheetCheckpoints.sheet_b).toMatchObject({
-      kind: 'sheet_full', reason: 'schema_change', createdAt: 30, sheetKey: 'sheet_b',
-      event: { filledSheetKeys: [], changedSheetKeys: ['sheet_b'] },
+  });
+
+  it('当前 frame 已有目标 Sheet 日志时将 migration 和 meta_update 追加到尾部且不创建旧 Sheet checkpoint', async () => {
+    const beforeSheet = {
+      uid: 'inventory', name: '旧背包', orderNo: 0,
+      content: [['row_id', '名称'], ['1', '铁剑']],
+      sourceData: { ddl: 'CREATE TABLE inventory (\n  row_id INTEGER PRIMARY KEY, -- 行号\n  item_name TEXT -- 名称\n);', note: '旧说明' },
+      updateConfig: {}, exportConfig: {},
+    } as any;
+    const migratedSheet = {
+      ...beforeSheet,
+      content: [['row_id', '名称', '品质'], ['1', '铁剑', null]],
+      sourceData: { ...beforeSheet.sourceData, ddl: 'CREATE TABLE inventory (\n  row_id INTEGER PRIMARY KEY, -- 行号\n  item_name TEXT, -- 名称\n  quality TEXT -- 品质\n);' },
+    } as any;
+    const targetSheet = {
+      ...migratedSheet,
+      name: '新背包',
+      orderNo: 4,
+      sourceData: { ...migratedSheet.sourceData, note: '新说明' },
+    } as any;
+    const migration = await buildSheetSchemaMigrationOperation_ACU('sheet_a', beforeSheet, migratedSheet);
+    const existingEntry = makeEntry({
+      seq: 7,
+      entryId: 'existing-target-entry',
+      changedSheetKeys: ['sheet_a'],
+      operations: [{ kind: 'meta_update', sheetKey: 'sheet_a', meta: { name: '旧背包' } }],
     });
+    const message = seedFrame({
+      checkpoint: { kind: 'full', createdAt: 1, reason: 'init', data: { mate: { type: 'acu' }, sheet_a: beforeSheet, sheet_b: sheetB } },
+      logEntries: [existingEntry],
+      perSheetCheckpoints: { sheet_b: { kind: 'sheet_full', createdAt: 2, reason: 'manual', sheetKey: 'sheet_b', data: sheetB } },
+    });
+    mocks.loadReplayState.mockResolvedValue({ mate: { type: 'acu' }, sheet_a: beforeSheet, sheet_b: sheetB });
+
+    const result = await commitCurrentFloorTemplateChanges_ACU({
+      isolationKey: '',
+      sheetChanges: [{
+        kind: 'operations',
+        sheetKey: 'sheet_a',
+        targetSheetData: targetSheet,
+        operations: [
+          migration,
+          { kind: 'meta_update', sheetKey: 'sheet_a', meta: { name: '新背包', orderNo: 4, sourceData: { note: '新说明' } } },
+        ],
+      }],
+      guideData: { sheet_a: { name: '新背包' }, sheet_b: { name: 'B' } },
+      createdAt: 30,
+    });
+
+    expect(result.saved).toBe(true);
+    const frame = message.TavernDB_ACU_IsolatedData[''].storageFrame;
+    expect(frame.logEntries[0]).toEqual(existingEntry);
+    expect(frame.logEntries[1]).toMatchObject({
+      seq: 8,
+      source: 'template_assistant',
+      changedSheetKeys: ['sheet_a'],
+      operations: [
+        expect.objectContaining({ kind: 'sheet_schema_migrate', sheetKey: 'sheet_a' }),
+        { kind: 'meta_update', sheetKey: 'sheet_a', meta: { name: '新背包', orderNo: 4, sourceData: { note: '新说明' } } },
+      ],
+    });
+    expect(frame.headRevision).toBe(frame.logEntries[1].commitRevision);
+    expect(frame.perSheetCheckpoints.sheet_a).toBeUndefined();
+  });
+
+  it('同批 introduction 与已有 Sheet migration 使用旧尾 seq 激活并将 operation 写入下一 seq', async () => {
+    const beforeSheet = {
+      uid: 'inventory', name: '背包', orderNo: 0,
+      content: [['row_id', '名称'], ['1', '铁剑']],
+      sourceData: { ddl: 'CREATE TABLE inventory (\n  row_id INTEGER PRIMARY KEY, -- 行号\n  item_name TEXT -- 名称\n);' },
+      updateConfig: {}, exportConfig: {},
+    } as any;
+    const targetSheet = {
+      ...beforeSheet,
+      content: [['row_id', '名称', '品质'], ['1', '铁剑', null]],
+      sourceData: { ddl: 'CREATE TABLE inventory (\n  row_id INTEGER PRIMARY KEY, -- 行号\n  item_name TEXT, -- 名称\n  quality TEXT -- 品质\n);' },
+    } as any;
+    const migration = await buildSheetSchemaMigrationOperation_ACU('sheet_a', beforeSheet, targetSheet);
+    const introducedSheet = { ...sheetB, uid: 'new_sheet', name: '新增表', content: [['row_id', 'value']] } as any;
+    const message = seedFrame({
+      checkpoint: { kind: 'full', createdAt: 1, reason: 'init', data: { mate: { type: 'acu' }, sheet_a: beforeSheet, sheet_b: sheetB } },
+      logEntries: [makeEntry({ seq: 7 })],
+      perSheetCheckpoints: {},
+    });
+    mocks.loadReplayState.mockResolvedValue({ mate: { type: 'acu' }, sheet_a: beforeSheet, sheet_b: sheetB });
+
+    const result = await commitCurrentFloorTemplateChanges_ACU({
+      isolationKey: '',
+      sheetChanges: [
+        { kind: 'introduction', sheetKey: 'sheet_new', sheetData: introducedSheet },
+        { kind: 'operations', sheetKey: 'sheet_a', targetSheetData: targetSheet, operations: [migration] },
+      ],
+      guideData: { sheet_a: { name: '背包' }, sheet_b: { name: 'B' }, sheet_new: { name: '新增表' } },
+      createdAt: 30,
+    });
+
+    expect(result.saved).toBe(true);
+    const frame = message.TavernDB_ACU_IsolatedData[''].storageFrame;
+    expect(frame.perSheetCheckpoints.sheet_new.timeline).toEqual({ kind: 'sheet_introduction', activateAtMessageIndex: 0, afterSeq: 7 });
+    expect(frame.logEntries[1]).toMatchObject({ seq: 8, operations: [expect.objectContaining({ kind: 'sheet_schema_migrate', sheetKey: 'sheet_a' })] });
   });
 
   it('新增 sheet 在目标 frame 尾部日志后写入 introduction timeline', async () => {
@@ -436,7 +541,7 @@ describe('commitCurrentFloorTemplateChanges_ACU', () => {
 
     const result = await commitCurrentFloorTemplateChanges_ACU({
       isolationKey: '',
-      sheetCheckpoints: [{ sheetKey: 'sheet_new', sheetData: introducedSheet, isNewSheet: true }],
+      sheetChanges: [{ kind: 'introduction', sheetKey: 'sheet_new', sheetData: introducedSheet }],
       guideData: { sheet_a: { name: 'A' }, sheet_b: { name: 'B' }, sheet_new: { name: '新增表' } },
       createdAt: 30,
     });
@@ -461,7 +566,7 @@ describe('commitCurrentFloorTemplateChanges_ACU', () => {
 
     const result = await commitCurrentFloorTemplateChanges_ACU({
       isolationKey: '',
-      sheetCheckpoints: [{ sheetKey: 'sheet_new', sheetData: introducedSheet, isNewSheet: true }],
+      sheetChanges: [{ kind: 'introduction', sheetKey: 'sheet_new', sheetData: introducedSheet }],
       guideData: { sheet_a: { name: 'A' }, sheet_b: { name: 'B' }, sheet_new: { name: '无根 checkpoint 的历史后新增表' } },
       createdAt: 30,
     });
@@ -483,9 +588,9 @@ describe('commitCurrentFloorTemplateChanges_ACU', () => {
 
     const result = await commitCurrentFloorTemplateChanges_ACU({
       isolationKey: '',
-      sheetCheckpoints: [
-        { sheetKey: 'sheet_a', sheetData: headerOnlySheetA, isNewSheet: true },
-        { sheetKey: 'sheet_b', sheetData: headerOnlySheetB, isNewSheet: true },
+      sheetChanges: [
+        { kind: 'introduction', sheetKey: 'sheet_a', sheetData: headerOnlySheetA },
+        { kind: 'introduction', sheetKey:'sheet_b', sheetData: headerOnlySheetB },
       ],
       guideData: { sheet_a: { name: 'A' }, sheet_b: { name: 'B' } },
       createdAt: 30,
@@ -508,7 +613,7 @@ describe('commitCurrentFloorTemplateChanges_ACU', () => {
 
     const result = await commitCurrentFloorTemplateChanges_ACU({
       isolationKey: '',
-      sheetCheckpoints: [{ sheetKey: 'sheet_new', sheetData: introducedSheet, isNewSheet: true }],
+      sheetChanges: [{ kind: 'introduction', sheetKey: 'sheet_new', sheetData: introducedSheet }],
       guideData: { sheet_a: { name: 'A' }, sheet_b: { name: 'B' }, sheet_new: { name: '历史已存在表' } },
       createdAt: 30,
     });
@@ -555,7 +660,7 @@ describe('commitCurrentFloorTemplateChanges_ACU', () => {
 
     const result = await commitCurrentFloorTemplateChanges_ACU({
       isolationKey: '',
-      sheetCheckpoints: [{ sheetKey: 'sheet_new', sheetData: historicalSheet, isNewSheet: true }],
+      sheetChanges: [{ kind: 'introduction', sheetKey: 'sheet_new', sheetData: historicalSheet }],
       guideData: { sheet_a: { name: 'A' }, sheet_b: { name: 'B' }, sheet_new: { name: '已删除历史表' } },
       createdAt: 30,
     });
@@ -574,7 +679,7 @@ describe('commitCurrentFloorTemplateChanges_ACU', () => {
 
     const result = await commitCurrentFloorTemplateChanges_ACU({
       isolationKey: '',
-      sheetCheckpoints: [{ sheetKey: 'sheet_new', sheetData: sheetWithDataRow, isNewSheet: true }],
+      sheetChanges: [{ kind: 'introduction', sheetKey: 'sheet_new', sheetData: sheetWithDataRow }],
       guideData: { sheet_a: { name: 'A' }, sheet_b: { name: 'B' }, sheet_new: { name: '含数据新表' } },
       createdAt: 30,
     });
@@ -601,7 +706,7 @@ describe('commitCurrentFloorTemplateChanges_ACU', () => {
 
     const result = await commitCurrentFloorTemplateChanges_ACU({
       isolationKey: '',
-      sheetCheckpoints: [{ sheetKey: 'sheet_new', sheetData: introducedSheet, isNewSheet: true }],
+      sheetChanges: [{ kind: 'introduction', sheetKey: 'sheet_new', sheetData: introducedSheet }],
       guideData: { sheet_a: { name: 'A' }, sheet_b: { name: 'B' }, sheet_new: { name: '新增表' } },
       createdAt: 30,
     });
@@ -626,7 +731,7 @@ describe('commitCurrentFloorTemplateChanges_ACU', () => {
 
     const result = await commitCurrentFloorTemplateChanges_ACU({
       isolationKey: '',
-      sheetCheckpoints: [{ sheetKey: 'sheet_new', sheetData: introducedSheet, isNewSheet: true }],
+      sheetChanges: [{ kind: 'introduction', sheetKey: 'sheet_new', sheetData: introducedSheet }],
       guideData: { sheet_a: { name: 'A' }, sheet_b: { name: 'B' }, sheet_new: { name: '新增表' } },
       createdAt: 30,
     });
@@ -659,7 +764,7 @@ describe('commitCurrentFloorTemplateChanges_ACU', () => {
 
     const result = await commitCurrentFloorTemplateChanges_ACU({
       isolationKey: '',
-      sheetCheckpoints: [{ sheetKey: 'sheet_new', sheetData: introducedSheet, isNewSheet: true }],
+      sheetChanges: [{ kind: 'introduction', sheetKey: 'sheet_new', sheetData: introducedSheet }],
       guideData: { sheet_a: { name: 'A' }, sheet_b: { name: 'B' }, sheet_new: { name: '新增表' } },
       createdAt: 30,
     });
@@ -682,7 +787,7 @@ describe('commitCurrentFloorTemplateChanges_ACU', () => {
 
     const result = await commitCurrentFloorTemplateChanges_ACU({
       isolationKey: '',
-      sheetCheckpoints: [{ sheetKey: 'sheet_new', sheetData: introducedSheet, isNewSheet: true }],
+      sheetChanges: [{ kind: 'introduction', sheetKey: 'sheet_new', sheetData: introducedSheet }],
       guideData: { sheet_a: { name: 'A' }, sheet_b: { name: 'B' }, sheet_new: { name: '新增表' } },
       createdAt: 30,
     });
@@ -693,9 +798,66 @@ describe('commitCurrentFloorTemplateChanges_ACU', () => {
     expect(message.TavernDB_ACU_IsolatedData).toBe(originalIsolatedData);
   });
 
-  it('严格保存失败时回滚 shard、identity、guide 与 scope', async () => {
+  it.each([
+    ['空 operations', [{ kind: 'operations', sheetKey: 'sheet_a', targetSheetData: sheetA, operations: [] }]],
+    ['operation sheetKey 不一致', [{ kind: 'operations', sheetKey: 'sheet_a', targetSheetData: sheetA, operations: [{ kind: 'meta_update', sheetKey: 'sheet_b', meta: { name: 'A' } }] }]],
+    ['非法 operation kind', [{ kind: 'operations', sheetKey: 'sheet_a', targetSheetData: sheetA, operations: [{ kind: 'row_upsert', sheetKey: 'sheet_a', rowId: '1', cells: ['1', 'x'] }] }]],
+    ['meta_update meta 不是普通对象', [{ kind: 'operations', sheetKey: 'sheet_a', targetSheetData: sheetA, operations: [{ kind: 'meta_update', sheetKey: 'sheet_a', meta: [] }] }]],
+    ['meta_update meta 是 Date', [{ kind: 'operations', sheetKey: 'sheet_a', targetSheetData: sheetA, operations: [{ kind: 'meta_update', sheetKey: 'sheet_a', meta: new Date(0) }] }]],
+    ['meta_update meta 是 class instance', [{ kind: 'operations', sheetKey: 'sheet_a', targetSheetData: sheetA, operations: [{ kind: 'meta_update', sheetKey: 'sheet_a', meta: new (class MetaPatch { name = 'A'; })() }] }]],
+    ['meta_update sourceData 不是普通对象', [{ kind: 'operations', sheetKey: 'sheet_a', targetSheetData: sheetA, operations: [{ kind: 'meta_update', sheetKey: 'sheet_a', meta: { sourceData: [] } }] }]],
+    ['meta_update sourceData 是 Map', [{ kind: 'operations', sheetKey: 'sheet_a', targetSheetData: sheetA, operations: [{ kind: 'meta_update', sheetKey: 'sheet_a', meta: { sourceData: new Map() } }] }]],
+    ['meta_update updateConfig 是 Set', [{ kind: 'operations', sheetKey: 'sheet_a', targetSheetData: sheetA, operations: [{ kind: 'meta_update', sheetKey: 'sheet_a', meta: { updateConfig: new Set() } }] }]],
+    ['meta_update 包含非法字段', [{ kind: 'operations', sheetKey: 'sheet_a', targetSheetData: sheetA, operations: [{ kind: 'meta_update', sheetKey: 'sheet_a', meta: { content: [] } }] }]],
+    ['meta_update name 类型错误', [{ kind: 'operations', sheetKey: 'sheet_a', targetSheetData: sheetA, operations: [{ kind: 'meta_update', sheetKey: 'sheet_a', meta: { name: 1 } }] }]],
+    ['重复 action', [
+      { kind: 'operations', sheetKey: 'sheet_a', targetSheetData: sheetA, operations: [{ kind: 'meta_update', sheetKey: 'sheet_a', meta: { name: 'A' } }] },
+      { kind: 'operations', sheetKey: 'sheet_a', targetSheetData: sheetA, operations: [{ kind: 'meta_update', sheetKey: 'sheet_a', meta: { orderNo: 1 } }] },
+    ]],
+    ['meta_update 携带 ddl', [{ kind: 'operations', sheetKey: 'sheet_a', targetSheetData: sheetA, operations: [{ kind: 'meta_update', sheetKey: 'sheet_a', meta: { sourceData: { ddl: 'unsafe' } } }] }]],
+    ['畸形 migration', [{ kind: 'operations', sheetKey: 'sheet_a', targetSheetData: sheetA, operations: [{ kind: 'sheet_schema_migrate', sheetKey: 'sheet_a', contractVersion: 999 }] }]],
+  ])('%s 时在事务写入前 fail closed', async (_label, sheetChanges) => {
     const message = seedFrame({ logEntries: [] });
     const originalIsolatedData = message.TavernDB_ACU_IsolatedData;
+
+    const result = await commitCurrentFloorTemplateChanges_ACU({
+      isolationKey: '',
+      sheetChanges: sheetChanges as any,
+      guideData: { sheet_a: { name: 'A' } },
+    });
+
+    expect(result.saved).toBe(false);
+    expect(mocks.saveChatStrict).not.toHaveBeenCalled();
+    expect(mocks.setGuide).not.toHaveBeenCalled();
+    expect(message.TavernDB_ACU_IsolatedData).toBe(originalIsolatedData);
+  });
+
+  it('operation 回放结果与 targetSheetData 不一致时零写入', async () => {
+    const message = seedFrame({ logEntries: [] });
+    const originalIsolatedData = message.TavernDB_ACU_IsolatedData;
+    const mismatchedTarget = { ...sheetA, name: '目标名称' };
+
+    const result = await commitCurrentFloorTemplateChanges_ACU({
+      isolationKey: '',
+      sheetChanges: [{
+        kind: 'operations',
+        sheetKey: 'sheet_a',
+        targetSheetData: mismatchedTarget,
+        operations: [{ kind: 'meta_update', sheetKey: 'sheet_a', meta: { name: '另一个名称' } }],
+      }],
+      guideData: { sheet_a: { name: '目标名称' } },
+    });
+
+    expect(result).toMatchObject({ saved: false, error: expect.stringContaining('回放结果与目标 Sheet 不一致') });
+    expect(mocks.saveChatStrict).not.toHaveBeenCalled();
+    expect(mocks.setGuide).not.toHaveBeenCalled();
+    expect(message.TavernDB_ACU_IsolatedData).toBe(originalIsolatedData);
+  });
+
+  it('严格保存失败时回滚 introduction shard、operation entry、headRevision、identity、guide 与 scope', async () => {
+    const message = seedFrame({ logEntries: [] });
+    const originalIsolatedData = message.TavernDB_ACU_IsolatedData;
+    const originalFrame = JSON.parse(JSON.stringify(originalIsolatedData[''].storageFrame));
     message.TavernDB_ACU_Identity = 'old-identity';
     const originalScope = JSON.parse(JSON.stringify(mocks.scopeContainer));
     const originalGuide = JSON.parse(JSON.stringify(mocks.guideContainer));
@@ -710,7 +872,10 @@ describe('commitCurrentFloorTemplateChanges_ACU', () => {
 
     const result = await commitCurrentFloorTemplateChanges_ACU({
       isolationKey: '',
-      sheetCheckpoints: [{ sheetKey: 'sheet_a', sheetData: sheetA }],
+      sheetChanges: [
+        { kind: 'introduction', sheetKey: 'sheet_new', sheetData: { ...sheetB, uid: 'new-sheet', name: '新增表' } },
+        { kind: 'operations', sheetKey: 'sheet_a', targetSheetData: sheetA, operations: [{ kind: 'meta_update', sheetKey: 'sheet_a', meta: { name: 'A' } }] },
+      ],
       guideData: { sheet_a: { name: 'A' } },
       syncTemplateScope: true,
     });
@@ -718,6 +883,46 @@ describe('commitCurrentFloorTemplateChanges_ACU', () => {
     expect(result).toEqual({ saved: false, error: 'host save failed' });
     expect(mocks.saveChatStrict).toHaveBeenCalledTimes(2);
     expect(message.TavernDB_ACU_IsolatedData).toBe(originalIsolatedData);
+    expect(message.TavernDB_ACU_IsolatedData[''].storageFrame).toEqual(originalFrame);
+    expect(message.TavernDB_ACU_Identity).toBe('old-identity');
+    expect(mocks.scopeContainer).toEqual(originalScope);
+    expect(mocks.guideContainer).toEqual(originalGuide);
+  });
+
+  it('提交与回滚宿主保存均失败时组合两个错误并恢复模板提交内存状态', async () => {
+    const message = seedFrame({ logEntries: [] });
+    const originalIsolatedData = message.TavernDB_ACU_IsolatedData;
+    const originalFrame = JSON.parse(JSON.stringify(originalIsolatedData[''].storageFrame));
+    message.TavernDB_ACU_Identity = 'old-identity';
+    const originalScope = JSON.parse(JSON.stringify(mocks.scopeContainer));
+    const originalGuide = JSON.parse(JSON.stringify(mocks.guideContainer));
+    mocks.settings.dataIsolationEnabled = true;
+    mocks.settings.dataIsolationCode = 'new-identity';
+    mocks.setGuide.mockImplementation(() => {
+      mocks.scopeContainer.template[''].changed = true;
+      mocks.guideContainer.tags[''].changed = true;
+      return true;
+    });
+    mocks.saveChatStrict
+      .mockRejectedValueOnce(new Error('commit save failed'))
+      .mockRejectedValueOnce(new Error('rollback save failed'));
+
+    const result = await commitCurrentFloorTemplateChanges_ACU({
+      isolationKey: '',
+      sheetChanges: [
+        { kind: 'introduction', sheetKey: 'sheet_new', sheetData: { ...sheetB, uid: 'new-sheet', name: '新增表' } },
+        { kind: 'operations', sheetKey: 'sheet_a', targetSheetData: sheetA, operations: [{ kind: 'meta_update', sheetKey: 'sheet_a', meta: { name: 'A' } }] },
+      ],
+      guideData: { sheet_a: { name: 'A' } },
+      syncTemplateScope: true,
+    });
+
+    expect(result.saved).toBe(false);
+    expect(result.error).toContain('commit save failed');
+    expect(result.error).toContain('rollback save failed');
+    expect(mocks.saveChatStrict).toHaveBeenCalledTimes(2);
+    expect(message.TavernDB_ACU_IsolatedData).toBe(originalIsolatedData);
+    expect(message.TavernDB_ACU_IsolatedData[''].storageFrame).toEqual(originalFrame);
     expect(message.TavernDB_ACU_Identity).toBe('old-identity');
     expect(mocks.scopeContainer).toEqual(originalScope);
     expect(mocks.guideContainer).toEqual(originalGuide);
@@ -732,7 +937,7 @@ describe('commitCurrentFloorTemplateChanges_ACU', () => {
 
     const result = await commitCurrentFloorTemplateChanges_ACU({
       isolationKey: '',
-      sheetCheckpoints: [{ sheetKey: 'sheet_a', sheetData: sheetA }],
+      sheetChanges: [{ kind: 'operations', sheetKey: 'sheet_a', targetSheetData: sheetA, operations: [{ kind: 'meta_update', sheetKey: 'sheet_a', meta: { name: 'A' } }] }],
       guideData: { sheet_a: { name: 'A' } },
     });
 
@@ -752,7 +957,7 @@ describe('commitCurrentFloorTemplateChanges_ACU', () => {
 
     const result = await commitCurrentFloorTemplateChanges_ACU({
       targetMessageIndex: 0,
-      sheetCheckpoints: [{ sheetKey: 'sheet_a', sheetData: sheetA }],
+      sheetChanges: [{ kind: 'operations', sheetKey: 'sheet_a', targetSheetData: sheetA, operations: [{ kind: 'meta_update', sheetKey: 'sheet_a', meta: { name: 'A' } }] }],
       guideData: { sheet_a: { name: 'A' } },
     });
 
@@ -771,9 +976,9 @@ describe('commitCurrentFloorTemplateChanges_ACU', () => {
 
     const result = await commitCurrentFloorTemplateChanges_ACU({
       isolationKey: '',
-      sheetCheckpoints: [
-        { sheetKey: 'sheet_a', sheetData: sheetA },
-        { sheetKey: 'sheet_b', sheetData: invalidSheet },
+      sheetChanges: [
+        { kind: 'operations', sheetKey: 'sheet_a', targetSheetData: sheetA, operations: [{ kind: 'meta_update', sheetKey: 'sheet_a', meta: { name: 'A' } }] },
+        { kind: 'operations', sheetKey: 'sheet_b', targetSheetData: invalidSheet, operations: [{ kind: 'meta_update', sheetKey: 'sheet_b', meta: { name: 'B' } }] },
       ],
       guideData: { sheet_a: { name: 'A' }, sheet_b: { name: 'B' } },
     });

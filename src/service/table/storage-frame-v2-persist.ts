@@ -7,7 +7,7 @@ import { getCurrentIsolationKey_ACU, settings_ACU } from '../runtime/state-manag
 import { setChatSheetGuideDataForIsolationKey_ACU } from '../template/chat-scope';
 import type { ManualRefillProgressV2_ACU, TableMutationEventV2_ACU, TableMutationLogEntryV2_ACU, TableMutationSourceV2_ACU, TableStorageFrameV2_ACU, TableCheckpointV2_ACU, TableMutationWriteSetV2_ACU, TableMutationOperationV2_ACU, TableSheetCheckpointV2_ACU } from './storage-frame-v2-types';
 import { isV2TagData_ACU } from './storage-strategy-resolver';
-import { collectScheduleSummaryFromFramesV2_ACU, loadTableStateFromFramesV2_ACU } from './storage-frame-v2-replay';
+import { applyTableOperationV2_ACU, collectScheduleSummaryFromFramesV2_ACU, loadTableStateFromFramesV2_ACU } from './storage-frame-v2-replay';
 import { runTableWriteTransaction_ACU, type TableWriteTransactionContext_ACU } from './table-write-transaction';
 import { formatCanonicalRowIssues_ACU, normalizeCanonicalTableRows_ACU } from '../../shared/canonical-row-normalizer';
 import { createSheetInsertPlan, generateDDL, validateDDLTextAgainstHeaders_ACU } from '../../data/sqlite/schema-mapper';
@@ -79,14 +79,7 @@ export interface CommitCurrentFloorTemplateChangesOptions_ACU {
   /** 未指定时选择当前聊天末尾的最新 AI 楼层。 */
   targetMessageIndex?: number;
   isolationKey?: string;
-  /** 结构保存只接受完整的单表快照，不能借 operation log 猜测结构变更。 */
-  sheetCheckpoints: Array<{
-    sheetKey: string;
-    sheetData: Sheet_ACU;
-    /** 由模板差异分类器确认的新表；writer 据此按 frame 尾部时序写 introduction shard。 */
-    isNewSheet?: boolean;
-    event?: TableMutationEventV2_ACU;
-  }>;
+  sheetChanges: TemplateSheetChange_ACU[];
   guideData: Record<string, any>;
   /** 同步当前聊天模板 scope；由 guide setter 生成一致的 chat_override 快照。 */
   syncTemplateScope?: boolean;
@@ -105,6 +98,23 @@ export interface CommitCurrentFloorTemplateChangesResult_ACU {
   removedNullRowCount?: number;
   error?: string;
 }
+
+type TemplatePersistOperation_ACU = Extract<TableMutationOperationV2_ACU, {
+  kind: 'sheet_schema_migrate' | 'meta_update';
+}>;
+
+export type TemplateSheetChange_ACU =
+  | {
+    kind: 'introduction';
+    sheetKey: string;
+    sheetData: Sheet_ACU;
+  }
+  | {
+    kind: 'operations';
+    sheetKey: string;
+    targetSheetData: Sheet_ACU;
+    operations: TemplatePersistOperation_ACU[];
+  };
 
 export type NullRowCleanupPersistStatus_ACU =
   | 'persisted'
@@ -182,6 +192,45 @@ function generateEntryId_ACU(): string {
 
 function buildCommitRevision_ACU(seq: number | 'checkpoint', entryId: string): string {
   return `${seq}:${entryId}`;
+}
+
+type AppendMutationLogEntryOptions_ACU = Omit<TableMutationLogEntryV2_ACU,
+  'seq' | 'entryId' | 'parentRevision' | 'commitRevision'> & {
+  seq: number;
+  parentRevision?: string | null;
+};
+
+function appendMutationLogEntry_ACU(
+  frame: TableStorageFrameV2_ACU,
+  options: AppendMutationLogEntryOptions_ACU,
+): TableMutationLogEntryV2_ACU {
+  const entryId = generateEntryId_ACU();
+  const parentRevision = options.parentRevision !== undefined
+    ? options.parentRevision
+    : (frame.headRevision ?? null);
+  const commitRevision = buildCommitRevision_ACU(options.seq, entryId);
+  const entry: TableMutationLogEntryV2_ACU = {
+    seq: options.seq,
+    entryId,
+    createdAt: options.createdAt,
+    source: options.source,
+    targetMessageIndex: options.targetMessageIndex,
+    aiFloor: options.aiFloor,
+    filledSheetKeys: options.filledSheetKeys,
+    changedSheetKeys: options.changedSheetKeys,
+    groupKeys: options.groupKeys,
+    ...(options.requestId !== undefined ? { requestId: options.requestId } : {}),
+    ...(options.batchId !== undefined ? { batchId: options.batchId } : {}),
+    ...(options.error !== undefined ? { error: options.error } : {}),
+    operations: options.operations,
+    baseRevision: options.baseRevision,
+    parentRevision,
+    commitRevision,
+    ...(options.writeSet !== undefined ? { writeSet: options.writeSet } : {}),
+  };
+  frame.logEntries.push(entry);
+  frame.headRevision = commitRevision;
+  return entry;
 }
 
 function findTargetAiMessage_ACU(chat: any[], targetMessageIndex: number | undefined): { message: any; index: number } | null {
@@ -342,6 +391,12 @@ function getOrInitV2Frame_ACU(isolatedData: Record<string, any>, isolationKey: s
 
 function isObjectRecord_ACU(value: unknown): value is Record<string, any> {
   return value !== null && typeof value === 'object' && !Array.isArray(value);
+}
+
+function isPlainObjectRecord_ACU(value: unknown): value is Record<string, any> {
+  if (!isObjectRecord_ACU(value)) return false;
+  const prototype = Object.getPrototypeOf(value);
+  return prototype === Object.prototype || prototype === null;
 }
 
 function logEntryConflictsWithSheetCheckpoint_ACU(entry: TableMutationLogEntryV2_ACU, sheetKey: string): boolean {
@@ -773,12 +828,9 @@ async function persistTableMutationLogV2Core_ACU(
     logDebug_ACU(`[V2 Persist] 写入 full checkpoint: messageIndex=${target.index}, revision=${checkpointRevision}, sheets=${Object.keys(afterData).filter(k => k.startsWith('sheet_')).length}`);
   } else {
     const nextSeq = Math.max(0, ...frame.logEntries.map(item => Number(item.seq) || 0)) + 1;
-    const entryId = generateEntryId_ACU();
     const parentRevision = options.parentRevision !== undefined ? options.parentRevision : (frame.headRevision ?? null);
-    const commitRevision = buildCommitRevision_ACU(nextSeq, entryId);
-    entry = {
+    entry = appendMutationLogEntry_ACU(frame, {
       seq: nextSeq,
-      entryId,
       createdAt: now,
       source: options.source,
       targetMessageIndex: target.index,
@@ -792,12 +844,9 @@ async function persistTableMutationLogV2Core_ACU(
       operations,
       baseRevision: requestedBaseRevision ?? parentRevision,
       parentRevision,
-      commitRevision,
       writeSet: currentWriteSet,
-    };
-    frame.logEntries.push(entry);
-    frame.headRevision = commitRevision;
-    logDebug_ACU(`[V2 Persist] 追加 operation log entry: messageIndex=${target.index}, seq=${entry.seq}, revision=${commitRevision}, operations=${operations.length}`);
+    });
+    logDebug_ACU(`[V2 Persist] 追加 operation log entry: messageIndex=${target.index}, seq=${entry.seq}, revision=${entry.commitRevision}, operations=${operations.length}`);
   }
 
   target.message.TavernDB_ACU_IsolatedData = isolatedData;
@@ -1062,6 +1111,89 @@ export async function persistNullRowCleanupShards_ACU(
   }
 }
 
+function templateSheetPersistentProjection_ACU(sheet: Sheet_ACU): Record<string, unknown> {
+  return {
+    uid: sheet.uid,
+    name: sheet.name,
+    orderNo: sheet.orderNo,
+    content: sheet.content,
+    sourceData: sheet.sourceData,
+    updateConfig: sheet.updateConfig,
+    exportConfig: sheet.exportConfig,
+  };
+}
+
+function canonicalJson_ACU(value: unknown): string {
+  if (Array.isArray(value)) return `[${value.map(canonicalJson_ACU).join(',')}]`;
+  if (!value || typeof value !== 'object') return JSON.stringify(value);
+  const record = value as Record<string, unknown>;
+  return `{${Object.keys(record).sort().map(key => `${JSON.stringify(key)}:${canonicalJson_ACU(record[key])}`).join(',')}}`;
+}
+
+function assertValidTemplateMetaUpdate_ACU(operation: Record<string, any>, sheetKey: string): void {
+  if (!isPlainObjectRecord_ACU(operation.meta)) {
+    throw new Error(`当前楼层模板提交 meta_update.meta 必须是普通对象：${sheetKey}。`);
+  }
+  const allowedKeys = new Set(['name', 'orderNo', 'sourceData', 'updateConfig', 'exportConfig']);
+  if (Object.keys(operation.meta).some(key => !allowedKeys.has(key))) {
+    throw new Error(`当前楼层模板提交 meta_update 包含非法字段：${sheetKey}。`);
+  }
+  if (operation.meta.name !== undefined && typeof operation.meta.name !== 'string') {
+    throw new Error(`当前楼层模板提交 meta_update.name 无效：${sheetKey}。`);
+  }
+  if (operation.meta.orderNo !== undefined && (typeof operation.meta.orderNo !== 'number' || !Number.isFinite(operation.meta.orderNo))) {
+    throw new Error(`当前楼层模板提交 meta_update.orderNo 无效：${sheetKey}。`);
+  }
+  for (const key of ['sourceData', 'updateConfig', 'exportConfig'] as const) {
+    if (operation.meta[key] !== undefined && !isPlainObjectRecord_ACU(operation.meta[key])) {
+      throw new Error(`当前楼层模板提交 meta_update.${key} 必须是普通对象：${sheetKey}。`);
+    }
+  }
+  if (operation.meta.sourceData && Object.prototype.hasOwnProperty.call(operation.meta.sourceData, 'ddl')) {
+    throw new Error(`当前楼层模板提交禁止 meta_update 修改 sourceData.ddl：${sheetKey}。`);
+  }
+}
+
+function assertValidTemplateSheetChanges_ACU(sheetChanges: TemplateSheetChange_ACU[]): void {
+  if (sheetChanges.length === 0) throw new Error('当前楼层模板提交必须至少包含一个 sheet change。');
+  const sheetKeys = sheetChanges.map(change => String(change?.sheetKey || ''));
+  if (sheetKeys.some(sheetKey => !sheetKey.startsWith('sheet_'))) {
+    throw new Error('当前楼层模板提交包含非法 sheetKey。');
+  }
+  if (new Set(sheetKeys).size !== sheetKeys.length) {
+    throw new Error('当前楼层模板提交不能包含重复 sheetKey。');
+  }
+  for (const change of sheetChanges) {
+    if (change.kind === 'introduction') {
+      if (!isObjectRecord_ACU(change.sheetData)) throw new Error(`当前楼层模板提交缺少可恢复 Sheet：${change.sheetKey}。`);
+      continue;
+    }
+    if (change.kind !== 'operations' || !isObjectRecord_ACU(change.targetSheetData) || !Array.isArray(change.operations) || change.operations.length === 0) {
+      throw new Error(`当前楼层模板提交 operations action 无效：${change.sheetKey}。`);
+    }
+    let migrationCount = 0;
+    let metaUpdateCount = 0;
+    for (const operation of change.operations) {
+      if (!operation || (operation.kind !== 'sheet_schema_migrate' && operation.kind !== 'meta_update') || operation.sheetKey !== change.sheetKey) {
+        throw new Error(`当前楼层模板提交包含不允许或归属错误的 operation：${change.sheetKey}。`);
+      }
+      if (operation.kind === 'sheet_schema_migrate') {
+        migrationCount += 1;
+        if (!migrationIsValidForIntroductionHistory_ACU(operation as Record<string, any>)) {
+          throw new Error(`当前楼层模板提交包含畸形 sheet_schema_migrate：${change.sheetKey}。`);
+        }
+      }
+      if (operation.kind === 'meta_update') {
+        metaUpdateCount += 1;
+        assertValidTemplateMetaUpdate_ACU(operation, change.sheetKey);
+      }
+    }
+    if (migrationCount > 1 || metaUpdateCount > 1 || (migrationCount === 1 && change.operations[0].kind !== 'sheet_schema_migrate')) {
+      throw new Error(`当前楼层模板提交 operation 顺序或数量无效：${change.sheetKey}。`);
+    }
+  }
+}
+
 /**
  * 在当前最新 AI 楼层原子写入模板结构变更。
  *
@@ -1071,22 +1203,16 @@ export async function persistNullRowCleanupShards_ACU(
 export async function commitCurrentFloorTemplateChanges_ACU(
   options: CommitCurrentFloorTemplateChangesOptions_ACU,
 ): Promise<CommitCurrentFloorTemplateChangesResult_ACU> {
-  const requestedCheckpoints = Array.isArray(options.sheetCheckpoints) ? options.sheetCheckpoints : [];
-  if (requestedCheckpoints.length === 0) {
-    return { saved: false, error: '当前楼层模板提交必须至少包含一个单表 checkpoint。' };
-  }
   if (!options.guideData || typeof options.guideData !== 'object' || Array.isArray(options.guideData)) {
     return { saved: false, error: '当前楼层模板提交必须提供有效的 guideData。' };
   }
-
-  const sheetKeys = requestedCheckpoints.map(item => String(item?.sheetKey || ''));
-  if (sheetKeys.some(sheetKey => !sheetKey.startsWith('sheet_'))) {
-    return { saved: false, error: '当前楼层模板提交包含非法 sheetKey。' };
+  const requestedChanges = Array.isArray(options.sheetChanges) ? options.sheetChanges : [];
+  try {
+    assertValidTemplateSheetChanges_ACU(requestedChanges);
+  } catch (error: any) {
+    return { saved: false, error: error?.message || String(error) };
   }
-  if (new Set(sheetKeys).size !== sheetKeys.length) {
-    return { saved: false, error: '当前楼层模板提交不能包含重复 sheetKey。' };
-  }
-
+  const sheetKeys = requestedChanges.map(change => change.sheetKey);
   const createdAt = options.createdAt ?? Date.now();
   if (!Number.isFinite(createdAt) || createdAt < 0) {
     return { saved: false, error: '当前楼层模板提交 requires a finite non-negative createdAt.' };
@@ -1134,35 +1260,32 @@ export async function commitCurrentFloorTemplateChanges_ACU(
       throw new Error('当前楼层模板提交要求目标 AI 楼层已存在合法 V2 storage frame；请先完成既有迁移。');
     }
 
-    const normalizedSheets = new Map<string, Sheet_ACU>();
+    const introductionSheets = new Map<string, Sheet_ACU>();
     let removedNullRowCount = 0;
-    for (const item of requestedCheckpoints) {
-      if (!isObjectRecord_ACU(item?.sheetData)) {
-        throw new Error(`当前楼层模板提交缺少可恢复 Sheet：${item.sheetKey}。`);
+    for (const change of requestedChanges) {
+      const targetSheetData = deepClone_ACU(change.kind === 'introduction' ? change.sheetData : change.targetSheetData);
+      if (change.kind === 'introduction' && targetSheetData.content?.length !== 1) {
+        throw new Error(`V2 sheet introduction only accepts a header-only sheet: sheetKey=${change.sheetKey}.`);
       }
-      const sheetData = deepClone_ACU(item.sheetData);
-      if (item.isNewSheet === true && sheetData.content?.length !== 1) {
-        throw new Error(`V2 sheet introduction only accepts a header-only sheet: sheetKey=${item.sheetKey}.`);
-      }
-      const normalization = normalizeCanonicalTableRows_ACU({ [item.sheetKey]: sheetData });
+      const normalization = normalizeCanonicalTableRows_ACU({ [change.sheetKey]: targetSheetData });
       removedNullRowCount += normalization.removedRows.length;
       if (normalization.errors.length > 0) {
         throw new Error(`V2 当前楼层模板提交行标识不合法：${formatCanonicalRowIssues_ACU(normalization.errors)}`);
       }
-      const headers = sheetData.content?.[0];
+      const headers = targetSheetData.content?.[0];
       if (!Array.isArray(headers) || headers[0] !== 'row_id') {
-        throw new Error(`V2 当前楼层模板提交缺少 row_id 表头：${item.sheetKey}。`);
+        throw new Error(`V2 当前楼层模板提交缺少 row_id 表头：${change.sheetKey}。`);
       }
-      if (!sheetData.sourceData || typeof sheetData.sourceData !== 'object') sheetData.sourceData = {} as any;
-      if (!String(sheetData.sourceData.ddl || '').trim()) {
-        sheetData.sourceData.ddl = generateDDL(sheetData, sheetData.uid || item.sheetKey);
+      if (!targetSheetData.sourceData || typeof targetSheetData.sourceData !== 'object') targetSheetData.sourceData = {} as any;
+      if (!String(targetSheetData.sourceData.ddl || '').trim()) {
+        targetSheetData.sourceData.ddl = generateDDL(targetSheetData, targetSheetData.uid || change.sheetKey);
       }
-      const ddlValidation = validateDDLTextAgainstHeaders_ACU(sheetData.sourceData.ddl, headers);
+      const ddlValidation = validateDDLTextAgainstHeaders_ACU(targetSheetData.sourceData.ddl, headers);
       if (!ddlValidation.valid) {
-        throw new Error(`V2 当前楼层模板提交 DDL 无法 strict hydrate：${item.sheetKey}：${ddlValidation.message}`);
+        throw new Error(`V2 当前楼层模板提交 DDL 无法 strict hydrate：${change.sheetKey}：${ddlValidation.message}`);
       }
-      createSheetInsertPlan(sheetData);
-      normalizedSheets.set(item.sheetKey, sheetData);
+      createSheetInsertPlan(targetSheetData);
+      if (change.kind === 'introduction') introductionSheets.set(change.sheetKey, targetSheetData);
     }
 
     const isolatedData = cloneIsolatedData_ACU(target.message) as Record<string, any>;
@@ -1177,44 +1300,65 @@ export async function commitCurrentFloorTemplateChanges_ACU(
     const checkpoints: TableSheetCheckpointV2_ACU[] = [];
     const scheduleSummaryBySheet = collectScheduleSummaryFromFramesV2_ACU(chat, isolationKey, { maxMessageIndex: target.index });
     const targetFrameLastLogSeq = getValidatedFrameLastLogSeq_ACU(frame);
-    for (const item of requestedCheckpoints) {
-      const isIntroducedSheet = item.isNewSheet === true;
-      if (isIntroducedSheet && (
-        historyContainsOrCannotDisproveSheet_ACU(chat, isolationKey, target.index, item.sheetKey)
-        || Object.prototype.hasOwnProperty.call(activeReplayState, item.sheetKey)
-        || Object.prototype.hasOwnProperty.call(frame.perSheetCheckpoints || {}, item.sheetKey)
-      )) {
-        throw new Error(`V2 sheet introduction requires a genuinely new sheet: sheetKey=${item.sheetKey} already exists in the active checkpoint state.`);
+    for (const change of requestedChanges.filter(item => item.kind === 'introduction')) {
+      if (
+        historyContainsOrCannotDisproveSheet_ACU(chat, isolationKey, target.index, change.sheetKey)
+        || Object.prototype.hasOwnProperty.call(activeReplayState, change.sheetKey)
+        || Object.prototype.hasOwnProperty.call(frame.perSheetCheckpoints || {}, change.sheetKey)
+      ) {
+        throw new Error(`V2 sheet introduction requires a genuinely new sheet: sheetKey=${change.sheetKey} already exists in the active checkpoint state.`);
       }
-      const conflictingEntry = isIntroducedSheet
-        ? undefined
-        : (frame.logEntries || []).find((entry: TableMutationLogEntryV2_ACU) => logEntryConflictsWithSheetCheckpoint_ACU(entry, item.sheetKey));
-      if (conflictingEntry) {
-        throw new Error(`V2 sheet checkpoint cannot be inserted before an existing target-sheet log entry: sheetKey=${item.sheetKey}, entryId=${conflictingEntry.entryId}.`);
-      }
-      const existingCheckpoint = frame.perSheetCheckpoints?.[item.sheetKey];
+      const existingCheckpoint = frame.perSheetCheckpoints?.[change.sheetKey];
       if (existingCheckpoint && Number(existingCheckpoint.createdAt) > createdAt) {
-        throw new Error(`V2 sheet checkpoint cannot replace a newer checkpoint: sheetKey=${item.sheetKey}, existingCreatedAt=${existingCheckpoint.createdAt}, requestedCreatedAt=${createdAt}.`);
+        throw new Error(`V2 sheet checkpoint cannot replace a newer checkpoint: sheetKey=${change.sheetKey}, existingCreatedAt=${existingCheckpoint.createdAt}, requestedCreatedAt=${createdAt}.`);
       }
-      const scheduleSummary = scheduleSummaryBySheet[item.sheetKey];
+      const scheduleSummary = scheduleSummaryBySheet[change.sheetKey];
       checkpoints.push({
         kind: 'sheet_full',
         createdAt,
         reason: 'schema_change',
-        sheetKey: item.sheetKey,
-        data: normalizedSheets.get(item.sheetKey)!,
+        sheetKey: change.sheetKey,
+        data: introductionSheets.get(change.sheetKey)!,
         ...(scheduleSummary ? { scheduleSummary: deepClone_ACU(scheduleSummary) } : {}),
-        event: deepClone_ACU(item.event || { filledSheetKeys: [], changedSheetKeys: [item.sheetKey] }),
-        ...(isIntroducedSheet ? {
-          timeline: {
-            kind: 'sheet_introduction' as const,
-            activateAtMessageIndex: target.index,
-            afterSeq: targetFrameLastLogSeq,
-          },
-        } : {}),
+        event: { filledSheetKeys: [], changedSheetKeys: [change.sheetKey] },
+        timeline: {
+          kind: 'sheet_introduction' as const,
+          activateAtMessageIndex: target.index,
+          afterSeq: targetFrameLastLogSeq,
+        },
         baseRevision: options.baseRevision !== undefined ? options.baseRevision : transactionContext.baseRevision,
       });
     }
+
+    const operationChanges = requestedChanges.filter((change): change is Extract<TemplateSheetChange_ACU, { kind: 'operations' }> => change.kind === 'operations');
+    const replayCandidate = deepClone_ACU(activeReplayState);
+    const operations = operationChanges.flatMap(change => change.operations.map(operation => deepClone_ACU(operation)));
+    for (const change of operationChanges) {
+      for (const operation of change.operations) await applyTableOperationV2_ACU(replayCandidate, operation);
+      const replayedSheet = replayCandidate[change.sheetKey] as Sheet_ACU | undefined;
+      if (!replayedSheet || canonicalJson_ACU(templateSheetPersistentProjection_ACU(replayedSheet)) !== canonicalJson_ACU(templateSheetPersistentProjection_ACU(change.targetSheetData))) {
+        throw new Error(`V2 当前楼层模板提交 operation 回放结果与目标 Sheet 不一致：${change.sheetKey}。`);
+      }
+    }
+
+    const entryOptions: AppendMutationLogEntryOptions_ACU | undefined = operations.length === 0 ? undefined : (() => {
+      const seq = targetFrameLastLogSeq + 1;
+      const parentRevision = frame.headRevision ?? null;
+      return {
+        seq,
+        createdAt,
+        source: 'template_assistant' as const,
+        targetMessageIndex: target.index,
+        aiFloor: countAiFloor_ACU(chat, target.index),
+        filledSheetKeys: [] as string[],
+        changedSheetKeys: operationChanges.map(change => change.sheetKey),
+        groupKeys: [] as string[],
+        operations,
+        baseRevision: options.baseRevision !== undefined ? options.baseRevision : (transactionContext.baseRevision ?? parentRevision),
+        parentRevision,
+        writeSet,
+      };
+    })();
 
     const hadIsolatedData = Object.prototype.hasOwnProperty.call(target.message, 'TavernDB_ACU_IsolatedData');
     const previousIsolatedData = target.message.TavernDB_ACU_IsolatedData;
@@ -1228,6 +1372,7 @@ export async function commitCurrentFloorTemplateChanges_ACU(
         ...(frame.perSheetCheckpoints || {}),
         ...Object.fromEntries(checkpoints.map(checkpoint => [checkpoint.sheetKey, checkpoint])),
       };
+      if (entryOptions) appendMutationLogEntry_ACU(frame, entryOptions);
       target.message.TavernDB_ACU_IsolatedData = isolatedData;
       writeMessageIdentity_ACU(target.message, {
         enabled: settings_ACU.dataIsolationEnabled,
@@ -1243,7 +1388,7 @@ export async function commitCurrentFloorTemplateChanges_ACU(
       });
       if (!guideUpdated) throw new Error('当前楼层模板提交无法写入 guideData。');
       await saveChatToHostStrict_ACU();
-      logDebug_ACU(`[V2 Persist] 当前楼层模板提交完成: messageIndex=${target.index}, checkpoints=${checkpoints.length}, isolationKey=${isolationKey}`);
+      logDebug_ACU(`[V2 Persist] 当前楼层模板提交完成: messageIndex=${target.index}, checkpoints=${checkpoints.length}, operations=${operations.length}, isolationKey=${isolationKey}`);
       return { saved: true, messageIndex: target.index, checkpoints, removedNullRowCount };
     } catch (error: any) {
       if (hadIsolatedData) target.message.TavernDB_ACU_IsolatedData = previousIsolatedData;

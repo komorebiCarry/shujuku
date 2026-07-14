@@ -321,9 +321,13 @@ describe('useVisualizerSave', () => {
       isolationKey: 'iso-test',
       guideData: expect.any(Object),
       syncTemplateScope: true,
-      sheetCheckpoints: [expect.objectContaining({
+      sheetChanges: [expect.objectContaining({
+        kind: 'operations',
         sheetKey: 'sheet_test_vz2',
-        event: { filledSheetKeys: [], changedSheetKeys: ['sheet_test_vz2'] },
+        operations: [expect.objectContaining({
+          kind: 'meta_update',
+          meta: expect.not.objectContaining({ sourceData: expect.objectContaining({ ddl: expect.anything() }) }),
+        })],
       })],
     }));
     expect(serviceMock.applyTemplateScopeForCurrentChat_ACU).toHaveBeenCalled();
@@ -347,11 +351,10 @@ describe('useVisualizerSave', () => {
     const saved = await useVisualizerSave().saveTemplateToCurrentChat();
 
     expect(saved).toBe(true);
-    const [[{ sheetCheckpoints }]] = serviceMock.commitCurrentFloorTemplateChanges_ACU.mock.calls;
-    expect(sheetCheckpoints).toEqual([expect.objectContaining({
+    const [[{ sheetChanges }]] = serviceMock.commitCurrentFloorTemplateChanges_ACU.mock.calls;
+    expect(sheetChanges).toEqual([expect.objectContaining({
+      kind: 'introduction',
       sheetKey: 'sheet_new_vz2',
-      isNewSheet: true,
-      event: { filledSheetKeys: [], changedSheetKeys: ['sheet_new_vz2'] },
     })]);
   });
 
@@ -370,13 +373,13 @@ describe('useVisualizerSave', () => {
     const saved = await useVisualizerSave().saveTemplateToCurrentChat();
 
     expect(saved).toBe(true);
-    const [[{ sheetCheckpoints }]] = serviceMock.commitCurrentFloorTemplateChanges_ACU.mock.calls;
-    expect(sheetCheckpoints).toHaveLength(2);
-    expect(sheetCheckpoints).toEqual(expect.arrayContaining([
-      expect.objectContaining({ sheetKey: 'sheet_first', isNewSheet: false }),
-      expect.objectContaining({ sheetKey: 'sheet_second', isNewSheet: false }),
+    const [[{ sheetChanges }]] = serviceMock.commitCurrentFloorTemplateChanges_ACU.mock.calls;
+    expect(sheetChanges).toHaveLength(2);
+    expect(sheetChanges).toEqual(expect.arrayContaining([
+      expect.objectContaining({ kind: 'operations', sheetKey: 'sheet_first' }),
+      expect.objectContaining({ kind: 'operations', sheetKey: 'sheet_second' }),
     ]));
-    expect(sheetCheckpoints.map((checkpoint: any) => checkpoint.sheetKey)).not.toContain('sheet_unchanged');
+    expect(sheetChanges.map((change: any) => change.sheetKey)).not.toContain('sheet_unchanged');
   });
 
   it('新增表并修改旧表时只提交新增表和实际修改的旧表', async () => {
@@ -394,13 +397,85 @@ describe('useVisualizerSave', () => {
     const saved = await useVisualizerSave().saveTemplateToCurrentChat();
 
     expect(saved).toBe(true);
-    const [[{ sheetCheckpoints }]] = serviceMock.commitCurrentFloorTemplateChanges_ACU.mock.calls;
-    expect(sheetCheckpoints).toHaveLength(2);
-    expect(sheetCheckpoints).toEqual(expect.arrayContaining([
-      expect.objectContaining({ sheetKey: 'sheet_changed', isNewSheet: false }),
-      expect.objectContaining({ sheetKey: 'sheet_new_vz2', isNewSheet: true }),
+    const [[{ sheetChanges }]] = serviceMock.commitCurrentFloorTemplateChanges_ACU.mock.calls;
+    expect(sheetChanges).toHaveLength(2);
+    expect(sheetChanges).toEqual(expect.arrayContaining([
+      expect.objectContaining({ kind: 'operations', sheetKey: 'sheet_changed' }),
+      expect.objectContaining({ kind: 'introduction', sheetKey: 'sheet_new_vz2' }),
     ]));
-    expect(sheetCheckpoints.map((checkpoint: any) => checkpoint.sheetKey)).not.toContain('sheet_unchanged');
+    expect(sheetChanges.map((change: any) => change.sheetKey)).not.toContain('sheet_unchanged');
+  });
+
+  it('已有 Sheet 同时变更 schema 与 metadata 时按 migration 再 meta_update 下传', async () => {
+    const { useVisualizerStore } = await import('../../../src/presentation-v2/stores/visualizer-store');
+    const { useVisualizerSave } = await import('../../../src/presentation-v2/composables/visualizer/useVisualizerSave');
+    const store = useVisualizerStore();
+    store.loadSnapshot({
+      mate: { type: 'chatSheets', version: 1 },
+      sheet_test_vz2: sheet('旧表名'),
+    }, ['sheet_test_vz2']);
+    store.currentSheet.name = '新表名';
+    store.currentSheet.content = [['row_id', '姓名', '状态', '职业'], ['1', 'A', '平静', null]];
+    store.currentSheet.sourceData.ddl = `CREATE TABLE sheet_test_vz2 (
+  row_id INTEGER PRIMARY KEY, -- 行号
+  col_1 TEXT, -- 姓名
+  col_2 TEXT, -- 状态
+  col_3 TEXT -- 职业
+);`;
+    const migration = { kind: 'sheet_schema_migrate', contractVersion: 1, sheetKey: 'sheet_test_vz2' };
+    serviceMock.preflightSchemaMigrations_ACU.mockResolvedValueOnce({
+      changedSheetKeys: ['sheet_test_vz2'],
+      blockers: [],
+      operations: [migration],
+    });
+
+    const saved = await useVisualizerSave().saveTemplateToCurrentChat();
+
+    expect(saved).toBe(true);
+    const [[{ sheetChanges }]] = serviceMock.commitCurrentFloorTemplateChanges_ACU.mock.calls;
+    expect(sheetChanges).toHaveLength(1);
+    expect(sheetChanges[0]).toMatchObject({
+      kind: 'operations',
+      sheetKey: 'sheet_test_vz2',
+      targetSheetData: expect.objectContaining({ name: '新表名' }),
+    });
+    expect(sheetChanges[0].operations).toEqual([
+      migration,
+      expect.objectContaining({
+        kind: 'meta_update',
+        sheetKey: 'sheet_test_vz2',
+        meta: expect.objectContaining({ name: '新表名' }),
+      }),
+    ]);
+    expect(sheetChanges[0].operations[1].meta.sourceData).not.toHaveProperty('ddl');
+  });
+
+  it.each([
+    ['缺少 operation', { changedSheetKeys: ['sheet_test_vz2'], blockers: [], operations: [] }],
+    ['重复 operation', {
+      changedSheetKeys: ['sheet_test_vz2'], blockers: [],
+      operations: [{ sheetKey: 'sheet_test_vz2' }, { sheetKey: 'sheet_test_vz2' }],
+    }],
+    ['changedSheetKeys 不一致', {
+      changedSheetKeys: ['sheet_other'], blockers: [], operations: [{ sheetKey: 'sheet_test_vz2' }],
+    }],
+  ])('schema migration preflight %s 时 fail closed', async (_label, preflightResult) => {
+    const { useVisualizerStore } = await import('../../../src/presentation-v2/stores/visualizer-store');
+    const { useVisualizerSave } = await import('../../../src/presentation-v2/composables/visualizer/useVisualizerSave');
+    const store = useVisualizerStore();
+    store.loadSnapshot({
+      mate: { type: 'chatSheets', version: 1 },
+      sheet_test_vz2: sheet('旧表名'),
+    }, ['sheet_test_vz2']);
+    store.currentSheet.content = [['row_id', '姓名', '状态', '职业'], ['1', 'A', '平静', null]];
+    store.currentSheet.sourceData.ddl = 'CREATE TABLE sheet_test_vz2 (row_id INTEGER PRIMARY KEY, col_1 TEXT, col_2 TEXT, col_3 TEXT);';
+    serviceMock.preflightSchemaMigrations_ACU.mockResolvedValueOnce(preflightResult as any);
+
+    const saved = await useVisualizerSave().saveTemplateToCurrentChat();
+
+    expect(saved).toBe(false);
+    expect(serviceMock.commitCurrentFloorTemplateChanges_ACU).not.toHaveBeenCalled();
+    expect(toastMock.error).toHaveBeenCalledWith(expect.stringContaining('一一对应'), { muteable: false });
   });
 
   it('schema migration preflight 阻断时不创建 checkpoint 或推进模板状态', async () => {
@@ -455,7 +530,7 @@ describe('useVisualizerSave', () => {
     const saving = useVisualizerSave().saveTemplateToCurrentChat();
     store.currentSheet.name = 'preflight 期间的新表名';
     store.setDirty(true);
-    resolvePreflight!({ changedSheetKeys: ['sheet_test_vz2'], blockers: [], operations: [] });
+    resolvePreflight!({ changedSheetKeys: ['sheet_test_vz2'], blockers: [], operations: [{ sheetKey: 'sheet_test_vz2' }] });
 
     await expect(saving).resolves.toBe(false);
     expect(serviceMock.commitCurrentFloorTemplateChanges_ACU).not.toHaveBeenCalled();
