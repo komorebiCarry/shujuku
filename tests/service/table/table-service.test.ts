@@ -29,6 +29,8 @@ const {
   mockReadIsolatedTagData,
   mockReadLegacyIndependentData,
   mockIsLegacyMatchForIsolation,
+  mockResolveTableStorageStrategy,
+  mockPersistTableMutationLogV2,
   mockEnsureStableRowIdsForSheetContent,
 } = vi.hoisted(() => {
   const mockCurrentJsonTableDataRef = {
@@ -82,6 +84,8 @@ const {
       })];
     }),
     mockIsLegacyMatchForIsolation: vi.fn(() => false),
+    mockResolveTableStorageStrategy: vi.fn(() => ({ mode: 'empty' })),
+    mockPersistTableMutationLogV2: vi.fn(async () => ({ saved: true, messageIndex: 0 })),
   };
 });
 
@@ -137,6 +141,15 @@ vi.mock('../../../src/data/repositories/chat-message-data-repo', () => ({
   isLegacyMatchForIsolation_ACU: mockIsLegacyMatchForIsolation,
 }));
 
+vi.mock('../../../src/service/table/storage-strategy-resolver', () => ({
+  isV2TagData_ACU: vi.fn(() => false),
+  resolveTableStorageStrategy_ACU: mockResolveTableStorageStrategy,
+}));
+
+vi.mock('../../../src/service/table/storage-frame-v2-persist', () => ({
+  persistTableMutationLogV2_ACU: mockPersistTableMutationLogV2,
+}));
+
 import {
   saveIndependentTableToChatHistory_ACU,
   persistTablesToChatMessage_ACU,
@@ -157,6 +170,8 @@ beforeEach(() => {
   mockReadIsolatedTagData.mockReturnValue({ independentData: {}, modifiedKeys: [], updateGroupKeys: [], _acu_storage_mode: 'checkpoint', _acu_storage_version: 1 });
   mockGetChatSheetGuideData.mockReturnValue(null);
   mockSaveChatToHost.mockResolvedValue(undefined);
+  mockResolveTableStorageStrategy.mockReturnValue({ mode: 'empty' });
+  mockPersistTableMutationLogV2.mockResolvedValue({ saved: true, messageIndex: 0 });
 });
 
 function makeTestTransactionContext_ACU(): any {
@@ -208,6 +223,32 @@ describe('direct persistence guards', () => {
     expect(result.saved).toBe(false);
     expect(result.error).toContain('commit model');
     expect(mockSaveChatToHost).not.toHaveBeenCalled();
+  });
+
+  it('empty 策略的首次真实写入自动下发 init checkpoint 参数', async () => {
+    const message = { is_user: false, mes: 'AI 回复' };
+    mockGetChatArray.mockReturnValue([message]);
+    const transactionContext = makeTestTransactionContext_ACU();
+
+    const result = await persistTablesToChatMessage_ACU({
+      assumeCommitLock: true,
+      transactionContext,
+      targetMessageIndex: 0,
+      tableData: mockCurrentJsonTableDataRef.value,
+      source: 'manual_fill',
+      filledSheetKeys: ['sheet_0'],
+      trackingSheetKeys: ['sheet_0'],
+      operations: [{ kind: 'sheet_replace', sheetKey: 'sheet_0', sheet: mockCurrentJsonTableDataRef.value.sheet_0, reason: 'system' }],
+    });
+
+    expect(result).toEqual({ saved: true, messageIndex: 0, error: undefined });
+    expect(mockResolveTableStorageStrategy).toHaveBeenCalledWith([message], '', { enabled: false, code: '' });
+    expect(mockPersistTableMutationLogV2).toHaveBeenCalledWith(expect.objectContaining({
+      afterData: mockCurrentJsonTableDataRef.value,
+      forceCheckpoint: true,
+      checkpointReason: 'init',
+      transactionContext,
+    }));
   });
 });
 

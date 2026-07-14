@@ -420,12 +420,12 @@ export function shouldUseOpeningSeedRows_ACU(): boolean {
               templateSource: resolvedTemplateSource,
               guideData: normalized,
           });
-          if (templateState) {
-              setCurrentChatTemplateScopeState_ACU(templateState, {
-                  isolationKey: normalizedKey,
-                  reason: String(reason || `template_scope_${resolvedSource}`),
-              });
-          }
+          if (!templateState) return false;
+          const scopeUpdated = setCurrentChatTemplateScopeState_ACU(templateState, {
+              isolationKey: normalizedKey,
+              reason: String(reason || `template_scope_${resolvedSource}`),
+          });
+          if (!scopeUpdated) return false;
       }
       return true;
   }

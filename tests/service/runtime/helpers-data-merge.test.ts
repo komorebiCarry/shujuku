@@ -660,6 +660,7 @@ import { saveChatToHost_ACU } from '../../../src/data/gateways/chat-gateway';
 import { persistTableMutationLogV2_ACU } from '../../../src/service/table/storage-frame-v2-persist';
 import { initIsolatedTagSlot_ACU, writeLegacyCompatData_ACU } from '../../../src/data/repositories/chat-message-data-repo';
 import { buildChatSheetGuideDataFromTemplateObj_ACU, setChatSheetGuideDataForIsolationKey_ACU, sanitizeTemplateSnapshotForChat_ACU } from '../../../src/service/template/chat-scope';
+import { applyTemplateScopeForCurrentChat_ACU } from '../../../src/service/settings/settings-service';
 
 function mockPersistV2CheckpointSuccess_ACU() {
   vi.mocked(persistTableMutationLogV2_ACU).mockImplementation(async (options: any) => {
@@ -889,6 +890,7 @@ describe('fillFirstLayerWithTemplateData_ACU', () => {
     const guideData = { sheet_0: { name: '背包物品表', content: [['row_id', '物品名称']] } };
     vi.mocked(buildChatSheetGuideDataFromTemplateObj_ACU).mockReturnValue(guideData);
     vi.mocked(sanitizeTemplateSnapshotForChat_ACU).mockReturnValue({ templateStr: '{}' } as any);
+    vi.mocked(setChatSheetGuideDataForIsolationKey_ACU).mockReturnValue(true);
 
     const templateObj = {
       sheet_0: {
@@ -897,8 +899,78 @@ describe('fillFirstLayerWithTemplateData_ACU', () => {
       },
     };
 
-    await fillFirstLayerWithTemplateData_ACU(templateObj);
+    const result = await fillFirstLayerWithTemplateData_ACU(templateObj);
+
+    expect(result).toEqual({ success: true, messageIndex: 0, sheetCount: 1 });
     expect(vi.mocked(setChatSheetGuideDataForIsolationKey_ACU)).toHaveBeenCalledTimes(1);
+    expect(vi.mocked(applyTemplateScopeForCurrentChat_ACU)).toHaveBeenCalledTimes(1);
+    expect(vi.mocked(persistTableMutationLogV2_ACU)).toHaveBeenCalledTimes(1);
+    expect((getChatArray_ACU() as any[])[0]._acu_local_template_base_state_seeded).toBe(GREETING_LOCAL_BASE_STATE_MARKER_ACU);
+    expect(vi.mocked(_set_currentJsonTableData_ACU)).toHaveBeenCalledTimes(1);
+  });
+
+  it('guide/scope 同步失败时不写 checkpoint、不设置已播种标记，且允许后续重试', async () => {
+    const firstMessage: any = { is_user: false, mes: '你好，欢迎来到冒险世界！' };
+    vi.mocked(getChatArray_ACU).mockReturnValue([firstMessage]);
+    vi.mocked(buildChatSheetGuideDataFromTemplateObj_ACU).mockReturnValue({
+      sheet_0: { name: '背包物品表', content: [['row_id', '物品名称']] },
+    });
+    vi.mocked(setChatSheetGuideDataForIsolationKey_ACU).mockReturnValue(false);
+
+    const result = await fillFirstLayerWithTemplateData_ACU({
+      sheet_0: {
+        name: '背包物品表',
+        content: [['row_id', '物品名称'], ['1', '铁剑']],
+      },
+    });
+
+    expect(result).toBe(false);
+    expect(firstMessage._acu_local_template_base_state_seeded).toBeUndefined();
+    expect(vi.mocked(applyTemplateScopeForCurrentChat_ACU)).not.toHaveBeenCalled();
+    expect(vi.mocked(persistTableMutationLogV2_ACU)).not.toHaveBeenCalled();
+    expect(vi.mocked(saveChatToHost_ACU)).not.toHaveBeenCalled();
+    expect(vi.mocked(_set_currentJsonTableData_ACU)).not.toHaveBeenCalled();
+
+    vi.mocked(setChatSheetGuideDataForIsolationKey_ACU).mockReturnValue(true);
+    const retryResult = await fillFirstLayerWithTemplateData_ACU({
+      sheet_0: {
+        name: '背包物品表',
+        content: [['row_id', '物品名称'], ['1', '铁剑']],
+      },
+    });
+
+    expect(retryResult).toEqual({ success: true, messageIndex: 0, sheetCount: 1 });
+    expect(firstMessage._acu_local_template_base_state_seeded).toBe(GREETING_LOCAL_BASE_STATE_MARKER_ACU);
+    expect(vi.mocked(setChatSheetGuideDataForIsolationKey_ACU)).toHaveBeenCalledTimes(2);
+    expect(vi.mocked(persistTableMutationLogV2_ACU)).toHaveBeenCalledTimes(1);
+  });
+
+  it('V2 checkpoint 写入失败时不设置已播种标记，后续可重试', async () => {
+    const firstMessage: any = { is_user: false, mes: '你好，欢迎来到冒险世界！' };
+    vi.mocked(getChatArray_ACU).mockReturnValue([firstMessage]);
+    vi.mocked(buildChatSheetGuideDataFromTemplateObj_ACU).mockReturnValue({
+      sheet_0: { name: '背包物品表', content: [['row_id', '物品名称']] },
+    });
+    vi.mocked(setChatSheetGuideDataForIsolationKey_ACU).mockReturnValue(true);
+    vi.mocked(persistTableMutationLogV2_ACU).mockResolvedValueOnce({ saved: false, error: 'host save failed' });
+
+    const result = await fillFirstLayerWithTemplateData_ACU({
+      sheet_0: {
+        name: '背包物品表',
+        content: [['row_id', '物品名称'], ['1', '铁剑']],
+      },
+    });
+
+    expect(result).toBe(false);
+    expect(firstMessage._acu_local_template_base_state_seeded).toBeUndefined();
+    expect(vi.mocked(_set_currentJsonTableData_ACU)).not.toHaveBeenCalled();
+
+    mockPersistV2CheckpointSuccess_ACU();
+    const retryResult = await fillFirstLayerWithTemplateData_ACU({
+      sheet_0: { name: '背包物品表', content: [['row_id', '物品名称'], ['1', '铁剑']] },
+    });
+    expect(retryResult).toEqual({ success: true, messageIndex: 0, sheetCount: 1 });
+    expect(firstMessage._acu_local_template_base_state_seeded).toBe(GREETING_LOCAL_BASE_STATE_MARKER_ACU);
   });
 
   it('多张表格全部写入', async () => {

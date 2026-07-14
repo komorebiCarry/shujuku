@@ -588,18 +588,19 @@ export function migrateContentNullToRowId(data: Record<string, any> | null): Rec
       const baseData = buildTemplateBaseStateDataForLocalStorage_ACU(templateObj);
       if (!baseData) return false;
 
-      firstMsg._acu_local_template_base_state_seeded = GREETING_LOCAL_BASE_STATE_MARKER_ACU;
-      _set_suppressWorldbookInjectionInGreeting_ACU(false);
-
       const guideData = buildChatSheetGuideDataFromTemplateObj_ACU(templateObj, { stripSeedRows: false });
       if (guideData) {
-          setChatSheetGuideDataForIsolationKey_ACU(isolationKey, guideData, {
+          const guideUpdated = setChatSheetGuideDataForIsolationKey_ACU(isolationKey, guideData, {
               reason,
               syncTemplateScope: true,
               templateSource: templateSnapshot?.templateStr || templateObj,
               presetName: normalizedPresetName,
               source: normalizedSource,
           });
+          if (!guideUpdated) {
+              logWarn_ACU('[InitialCheckpoint] 初始化模板 scope 同步失败，已中止 checkpoint 写入。');
+              return false;
+          }
           applyTemplateScopeForCurrentChat_ACU();
       }
 
@@ -647,6 +648,9 @@ export function migrateContentNullToRowId(data: Record<string, any> | null): Rec
               return false;
           }
       }
+
+      firstMsg._acu_local_template_base_state_seeded = GREETING_LOCAL_BASE_STATE_MARKER_ACU;
+      _set_suppressWorldbookInjectionInGreeting_ACU(false);
 
       if (cleanupWorldbook) {
           try {

@@ -4,13 +4,15 @@ import { getChatScopedConfigContainer_ACU, getChatSheetGuideContainer_ACU, setCh
 import type { Sheet_ACU, TableDataObject_ACU } from '../../shared/models/table-data';
 import { logDebug_ACU, logWarn_ACU } from '../../shared/utils';
 import { getCurrentIsolationKey_ACU, settings_ACU } from '../runtime/state-manager';
-import { setChatSheetGuideDataForIsolationKey_ACU } from '../template/chat-scope';
+import { normalizeGuideData_ACU, setChatSheetGuideDataForIsolationKey_ACU } from '../template/chat-scope';
+import { ensureGlobalInjectionConfigDefaults_ACU } from '../worldbook/injection-engine';
 import type { ManualRefillProgressV2_ACU, TableMutationEventV2_ACU, TableMutationLogEntryV2_ACU, TableMutationSourceV2_ACU, TableStorageFrameV2_ACU, TableCheckpointV2_ACU, TableMutationWriteSetV2_ACU, TableMutationOperationV2_ACU, TableSheetCheckpointV2_ACU } from './storage-frame-v2-types';
-import { isV2TagData_ACU } from './storage-strategy-resolver';
+import { hasLegacyTopLevelTableData_ACU, isLegacyV1TagData_ACU, isV2TagData_ACU } from './storage-strategy-resolver';
 import { applyTableOperationV2_ACU, collectScheduleSummaryFromFramesV2_ACU, loadTableStateFromFramesV2_ACU } from './storage-frame-v2-replay';
 import { runTableWriteTransaction_ACU, type TableWriteTransactionContext_ACU } from './table-write-transaction';
 import { formatCanonicalRowIssues_ACU, normalizeCanonicalTableRows_ACU } from '../../shared/canonical-row-normalizer';
 import { createSheetInsertPlan, generateDDL, validateDDLTextAgainstHeaders_ACU } from '../../data/sqlite/schema-mapper';
+import { hydrateTableDataStrict_ACU } from './sqlite-template-validation';
 
 export interface TableCheckpointGenerationConfig_ACU {
   maxEntriesAfterCheckpoint: number;
@@ -100,6 +102,7 @@ export interface CommitCurrentFloorTemplateChangesOptions_ACU {
 
 export interface CommitCurrentFloorTemplateChangesResult_ACU {
   saved: boolean;
+  mode?: 'template_only' | 'v2_commit';
   messageIndex?: number;
   checkpoints?: TableSheetCheckpointV2_ACU[];
   removedNullRowCount?: number;
@@ -443,6 +446,55 @@ function getOrInitV2Frame_ACU(isolatedData: Record<string, any>, isolationKey: s
 
 function isObjectRecord_ACU(value: unknown): value is Record<string, any> {
   return value !== null && typeof value === 'object' && !Array.isArray(value);
+}
+
+type TemplateCommitStorageState_ACU =
+  | { kind: 'pristine_without_checkpoint' }
+  | { kind: 'existing_full_checkpoint'; checkpoint: { message: any; index: number; checkpoint: TableCheckpointV2_ACU } }
+  | { kind: 'legacy_persisted_data'; details: string[] }
+  | { kind: 'orphan_v2_artifacts'; details: string[] };
+
+function classifyTemplateCommitStorageState_ACU(
+  chat: any[],
+  isolationKey: string,
+): TemplateCommitStorageState_ACU {
+  const legacyDetails: string[] = [];
+  const v2FrameWithoutCheckpointDetails: string[] = [];
+  const orphanDetails: string[] = [];
+  let latestCheckpoint: { message: any; index: number; checkpoint: TableCheckpointV2_ACU } | null = null;
+  const isolationConfig = {
+    enabled: settings_ACU.dataIsolationEnabled,
+    code: settings_ACU.dataIsolationCode,
+  };
+
+  for (let index = 0; index < chat.length; index += 1) {
+    const message = chat[index];
+    if (!message || message.is_user) continue;
+    const tagData = readIsolatedTagData_ACU(message, isolationKey) as any;
+    if (isLegacyV1TagData_ACU(tagData) || hasLegacyTopLevelTableData_ACU(message, isolationConfig)) {
+      legacyDetails.push(`message#${index}`);
+      continue;
+    }
+    if (isV2TagData_ACU(tagData)) {
+      if (tagData.storageFrame.checkpoint?.kind === 'full') {
+        latestCheckpoint = { message, index, checkpoint: tagData.storageFrame.checkpoint };
+      } else {
+        v2FrameWithoutCheckpointDetails.push(`message#${index}: V2 storage frame has no full checkpoint`);
+      }
+      continue;
+    }
+    if (hasV2HistoryMarker_ACU(tagData)) {
+      orphanDetails.push(`message#${index}: malformed V2 storage marker`);
+    }
+  }
+
+  if (legacyDetails.length > 0) return { kind: 'legacy_persisted_data', details: legacyDetails };
+  if (latestCheckpoint) return { kind: 'existing_full_checkpoint', checkpoint: latestCheckpoint };
+  if (v2FrameWithoutCheckpointDetails.length > 0) {
+    return { kind: 'orphan_v2_artifacts', details: [...v2FrameWithoutCheckpointDetails, ...orphanDetails] };
+  }
+  if (orphanDetails.length > 0) return { kind: 'orphan_v2_artifacts', details: orphanDetails };
+  return { kind: 'pristine_without_checkpoint' };
 }
 
 function isPlainObjectRecord_ACU(value: unknown): value is Record<string, any> {
@@ -1276,6 +1328,69 @@ function assertValidTemplateMetaUpdate_ACU(operation: Record<string, any>, sheet
   }
 }
 
+async function assertValidInitialTemplateSnapshot_ACU(
+  data: Record<string, any>,
+  guideData: Record<string, any>,
+): Promise<void> {
+  const mate = data.mate;
+  if (!isPlainObjectRecord_ACU(mate) || typeof mate.type !== 'string' || mate.type.length === 0) {
+    throw new Error('V2 首次模板提交的 templateSource.mate 无效。');
+  }
+  if (mate.version !== undefined && (!Number.isFinite(mate.version) || mate.version < 0)) {
+    throw new Error('V2 首次模板提交的 templateSource.mate.version 无效。');
+  }
+  if (mate.updateConfigUiSentinel !== undefined && !Number.isFinite(mate.updateConfigUiSentinel)) {
+    throw new Error('V2 首次模板提交的 templateSource.mate.updateConfigUiSentinel 无效。');
+  }
+  mate.version = mate.version ?? 1;
+  mate.updateConfigUiSentinel = mate.updateConfigUiSentinel ?? 0;
+  mate.globalInjectionConfig = ensureGlobalInjectionConfigDefaults_ACU(mate.globalInjectionConfig);
+
+  const invalidRootKey = Object.keys(data).find(key => key !== 'mate' && !key.startsWith('sheet_'));
+  if (invalidRootKey) {
+    throw new Error(`V2 首次模板提交的 templateSource 包含非法根字段：${invalidRootKey}。`);
+  }
+  const sheetKeys = Object.keys(data).filter(key => key.startsWith('sheet_')).sort();
+  if (sheetKeys.length === 0) {
+    throw new Error('V2 首次模板提交的 templateSource 不包含任何 Sheet。');
+  }
+  const normalizedGuideData = normalizeGuideData_ACU(deepClone_ACU(guideData));
+  if (!normalizedGuideData) {
+    throw new Error('V2 首次模板提交的 guideData 无法规范化。');
+  }
+  const guideSheetKeys = Object.keys(normalizedGuideData).filter(key => key.startsWith('sheet_')).sort();
+  if (sheetKeys.length !== guideSheetKeys.length || sheetKeys.some((key, index) => key !== guideSheetKeys[index])) {
+    throw new Error('V2 首次模板提交的 templateSource 与 guideData 的 Sheet 集合不一致。');
+  }
+
+  for (const sheetKey of sheetKeys) {
+    const sheet = data[sheetKey];
+    if (!sheetIsValidForIntroductionHistory_ACU(sheet)) {
+      throw new Error(`V2 首次模板提交的 templateSource 包含无效 Sheet：${sheetKey}。`);
+    }
+    if (sheet.content.length === 0 || sheet.content[0].length === 0 || sheet.content[0][0] !== 'row_id') {
+      throw new Error(`V2 首次模板提交的 templateSource Sheet 缺少 row_id 表头：${sheetKey}。`);
+    }
+    if (!String(sheet.sourceData.ddl || '').trim()) {
+      sheet.sourceData.ddl = generateDDL(sheet as Sheet_ACU, sheet.uid || sheetKey);
+    }
+    const ddlValidation = validateDDLTextAgainstHeaders_ACU(sheet.sourceData.ddl, sheet.content[0]);
+    if (!ddlValidation.valid) {
+      throw new Error(`V2 首次模板提交的 templateSource Sheet DDL 无法 strict hydrate：${sheetKey}：${ddlValidation.message}`);
+    }
+    try {
+      createSheetInsertPlan(sheet as Sheet_ACU);
+    } catch (error: any) {
+      throw new Error(`V2 首次模板提交的 templateSource Sheet 无法 hydrate：${sheetKey}：${error?.message || String(error)}`);
+    }
+  }
+  try {
+    await hydrateTableDataStrict_ACU(data);
+  } catch (error: any) {
+    throw new Error(`V2 首次模板提交的完整 templateSource 无法通过 SQLite strict hydrate：${error?.message || String(error)}`);
+  }
+}
+
 function assertValidTemplateSheetChanges_ACU(sheetChanges: TemplateSheetChange_ACU[]): void {
   if (sheetChanges.length === 0) throw new Error('当前楼层模板提交必须至少包含一个 sheet change。');
   const sheetKeys = sheetChanges.map(change => String(change?.sheetKey || ''));
@@ -1365,11 +1480,17 @@ export async function commitCurrentFloorTemplateChanges_ACU(
       throw new Error(`当前楼层模板提交只能写入最新 AI 楼层：requested=${target.index}, latest=${latestAiTarget.index}。`);
     }
 
-    const latestFullCheckpoint = findLatestFullCheckpoint_ACU(chat, isolationKey);
-    if (!latestFullCheckpoint) {
-      throw new Error('V2 当前楼层模板提交 requires an existing full checkpoint anchor.');
+    const storageState = classifyTemplateCommitStorageState_ACU(chat, isolationKey);
+    if (storageState.kind === 'legacy_persisted_data') {
+      throw new Error(`当前楼层模板提交检测到 legacy 持久化数据，必须先完成迁移：${storageState.details.join(', ')}。`);
     }
-    if (target.index < latestFullCheckpoint.index) {
+    if (storageState.kind === 'orphan_v2_artifacts') {
+      throw new Error(`当前楼层模板提交检测到缺少 full checkpoint 的 V2 存储痕迹，已拒绝覆盖：${storageState.details.join(', ')}。`);
+    }
+    const latestFullCheckpoint = storageState.kind === 'existing_full_checkpoint'
+      ? storageState.checkpoint
+      : null;
+    if (latestFullCheckpoint && target.index < latestFullCheckpoint.index) {
       throw new Error(`V2 当前楼层模板提交目标早于最近 full checkpoint：targetMessageIndex=${target.index}, latestFullCheckpointIndex=${latestFullCheckpoint.index}。`);
     }
 
@@ -1377,6 +1498,57 @@ export async function commitCurrentFloorTemplateChanges_ACU(
     if (chat[target.index] !== target.message || target.message.is_user) {
       throw new Error('target AI message changed before template commit; abort stale table write.');
     }
+
+    if (storageState.kind === 'pristine_without_checkpoint') {
+      if (!isObjectRecord_ACU(options.templateSource)) {
+        throw new Error('预填表模板提交必须提供完整有效的 templateSource。');
+      }
+      const templateSnapshot = deepClone_ACU(options.templateSource);
+      await assertValidInitialTemplateSnapshot_ACU(templateSnapshot, options.guideData);
+      for (const change of requestedChanges) {
+        const snapshotSheet: unknown = templateSnapshot[change.sheetKey];
+        if (!isObjectRecord_ACU(snapshotSheet) || !Array.isArray(snapshotSheet.content)) {
+          throw new Error(`预填表模板提交的 templateSource 缺少变更 Sheet：${change.sheetKey}。`);
+        }
+        const expectedSheet = deepClone_ACU(change.kind === 'introduction' ? change.sheetData : change.targetSheetData);
+        const expectedNormalization = normalizeCanonicalTableRows_ACU({ [change.sheetKey]: expectedSheet });
+        if (expectedNormalization.errors.length > 0) {
+          throw new Error(`预填表模板提交目标 Sheet 行标识不合法：${formatCanonicalRowIssues_ACU(expectedNormalization.errors)}`);
+        }
+        if (!expectedSheet.sourceData || typeof expectedSheet.sourceData !== 'object') expectedSheet.sourceData = {} as any;
+        if (!String(expectedSheet.sourceData.ddl || '').trim()) {
+          expectedSheet.sourceData.ddl = generateDDL(expectedSheet, expectedSheet.uid || change.sheetKey);
+        }
+        if (canonicalJson_ACU(templateSheetPersistentProjection_ACU(snapshotSheet as Sheet_ACU)) !== canonicalJson_ACU(templateSheetPersistentProjection_ACU(expectedSheet))) {
+          throw new Error(`预填表模板提交的 templateSource 与目标 Sheet 不一致：${change.sheetKey}。`);
+        }
+      }
+      const previousScopeContainer = cloneOptionalJson_ACU(getChatScopedConfigContainer_ACU(chat));
+      const previousGuideContainer = cloneOptionalJson_ACU(getChatSheetGuideContainer_ACU(chat));
+      try {
+        const guideUpdated = setChatSheetGuideDataForIsolationKey_ACU(isolationKey, options.guideData, {
+          reason: options.reason || 'visualizer_v2_template_only',
+          syncTemplateScope: true,
+          templateSource: templateSnapshot,
+          presetName: options.presetName,
+          source: options.source,
+          updatedAt: createdAt,
+        });
+        if (!guideUpdated) throw new Error('预填表模板提交无法原子写入 guideData 与 template scope。');
+        await saveChatToHostStrict_ACU();
+        return { saved: true, mode: 'template_only', messageIndex: target.index, checkpoints: [] as TableSheetCheckpointV2_ACU[], removedNullRowCount: 0 };
+      } catch (error: any) {
+        setChatScopedConfigContainer_ACU(chat, previousScopeContainer);
+        setChatSheetGuideContainer_ACU(chat, previousGuideContainer);
+        try {
+          await saveChatToHostStrict_ACU();
+        } catch (rollbackError: any) {
+          throw new Error(`${error?.message || String(error)}；回滚保存也失败：${rollbackError?.message || String(rollbackError)}`);
+        }
+        throw error;
+      }
+    }
+
     const targetTagData = target.message?.TavernDB_ACU_IsolatedData?.[isolationKey];
     if (!isV2TagData_ACU(targetTagData)) {
       throw new Error('当前楼层模板提交要求目标 AI 楼层已存在合法 V2 storage frame；请先完成既有迁移。');
@@ -1511,7 +1683,7 @@ export async function commitCurrentFloorTemplateChanges_ACU(
       if (!guideUpdated) throw new Error('当前楼层模板提交无法写入 guideData。');
       await saveChatToHostStrict_ACU();
       logDebug_ACU(`[V2 Persist] 当前楼层模板提交完成: messageIndex=${target.index}, checkpoints=${checkpoints.length}, operations=${operations.length}, isolationKey=${isolationKey}`);
-      return { saved: true, messageIndex: target.index, checkpoints, removedNullRowCount };
+      return { saved: true, mode: 'v2_commit', messageIndex: target.index, checkpoints, removedNullRowCount };
     } catch (error: any) {
       if (hadIsolatedData) target.message.TavernDB_ACU_IsolatedData = previousIsolatedData;
       else delete target.message.TavernDB_ACU_IsolatedData;

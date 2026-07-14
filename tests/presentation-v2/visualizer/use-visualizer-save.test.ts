@@ -47,7 +47,7 @@ const serviceMock = vi.hoisted(() => ({
   })),
   isSqliteMode: vi.fn(() => false),
   ensureTemplateRecoveryOrDeleteCurrentIsolationData_ACU: vi.fn(async () => ({ success: true, dataWasReset: false })),
-  commitCurrentFloorTemplateChanges_ACU: vi.fn(async () => ({ saved: true, messageIndex: 0, checkpoints: [], removedNullRowCount: 0 })),
+  commitCurrentFloorTemplateChanges_ACU: vi.fn(async () => ({ saved: true, mode: 'template_only', messageIndex: 0, checkpoints: [], removedNullRowCount: 0 })),
   reloadStorageProvider: vi.fn(async () => undefined),
   applyTemplateScopeForCurrentChat_ACU: vi.fn(() => ({ mode: 'chat_override' })),
   buildChatSheetGuideDataFromData_ACU: vi.fn((data: Record<string, any>) => data),
@@ -302,7 +302,7 @@ describe('useVisualizerSave', () => {
     );
   });
 
-  it('保存模板到当前聊天会在当前楼层提交 shard 和 guide，不触发历史 recovery guard', async () => {
+  it('pristine 模板保存接受 template_only 结果并只提交一次核心请求，不触发历史 recovery guard', async () => {
     const { useVisualizerStore } = await import('../../../src/presentation-v2/stores/visualizer-store');
     const { useVisualizerSave } = await import('../../../src/presentation-v2/composables/visualizer/useVisualizerSave');
     const store = useVisualizerStore();
@@ -321,6 +321,9 @@ describe('useVisualizerSave', () => {
       isolationKey: 'iso-test',
       guideData: expect.any(Object),
       syncTemplateScope: true,
+      templateSource: expect.objectContaining({
+        sheet_test_vz2: expect.objectContaining({ name: '新表名' }),
+      }),
       sheetChanges: [expect.objectContaining({
         kind: 'operations',
         sheetKey: 'sheet_test_vz2',
@@ -330,6 +333,7 @@ describe('useVisualizerSave', () => {
         })],
       })],
     }));
+    expect(serviceMock.commitCurrentFloorTemplateChanges_ACU).toHaveBeenCalledTimes(1);
     expect(serviceMock.applyTemplateScopeForCurrentChat_ACU).toHaveBeenCalled();
     expect(runtimeMock._set_currentJsonTableData_ACU).toHaveBeenCalledWith(expect.objectContaining({
       sheet_test_vz2: expect.objectContaining({ name: '新表名' }),

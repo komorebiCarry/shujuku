@@ -384,6 +384,56 @@ describe('setChatSheetGuideDataForIsolationKey_ACU', () => {
     expect(result).toBe(true);
     expect(firstMsg._acu_sheet_guide).toBeDefined();
   });
+
+  it('未要求同步 scope 时只写入 guide', () => {
+    const firstMsg: any = {};
+    mockGetChatFirstLayerMessage.mockReturnValue(firstMsg);
+    mockGetChatArray.mockReturnValue([firstMsg]);
+    mockGetChatSheetGuideContainer.mockReturnValue({ version: 2, tags: {} });
+
+    const result = setChatSheetGuideDataForIsolationKey_ACU('', {
+      sheet_0: { uid: 's0', name: '表', content: [['row_id']], sourceData: {}, updateConfig: {} },
+    });
+
+    expect(result).toBe(true);
+    expect(mockBuildChatTemplateScopeStateFromCurrent).not.toHaveBeenCalled();
+    expect(mockSetCurrentChatTemplateScopeState).not.toHaveBeenCalled();
+    expect(firstMsg._acu_sheet_guide.tags[''].data.sheet_0.name).toBe('表');
+  });
+
+  it('同步 scope 但无法构建状态时返回 false', () => {
+    const firstMsg: any = {};
+    mockGetChatFirstLayerMessage.mockReturnValue(firstMsg);
+    mockGetChatArray.mockReturnValue([firstMsg]);
+    mockGetChatSheetGuideContainer.mockReturnValue({ version: 2, tags: {} });
+    mockBuildChatTemplateScopeStateFromCurrent.mockReturnValue(null);
+
+    const result = setChatSheetGuideDataForIsolationKey_ACU('', {
+      sheet_0: { uid: 's0', name: '表', content: [['row_id']], sourceData: {}, updateConfig: {} },
+    }, { syncTemplateScope: true });
+
+    expect(result).toBe(false);
+    expect(mockSetCurrentChatTemplateScopeState).not.toHaveBeenCalled();
+  });
+
+  it('同步 scope 写入失败时返回 false，并将规范化 guide 用于 scope 构建', () => {
+    const firstMsg: any = {};
+    mockGetChatFirstLayerMessage.mockReturnValue(firstMsg);
+    mockGetChatArray.mockReturnValue([firstMsg]);
+    mockGetChatSheetGuideContainer.mockReturnValue({ version: 2, tags: {} });
+    const templateState = { mode: 'chat_override', templateStr: '{}' };
+    mockBuildChatTemplateScopeStateFromCurrent.mockReturnValue(templateState);
+    mockSetCurrentChatTemplateScopeState.mockReturnValue(false);
+
+    const result = setChatSheetGuideDataForIsolationKey_ACU('', {
+      sheet_0: { uid: 's0', name: '表', content: [['row_id']], sourceData: {}, updateConfig: {} },
+    }, { syncTemplateScope: true });
+
+    expect(result).toBe(false);
+    expect(mockSetCurrentChatTemplateScopeState).toHaveBeenCalledWith(templateState, expect.objectContaining({ isolationKey: '' }));
+    const builderInput = mockBuildChatTemplateScopeStateFromCurrent.mock.calls[0][0];
+    expect(builderInput.guideData).toBe(firstMsg._acu_sheet_guide.tags[''].data);
+  });
 });
 
 // ═══ getEffectiveSeedRowsForSheet_ACU ═══
