@@ -36,6 +36,7 @@ import {
     normalizeSummaryVectorIndexManifestForRead_ACU,
     persistSummaryVectorIndexSnapshot_ACU,
 } from './summary-vector-index-storage-service';
+import { isMissingExternalVectorFileError_ACU } from './summary-vector-index-cache-service';
 import { hashUserInput_ACU, isSummaryOrOutlineTable_ACU, logDebug_ACU, logWarn_ACU } from '../../shared/utils';
 
 type SummaryVectorIndexArchiveMode_ACU = 'append' | 'sync';
@@ -620,17 +621,35 @@ async function hydrateAggregatedSummaryVectorIndexSnapshot_ACU(
     const mergedChunks = new Map<string, ChatSummaryVectorIndexChunk_ACU>();
     let latestState: ChatSummaryVectorIndexState_ACU | null = null;
 
-    for (const layer of snapshot.layers) {
+    // 只有"最新有效层"和"内容寻址层"才联网加载外置分片：
+    // rolling delta 折叠后旧层 base 指针必然悬空(其 chunks 已被最新层覆盖)，
+    // 逐层联网只会产生 O(楼层数) 次无害 404 刷屏并拖慢归档/召回。
+    const latestLayerIndex = snapshot.layers.length - 1;
+    const HISTORICAL_LAYER_MISSING_ERROR_LIMIT = 8;
+    let historicalMissingErrorCount = 0;
+
+    for (let layerIndex = 0; layerIndex < snapshot.layers.length; layerIndex += 1) {
+        const layer = snapshot.layers[layerIndex];
         const state = cloneSummaryVectorIndexState_ACU(layer.summaryVectorIndexState);
         if (!state) continue;
         if (state.manifest && (!Array.isArray(state.chunks) || state.chunks.length === 0)) {
-            try {
-                const externalChunks = await loadSummaryVectorIndexChunksFromManifest_ACU(state.manifest);
-                if (externalChunks.length > 0) {
-                    state.chunks = externalChunks;
+            const isLatestLayer = layerIndex === latestLayerIndex;
+            const isContentAddressedLayer = (state.manifest.contentAddressed?.chunkRefs?.length || 0) > 0;
+            const shouldLoadExternal = isLatestLayer
+                || (isContentAddressedLayer && historicalMissingErrorCount < HISTORICAL_LAYER_MISSING_ERROR_LIMIT);
+            if (shouldLoadExternal) {
+                try {
+                    const externalChunks = await loadSummaryVectorIndexChunksFromManifest_ACU(state.manifest);
+                    if (externalChunks.length > 0) {
+                        state.chunks = externalChunks;
+                    }
+                } catch (error) {
+                    if (!isLatestLayer) {
+                        const message = error instanceof Error ? error.message : String(error || '');
+                        if (isMissingExternalVectorFileError_ACU(message)) historicalMissingErrorCount += 1;
+                    }
+                    logWarn_ACU('[纪要向量索引] 加载历史外置分片失败，保留该层 manifest，禁止因缺失 chunks 清理旧层:', error);
                 }
-            } catch (error) {
-                logWarn_ACU('[纪要向量索引] 加载历史外置分片失败，保留该层 manifest，禁止因缺失 chunks 清理旧层:', error);
             }
         }
         hydratedLayers.push({ ...layer, summaryVectorIndexState: state });

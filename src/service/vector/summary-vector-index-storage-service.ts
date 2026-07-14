@@ -9,7 +9,9 @@ import {
     buildVectorIndexStableFilePath_ACU,
     deleteRegisteredVectorIndexFilesWhere_ACU,
     deleteVectorIndexFile_ACU,
+    isVectorIndexFilePathConfirmedMissing_ACU,
     loadVectorIndexRegistry_ACU,
+    markVectorIndexFilePathConfirmedMissing_ACU,
     readVectorIndexJsonFile_ACU,
     registerVectorIndexFiles_ACU,
     sha256Text_ACU,
@@ -974,7 +976,17 @@ async function persistSummaryVectorIndexSnapshotAsRollingDelta_ACU(params: {
         });
         const reusableBaseChunkIds = new Set(reusableBaseBatch?.chunkIds || []);
         const foldThreshold = Math.max(1, Math.floor(Number(params.foldThreshold) || 1));
-        const shouldFold = !reusableBaseBatch || reusableBaseChunkIds.size === 0 || changedRowKeys.size >= foldThreshold;
+        // 复用的 base 分片若已被确认缺失(404，如删楼退回折叠点之前的悬空层)，
+        // 必须无条件强制折叠重写 base，否则死指针只写 delta 永远补不回（base 404 死锁）。
+        const reusableBaseShardPaths = (reusableBaseBatch?.files || [])
+            .filter((file) => file?.role === 'base_shard' && !!file?.path)
+            .map((file) => file.path);
+        const baseFileConfirmedMissing = reusableBaseShardPaths.length > 0
+            && reusableBaseShardPaths.some((path) => isVectorIndexFilePathConfirmedMissing_ACU(path));
+        const shouldFold = !reusableBaseBatch
+            || reusableBaseChunkIds.size === 0
+            || changedRowKeys.size >= foldThreshold
+            || baseFileConfirmedMissing;
         const activeRowKeySet = new Set(activeRowKeys);
         const changedActiveRowKeys = new Set(Array.from(changedRowKeys).filter((rowKey) => activeRowKeySet.has(rowKey)));
         const baseChunks = shouldFold ? chunks : [];
@@ -1022,7 +1034,16 @@ async function persistSummaryVectorIndexSnapshotAsRollingDelta_ACU(params: {
             return written.ref;
         };
 
-        const baseShardRef = shouldFold ? await writeShard('base', 'base_0001', baseChunks) : null;
+        // 折叠时 base 按块数上限拆多分片写入，规避单大文件上传被 413/500 截断导致 base 从未落盘
+        const baseShardRefs: SummaryVectorIndexExternalFileRef_ACU[] = [];
+        if (shouldFold) {
+            const baseShardGroups = chunkArray_ACU(baseChunks, DEFAULT_SHARD_CHUNK_LIMIT_ACU);
+            for (let shardIndex = 0; shardIndex < baseShardGroups.length; shardIndex += 1) {
+                const shardId = `base_${String(shardIndex + 1).padStart(4, '0')}`;
+                const written = await writeShard('base', shardId, baseShardGroups[shardIndex]);
+                if (written) baseShardRefs.push(written);
+            }
+        }
         const deltaShardRef = await writeShard('delta', 'delta_0001', deltaChunks);
         const baseBatch: SummaryVectorIndexBatchRef_ACU = shouldFold
             ? {
@@ -1033,7 +1054,7 @@ async function persistSummaryVectorIndexSnapshotAsRollingDelta_ACU(params: {
                     updatedAt: indexedAt,
                     rows: baseRows,
                     chunks: baseChunks,
-                    files: baseShardRef ? [baseShardRef] : [],
+                    files: baseShardRefs,
                     sourceMessageIndex: options.sourceMessageIndex,
                     sourceSnapshotMessageId: options.snapshotMessageId,
                 }),
@@ -1162,7 +1183,7 @@ async function persistSummaryVectorIndexSnapshotAsRollingDelta_ACU(params: {
         } catch (error) {
             logWarn_ACU('[纪要向量索引] rolling delta 旧分片清理失败，保留当前快照继续运行:', error);
         }
-        logDebug_ACU(`[交火向量索引] 已写入 rolling delta 快照：fold=${shouldFold ? 'yes' : 'no'} changedRows=${changedRowKeys.size}`);
+        logDebug_ACU(`[交火向量索引] 已写入 rolling delta 快照：fold=${shouldFold ? 'yes' : 'no'} changedRows=${changedRowKeys.size}${baseFileConfirmedMissing ? ' forcedByMissingBase=yes' : ''} baseShards=${shouldFold ? baseShardRefs.length : (reusableBaseBatch?.files?.length || 0)}`);
         return { state, manifest: finalManifest, uploadedFiles };
     } catch (error) {
         await rollbackUploadedFiles_ACU(uploadedFiles);
@@ -1485,8 +1506,16 @@ async function loadOneShardChunks_ACU(
         shard = await getVectorIndexCachedShard_ACU(indexId, ref.shardId, ref.checksum || '');
     }
     if (!shard) {
+        // 本会话已确认 404 的路径直接短路，避免旧层悬空指针反复联网重试刷屏
+        if (ref.path && isVectorIndexFilePathConfirmedMissing_ACU(ref.path)) {
+            throw new Error(`交火向量索引分片读取失败: ${ref.path} 文件已确认缺失(404)，本会话跳过网络重试`);
+        }
         const loaded = await readVectorIndexJsonFile_ACU<SummaryVectorIndexShard_ACU>(ref.path);
         if (!loaded.ok || !loaded.data) {
+            // 记录已确认缺失(404)的分片路径，供 rolling delta 折叠判定强制重写 base
+            if (loaded.status === 404 && ref.path) {
+                markVectorIndexFilePathConfirmedMissing_ACU(ref.path);
+            }
             throw new Error(`交火向量索引分片读取失败: ${ref.path} ${loaded.error || ''}`.trim());
         }
         const loadedShard = loaded.data;

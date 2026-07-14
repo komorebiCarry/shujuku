@@ -191,6 +191,19 @@ export async function sha256Text_ACU(text: string): Promise<string> {
     return `fallback-${Math.abs(hash)}`;
 }
 
+// 会话级"已确认缺失(404)"外置文件路径集合：
+// 读分片遇 404 时记录，后续同会话对该路径直接短路（不再联网重试）；
+// 上传成功后移除，供写入侧(rolling delta 折叠判定)检测 base 死指针并强制重写。
+const confirmedMissingVectorFilePaths_ACU = new Set<string>();
+
+export function isVectorIndexFilePathConfirmedMissing_ACU(path: string): boolean {
+    return !!path && confirmedMissingVectorFilePaths_ACU.has(path);
+}
+
+export function markVectorIndexFilePathConfirmedMissing_ACU(path: string): void {
+    if (path) confirmedMissingVectorFilePaths_ACU.add(path);
+}
+
 export async function uploadVectorIndexJsonFile_ACU(params: {
     path: string;
     role: SummaryVectorIndexExternalFileRole_ACU;
@@ -217,6 +230,7 @@ export async function uploadVectorIndexJsonFile_ACU(params: {
             return { ok: false, error: `上传失败 ${response.status}: ${detail}` };
         }
         const now = new Date().toISOString();
+        confirmedMissingVectorFilePaths_ACU.delete(params.path);
         return {
             ok: true,
             ref: {
