@@ -334,7 +334,7 @@ describe('useVisualizerSave', () => {
     expect(store.lastSavedTarget).toBe('template-chat');
   });
 
-  it('新增表保存时将新增性传给 V2 当前楼层 writer', async () => {
+  it('新增表保存时只将新增表提交给 V2 当前楼层 writer', async () => {
     const { useVisualizerStore } = await import('../../../src/presentation-v2/stores/visualizer-store');
     const { useVisualizerSave } = await import('../../../src/presentation-v2/composables/visualizer/useVisualizerSave');
     const store = useVisualizerStore();
@@ -347,13 +347,60 @@ describe('useVisualizerSave', () => {
     const saved = await useVisualizerSave().saveTemplateToCurrentChat();
 
     expect(saved).toBe(true);
-    expect(serviceMock.commitCurrentFloorTemplateChanges_ACU).toHaveBeenCalledWith(expect.objectContaining({
-      sheetCheckpoints: expect.arrayContaining([expect.objectContaining({
-        sheetKey: 'sheet_new_vz2',
-        isNewSheet: true,
-        event: { filledSheetKeys: [], changedSheetKeys: ['sheet_new_vz2'] },
-      })]),
-    }));
+    const [[{ sheetCheckpoints }]] = serviceMock.commitCurrentFloorTemplateChanges_ACU.mock.calls;
+    expect(sheetCheckpoints).toEqual([expect.objectContaining({
+      sheetKey: 'sheet_new_vz2',
+      isNewSheet: true,
+      event: { filledSheetKeys: [], changedSheetKeys: ['sheet_new_vz2'] },
+    })]);
+  });
+
+  it('重排已有表时只提交 orderNo 实际变化的表', async () => {
+    const { useVisualizerStore } = await import('../../../src/presentation-v2/stores/visualizer-store');
+    const { useVisualizerSave } = await import('../../../src/presentation-v2/composables/visualizer/useVisualizerSave');
+    const store = useVisualizerStore();
+    store.loadSnapshot({
+      mate: { type: 'chatSheets', version: 1 },
+      sheet_first: { ...sheet('第一张表'), uid: 'sheet_first', orderNo: 0 },
+      sheet_second: { ...sheet('第二张表'), uid: 'sheet_second', orderNo: 1 },
+      sheet_unchanged: { ...sheet('未变表'), uid: 'sheet_unchanged', orderNo: 2 },
+    }, ['sheet_first', 'sheet_second', 'sheet_unchanged']);
+    store.moveSheet('sheet_second', 'up');
+
+    const saved = await useVisualizerSave().saveTemplateToCurrentChat();
+
+    expect(saved).toBe(true);
+    const [[{ sheetCheckpoints }]] = serviceMock.commitCurrentFloorTemplateChanges_ACU.mock.calls;
+    expect(sheetCheckpoints).toHaveLength(2);
+    expect(sheetCheckpoints).toEqual(expect.arrayContaining([
+      expect.objectContaining({ sheetKey: 'sheet_first', isNewSheet: false }),
+      expect.objectContaining({ sheetKey: 'sheet_second', isNewSheet: false }),
+    ]));
+    expect(sheetCheckpoints.map((checkpoint: any) => checkpoint.sheetKey)).not.toContain('sheet_unchanged');
+  });
+
+  it('新增表并修改旧表时只提交新增表和实际修改的旧表', async () => {
+    const { useVisualizerStore } = await import('../../../src/presentation-v2/stores/visualizer-store');
+    const { useVisualizerSave } = await import('../../../src/presentation-v2/composables/visualizer/useVisualizerSave');
+    const store = useVisualizerStore();
+    store.loadSnapshot({
+      mate: { type: 'chatSheets', version: 1 },
+      sheet_changed: { ...sheet('原名称'), uid: 'sheet_changed', orderNo: 0 },
+      sheet_unchanged: { ...sheet('未变表'), uid: 'sheet_unchanged', orderNo: 1 },
+    }, ['sheet_changed', 'sheet_unchanged']);
+    store.currentSheet.name = '更新后的名称';
+    store.addSheet('sheet_new_vz2', { ...sheet('新增表'), uid: 'sheet_new_vz2' });
+
+    const saved = await useVisualizerSave().saveTemplateToCurrentChat();
+
+    expect(saved).toBe(true);
+    const [[{ sheetCheckpoints }]] = serviceMock.commitCurrentFloorTemplateChanges_ACU.mock.calls;
+    expect(sheetCheckpoints).toHaveLength(2);
+    expect(sheetCheckpoints).toEqual(expect.arrayContaining([
+      expect.objectContaining({ sheetKey: 'sheet_changed', isNewSheet: false }),
+      expect.objectContaining({ sheetKey: 'sheet_new_vz2', isNewSheet: true }),
+    ]));
+    expect(sheetCheckpoints.map((checkpoint: any) => checkpoint.sheetKey)).not.toContain('sheet_unchanged');
   });
 
   it('schema migration preflight 阻断时不创建 checkpoint 或推进模板状态', async () => {

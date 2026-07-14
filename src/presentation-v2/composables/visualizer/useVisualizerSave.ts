@@ -159,9 +159,7 @@ function projectSheetSchema_ACU(sheet: any): Record<string, any> {
 
 function classifyVisualizerTemplateChanges_ACU(
   baseData: Record<string, any> | null,
-  baseOrder: string[],
   nextData: Record<string, any>,
-  nextOrder: string[],
 ): VisualizerTemplateChanges_ACU {
   const baseKeys = Object.keys(baseData || {}).filter(key => key.startsWith('sheet_'));
   const nextKeys = Object.keys(nextData || {}).filter(key => key.startsWith('sheet_'));
@@ -169,10 +167,9 @@ function classifyVisualizerTemplateChanges_ACU(
   const deletedSheetKeys = baseKeys.filter(key => !nextKeys.includes(key));
   const schemaChangedSheetKeys = nextKeys.filter(key => baseData?.[key]
     && !sameTemplateValue_ACU(projectSheetSchema_ACU(baseData[key]), projectSheetSchema_ACU(nextData[key])));
-  const sheetOrderChanged = !sameTemplateValue_ACU(baseOrder, nextOrder);
   const metadataChangedSheetKeys = nextKeys.filter(key => baseData?.[key]
     && !schemaChangedSheetKeys.includes(key)
-    && (sheetOrderChanged || !sameTemplateValue_ACU(projectSheetTemplate_ACU(baseData[key]), projectSheetTemplate_ACU(nextData[key]))));
+    && !sameTemplateValue_ACU(projectSheetTemplate_ACU(baseData[key]), projectSheetTemplate_ACU(nextData[key])));
   return { addedSheetKeys, schemaChangedSheetKeys, metadataChangedSheetKeys, deletedSheetKeys };
 }
 
@@ -440,9 +437,7 @@ export function useVisualizerSave(interactions: VisualizerSaveInteractions = {})
       const orderedData = buildOrderedData(visualizer.tempData, visualizer.sheetOrder, visualizer.tableLockDrafts);
       const changes = classifyVisualizerTemplateChanges_ACU(
         visualizer.templateBaseData,
-        visualizer.templateBaseSheetOrder,
         orderedData,
-        visualizer.sheetOrder,
       );
       if (changes.deletedSheetKeys.length > 0) {
         toastStore.error('模板保存不处理删表；请使用数据保存执行现有硬删除流程。', { muteable: false });
