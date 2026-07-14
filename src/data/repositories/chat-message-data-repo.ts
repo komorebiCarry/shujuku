@@ -397,6 +397,12 @@ function purgeManualRefillProgressV2_ACU(progress: any, sheetKeys: Set<string>):
     if (deleteSheetKeysFromRecord_ACU(progress.completedSheetMessageIndexByKey, sheetKeys)) {
         changed = true;
     }
+    if (Array.isArray(progress.selectedSheetKeys) && progress.selectedSheetKeys.length === 0) {
+        // 不留下无目标表、无法继续或恢复的幽灵运行记录。
+        progress.status = 'complete';
+        if (typeof progress.lastError === 'string') delete progress.lastError;
+        changed = true;
+    }
     return changed;
 }
 
@@ -589,7 +595,13 @@ function purgeSheetKeysFromStorageFrameV2_ACU(frame: any, sheetKeys: Set<string>
     return changed;
 }
 
-function purgeManualRefillIncrementalSheetKeysFromStorageFrameV2_ACU(frame: any, sheetKeys: Set<string>, knownSqlTableNames?: Iterable<string>): boolean {
+function normalizeManualRefillFrameHeadRevisionV2_ACU(frame: any, previousHeadRevision: unknown, previousEntryRevisions: Set<string>): void {
+    const entries = Array.isArray(frame.logEntries) ? frame.logEntries : [];
+    const latestEntryRevision = [...entries].reverse().find((entry: any) => typeof entry?.commitRevision === 'string')?.commitRevision;
+    frame.headRevision = latestEntryRevision || (typeof previousHeadRevision === 'string' && !previousEntryRevisions.has(previousHeadRevision) ? previousHeadRevision : null);
+}
+
+export function purgeManualRefillIncrementalSheetKeysFromStorageFrameV2_ACU(frame: any, sheetKeys: Set<string>, knownSqlTableNames?: Iterable<string>): boolean {
     if (!isObjectRecord_ACU(frame)) return false;
     // 单表 checkpoint 是重放基底；增量预清除只裁剪日志和重填进度，不能删除或改写 shard。
     // 需要替换基底时必须走完整的 purgeSheetKeysFromStorageFrameV2_ACU 流程。
@@ -612,6 +624,10 @@ function purgeManualRefillIncrementalSheetKeysFromStorageFrameV2_ACU(frame: any,
     if (purgeManualRefillProgressV2_ACU(frame.manualRefillProgress, sheetKeys)) changed = true;
 
     if (Array.isArray(frame.logEntries)) {
+        const previousHeadRevision = frame.headRevision;
+        const previousEntryRevisions = new Set(frame.logEntries
+            .map((entry: any) => entry?.commitRevision)
+            .filter((revision: unknown): revision is string => typeof revision === 'string'));
         const nextEntries: any[] = [];
         frame.logEntries.forEach((entry: any) => {
             if (!isObjectRecord_ACU(entry)) {
@@ -654,6 +670,7 @@ function purgeManualRefillIncrementalSheetKeysFromStorageFrameV2_ACU(frame: any,
         });
         if (nextEntries.length !== frame.logEntries.length) changed = true;
         frame.logEntries = nextEntries;
+        if (changed) normalizeManualRefillFrameHeadRevisionV2_ACU(frame, previousHeadRevision, previousEntryRevisions);
     }
 
     return changed;

@@ -153,12 +153,31 @@
         <AcuMessage v-if="manualUpdate.vectorIndexWarning.value" kind="warning">
           交火模式纪要索引启用时不建议手动更新表格；特殊场景下仍可点击执行。
         </AcuMessage>
+        <AcuMessage kind="info">
+          {{ formFillCopy.panels.manual.catchUpBoundary }}
+        </AcuMessage>
 
         <div class="acu-v2-form-fill-page__actions">
+          <AcuButton
+            variant="secondary"
+            :disabled="
+              manualUpdate.manualUpdateBusy.value ||
+              manualUpdate.catchUpBusy.value ||
+              !manualUpdate.selectedManualTableKeys.value.length
+            "
+            @click="manualUpdate.runManualCatchUp"
+          >
+            {{
+              manualUpdate.catchUpBusy.value
+                ? formFillCopy.panels.manual.catchUpBusyLabel
+                : formFillCopy.panels.manual.catchUpLabel
+            }}
+          </AcuButton>
           <AcuButton
             variant="primary"
             :disabled="
               manualUpdate.manualUpdateBusy.value ||
+              manualUpdate.catchUpBusy.value ||
               !manualUpdate.selectedManualTableKeys.value.length
             "
             @click="manualUpdate.runManualUpdate"
@@ -168,7 +187,7 @@
                 ? "填表中..."
                 : manualUpdate.vectorIndexWarning.value
                   ? "交火索引已启用"
-                  : "执行手动填表"
+                  : formFillCopy.panels.manual.runLabel
             }}
           </AcuButton>
         </div>

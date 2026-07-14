@@ -1,5 +1,5 @@
 import { getChatArray_ACU, saveChatToHost_ACU, saveChatToHostStrict_ACU } from '../../data/gateways/chat-gateway';
-import { cloneIsolatedData_ACU, writeMessageIdentity_ACU } from '../../data/repositories/chat-message-data-repo';
+import { cloneIsolatedData_ACU, collectSqlTargetTableNamesFromStorageFrameV2_ACU, purgeManualRefillIncrementalSheetKeysFromStorageFrameV2_ACU, readIsolatedTagData_ACU, writeMessageIdentity_ACU } from '../../data/repositories/chat-message-data-repo';
 import { getChatScopedConfigContainer_ACU, getChatSheetGuideContainer_ACU, setChatScopedConfigContainer_ACU, setChatSheetGuideContainer_ACU } from '../../data/storage/chat-history';
 import type { Sheet_ACU, TableDataObject_ACU } from '../../shared/models/table-data';
 import { logDebug_ACU, logWarn_ACU } from '../../shared/utils';
@@ -34,6 +34,11 @@ export interface TableCheckpointGenerationStatus_ACU {
   config: TableCheckpointGenerationConfig_ACU;
 }
 
+export interface ReplaceExistingIncrementalOptions_ACU {
+  targetMessageIndices: number[];
+  targetSheetKeys: string[];
+}
+
 export interface PersistTableMutationV2Options_ACU {
   targetMessageIndex?: number;
   source: TableMutationSourceV2_ACU;
@@ -53,6 +58,8 @@ export interface PersistTableMutationV2Options_ACU {
   parentRevision?: string | null;
   writeSet?: TableMutationWriteSetV2_ACU;
   revisionWriteSet?: TableMutationWriteSetV2_ACU;
+  /** 在追加本次 entry 前，裁剪指定消息与表的历史手动填表增量。 */
+  replaceExistingIncremental?: ReplaceExistingIncrementalOptions_ACU;
   /** 调用方已处于 transactionContext.runCommit 临界区内时使用，避免嵌套 commit 锁。 */
   assumeCommitLock?: boolean;
   /** 对破坏性复合写入要求宿主真实保存；默认保持历史宽松保存语义。 */
@@ -249,6 +256,51 @@ function findTargetAiMessage_ACU(chat: any[], targetMessageIndex: number | undef
   }
 
   return null;
+}
+
+function normalizeIncrementalReplacement_ACU(
+  replacement: ReplaceExistingIncrementalOptions_ACU | undefined,
+  targetMessageIndex: number,
+  chat: any[],
+): { targetMessageIndices: number[]; targetSheetKeys: string[] } | { error: string } | null {
+  if (!replacement) return null;
+  if (!Array.isArray(replacement.targetMessageIndices) || replacement.targetMessageIndices.length === 0) {
+    return { error: 'V2 incremental replacement requires non-empty targetMessageIndices.' };
+  }
+  if (!Array.isArray(replacement.targetSheetKeys) || replacement.targetSheetKeys.length === 0) {
+    return { error: 'V2 incremental replacement requires non-empty targetSheetKeys.' };
+  }
+  const targetMessageIndices = replacement.targetMessageIndices.map(Number);
+  if (targetMessageIndices.some(index => !Number.isInteger(index) || index < 0 || index >= chat.length)
+    || new Set(targetMessageIndices).size !== targetMessageIndices.length
+    || !targetMessageIndices.includes(targetMessageIndex)
+    || targetMessageIndices.some(index => !chat[index] || chat[index].is_user)) {
+    return { error: 'V2 incremental replacement targetMessageIndices must contain unique existing AI message indices including the persist target.' };
+  }
+  const targetSheetKeys = replacement.targetSheetKeys.map(sheetKey => String(sheetKey || '').trim());
+  if (targetSheetKeys.some(sheetKey => !sheetKey.startsWith('sheet_'))
+    || new Set(targetSheetKeys).size !== targetSheetKeys.length) {
+    return { error: 'V2 incremental replacement targetSheetKeys must contain unique sheet_ keys.' };
+  }
+  return { targetMessageIndices, targetSheetKeys };
+}
+
+function collectReplacementSqlTableNames_ACU(
+  chat: any[],
+  isolationKey: string,
+  targetMessageIndices: number[],
+  targetSheetKeys: string[],
+): Set<string> {
+  const maxTargetMessageIndex = Math.max(...targetMessageIndices);
+  const sheetKeySet = new Set(targetSheetKeys);
+  const knownSqlTableNames = new Set<string>();
+  for (let index = 0; index <= maxTargetMessageIndex; index += 1) {
+    const tagData = readIsolatedTagData_ACU(chat[index], isolationKey);
+    if (!isV2TagData_ACU(tagData)) continue;
+    collectSqlTargetTableNamesFromStorageFrameV2_ACU(tagData.storageFrame, sheetKeySet)
+      .forEach(tableName => knownSqlTableNames.add(tableName));
+  }
+  return knownSqlTableNames;
 }
 
 function countAiFloor_ACU(chat: any[], messageIndex: number): number {
@@ -486,19 +538,27 @@ function scheduleSummaryIsValidForIntroductionHistory_ACU(value: unknown): boole
 }
 
 function manualRefillProgressIsValidForIntroductionHistory_ACU(value: unknown): boolean {
-  return value === undefined || (
-    isObjectRecord_ACU(value)
-    && value.kind === 'manual_refill'
-    && (value.status === 'in_progress' || value.status === 'complete')
-    && isStringArray_ACU(value.selectedSheetKeys)
+  if (value === undefined) return true;
+  if (!isObjectRecord_ACU(value) || value.kind !== 'manual_refill') return false;
+  const legacyStatus = value.status === 'in_progress' || value.status === 'complete';
+  const commonFieldsAreValid = isStringArray_ACU(value.selectedSheetKeys)
     && Array.isArray(value.contextMessageIndices) && value.contextMessageIndices.every(Number.isInteger)
     && ['originalStartMessageIndex', 'targetMessageIndex', 'batchSize', 'completedUntilMessageIndex', 'updatedAt']
       .every(key => isFiniteNonNegativeNumber_ACU(value[key]))
     && (value.completedSheetMessageIndexByKey === undefined || (
       isObjectRecord_ACU(value.completedSheetMessageIndexByKey)
       && Object.values(value.completedSheetMessageIndexByKey).every(Number.isInteger)
-    ))
-  );
+    ));
+  if (!commonFieldsAreValid) return false;
+  if (value.version === undefined) return legacyStatus;
+  return value.version === 2
+    && ['planned', 'collecting', 'committing', 'committed', 'stopped', 'failed', 'sync_pending', 'complete'].includes(value.status)
+    && typeof value.runId === 'string' && value.runId.length > 0
+    && (value.mode === 'refill' || value.mode === 'catch_up')
+    && isFiniteNonNegativeNumber_ACU(value.targetAiFloor)
+    && typeof value.planSignature === 'string'
+    && ['waveIndex', 'bucketIndex', 'totalWaves', 'totalBuckets'].every(key => isFiniteNonNegativeInteger_ACU(value[key]))
+    && (value.lastError === undefined || typeof value.lastError === 'string');
 }
 
 function timelineIsValidForIntroductionHistory_ACU(value: unknown): boolean {
@@ -763,6 +823,11 @@ async function persistTableMutationLogV2Core_ACU(
   }
 
   const isolationKey = options.isolationKey ?? getCurrentIsolationKey_ACU();
+  const replacementValidation = normalizeIncrementalReplacement_ACU(options.replaceExistingIncremental, target.index, chat);
+  if (replacementValidation && 'error' in replacementValidation) {
+    return { saved: false, error: replacementValidation.error };
+  }
+  const replacement = replacementValidation as { targetMessageIndices: number[]; targetSheetKeys: string[] } | null;
   const afterData = deepClone_ACU(options.afterData);
   const normalization = normalizeCanonicalTableRows_ACU(afterData);
   if (normalization.errors.length > 0) {
@@ -772,19 +837,52 @@ async function persistTableMutationLogV2Core_ACU(
   const candidateChangedSheetKeys = normalizeKeys_ACU(options.candidateChangedSheetKeys, afterData);
   const operations = normalizeOperations_ACU(options.operations, afterData, options.source);
   const effectiveChangedSheetKeys = candidateChangedSheetKeys;
+  const hasExistingCheckpoint = hasAnyV2Checkpoint_ACU(chat, isolationKey);
+  const hasExistingV2Frame = hasAnyV2Frame_ACU(chat, isolationKey);
+  const hasMetadataOnlyFillEvent = filledSheetKeys.length > 0 || (Array.isArray(options.groupKeys) && options.groupKeys.length > 0);
+  const hasManualRefillProgress = !!options.manualRefillProgress;
+  const isManualRefillProgressOnly = operations.length === 0 && !hasMetadataOnlyFillEvent && hasManualRefillProgress;
+  if (!manualRefillProgressIsValidForIntroductionHistory_ACU(options.manualRefillProgress)) {
+    return { saved: false, error: 'V2 manualRefillProgress 格式无效，已拒绝写入。' };
+  }
+  if (isManualRefillProgressOnly && !hasExistingCheckpoint) {
+    return {
+      saved: false,
+      error: 'V2 manualRefillProgress-only write requires an existing full checkpoint anchor.',
+    };
+  }
 
   const isolatedData = cloneIsolatedData_ACU(target.message) as Record<string, any>;
   const frame = getOrInitV2Frame_ACU(isolatedData, isolationKey);
+  const replacementIsolatedDataByMessageIndex = new Map<number, Record<string, any>>();
+  if (replacement) {
+    const knownSqlTableNames = collectReplacementSqlTableNames_ACU(
+      chat,
+      isolationKey,
+      replacement.targetMessageIndices,
+      replacement.targetSheetKeys,
+    );
+    for (const messageIndex of replacement.targetMessageIndices) {
+      const nextIsolatedData = messageIndex === target.index
+        ? isolatedData
+        : cloneIsolatedData_ACU(chat[messageIndex]) as Record<string, any>;
+      const tagData = nextIsolatedData[isolationKey];
+      if (!isV2TagData_ACU(tagData)) continue;
+      if (purgeManualRefillIncrementalSheetKeysFromStorageFrameV2_ACU(
+        tagData.storageFrame,
+        new Set(replacement.targetSheetKeys),
+        knownSqlTableNames,
+      )) {
+        replacementIsolatedDataByMessageIndex.set(messageIndex, nextIsolatedData);
+      }
+    }
+  }
   const currentWriteSet = options.writeSet ?? options.transactionContext?.writeSet;
   const revisionWriteSet = options.revisionWriteSet;
   const requestedBaseRevision = options.baseRevision !== undefined
     ? options.baseRevision
     : options.transactionContext?.baseRevision;
 
-  const hasExistingCheckpoint = hasAnyV2Checkpoint_ACU(chat, isolationKey);
-  const hasExistingV2Frame = hasAnyV2Frame_ACU(chat, isolationKey);
-  const hasMetadataOnlyFillEvent = filledSheetKeys.length > 0 || (Array.isArray(options.groupKeys) && options.groupKeys.length > 0);
-  const hasManualRefillProgress = !!options.manualRefillProgress;
   if (operations.length === 0 && !hasMetadataOnlyFillEvent && !hasManualRefillProgress && options.source !== 'import' && hasExistingCheckpoint) {
     return { saved: false, error: `V2 operation log requires explicit operations for source=${options.source}; snapshot diff fallback is not allowed.` };
   }
@@ -792,6 +890,7 @@ async function persistTableMutationLogV2Core_ACU(
   const initialCheckpointReason: TableCheckpointV2_ACU['reason'] = options.checkpointReason
     || (hasExistingV2Frame ? 'migration' : 'init');
   const shouldCheckpoint = !hasExistingCheckpoint
+    && !isManualRefillProgressOnly
     && (initialCheckpointReason === 'init' || initialCheckpointReason === 'migration');
 
   if (options.forceCheckpoint && !shouldCheckpoint) {
@@ -801,6 +900,7 @@ async function persistTableMutationLogV2Core_ACU(
   if (options.manualRefillProgress) {
     frame.manualRefillProgress = deepClone_ACU(options.manualRefillProgress);
   }
+  const shouldAppendLogEntry = operations.length > 0 || hasMetadataOnlyFillEvent;
   const now = Date.now();
   const aiFloor = countAiFloor_ACU(chat, target.index);
   let entry: TableMutationLogEntryV2_ACU | undefined;
@@ -826,7 +926,7 @@ async function persistTableMutationLogV2Core_ACU(
     frame.headRevision = checkpointRevision;
     frame.logEntries = [];
     logDebug_ACU(`[V2 Persist] 写入 full checkpoint: messageIndex=${target.index}, revision=${checkpointRevision}, sheets=${Object.keys(afterData).filter(k => k.startsWith('sheet_')).length}`);
-  } else {
+  } else if (shouldAppendLogEntry) {
     const nextSeq = Math.max(0, ...frame.logEntries.map(item => Number(item.seq) || 0)) + 1;
     const parentRevision = options.parentRevision !== undefined ? options.parentRevision : (frame.headRevision ?? null);
     entry = appendMutationLogEntry_ACU(frame, {
@@ -849,20 +949,42 @@ async function persistTableMutationLogV2Core_ACU(
     logDebug_ACU(`[V2 Persist] 追加 operation log entry: messageIndex=${target.index}, seq=${entry.seq}, revision=${entry.commitRevision}, operations=${operations.length}`);
   }
 
-  target.message.TavernDB_ACU_IsolatedData = isolatedData;
-  writeMessageIdentity_ACU(target.message, {
-    enabled: settings_ACU.dataIsolationEnabled,
-    code: settings_ACU.dataIsolationCode,
-  });
-
-  if (operations.length === 0 && filledSheetKeys.length === 0 && !shouldCheckpoint) {
-    logWarn_ACU(`[V2 Persist] 无 operation 且无 filled 事件，仍保存空日志事件: messageIndex=${target.index}`);
+  if (!shouldAppendLogEntry && !shouldCheckpoint && options.manualRefillProgress) {
+    logDebug_ACU(`[V2 Persist] 仅更新 manualRefillProgress，不追加 mutation entry: messageIndex=${target.index}`);
   }
 
-  if (options.strictSave) {
-    await saveChatToHostStrict_ACU();
-  } else {
-    await saveChatToHost_ACU();
+  replacementIsolatedDataByMessageIndex.set(target.index, isolatedData);
+  const previousMessageState = [...replacementIsolatedDataByMessageIndex.keys()].map(messageIndex => {
+    const message = chat[messageIndex];
+    return {
+      message,
+      hadIsolatedData: Object.prototype.hasOwnProperty.call(message, 'TavernDB_ACU_IsolatedData'),
+      isolatedData: message.TavernDB_ACU_IsolatedData,
+      hadIdentity: Object.prototype.hasOwnProperty.call(message, 'TavernDB_ACU_Identity'),
+      identity: message.TavernDB_ACU_Identity,
+    };
+  });
+  try {
+    for (const [messageIndex, nextIsolatedData] of replacementIsolatedDataByMessageIndex) {
+      chat[messageIndex].TavernDB_ACU_IsolatedData = nextIsolatedData;
+    }
+    writeMessageIdentity_ACU(target.message, {
+      enabled: settings_ACU.dataIsolationEnabled,
+      code: settings_ACU.dataIsolationCode,
+    });
+    if (options.strictSave || replacement) {
+      await saveChatToHostStrict_ACU();
+    } else {
+      await saveChatToHost_ACU();
+    }
+  } catch (error) {
+    for (const state of previousMessageState) {
+      if (state.hadIsolatedData) state.message.TavernDB_ACU_IsolatedData = state.isolatedData;
+      else delete state.message.TavernDB_ACU_IsolatedData;
+      if (state.hadIdentity) state.message.TavernDB_ACU_Identity = state.identity;
+      else delete state.message.TavernDB_ACU_Identity;
+    }
+    throw error;
   }
   return { saved: true, messageIndex: target.index, entry };
 }

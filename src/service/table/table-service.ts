@@ -22,7 +22,7 @@ import { mergeAllIndependentTables_ACU, mergeAllIndependentTablesLegacyV1_ACU } 
 import { cloneIsolatedData_ACU, writeIsolatedTagData_ACU, writeMessageIdentity_ACU, readIsolatedTagData_ACU, readLegacyIndependentData_ACU, isLegacyMatchForIsolation_ACU } from '../../data/repositories/chat-message-data-repo';
 import { applyTableDelta_ACU, buildTableDelta_ACU, isDeltaTagData_ACU } from './table-delta';
 import { isV2TagData_ACU, resolveTableStorageStrategy_ACU } from './storage-strategy-resolver';
-import { persistTableMutationLogV2_ACU } from './storage-frame-v2-persist';
+import { persistTableMutationLogV2_ACU, type ReplaceExistingIncrementalOptions_ACU } from './storage-frame-v2-persist';
 import { migrateLegacyStorageToV2OnLoad_ACU } from './storage-v2-migration';
 import type { ManualRefillProgressV2_ACU, TableCheckpointV2_ACU, TableMutationOperationV2_ACU, TableMutationSourceV2_ACU, TableWriteConflictUnitV2_ACU } from './storage-frame-v2-types';
 import type { TableWriteTransactionContext_ACU } from './table-write-transaction';
@@ -54,6 +54,8 @@ export interface TableChatPersistOptions_ACU {
   forceCheckpoint?: boolean;
   checkpointReason?: TableCheckpointV2_ACU['reason'];
   manualRefillProgress?: ManualRefillProgressV2_ACU;
+  /** 在本次 V2 entry 写入前替换指定 bucket 的历史增量。 */
+  replaceExistingIncremental?: ReplaceExistingIncrementalOptions_ACU;
   /** 调用方已处于 transactionContext.runCommit 临界区内时使用，避免嵌套 commit 锁。 */
   assumeCommitLock?: boolean;
   /** 对破坏性复合写入要求宿主真实保存；默认保持历史宽松保存语义。 */
@@ -134,6 +136,7 @@ async function persistTablesToChatMessageWithLockOption_ACU(
     forceCheckpoint,
     checkpointReason,
     manualRefillProgress,
+    replaceExistingIncremental,
     assumeCommitLock,
     strictSave,
     transactionContext,
@@ -226,6 +229,7 @@ async function persistTablesToChatMessageWithLockOption_ACU(
         forceCheckpoint: forceCheckpoint === true || strategy.mode === 'empty',
         checkpointReason: checkpointReason || (strategy.mode === 'empty' ? 'init' : undefined),
         manualRefillProgress,
+        replaceExistingIncremental,
         isolationKey: currentIsolationKey,
         revisionWriteSet,
         assumeCommitLock,

@@ -6,13 +6,16 @@
 
 import { isAutoUpdatingCard_ACU, pendingFinalGenerationGreenlights_ACU, wasStoppedByUser_ACU, _set_isAutoUpdatingCard_ACU, _set_manualExtraHint_ACU, _set_wasStoppedByUser_ACU } from '../runtime/state-manager';
 import { callCustomOpenAI_ACU } from '../ai/prompt-builder';
-import { captureManualRefillSessionSnapshot_ACU, clearManualRefillIncrementalDataInRange_ACU, clearManualRefillSheetDataInRange_ACU, commitManualRefillSheetSnapshotInRangeAtomic_ACU, ensureManualRefillInitialBaseline_ACU, ensureV2BoundaryCheckpointForRetainedBuffer_ACU, getChatArray_ACU, restoreManualRefillSessionSnapshotAtomic_ACU, shouldRotateV2BoundaryCheckpointForRetainedBuffer_ACU } from '../chat/chat-service';
+import { captureManualRefillSessionSnapshot_ACU, clearManualRefillSheetDataInRange_ACU, commitManualRefillSheetSnapshotInRangeAtomic_ACU, ensureManualRefillInitialBaseline_ACU, ensureV2BoundaryCheckpointForRetainedBuffer_ACU, getChatArray_ACU, restoreManualRefillSessionSnapshotAtomic_ACU, shouldRotateV2BoundaryCheckpointForRetainedBuffer_ACU } from '../chat/chat-service';
 import { coreApisAreReady_ACU, currentJsonTableData_ACU, getCurrentIsolationKey_ACU, settings_ACU, _set_currentJsonTableData_ACU } from '../runtime/state-manager';
 import { checkAutoMergeTrigger_ACU, prepareAutoMergeBatches_ACU, executeAutoMergeBatch_ACU, finalizeAutoMerge_ACU } from '../summary/merge-logic';
 import { ensureStableRowIdsForSheetContent_ACU, getChatSheetGuideDataForIsolationKey_ACU, getEffectiveSeedRowsForSheet_ACU, shouldUseInitialSeedRows_ACU } from '../template/chat-scope';
 import { loadAllChatMessages_ACU, updateReadableLorebookEntry_ACU } from '../worldbook/pipeline';
 import { enqueueSummaryVectorIndexFlush_ACU } from '../vector/summary-vector-index-flush-queue';
 import { getCurrentWorldbookConfig_ACU } from '../settings/settings-readers';
+import { resolveTableHistoryStateFromChat_ACU } from './table-history';
+import { planManualCatchUpWaves_ACU, type ManualCatchUpPlan_ACU } from './manual-fill-planner';
+import type { ManualRefillProgressV2_ACU } from './storage-frame-v2-types';
 
 import { isSummaryOrOutlineTable_ACU, logDebug_ACU, logError_ACU, logWarn_ACU, parseTableTemplateJson_ACU } from '../../shared/utils';
 
@@ -119,6 +122,15 @@ export interface ManualUpdateResult {
     autoMergeTriggered?: boolean;
     autoMergeSuccess?: boolean;
     checkpointWarning?: string;
+    outcome?: 'complete' | 'no_work' | 'stopped' | 'sync_pending';
+    committedBucketCount?: number;
+    catchUpPlan?: ManualCatchUpPlan_ACU;
+}
+
+export interface ManualCatchUpPlanningResult_ACU {
+    success: boolean;
+    error?: string;
+    plan?: ManualCatchUpPlan_ACU;
 }
 
 export interface GroupFillJob_ACU {
@@ -158,6 +170,7 @@ interface ManualRuntimeUpdateGroup_ACU {
     batchSize: number;
     groupId: number;
     sheetKeys: string[];
+    requestOptions: Record<string, any> | null;
 }
 
 export interface GroupedRuntimeUpdateGroup_ACU {
@@ -176,6 +189,7 @@ interface PlannedGroupedRuntimeJob_ACU {
     batchNumber: number;
     firstMessageIndexOfBatch: number;
     lastMessageIndexOfBatch: number;
+    messageIndices: number[];
     saveTargetIndex: number;
     updateMode: string;
 }
@@ -654,9 +668,11 @@ export async function collectGroupFillResponse_ACU(
     options: {
         onProgress?: (event: CardUpdateProgressEvent) => void;
         maxRetriesOverride?: number;
+        respectGlobalStop?: boolean;
     } = {}
 ): Promise<GroupFillResponse_ACU> {
     const effectiveAbortController = abortController || new AbortController();
+    const isStopped = () => effectiveAbortController.signal.aborted || (options.respectGlobalStop !== false && wasStoppedByUser_ACU);
     options.onProgress?.({ phase: 'preparing' });
 
     const dynamicContent = await prepareAIInput_ACU(job.messagesForContext, job.updateMode, job.targetSheetKeys, {
@@ -678,7 +694,7 @@ export async function collectGroupFillResponse_ACU(
     let lastErrorMessage = 'AI响应中未找到完整有效的 <tableEdit> 标签';
 
     for (let attempt = 1; attempt <= maxRetries; attempt++) {
-        if (wasStoppedByUser_ACU) {
+        if (isStopped()) {
             return { job, success: false, attempt, aborted: true };
         }
 
@@ -705,7 +721,7 @@ export async function collectGroupFillResponse_ACU(
                 tableData: job.baseSnapshot,
                 targetSheetKeys: job.targetSheetKeys,
             });
-            if (effectiveAbortController.signal.aborted || wasStoppedByUser_ACU) {
+            if (isStopped()) {
                 return { job, success: false, attempt, aborted: true };
             }
 
@@ -737,7 +753,7 @@ export async function collectGroupFillResponse_ACU(
         } catch (error: any) {
             lastErrorMessage = error?.message || '未知错误';
             logWarn_ACU(`第 ${attempt} 次尝试失败: ${lastErrorMessage}`);
-            if (error?.name === 'AbortError' || String(lastErrorMessage).toLowerCase().includes('aborted') || wasStoppedByUser_ACU) {
+            if (error?.name === 'AbortError' || String(lastErrorMessage).toLowerCase().includes('aborted') || isStopped()) {
                 return { job, success: false, attempt, aborted: true };
             }
             if (attempt < maxRetries) {
@@ -893,6 +909,9 @@ export async function applyUnifiedGroupFillResponses_ACU(
         saveTargetIndex: number;
         updateMode: string;
         isImportMode: boolean;
+        replaceExistingIncremental?: { targetMessageIndices: number[]; targetSheetKeys: string[] };
+        manualRefillProgress?: ManualRefillProgressV2_ACU;
+        syncAfterCommit?: boolean;
         baseRevision?: string | null;
     }
 ): Promise<CardUpdateResult> {
@@ -975,6 +994,8 @@ export async function applyUnifiedGroupFillResponses_ACU(
             updateGroupKeys: null,
             trackingSheetKeys: null,
             trackAsUpdate: true,
+            replaceExistingIncremental: options.replaceExistingIncremental,
+            manualRefillProgress: options.manualRefillProgress,
             skipChatSave: options.isImportMode,
         }, async () => {
             const provider = await ensureStorageProviderReady_ACU();
@@ -1047,7 +1068,7 @@ export async function applyUnifiedGroupFillResponses_ACU(
             _set_currentJsonTableData_ACU(JSON.parse(JSON.stringify(baseSnapshot || {})) as any);
             return { success: false, modifiedKeys: [], error: commitResult.error || '统一提交失败。' };
         }
-        if (!options.isImportMode && commitResult.tableData) {
+        if (!options.isImportMode && options.syncAfterCommit !== false && commitResult.tableData) {
             await updateReadableLorebookEntry_ACU(true, false, null, commitResult.tableData);
         }
         return { success: true, modifiedKeys: commitResult.value.modifiedKeys, tableData: commitResult.tableData as any };
@@ -1144,6 +1165,8 @@ export async function applyUnifiedGroupFillResponses_ACU(
             trackingSheetKeys: keysToTrack,
             trackAsUpdate: true,
             operations: [...operations, ...snapshotOperations],
+            replaceExistingIncremental: options.replaceExistingIncremental,
+            manualRefillProgress: options.manualRefillProgress,
         }, () => ({
             success: true,
             value: { modifiedKeys },
@@ -1153,9 +1176,11 @@ export async function applyUnifiedGroupFillResponses_ACU(
             return { success: false, modifiedKeys, error: commitResult.error || '统一提交失败：保存聊天记录失败。' };
         }
 
-        await updateReadableLorebookEntry_ACU(true, false, null, workingTableData);
-        if (getCurrentWorldbookConfig_ACU().summaryVectorIndexModeEnabled === true) {
-            await enqueueSummaryVectorIndexFlush_ACU({ targetMessageIndex: options.saveTargetIndex, mode: 'sync', reason: 'unified_group_fill_complete' });
+        if (options.syncAfterCommit !== false) {
+            await updateReadableLorebookEntry_ACU(true, false, null, workingTableData);
+            if (getCurrentWorldbookConfig_ACU().summaryVectorIndexModeEnabled === true) {
+                await enqueueSummaryVectorIndexFlush_ACU({ targetMessageIndex: options.saveTargetIndex, mode: 'sync', reason: 'unified_group_fill_complete' });
+            }
         }
     }
 
@@ -1168,16 +1193,31 @@ export async function processGroupedRuntimeChunk_ACU(
     options: {
         isImportMode?: boolean;
         abortController?: AbortController;
+        replaceExistingIncremental?: boolean;
+        buildManualRefillProgress?: (bucket: {
+            saveTargetIndex: number;
+            messageIndices: number[];
+            sheetKeys: string[];
+            committedBucketCount: number;
+        }) => ManualRefillProgressV2_ACU;
+        onBucketCommitted?: (bucket: {
+            saveTargetIndex: number;
+            messageIndices: number[];
+            sheetKeys: string[];
+            committedBucketCount: number;
+        }) => void;
+        syncAfterCommit?: boolean;
         onProgress?: (event: CardUpdateProgressEvent) => void;
+        respectGlobalStop?: boolean;
     } = {}
-): Promise<{ success: boolean; failedGroups: string[]; error?: string }> {
+): Promise<{ success: boolean; failedGroups: string[]; error?: string; aborted?: boolean; committedBucketCount: number }> {
     if (!Array.isArray(groups) || groups.length === 0) {
-        return { success: true, failedGroups: [] };
+        return { success: true, failedGroups: [], committedBucketCount: 0 };
     }
 
     const migration = await ensureLegacyStorageMigratedBeforeWrite_ACU('processGroupedRuntimeChunk');
     if (!migration.success) {
-        return { success: false, failedGroups: groups.map(group => group.key), error: migration.error || '旧存储迁移失败，已阻止本次填表。' };
+        return { success: false, failedGroups: groups.map(group => group.key), error: migration.error || '旧存储迁移失败，已阻止本次填表。', committedBucketCount: 0 };
     }
     if (migration.migrated) {
         await reloadStorageProvider();
@@ -1214,6 +1254,7 @@ export async function processGroupedRuntimeChunk_ACU(
                 batchNumber,
                 firstMessageIndexOfBatch,
                 lastMessageIndexOfBatch,
+                messageIndices: [...batchIndices],
                 saveTargetIndex: finalSaveTargetIndex,
                 updateMode,
             };
@@ -1239,13 +1280,24 @@ export async function processGroupedRuntimeChunk_ACU(
             totalBatches: orderedBuckets.length,
         });
     };
+    const isStopped = () => options.abortController?.signal.aborted === true || (options.respectGlobalStop !== false && wasStoppedByUser_ACU);
+    let committedBucketCount = 0;
+    let aborted = false;
     for (let bucketIndex = 0; bucketIndex < orderedBuckets.length; bucketIndex++) {
+        if (isStopped()) {
+            aborted = true;
+            break;
+        }
         const bucket = orderedBuckets[bucketIndex];
         const maxBucketRetries = Math.max(1, Number(settings_ACU.tableMaxRetries) || 3);
         let retryUnifiedError: string | null = null;
         let bucketSucceeded = false;
 
         for (let bucketAttempt = 1; bucketAttempt <= maxBucketRetries; bucketAttempt++) {
+            if (isStopped()) {
+                aborted = true;
+                break;
+            }
             const chatHistory = getChatArray_ACU();
             const bucketFirstMessageIndex = Math.min(...bucket.plannedJobs.map(job => job.firstMessageIndexOfBatch));
             const explicitMergeBaseBounds = [...new Set(
@@ -1337,7 +1389,10 @@ export async function processGroupedRuntimeChunk_ACU(
                 job,
                 collectFeedback,
                 options.abortController,
-                { onProgress: event => emitBucketProgress(bucketIndex, event) },
+                {
+                    onProgress: event => emitBucketProgress(bucketIndex, event),
+                    respectGlobalStop: options.respectGlobalStop,
+                },
             )));
             let responses: GroupFillResponse_ACU[] = [];
             let collectFailed = false;
@@ -1381,7 +1436,10 @@ export async function processGroupedRuntimeChunk_ACU(
                         job,
                         { lastUnifiedError: formatError },
                         options.abortController,
-                        { onProgress: event => emitBucketProgress(bucketIndex, event) },
+                        {
+                            onProgress: event => emitBucketProgress(bucketIndex, event),
+                            respectGlobalStop: options.respectGlobalStop,
+                        },
                     )));
                     for (let i = 0; i < retrySettled.length; i++) {
                         const settledResponse = retrySettled[i];
@@ -1402,16 +1460,45 @@ export async function processGroupedRuntimeChunk_ACU(
                 }
             }
 
+            if (isStopped()) {
+                aborted = true;
+                break;
+            }
             emitBucketProgress(bucketIndex, { phase: 'saving' });
+            const replacementMessageIndices = [...new Set(bucket.plannedJobs.flatMap(job => job.messageIndices))].sort((left, right) => left - right);
+            const replacementSheetKeys = [...new Set(bucket.plannedJobs.flatMap(job => job.group.sheetKeys || []))].sort();
             const applyResult = await applyUnifiedGroupFillResponses_ACU(responses, baseSnapshot, {
                 saveTargetIndex: bucket.saveTargetIndex,
                 updateMode: bucket.updateMode,
                 isImportMode: options.isImportMode === true,
+                ...(options.replaceExistingIncremental === true ? {
+                    replaceExistingIncremental: {
+                        targetMessageIndices: replacementMessageIndices,
+                        targetSheetKeys: replacementSheetKeys,
+                    },
+                } : {}),
+                ...(options.buildManualRefillProgress ? {
+                    manualRefillProgress: options.buildManualRefillProgress({
+                        saveTargetIndex: bucket.saveTargetIndex,
+                        messageIndices: replacementMessageIndices,
+                        sheetKeys: replacementSheetKeys,
+                        committedBucketCount,
+                    }),
+                } : {}),
+                syncAfterCommit: options.syncAfterCommit,
                 baseRevision,
             });
             if (applyResult.success) {
+                const nextCommittedBucketCount = committedBucketCount + 1;
+                options.onBucketCommitted?.({
+                    saveTargetIndex: bucket.saveTargetIndex,
+                    messageIndices: replacementMessageIndices,
+                    sheetKeys: replacementSheetKeys,
+                    committedBucketCount: nextCommittedBucketCount,
+                });
                 emitBucketProgress(bucketIndex, { phase: 'complete' });
                 bucketSucceeded = true;
+                committedBucketCount = nextCommittedBucketCount;
                 break;
             }
 
@@ -1429,14 +1516,22 @@ export async function processGroupedRuntimeChunk_ACU(
             }
         }
 
-        if (!bucketSucceeded && options.abortController?.signal.aborted) {
+        if (aborted || (!bucketSucceeded && isStopped())) {
+            aborted = true;
+            break;
+        }
+        if (!bucketSucceeded) {
+            // 连续前沿模型不允许跨过失败 bucket 继续提交，否则会制造无法自动追平的内部空洞。
             break;
         }
     }
 
+    if (aborted) {
+        return { success: false, failedGroups: [...failedGroups], error: '手动更新已终止。', aborted: true, committedBucketCount };
+    }
     return failedGroups.size > 0
-        ? { success: false, failedGroups: [...failedGroups], error: firstError || '统一提交失败。' }
-        : { success: true, failedGroups: [] };
+        ? { success: false, failedGroups: [...failedGroups], error: firstError || '统一提交失败。', committedBucketCount }
+        : { success: true, failedGroups: [], committedBucketCount };
 }
 
 /**
@@ -1972,6 +2067,335 @@ export async function processUpdatesBatch_ACU(
     }
 }
 
+function collectEffectiveAiMessageIndices_ACU(chat: any[]): number[] {
+    const allAiMessageIndices = chat
+        .map((message: any, index: number) => !message?.is_user ? index : -1)
+        .filter((index: number) => index >= 0);
+    const skipped = Math.max(0, Math.trunc(Number(settings_ACU.skipUpdateFloors) || 0));
+    return skipped > 0 ? allAiMessageIndices.slice(0, -skipped) : allAiMessageIndices;
+}
+
+function createManualCatchUpRunId_ACU(): string {
+    return `manual-catch-up-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
+}
+
+function countCatchUpChunkBuckets_ACU(groups: ManualCatchUpPlan_ACU['waves'][number]['groups'], messageIndices: number[]): number {
+    const bucketKeys = new Set<string>();
+    groups.forEach(group => {
+        const batchSize = Math.max(1, Math.trunc(Number(group.batchSize) || 1));
+        for (let offset = 0, batchNumber = 1; offset < messageIndices.length; offset += batchSize, batchNumber += 1) {
+            const batchIndices = messageIndices.slice(offset, offset + batchSize);
+            const saveTargetIndex = batchIndices[batchIndices.length - 1];
+            bucketKeys.add(`${saveTargetIndex}|${batchNumber}|${group.updateMode}`);
+        }
+    });
+    return bucketKeys.size;
+}
+
+/**
+ * 从聊天中的已提交事实生成 catch-up 计划，不调用 AI、不写入数据。
+ * 调用方可用于确认展示；真正执行时必须重新规划，以吸收确认期间的提交变化。
+ */
+export async function prepareManualCatchUpPlan_ACU(targetKeys: string[]): Promise<ManualCatchUpPlanningResult_ACU> {
+    if (!Array.isArray(targetKeys) || targetKeys.length === 0) {
+        return { success: false, error: '未选择需要追平的表格。' };
+    }
+
+    await loadAllChatMessages_ACU();
+    const chat = getChatArray_ACU();
+    if (!Array.isArray(chat) || chat.length === 0) {
+        return { success: false, error: '聊天记录为空，无法执行追平。' };
+    }
+
+    const templateData = parseTableTemplateJson_ACU({ stripSeedRows: true }) || {};
+    const selectedSheetKeys = [...new Set(targetKeys.filter(key =>
+        typeof key === 'string'
+        && key.startsWith('sheet_')
+        && Boolean(templateData[key] || currentJsonTableData_ACU?.[key])
+    ))].sort();
+    if (selectedSheetKeys.length === 0) {
+        return { success: false, error: '未找到可追平的已选表格。' };
+    }
+
+    const effectiveAiMessageIndices = collectEffectiveAiMessageIndices_ACU(chat);
+    const isolationKey = getCurrentIsolationKey_ACU();
+    const plan = planManualCatchUpWaves_ACU(effectiveAiMessageIndices, selectedSheetKeys.map(sheetKey => {
+        const sheet = templateData[sheetKey] || currentJsonTableData_ACU?.[sheetKey] || {};
+        const history = resolveTableHistoryStateFromChat_ACU(chat, {
+            sheetKey,
+            isSummaryTable: isSummaryOrOutlineTable_ACU(String(sheet.name || '')),
+            isolationKey,
+            settings: settings_ACU,
+        });
+        const updateConfig = sheet.updateConfig || {};
+        const groupId = Number.isFinite(updateConfig.groupId) ? Math.trunc(updateConfig.groupId) : -1;
+        const preset = resolveTableApiPresetOverride_ACU(sheet.name);
+        return {
+            sheetKey,
+            lastCompletedAiFloor: history.lastTrackedUpdateAiFloor,
+            groupId,
+            batchSize: Math.max(1, Math.trunc(Number(settings_ACU.updateBatchSize) || 1)),
+            requestOptions: preset ? { tableApiPreset: preset } : null,
+            updateMode: 'manual_independent',
+            executionKind: isSqliteMode() ? 'sql' as const : 'standard' as const,
+        };
+    }));
+
+    return { success: true, plan };
+}
+
+/**
+ * 按聊天中已提交的 scheduleSummary/事件事实规划并执行所选表的后缀追平。
+ * 不扫描或声称修复历史内部空洞；一期只处理每表连续前沿后的缺口。
+ */
+export async function orchestrateManualCatchUp_ACU(
+    targetKeys: string[],
+    refreshData: () => Promise<{ degraded?: boolean } | void>,
+    options: {
+        abortController?: AbortController;
+        onProgress?: (event: CardUpdateProgressEvent) => void;
+    } = {},
+): Promise<ManualUpdateResult> {
+    if (isAutoUpdatingCard_ACU) {
+        return { success: false, error: '数据库更新正在进行中，请稍候。' };
+    }
+    if (!coreApisAreReady_ACU) {
+        return { success: false, error: 'API未就绪。' };
+    }
+    const planningResult = await prepareManualCatchUpPlan_ACU(targetKeys);
+    if (!planningResult.success || !planningResult.plan) {
+        return { success: false, error: planningResult.error || '无法生成手动追平计划。' };
+    }
+    const plan = planningResult.plan;
+    const selectedSheetKeys = [...new Set(plan.waves.flatMap(wave => wave.sheetKeys))].sort();
+
+    if (plan.waves.length === 0) {
+        return { success: true, outcome: 'no_work', catchUpPlan: plan, committedBucketCount: 0 };
+    }
+
+    const maxConcurrentGroups = Math.max(1, Math.trunc(Number(settings_ACU.maxConcurrentGroups) || 1));
+    const totalBuckets = plan.waves.reduce((count, wave) => {
+        let waveBuckets = 0;
+        for (let start = 0; start < wave.groups.length; start += maxConcurrentGroups) {
+            waveBuckets += countCatchUpChunkBuckets_ACU(wave.groups.slice(start, start + maxConcurrentGroups), wave.messageIndices);
+        }
+        return count + waveBuckets;
+    }, 0);
+    const runId = createManualCatchUpRunId_ACU();
+    let committedBucketCount = 0;
+    let activeWaveIndex = 0;
+    const completedSheetMessageIndexByKey: Record<string, number> = {};
+    const allContextMessageIndices = [...new Set(plan.waves.flatMap(wave => wave.messageIndices))].sort((left, right) => left - right);
+    const originalStartMessageIndex = plan.waves[0]?.messageIndices[0] ?? plan.targetMessageIndex ?? 0;
+    const terminalTargetMessageIndex = plan.targetMessageIndex ?? allContextMessageIndices[allContextMessageIndices.length - 1] ?? 0;
+    const catchUpBatchSize = Math.max(1, ...plan.waves.flatMap(wave => wave.groups.map(group => group.batchSize)));
+    const buildCatchUpProgress = (
+        status: ManualRefillProgressV2_ACU['status'],
+        lastError?: string,
+    ): ManualRefillProgressV2_ACU => {
+        const completedMessageIndices = Object.values(completedSheetMessageIndexByKey);
+        return {
+            kind: 'manual_refill',
+            version: 2,
+            status,
+            selectedSheetKeys,
+            contextMessageIndices: allContextMessageIndices,
+            originalStartMessageIndex,
+            targetMessageIndex: terminalTargetMessageIndex,
+            batchSize: catchUpBatchSize,
+            completedUntilMessageIndex: completedMessageIndices.length > 0
+                ? Math.max(...completedMessageIndices)
+                : Math.max(0, originalStartMessageIndex - 1),
+            completedSheetMessageIndexByKey: { ...completedSheetMessageIndexByKey },
+            runId,
+            mode: 'catch_up',
+            targetAiFloor: plan.targetAiFloor,
+            planSignature: plan.planSignature,
+            waveIndex: Math.min(activeWaveIndex, Math.max(0, plan.waves.length - 1)),
+            bucketIndex: Math.max(0, committedBucketCount - 1),
+            totalWaves: plan.waves.length,
+            totalBuckets,
+            ...(lastError ? { lastError } : {}),
+            updatedAt: Date.now(),
+        };
+    };
+    const persistCatchUpTerminalProgress = async (
+        status: 'complete' | 'stopped' | 'failed' | 'sync_pending',
+        lastError?: string,
+    ): Promise<string | undefined> => {
+        try {
+            const progress = buildCatchUpProgress(status, lastError);
+            const commitResult = await runTableUpdateCommit_ACU({
+                source: 'manual_fill',
+                reason: `orchestrateManualCatchUp:terminal:${status}`,
+                isolationKey: getCurrentIsolationKey_ACU(),
+                writeSet: buildWriteSetForSheetKeys_ACU(selectedSheetKeys, currentJsonTableData_ACU),
+                revisionWriteSet: [],
+                initialData: currentJsonTableData_ACU,
+                targetMessageIndex: terminalTargetMessageIndex,
+                targetSheetKeys: [],
+                updateGroupKeys: [],
+                trackingSheetKeys: [],
+                trackAsUpdate: false,
+                operations: [],
+                manualRefillProgress: progress,
+                strictSave: true,
+            }, ({ workingData }) => ({
+                success: true,
+                tableData: workingData || currentJsonTableData_ACU,
+            }));
+            return commitResult.success ? undefined : (commitResult.error || `手动追平终态 ${status} 保存失败。`);
+        } catch (error: any) {
+            return error?.message || String(error || `手动追平终态 ${status} 保存异常。`);
+        }
+    };
+    const refreshCommittedDataBeforeExit = async (): Promise<void> => {
+        if (committedBucketCount <= 0) return;
+        try {
+            await refreshData();
+        } catch (error) {
+            logWarn_ACU('[手动追平] 已提交 bucket 保留成功，但失败/终止后的最终刷新未完成。', error);
+        }
+    };
+    _set_isAutoUpdatingCard_ACU(true);
+
+    try {
+        for (let waveIndex = 0; waveIndex < plan.waves.length; waveIndex += 1) {
+            activeWaveIndex = waveIndex;
+            if (options.abortController?.signal.aborted) {
+                const terminalError = await persistCatchUpTerminalProgress('stopped', '手动追平已终止。');
+                await refreshCommittedDataBeforeExit();
+                return {
+                    success: false, outcome: 'stopped',
+                    error: terminalError ? `手动追平已终止；终态进度保存失败：${terminalError}` : '手动追平已终止。',
+                    committedBucketCount, catchUpPlan: plan,
+                };
+            }
+            const wave = plan.waves[waveIndex];
+            for (let groupStart = 0; groupStart < wave.groups.length; groupStart += maxConcurrentGroups) {
+                if (options.abortController?.signal.aborted) {
+                    const terminalError = await persistCatchUpTerminalProgress('stopped', '手动追平已终止。');
+                    await refreshCommittedDataBeforeExit();
+                    return {
+                        success: false, outcome: 'stopped',
+                        error: terminalError ? `手动追平已终止；终态进度保存失败：${terminalError}` : '手动追平已终止。',
+                        committedBucketCount, catchUpPlan: plan,
+                    };
+                }
+                const groupChunk = wave.groups.slice(groupStart, groupStart + maxConcurrentGroups);
+                const groups: GroupedRuntimeUpdateGroup_ACU[] = groupChunk.map(group => ({
+                    key: group.key,
+                    groupId: group.groupId,
+                    indices: [...wave.messageIndices],
+                    batchSize: group.batchSize,
+                    sheetKeys: [...group.sheetKeys],
+                    requestOptions: group.requestOptions,
+                    mergeBaseMaxMessageIndex: wave.messageIndices[0] - 1,
+                }));
+                const result = await processGroupedRuntimeChunk_ACU(groups, 'manual_independent', {
+                    abortController: options.abortController,
+                    respectGlobalStop: false,
+                    replaceExistingIncremental: true,
+                    syncAfterCommit: false,
+                    onProgress: event => options.onProgress?.({
+                        ...event,
+                        currentBatch: committedBucketCount + (event.currentBatch || 1),
+                        totalBatches: totalBuckets,
+                    }),
+                    buildManualRefillProgress: bucket => {
+                        const nextCompletedSheetMessageIndexByKey = { ...completedSheetMessageIndexByKey };
+                        bucket.sheetKeys.forEach(sheetKey => {
+                            nextCompletedSheetMessageIndexByKey[sheetKey] = bucket.saveTargetIndex;
+                        });
+                        return {
+                            kind: 'manual_refill',
+                            version: 2,
+                            status: 'committed',
+                            selectedSheetKeys,
+                            contextMessageIndices: [...wave.messageIndices],
+                            originalStartMessageIndex: wave.messageIndices[0],
+                            targetMessageIndex: plan.targetMessageIndex ?? bucket.saveTargetIndex,
+                            batchSize: Math.max(...wave.groups.map(group => group.batchSize)),
+                            completedUntilMessageIndex: bucket.saveTargetIndex,
+                            completedSheetMessageIndexByKey: nextCompletedSheetMessageIndexByKey,
+                            runId,
+                            mode: 'catch_up',
+                            targetAiFloor: plan.targetAiFloor,
+                            planSignature: plan.planSignature,
+                            waveIndex,
+                            bucketIndex: committedBucketCount + bucket.committedBucketCount,
+                            totalWaves: plan.waves.length,
+                            totalBuckets,
+                            updatedAt: Date.now(),
+                        };
+                    },
+                    onBucketCommitted: bucket => {
+                        bucket.sheetKeys.forEach(sheetKey => {
+                            completedSheetMessageIndexByKey[sheetKey] = bucket.saveTargetIndex;
+                        });
+                    },
+                });
+                committedBucketCount += result.committedBucketCount;
+                if (!result.success) {
+                    const outcome = result.aborted ? 'stopped' : undefined;
+                    const primaryError = result.error || (result.aborted ? '手动追平已终止。' : '手动追平失败。');
+                    const terminalError = await persistCatchUpTerminalProgress(result.aborted ? 'stopped' : 'failed', primaryError);
+                    await refreshCommittedDataBeforeExit();
+                    return {
+                        success: false,
+                        outcome,
+                        error: terminalError ? `${primaryError}；终态进度保存失败：${terminalError}` : primaryError,
+                        committedBucketCount,
+                        catchUpPlan: plan,
+                    };
+                }
+            }
+            await loadAllChatMessages_ACU();
+        }
+
+        const refreshResult = await refreshData();
+        if (refreshResult && refreshResult.degraded === true) {
+            const terminalError = await persistCatchUpTerminalProgress('sync_pending');
+            if (terminalError) {
+                return {
+                    success: false,
+                    error: `手动追平数据已提交且世界书同步待重试，但终态进度保存失败：${terminalError}`,
+                    committedBucketCount,
+                    catchUpPlan: plan,
+                };
+            }
+            return {
+                success: true,
+                outcome: 'sync_pending',
+                committedBucketCount,
+                catchUpPlan: plan,
+            };
+        }
+        const terminalError = await persistCatchUpTerminalProgress('complete');
+        if (terminalError) {
+            return {
+                success: false,
+                error: `手动追平数据与世界书同步已完成，但终态进度保存失败：${terminalError}`,
+                committedBucketCount,
+                catchUpPlan: plan,
+            };
+        }
+        return { success: true, outcome: 'complete', committedBucketCount, catchUpPlan: plan };
+    } catch (error: any) {
+        const primaryError = error?.message || String(error || '手动追平执行异常。');
+        const terminalError = await persistCatchUpTerminalProgress('failed', primaryError);
+        await refreshCommittedDataBeforeExit();
+        return {
+            success: false,
+            error: terminalError ? `${primaryError}；终态进度保存失败：${terminalError}` : primaryError,
+            committedBucketCount,
+            catchUpPlan: plan,
+        };
+    } finally {
+        _set_isAutoUpdatingCard_ACU(false);
+    }
+}
+
 /**
  * 手动更新编排（纯业务逻辑）
  * 从 handleManualUpdate_ACU 提取。不驱动 UI，只返回结果。
@@ -1981,7 +2405,7 @@ export async function processUpdatesBatch_ACU(
  * @param processBatch 批处理执行回调
  * @param refreshData 数据刷新回调
  * @param options 可选参数：
- *   - clearBeforeUpdate: 兼容旧调用名；启用事务式手动重填。首次重填会清理目标范围内选中表本地数据，匹配续跑进度时不预清理。
+ *   - clearBeforeUpdate: 兼容旧调用名；启用事务式手动重填。普通可回放路径按 bucket 原子替换历史增量；仅跨 checkpoint 特例会预清理并等待最终 snapshot。
  */
 export async function orchestrateManualUpdate_ACU(
     targetKeys: string[],
@@ -1995,7 +2419,10 @@ export async function orchestrateManualUpdate_ACU(
 ): Promise<ManualUpdateResult> {
     let manualRefillSessionSnapshot: ReturnType<typeof captureManualRefillSessionSnapshot_ACU> | null = null;
     let manualRefillRollbackAttempted = false;
+    let manualRefillRequiresFinalSnapshot = false;
+    let committedBucketCount = 0;
     const rollbackManualRefillSession = async (): Promise<string | undefined> => {
+        if (!manualRefillRequiresFinalSnapshot && committedBucketCount > 0) return undefined;
         if (!manualRefillSessionSnapshot || manualRefillRollbackAttempted) return undefined;
         manualRefillRollbackAttempted = true;
         try {
@@ -2015,6 +2442,14 @@ export async function orchestrateManualUpdate_ACU(
     };
     const failManualRefillSession = async (failureError: string): Promise<ManualUpdateResult> => {
         const rollbackError = await rollbackManualRefillSession();
+        if (!rollbackError && (!manualRefillRequiresFinalSnapshot && committedBucketCount > 0)) {
+            try {
+                await loadAllChatMessages_ACU();
+                await refreshData();
+            } catch (refreshError) {
+                logWarn_ACU('[Manual Refill] 已提交 bucket 后刷新运行时数据失败:', refreshError);
+            }
+        }
         return {
             success: false,
             error: rollbackError ? `${failureError}；回滚失败：${rollbackError}` : failureError,
@@ -2072,18 +2507,22 @@ export async function orchestrateManualUpdate_ACU(
         const updateGroups: Record<string, ManualRuntimeUpdateGroup_ACU> = {};
         targetKeys.forEach((sheetKey: string) => {
             const tableConfig = templateData?.[sheetKey]?.updateConfig || {};
+            const tableName = templateData?.[sheetKey]?.name || currentJsonTableData_ACU?.[sheetKey]?.name || '';
+            const resolvedPreset = resolveTableApiPresetOverride_ACU(tableName);
+            const requestOptions = resolvedPreset ? { tableApiPreset: resolvedPreset } : null;
             const tableGroupId = Number.isFinite(tableConfig?.groupId)
                 ? Math.trunc(tableConfig.groupId)
                 : -1;
-            // 手动更新只尊重分组 ID。updateFrequency/contextDepth/skipFloors 属于自动更新调度参数，
-            // 混入手动路径会让用户选择被模板参数悄悄改写，属于职责污染。
-            const groupKey = `${tableGroupId}|${contextScopeIndices.join(',')}|${uiBatchSize}`;
+            // updateFrequency/contextDepth/skipFloors 属于自动更新调度参数，不进入手动路径；
+            // API preset 属于请求执行契约，不同 preset 必须拆组，禁止静默采用第一张表配置。
+            const groupKey = `${tableGroupId}|${contextScopeIndices.join(',')}|${uiBatchSize}|${JSON.stringify(requestOptions)}`;
             if (!updateGroups[groupKey]) {
                 updateGroups[groupKey] = {
                     indices: contextScopeIndices,
                     batchSize: uiBatchSize,
                     groupId: tableGroupId,
-                    sheetKeys: []
+                    sheetKeys: [],
+                    requestOptions,
                 };
             }
             updateGroups[groupKey].sheetKeys.push(sheetKey);
@@ -2094,7 +2533,6 @@ export async function orchestrateManualUpdate_ACU(
         const lastEffectiveAiIndex = effectiveAiIndices[effectiveAiIndices.length - 1];
         const manualRefillUsesLatestRuntimeBase = manualRefillEnabled && uiSkip === 0 && contextScopeIndices[contextScopeIndices.length - 1] === lastEffectiveAiIndex;
         const manualRefillMergeBaseMaxMessageIndex = manualRefillEnabled && !manualRefillUsesLatestRuntimeBase ? contextScopeIndices[0] - 1 : undefined;
-        let manualRefillRequiresFinalSnapshot = false;
         if (manualRefillEnabled) {
             const currentIsolationKey = getCurrentIsolationKey_ACU();
             const rollbackMessageIndices = collectManualRefillRollbackMessageIndices_ACU(liveChat, currentIsolationKey, contextScopeIndices);
@@ -2153,26 +2591,19 @@ export async function orchestrateManualUpdate_ACU(
                 manualRefillRequiresFinalSnapshot = true;
                 logWarn_ACU(`[Manual Refill] ${replayBoundaryCheck.error} 用户已确认手动重填，已清理本次范围内选中表旧数据；将在全部重填成功后提交完整单表 checkpoint。`);
             } else {
-                try {
-                    await clearManualRefillIncrementalDataInRange_ACU(contextScopeIndices, targetKeys);
-                } catch (error: any) {
-                    logError_ACU('[Manual Refill] 启动前清理选中表范围内旧数据失败:', error);
-                    const failureError = error?.message || '手动重填启动前清理选中表范围内旧数据失败。';
-                    return await failManualRefillSession(failureError);
-                }
+                logDebug_ACU('[Manual Refill] 可回放重填不再预清理完整范围；每个 bucket 将在自身严格提交中替换对应历史增量。');
             }
 
-            try {
-                // 清理历史 V2 数据后必须刷新 SQLite/runtime 快照，
-                // 否则 AI prompt 基底会继续读到清理前的旧 chronicle 行（test6.8 类事故）。
-                await reloadStorageProvider();
-            } catch (error: any) {
-                logError_ACU('[Manual Refill] 清理后刷新运行时快照失败:', error);
-                const rollbackError = await rollbackManualRefillSession();
-                const failureError = error?.message || '手动重填清理后刷新运行时快照失败。';
-                return { success: false, error: rollbackError ? `${failureError}；回滚失败：${rollbackError}` : failureError };
+            if (manualRefillRequiresFinalSnapshot) {
+                try {
+                    await reloadStorageProvider();
+                } catch (error: any) {
+                    logError_ACU('[Manual Refill] 清理后刷新运行时快照失败:', error);
+                    const rollbackError = await rollbackManualRefillSession();
+                    const failureError = error?.message || '手动重填清理后刷新运行时快照失败。';
+                    return { success: false, error: rollbackError ? `${failureError}；回滚失败：${rollbackError}` : failureError };
+                }
             }
-            logDebug_ACU(`[Manual Refill] 已清理选中表范围内旧数据并刷新运行时快照，将按普通手动填写路径重写 ${contextScopeIndices[0]}..${contextScopeIndices[contextScopeIndices.length - 1]}。`);
             if (!manualRefillUsesLatestRuntimeBase) {
                 logDebug_ACU(`[Manual Refill] 当前重填范围不是有效 AI 尾部，将使用 <=${manualRefillMergeBaseMaxMessageIndex} 的 bounded replay 基底，避免未来楼层污染 prompt。`);
             }
@@ -2190,23 +2621,13 @@ export async function orchestrateManualUpdate_ACU(
             const chunkKeys = groupKeys.slice(start, start + maxConcurrentGroups);
             const groupedChunk: GroupedRuntimeUpdateGroup_ACU[] = chunkKeys.map((gKey): GroupedRuntimeUpdateGroup_ACU => {
                 const group = updateGroups[gKey];
-                let effectiveRequestOptions: GroupedRuntimeUpdateGroup_ACU['requestOptions'] = null;
-                if (Array.isArray(group.sheetKeys) && group.sheetKeys.length > 0) {
-                    const firstSheetKey = group.sheetKeys[0];
-                    const firstTableName = templateData?.[firstSheetKey]?.name || '';
-                    const resolvedPreset = resolveTableApiPresetOverride_ACU(firstTableName);
-                    if (resolvedPreset) {
-                        effectiveRequestOptions = { tableApiPreset: resolvedPreset };
-                    }
-                }
-
                 return {
                     key: gKey,
                     groupId: group.groupId,
                     indices: group.indices,
                     batchSize: group.batchSize,
                     sheetKeys: group.sheetKeys,
-                    requestOptions: effectiveRequestOptions,
+                    requestOptions: group.requestOptions,
                     mergeBaseMaxMessageIndex: manualRefillMergeBaseMaxMessageIndex,
                     useLatestRuntimeMergeBase: manualRefillUsesLatestRuntimeBase,
                 };
@@ -2239,11 +2660,16 @@ export async function orchestrateManualUpdate_ACU(
             try {
                 const chunkResult = await processGroupedRuntimeChunk_ACU(groupedChunk, 'manual_independent', {
                     onProgress: options.onProgress,
+                    replaceExistingIncremental: manualRefillEnabled && !manualRefillRequiresFinalSnapshot,
                 });
+                committedBucketCount += chunkResult.committedBucketCount;
                 if (!chunkResult.success) {
                     chunkResult.failedGroups.forEach(key => {
                         failedGroups.push({ key, error: chunkResult.error || '手动更新失败或被终止。' });
                     });
+                    if (chunkResult.failedGroups.length === 0) {
+                        failedGroups.push({ key: chunkKeys[0] || 'manual_refill', error: chunkResult.error || '手动更新已终止。' });
+                    }
                 }
 
                 // 并发组内禁止每组单独刷新；填表保存后 currentJsonTableData_ACU 已由本轮 workingTableData 更新。
@@ -2263,26 +2689,13 @@ export async function orchestrateManualUpdate_ACU(
         _set_isAutoUpdatingCard_ACU(false);
 
         if (failedGroups.length > 0) {
-            const rollbackError = await rollbackManualRefillSession();
-            if (!manualRefillSessionSnapshot) {
-                // 填表失败时，processUpdatesBatch 内部的 loadBatchBaseData 可能已覆盖运行时数据；
-                // 非会话补偿路径仍需从聊天恢复运行时状态。
-                try {
-                    await loadAllChatMessages_ACU();
-                    await refreshData();
-                } catch (error) {
-                    logWarn_ACU('[Manual Update] 填表失败后恢复数据时出错:', error);
-                }
-            }
             const firstFailure = failedGroups[0];
             const failureError = firstFailure.error || '手动更新失败或被终止。';
-            return { success: false, error: rollbackError ? `${failureError}；回滚失败：${rollbackError}` : failureError };
+            return await failManualRefillSession(failureError);
         }
 
         if (wasStoppedByUser_ACU) {
-            const rollbackError = await rollbackManualRefillSession();
-            const failureError = '手动更新已终止。';
-            return { success: false, error: rollbackError ? `${failureError}；回滚失败：${rollbackError}` : failureError };
+            return await failManualRefillSession('手动更新已终止。');
         }
 
         if (manualRefillRequiresFinalSnapshot) {

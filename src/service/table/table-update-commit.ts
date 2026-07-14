@@ -5,6 +5,7 @@ import { currentJsonTableData_ACU, getCurrentIsolationKey_ACU, _set_currentJsonT
 import { ensureLegacyStorageMigratedBeforeWrite_ACU, persistTablesToChatMessage_ACU } from './table-service';
 import { ensureStorageProviderReady_ACU, reloadStorageProvider } from './table-storage-strategy';
 import { runTableWriteTransaction_ACU, type TableWriteTransactionContext_ACU } from './table-write-transaction';
+import type { ReplaceExistingIncrementalOptions_ACU } from './storage-frame-v2-persist';
 import type { ManualRefillProgressV2_ACU, TableCheckpointV2_ACU, TableMutationOperationV2_ACU, TableMutationSourceV2_ACU, TableWriteConflictUnitV2_ACU } from './storage-frame-v2-types';
 
 export interface TableUpdateCommitApplyContext_ACU {
@@ -23,6 +24,8 @@ export interface TableUpdateCommitPersistOverride_ACU {
   forceCheckpoint?: boolean;
   checkpointReason?: TableCheckpointV2_ACU['reason'];
   manualRefillProgress?: ManualRefillProgressV2_ACU;
+  replaceExistingIncremental?: ReplaceExistingIncrementalOptions_ACU;
+  strictSave?: boolean;
 }
 
 export interface TableUpdateCommitApplyResult_ACU<T> {
@@ -48,6 +51,9 @@ export interface RunTableUpdateCommitOptions_ACU {
   trackingSheetKeys?: string[] | null;
   trackAsUpdate?: boolean;
   operations?: TableMutationOperationV2_ACU[];
+  manualRefillProgress?: ManualRefillProgressV2_ACU;
+  replaceExistingIncremental?: ReplaceExistingIncrementalOptions_ACU;
+  strictSave?: boolean;
   skipChatSave?: boolean;
 }
 
@@ -117,7 +123,9 @@ export async function runTableUpdateCommit_ACU<T>(
             revisionWriteSet,
             forceCheckpoint: persistOptions.forceCheckpoint,
             checkpointReason: persistOptions.checkpointReason,
-            manualRefillProgress: persistOptions.manualRefillProgress,
+            manualRefillProgress: persistOptions.manualRefillProgress ?? options.manualRefillProgress,
+            replaceExistingIncremental: persistOptions.replaceExistingIncremental ?? options.replaceExistingIncremental,
+            strictSave: persistOptions.strictSave ?? options.strictSave,
             assumeCommitLock: true,
             transactionContext,
           });

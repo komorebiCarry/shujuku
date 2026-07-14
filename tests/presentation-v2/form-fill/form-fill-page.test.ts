@@ -62,6 +62,30 @@ async function mountFormFillPage(
   const { ref, computed } = await import('vue');
   const saveSettings = vi.fn(() => ({ saved: true, storageType: 'memory' }));
   const orchestrate = vi.fn(async (..._args: any[]) => ({ success: true }));
+  const catchUpPlan = {
+    targetAiFloor: 3,
+    targetMessageIndex: 4,
+    planSignature: 'catch-up-plan',
+    waves: [
+      {
+        startAiFloor: 2,
+        endAiFloor: 2,
+        messageIndices: [3],
+        sheetKeys: ['sheet_a'],
+        groups: [{ key: 'a', groupId: 0, batchSize: 1, sheetKeys: ['sheet_a'], requestOptions: null, updateMode: 'manual_independent', executionKind: 'standard' }],
+      },
+      {
+        startAiFloor: 3,
+        endAiFloor: 3,
+        messageIndices: [4],
+        sheetKeys: ['sheet_a', 'sheet_b'],
+        groups: [{ key: 'ab', groupId: 0, batchSize: 1, sheetKeys: ['sheet_a', 'sheet_b'], requestOptions: null, updateMode: 'manual_independent', executionKind: 'standard' }],
+      },
+    ],
+  };
+  const prepareCatchUp = vi.fn(async (..._args: any[]) => ({ success: true, plan: catchUpPlan }));
+  const orchestrateCatchUp = vi.fn(async (..._args: any[]) => ({ success: true, outcome: 'complete', committedBucketCount: 2, catchUpPlan }));
+  const refreshMergedData = vi.fn(async () => ({ degraded: false }));
   const executeCore = vi.fn(async (..._args: any[]) => ({ success: true, modifiedKeys: [] }));
   const processUpdatesBatch = vi.fn(async (indices: number[], mode: string, options: any, executeUpdate: any) => {
     if (options?.__skipExecuteForTest) return { success: true };
@@ -187,6 +211,8 @@ async function mountFormFillPage(
   }));
   vi.doMock('../../../src/service/table/update-orchestrator', () => ({
     orchestrateManualUpdate_ACU: orchestrate,
+    orchestrateManualCatchUp_ACU: orchestrateCatchUp,
+    prepareManualCatchUpPlan_ACU: prepareCatchUp,
     processUpdatesBatch_ACU: processUpdatesBatch,
     executeCardUpdateCore_ACU: executeCore,
   }));
@@ -195,6 +221,7 @@ async function mountFormFillPage(
     fetchAvailableModels_ACU: vi.fn(async () => ({ success: true, models: [] })),
   }));
   vi.doMock('../../../src/service/worldbook/pipeline', () => ({
+    refreshMergedDataAndNotify_ACU: refreshMergedData,
     getWorldbookNames_ACU: vi.fn(async () => ['world-X', 'world-Y']),
     getLorebookEntriesByNames_ACU: vi.fn(async () => ({
       'CharBookFF': [
@@ -218,6 +245,9 @@ async function mountFormFillPage(
     settings,
     saveSettings,
     orchestrate,
+    prepareCatchUp,
+    orchestrateCatchUp,
+    refreshMergedData,
     processUpdatesBatch,
     executeCore,
     worldbookConfig,
@@ -672,6 +702,8 @@ describe('FormFillPage · 手动填表面板', () => {
     expect(text).toContain('AI 第 3 层（历史周期基线）');
     expect(text).toContain('选中表：角色状态（sheet_a）、事件记录（sheet_b）');
     expect(text).toContain('执行手动填表');
+    expect(text).toContain('一键追平所选表未填楼层');
+    expect(text).toContain('不扫描历史前沿之前的内部空洞');
     expect(panel.querySelector('.acu-v2-form-fill-page__manual-extra .acu-toggle')).toBeNull();
     expect(panel.querySelector('.acu-v2-form-fill-page__manual-extra textarea')).not.toBeNull();
 
@@ -978,6 +1010,123 @@ describe('FormFillPage · 手动填表面板', () => {
     expect(manualExtraHintSetter).toHaveBeenCalledWith(
       '以下为用户的额外填表要求,请严格遵守:\n只更新角色状态。',
     );
+
+    mount.__resetAcuV2MountForTests();
+  });
+
+  it('追平入口使用真实计划展示 wave、bucket、skip 与内部空洞边界，确认后才执行', async () => {
+    const { mount, prepareCatchUp, orchestrateCatchUp, orchestrate } = await mountFormFillPage();
+    const button = Array.from(document.querySelectorAll<HTMLButtonElement>('button'))
+      .find(btn => btn.textContent?.includes('一键追平所选表未填楼层'))!;
+
+    button.click();
+    await new Promise(r => setTimeout(r, 0));
+
+    const dialogText = document.querySelector('.acu-dialog-layer')?.textContent || '';
+    expect(prepareCatchUp).toHaveBeenCalledWith(['sheet_a', 'sheet_b']);
+    expect(dialogText).toContain('锁定目标：AI 第 3 层');
+    expect(dialogText).toContain('预计 2 个 wave、2 个 bucket');
+    expect(dialogText).toContain('跳过最新楼层：0 层');
+    expect(dialogText).toContain('Wave 1：AI 第 2 层；角色状态');
+    expect(dialogText).toContain('Wave 2：AI 第 3 层；角色状态、事件记录');
+    expect(dialogText).toContain('不扫描或修复历史前沿之前的内部空洞');
+    expect(orchestrateCatchUp).not.toHaveBeenCalled();
+    expect(orchestrate).not.toHaveBeenCalled();
+
+    await clickDialogButton('确认追平');
+    await new Promise(r => setTimeout(r, 0));
+
+    expect(orchestrateCatchUp).toHaveBeenCalledTimes(1);
+    expect(orchestrateCatchUp.mock.calls[0][0]).toEqual(['sheet_a', 'sheet_b']);
+    expect(orchestrateCatchUp.mock.calls[0][1]).toEqual(expect.any(Function));
+    expect(orchestrateCatchUp.mock.calls[0][2]).toEqual(expect.objectContaining({
+      abortController: expect.any(AbortController),
+      onProgress: expect.any(Function),
+    }));
+    expect(orchestrate).not.toHaveBeenCalled();
+
+    mount.__resetAcuV2MountForTests();
+  });
+
+  it('追平规划无缺口时提示已追平且不执行编排或刷新', async () => {
+    const { mount, prepareCatchUp, orchestrateCatchUp, refreshMergedData } = await mountFormFillPage();
+    prepareCatchUp.mockResolvedValueOnce({
+      success: true,
+      plan: { targetAiFloor: 3, targetMessageIndex: 4, planSignature: 'none', waves: [] },
+    });
+    const button = Array.from(document.querySelectorAll<HTMLButtonElement>('button'))
+      .find(btn => btn.textContent?.includes('一键追平所选表未填楼层'))!;
+
+    button.click();
+    await new Promise(r => setTimeout(r, 0));
+
+    expect(document.querySelector('.acu-dialog-layer')).toBeNull();
+    expect(document.querySelector('.acu-toast-viewport')?.textContent || '').toContain('所选表已追平');
+    expect(orchestrateCatchUp).not.toHaveBeenCalled();
+    expect(refreshMergedData).not.toHaveBeenCalled();
+
+    mount.__resetAcuV2MountForTests();
+  });
+
+  it('追平运行与普通手填互斥，终止仅中止当前 controller', async () => {
+    const { mount, orchestrateCatchUp, orchestrate, abortAllActiveRequests, setWasStoppedByUser, setIsAutoUpdatingCard } = await mountFormFillPage();
+    let releaseCatchUp = () => {};
+    let capturedController: AbortController | undefined;
+    orchestrateCatchUp.mockImplementation(async (_keys: string[], _refresh: any, options: any) => {
+      capturedController = options.abortController;
+      await new Promise<void>(resolve => { releaseCatchUp = resolve; });
+      return { success: false, outcome: 'stopped', committedBucketCount: 1 };
+    });
+    const catchUpButton = Array.from(document.querySelectorAll<HTMLButtonElement>('button'))
+      .find(btn => btn.textContent?.includes('一键追平所选表未填楼层'))!;
+    const manualButton = Array.from(document.querySelectorAll<HTMLButtonElement>('button'))
+      .find(btn => btn.textContent?.includes('执行手动填表'))!;
+
+    catchUpButton.click();
+    await new Promise(r => setTimeout(r, 0));
+    expect(manualButton.disabled).toBe(true);
+    await clickDialogButton('确认追平');
+    await new Promise(r => setTimeout(r, 0));
+    expect(capturedController?.signal.aborted).toBe(false);
+    expect(manualButton.disabled).toBe(true);
+
+    const stopButton = Array.from(document.querySelectorAll<HTMLButtonElement>('.acu-v2-toast__action'))
+      .find(btn => btn.textContent?.includes('终止'))!;
+    stopButton.click();
+    await Promise.resolve();
+
+    expect(capturedController?.signal.aborted).toBe(true);
+    expect(abortAllActiveRequests).not.toHaveBeenCalled();
+    expect(setWasStoppedByUser).not.toHaveBeenCalled();
+    expect(setIsAutoUpdatingCard).not.toHaveBeenCalled();
+    expect(orchestrate).not.toHaveBeenCalled();
+
+    releaseCatchUp();
+    await new Promise(r => setTimeout(r, 0));
+    expect(document.querySelector('.acu-toast-viewport')?.textContent || '').toContain('已保留 1 个已提交 bucket');
+
+    mount.__resetAcuV2MountForTests();
+  });
+
+  it('sync_pending 提供仅同步重试，重试不再次调用追平编排', async () => {
+    const { mount, orchestrateCatchUp, refreshMergedData } = await mountFormFillPage();
+    orchestrateCatchUp.mockResolvedValueOnce({ success: true, outcome: 'sync_pending', committedBucketCount: 2 });
+    const button = Array.from(document.querySelectorAll<HTMLButtonElement>('button'))
+      .find(btn => btn.textContent?.includes('一键追平所选表未填楼层'))!;
+    button.click();
+    await new Promise(r => setTimeout(r, 0));
+    await clickDialogButton('确认追平');
+    await new Promise(r => setTimeout(r, 0));
+
+    expect(document.querySelector('.acu-toast-viewport')?.textContent || '').toContain('世界书同步待重试');
+    const retryButton = Array.from(document.querySelectorAll<HTMLButtonElement>('.acu-v2-toast__action'))
+      .find(btn => btn.textContent?.includes('仅同步重试'))!;
+    retryButton.click();
+    await new Promise(r => setTimeout(r, 0));
+
+    expect(refreshMergedData).toHaveBeenCalledTimes(1);
+    expect(orchestrateCatchUp).toHaveBeenCalledTimes(1);
+    expect(document.querySelector('.acu-toast-viewport')?.textContent || '').toContain('没有再次调用 AI');
 
     mount.__resetAcuV2MountForTests();
   });

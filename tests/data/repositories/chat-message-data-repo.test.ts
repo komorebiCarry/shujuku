@@ -23,6 +23,7 @@ import {
   writeLegacyCompatData_ACU,
   writeLegacyStandardAndSummary_ACU,
   writeMessageIdentity_ACU,
+  purgeManualRefillIncrementalSheetKeysFromStorageFrameV2_ACU,
   purgeManualRefillIncrementalSheetKeysFromMessage_ACU,
   purgeSheetKeysFromMessage_ACU,
   clearAllTableFields_ACU,
@@ -471,6 +472,30 @@ describe('purgeSheetKeysFromMessage_ACU', () => {
     expect(frame.checkpoint.manualRefillProgress.completedSheetMessageIndexByKey).toEqual({ sheet_1: 3 });
   });
 
+
+  it('删完新版 progress 的目标表后将运行收敛为 complete 并清除错误', () => {
+    const msg: any = {
+      TavernDB_ACU_IsolatedData: {
+        tag1: {
+          storageFrame: {
+            version: 2,
+            manualRefillProgress: {
+              kind: 'manual_refill', version: 2, status: 'failed', selectedSheetKeys: ['sheet_0'],
+              completedSheetMessageIndexByKey: { sheet_0: 2 }, lastError: 'network failed',
+            },
+            logEntries: [],
+          },
+        },
+      },
+    };
+
+    expect(purgeSheetKeysFromMessage_ACU(msg, ['sheet_0'])).toBe(true);
+    expect(msg.TavernDB_ACU_IsolatedData.tag1.storageFrame.manualRefillProgress).toEqual(expect.objectContaining({
+      status: 'complete', selectedSheetKeys: [], completedSheetMessageIndexByKey: {},
+    }));
+    expect(msg.TavernDB_ACU_IsolatedData.tag1.storageFrame.manualRefillProgress.lastError).toBeUndefined();
+  });
+
   it('从 V2 logEntries 中只清理目标 sheet 的结构化 operation、patch 和 writeSet', () => {
     const msg: any = {
       TavernDB_ACU_IsolatedData: {
@@ -731,6 +756,42 @@ describe('purgeManualRefillIncrementalSheetKeysFromMessage_ACU', () => {
     ]);
     expect(frame.logEntries[0].patches).toEqual([{ kind: 'row_delete', sheetKey: 'sheet_1', rowId: 'r1' }]);
     expect(frame.logEntries[0].writeSet).toEqual([{ kind: 'sheet', sheetKey: 'sheet_1' }, { kind: 'all' }]);
+  });
+
+  it('裁剪后将 headRevision 收敛到最后保留 entry，避免后续追加引用已删 revision', () => {
+    const frame: any = {
+      version: 2,
+      headRevision: '2:removed',
+      checkpoint: { kind: 'full', data: { sheet_0: { name: 'base' }, sheet_1: { name: 'keep' } } },
+      logEntries: [
+        {
+          seq: 1, commitRevision: '1:keep', filledSheetKeys: ['sheet_1'], changedSheetKeys: ['sheet_1'], groupKeys: ['sheet_1'],
+          operations: [{ kind: 'sheet_replace', sheetKey: 'sheet_1', sheet: { name: 'keep' }, reason: 'manual_crud' }],
+        },
+        {
+          seq: 2, commitRevision: '2:removed', filledSheetKeys: ['sheet_0'], changedSheetKeys: ['sheet_0'], groupKeys: ['sheet_0'],
+          operations: [{ kind: 'sheet_replace', sheetKey: 'sheet_0', sheet: { name: 'remove' }, reason: 'manual_crud' }],
+        },
+      ],
+    };
+
+    expect(purgeManualRefillIncrementalSheetKeysFromStorageFrameV2_ACU(frame, new Set(['sheet_0']))).toBe(true);
+    expect(frame.logEntries).toHaveLength(1);
+    expect(frame.logEntries[0].commitRevision).toBe('1:keep');
+    expect(frame.headRevision).toBe('1:keep');
+  });
+
+  it('裁剪清空全部 entry 时移除指向已删除 entry 的 headRevision', () => {
+    const frame: any = {
+      version: 2,
+      headRevision: '1:removed',
+      checkpoint: { kind: 'full', data: { sheet_0: { name: 'base' } } },
+      logEntries: [{ seq: 1, commitRevision: '1:removed', filledSheetKeys: ['sheet_0'], operations: [{ kind: 'sheet_replace', sheetKey: 'sheet_0', sheet: { name: 'remove' }, reason: 'manual_crud' }] }],
+    };
+
+    expect(purgeManualRefillIncrementalSheetKeysFromStorageFrameV2_ACU(frame, new Set(['sheet_0']))).toBe(true);
+    expect(frame.logEntries).toEqual([]);
+    expect(frame.headRevision).toBeNull();
   });
 
   it('目标 sheet 专属 V2 增量日志清理后移除空壳 entry，并保留 checkpoint.data', () => {

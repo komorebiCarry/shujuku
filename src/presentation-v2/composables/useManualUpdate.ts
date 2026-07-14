@@ -15,7 +15,9 @@ import { getSortedSheetKeys_ACU } from '../../service/template/chat-scope';
 import { collectV2CheckpointFloorsFromChat_ACU } from '../../service/table/table-history';
 import {
   executeCardUpdateCore_ACU,
+  orchestrateManualCatchUp_ACU,
   orchestrateManualUpdate_ACU,
+  prepareManualCatchUpPlan_ACU,
   processUpdatesBatch_ACU,
   type BatchUpdateProgressContext,
   type CardUpdateProgressEvent,
@@ -33,6 +35,7 @@ export interface ManualUpdateState {
   manualBatchSize: Ref<number>;
   manualExtraHint: Ref<string>;
   manualUpdateBusy: Ref<boolean>;
+  catchUpBusy: Ref<boolean>;
   sheetKeys: ComputedRef<string[]>;
   sheetNames: ComputedRef<Record<string, string>>;
   selectedSheetSummary: ComputedRef<string>;
@@ -47,6 +50,7 @@ export interface ManualUpdateState {
   selectAllManualTables: () => void;
   selectNoManualTables: () => void;
   runManualUpdate: () => Promise<void>;
+  runManualCatchUp: () => Promise<void>;
 }
 
 function currentSheetKeys(): string[] {
@@ -194,31 +198,36 @@ export function useManualUpdate(): ManualUpdateState {
   const manualBatchSize = ref(resolveManualBatchSize());
   const manualExtraHint = ref('');
   const manualUpdateBusy = ref(false);
+  const catchUpBusy = ref(false);
   const refreshTick = ref(0);
   let progressToastId: string | null = null;
   let abortRequested = false;
+  let catchUpAbortController: AbortController | null = null;
 
-  function progressToastOptions() {
+  function progressToastOptions(onAbort: () => void = requestAbort) {
+    const abortDisabled = onAbort === requestCatchUpAbort
+      ? catchUpAbortController?.signal.aborted === true
+      : abortRequested;
     return {
       durationMs: 0,
       muteable: false,
       dismissible: false,
-      action: abortRequested
+      action: abortDisabled
         ? undefined
         : {
             label: '终止',
             variant: 'danger' as const,
             dismissOnClick: false,
-            onClick: requestAbort,
+            onClick: onAbort,
           },
     };
   }
 
-  function notifyProgress(text: string): void {
-    if (progressToastId && toast.update(progressToastId, 'info', text, progressToastOptions())) {
+  function notifyProgress(text: string, onAbort: () => void = requestAbort): void {
+    if (progressToastId && toast.update(progressToastId, 'info', text, progressToastOptions(onAbort))) {
       return;
     }
-    progressToastId = toast.info(text, progressToastOptions());
+    progressToastId = toast.info(text, progressToastOptions(onAbort));
   }
 
   function finishToast(kind: MessageKind, text: string): void {
@@ -250,6 +259,17 @@ export function useManualUpdate(): ManualUpdateState {
         muteable: false,
         dismissible: false,
       });
+    }
+  }
+
+  function requestCatchUpAbort(): void {
+    if (!catchUpAbortController || catchUpAbortController.signal.aborted) return;
+    catchUpAbortController.abort();
+    const text = '手动追平已终止，正在等待当前安全边界收敛...';
+    if (progressToastId) {
+      toast.update(progressToastId, 'warning', text, { durationMs: 0, muteable: false, dismissible: false });
+    } else {
+      toast.warning(text, { durationMs: 0, muteable: false, dismissible: false });
     }
   }
 
@@ -382,12 +402,13 @@ export function useManualUpdate(): ManualUpdateState {
   }
 
   async function runManualUpdate(): Promise<void> {
-    if (manualUpdateBusy.value) return;
+    if (manualUpdateBusy.value || catchUpBusy.value) return;
     if (!selectedManualTableKeys.value.length) {
       toast.warning('未选择需要手动填表的表格。');
       return;
     }
 
+    manualUpdateBusy.value = true;
     const confirmed = await dialogStore.confirm({
       title: '执行手动填表',
       message: `即将执行手动填表。\n\n当前 full checkpoint：${checkpointFloorsLabel.value}\n本次重填范围：${manualRefillRangeLabel.value}\n选中表：${selectedSheetSummary.value}\n\n系统会先在 service 层做重填边界检查，并在内存中按当前上下文和批处理设置准备重填当前选中的表。\n常规路径只会在确认可回放边界后清理本次范围内选中表的 V2 增量日志与 revision 指纹，并在全部成功后写入手动重填进度记录。\n如果边界检查确认重填起点前没有可回放 checkpoint，系统会停止并弹出第二次破坏性确认；只有你在第二次确认中授权后，才会替换本次范围内选中表的旧 checkpoint 基底并写入新的单表 checkpoint。\n\n取消、失败、终止或从中断处继续时，不会清理本次重填范围之外的聊天记录表格数据，也不会在未二次确认时替换 checkpoint 基底。`,
@@ -396,12 +417,14 @@ export function useManualUpdate(): ManualUpdateState {
       cancelLabel: '取消',
       confirmVariant: checkpointRiskMessage.value ? 'danger' : undefined,
     });
-    if (!confirmed) return;
+    if (!confirmed) {
+      manualUpdateBusy.value = false;
+      return;
+    }
     // 兼容沿用 clearBeforeUpdate 参数名；service 层实际执行事务式重填，不会预清空聊天记录。
     const clearBeforeUpdate = true;
     const targetManualTableKeys = selectedManualTableKeys.value.slice();
 
-    manualUpdateBusy.value = true;
     progressToastId = null;
     abortRequested = false;
     _set_wasStoppedByUser_ACU(false);
@@ -489,12 +512,121 @@ export function useManualUpdate(): ManualUpdateState {
     }
   }
 
+  async function retryCatchUpSyncOnly(): Promise<void> {
+    if (manualUpdateBusy.value || catchUpBusy.value) return;
+    catchUpBusy.value = true;
+    try {
+      if (progressToastId) {
+        toast.update(progressToastId, 'info', '正在仅重试世界书同步，不会再次调用 AI...', {
+          durationMs: 0,
+          muteable: false,
+          dismissible: false,
+        });
+      }
+      const result = await refreshMergedDataAndNotify_ACU();
+      refresh();
+      if (result.degraded) {
+        showCatchUpSyncPending();
+        return;
+      }
+      finishToast('success', '世界书同步已完成；没有再次调用 AI。');
+    } catch (error: any) {
+      showCatchUpSyncPending(error?.message || '世界书同步仍未完成。');
+    } finally {
+      catchUpBusy.value = false;
+    }
+  }
+
+  function showCatchUpSyncPending(detail?: string): void {
+    const text = `追平数据已保存，但世界书同步待重试。${detail ? ` ${detail}` : ''}`;
+    const options = {
+      durationMs: 0,
+      muteable: false,
+      dismissible: true,
+      action: {
+        label: '仅同步重试',
+        dismissOnClick: false,
+        onClick: retryCatchUpSyncOnly,
+      },
+    };
+    if (progressToastId && toast.update(progressToastId, 'warning', text, options)) return;
+    progressToastId = toast.warning(text, options);
+  }
+
+  async function runManualCatchUp(): Promise<void> {
+    if (manualUpdateBusy.value || catchUpBusy.value) return;
+    if (!selectedManualTableKeys.value.length) {
+      toast.warning('未选择需要追平的表格。');
+      return;
+    }
+
+    catchUpBusy.value = true;
+    const targetKeys = selectedManualTableKeys.value.slice();
+    try {
+      const planningResult = await prepareManualCatchUpPlan_ACU(targetKeys);
+      if (!planningResult.success || !planningResult.plan) {
+        finishToast('error', planningResult.error || '无法生成手动追平计划。');
+        return;
+      }
+      const plan = planningResult.plan;
+      if (!plan.waves.length) {
+        finishToast('info', '所选表已追平，无需调用 AI 或写入数据。');
+        return;
+      }
+      const totalBuckets = plan.waves.reduce((count, wave) => count + wave.groups.reduce(
+        (waveCount, group) => waveCount + Math.ceil(wave.messageIndices.length / group.batchSize),
+        0,
+      ), 0);
+      const waveSummary = plan.waves.map((wave, index) =>
+        `Wave ${index + 1}：${formatAiFloorRange_ACU(wave.startAiFloor, wave.endAiFloor)}；${wave.sheetKeys.map(key => sheetNames.value[key] || key).join('、')}`
+      ).join('\n');
+      const confirmed = await dialogStore.confirm({
+        title: '追平所选表未填楼层',
+        message: `锁定目标：AI 第 ${plan.targetAiFloor} 层\n预计 ${plan.waves.length} 个 wave、${totalBuckets} 个 bucket。\n跳过最新楼层：${normalizeNonNegativeInteger(settings_ACU.skipUpdateFloors, 0)} 层。\n\n${waveSummary}\n\n本功能只补每张表已提交连续前沿之后的后缀缺口，不扫描或修复历史前沿之前的内部空洞。执行时会重新读取已提交事实并重新规划，避免重复处理确认期间已完成的 bucket。`,
+        confirmLabel: '确认追平',
+        cancelLabel: '取消',
+      });
+      if (!confirmed) return;
+
+      progressToastId = null;
+      abortRequested = false;
+      catchUpAbortController = new AbortController();
+      notifyProgress('手动追平开始。', requestCatchUpAbort);
+      const result = await orchestrateManualCatchUp_ACU(
+        targetKeys,
+        refreshMergedDataAndNotify_ACU,
+        {
+          abortController: catchUpAbortController,
+          onProgress: event => notifyProgress(progressLabel(event), requestCatchUpAbort),
+        },
+      );
+      if (result.outcome === 'sync_pending') {
+        showCatchUpSyncPending();
+      } else if (result.outcome === 'no_work') {
+        finishToast('info', '所选表已追平，无需调用 AI 或写入数据。');
+      } else if (result.outcome === 'stopped' || catchUpAbortController.signal.aborted) {
+        finishToast('warning', `手动追平已终止；已保留 ${result.committedBucketCount || 0} 个已提交 bucket。`);
+      } else if (result.success) {
+        finishToast('success', `手动追平完成，共提交 ${result.committedBucketCount || 0} 个 bucket。`);
+      } else {
+        finishToast('error', result.error || '手动追平失败。');
+      }
+    } catch (error: any) {
+      finishToast('error', error?.message || '手动追平执行异常。');
+    } finally {
+      catchUpAbortController = null;
+      catchUpBusy.value = false;
+      refresh();
+    }
+  }
+
   return {
     selectedManualTableKeys,
     manualContextDepth,
     manualBatchSize,
     manualExtraHint,
     manualUpdateBusy,
+    catchUpBusy,
     sheetKeys,
     sheetNames,
     selectedSheetSummary,
@@ -509,5 +641,6 @@ export function useManualUpdate(): ManualUpdateState {
     selectAllManualTables,
     selectNoManualTables,
     runManualUpdate,
+    runManualCatchUp,
   };
 }

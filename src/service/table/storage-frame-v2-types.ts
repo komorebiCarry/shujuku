@@ -26,9 +26,22 @@ export interface TableCheckpointScheduleSummaryV2_ACU {
   lastChangedAiFloor?: number;
 }
 
+export type ManualRefillProgressStatusV2_ACU =
+  | 'in_progress'
+  | 'complete'
+  | 'planned'
+  | 'collecting'
+  | 'committing'
+  | 'committed'
+  | 'stopped'
+  | 'failed'
+  | 'sync_pending';
+
 export interface ManualRefillProgressV2_ACU {
   kind: 'manual_refill';
-  status: 'in_progress' | 'complete';
+  /** 未带 version 的历史进度继续按旧契约读取。 */
+  version?: 2;
+  status: ManualRefillProgressStatusV2_ACU;
   selectedSheetKeys: string[];
   contextMessageIndices: number[];
   originalStartMessageIndex: number;
@@ -36,6 +49,15 @@ export interface ManualRefillProgressV2_ACU {
   batchSize: number;
   completedUntilMessageIndex: number;
   completedSheetMessageIndexByKey?: Record<string, number>;
+  runId?: string;
+  mode?: 'refill' | 'catch_up';
+  targetAiFloor?: number;
+  planSignature?: string;
+  waveIndex?: number;
+  bucketIndex?: number;
+  totalWaves?: number;
+  totalBuckets?: number;
+  lastError?: string;
   updatedAt: number;
 }
 

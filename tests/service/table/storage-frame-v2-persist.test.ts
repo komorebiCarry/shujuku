@@ -18,7 +18,8 @@ vi.mock('../../../src/data/gateways/chat-gateway', () => ({
   saveChatToHost_ACU: mocks.saveChat,
   saveChatToHostStrict_ACU: mocks.saveChatStrict,
 }));
-vi.mock('../../../src/data/repositories/chat-message-data-repo', () => ({
+vi.mock('../../../src/data/repositories/chat-message-data-repo', async importOriginal => ({
+  ...(await importOriginal<typeof import('../../../src/data/repositories/chat-message-data-repo')>()),
   cloneIsolatedData_ACU: vi.fn((message: any) => JSON.parse(JSON.stringify(message.TavernDB_ACU_IsolatedData || {}))),
   writeMessageIdentity_ACU: vi.fn((message: any, isolationConfig: any) => {
     if (isolationConfig.enabled) {
@@ -91,6 +92,236 @@ function makeTransaction(baseRevision: string | null = 'runtime-v1:test'): any {
     runCommit: vi.fn(async (task: () => any) => task()),
   };
 }
+
+
+describe('manualRefillProgress V2 validation', () => {
+  it('接受无 version 的旧版手动重填进度', async () => {
+    const { persistTableMutationLogV2_ACU } = await import('../../../src/service/table/storage-frame-v2-persist');
+    seedFrame({ manualRefillProgress: undefined });
+    const result = await persistTableMutationLogV2_ACU({
+      targetMessageIndex: 0,
+      source: 'manual_fill',
+      afterData: { sheet_a: sheetA, sheet_b: sheetB } as any,
+      filledSheetKeys: ['sheet_a'],
+      candidateChangedSheetKeys: ['sheet_a'],
+      operations: [{ kind: 'sheet_replace', sheetKey: 'sheet_a', sheet: sheetA, reason: 'system' }],
+      manualRefillProgress: {
+        kind: 'manual_refill', status: 'in_progress', selectedSheetKeys: ['sheet_a'], contextMessageIndices: [0],
+        originalStartMessageIndex: 0, targetMessageIndex: 0, batchSize: 1, completedUntilMessageIndex: 0, updatedAt: 1,
+      },
+      transactionContext: makeTransaction(), assumeCommitLock: true,
+    });
+    expect(result.saved).toBe(true);
+  });
+
+  it('仅更新新版手动追平进度时不追加 mutation entry 或创建 checkpoint', async () => {
+    mocks.saveChat.mockClear();
+    mocks.saveChatStrict.mockClear();
+    const { persistTableMutationLogV2_ACU } = await import('../../../src/service/table/storage-frame-v2-persist');
+    const message = seedFrame();
+    const frameBefore = JSON.parse(JSON.stringify(message.TavernDB_ACU_IsolatedData[''].storageFrame));
+
+    const result = await persistTableMutationLogV2_ACU({
+      targetMessageIndex: 0,
+      source: 'manual_fill',
+      afterData: frameBefore.checkpoint.data,
+      filledSheetKeys: [],
+      candidateChangedSheetKeys: [],
+      operations: [],
+      manualRefillProgress: {
+        kind: 'manual_refill', version: 2, status: 'complete',
+        selectedSheetKeys: ['sheet_a'], contextMessageIndices: [0],
+        originalStartMessageIndex: 0, targetMessageIndex: 0, batchSize: 1,
+        completedUntilMessageIndex: 0, completedSheetMessageIndexByKey: { sheet_a: 0 },
+        runId: 'catch-up-run', mode: 'catch_up', targetAiFloor: 1,
+        planSignature: 'plan-signature', waveIndex: 0, bucketIndex: 0,
+        totalWaves: 1, totalBuckets: 1, updatedAt: 2,
+      },
+      transactionContext: makeTransaction(), assumeCommitLock: true,
+    });
+
+    const frameAfter = message.TavernDB_ACU_IsolatedData[''].storageFrame;
+    expect(result.saved).toBe(true);
+    expect(frameAfter.manualRefillProgress).toEqual(expect.objectContaining({
+      version: 2,
+      status: 'complete',
+      runId: 'catch-up-run',
+      completedSheetMessageIndexByKey: { sheet_a: 0 },
+    }));
+    expect(frameAfter.logEntries).toEqual(frameBefore.logEntries);
+    expect(frameAfter.checkpoint).toEqual(frameBefore.checkpoint);
+    expect(frameAfter.headRevision).toBe(frameBefore.headRevision);
+    expect(mocks.saveChat).toHaveBeenCalledTimes(1);
+    expect(mocks.saveChatStrict).not.toHaveBeenCalled();
+  });
+
+  it('无 full checkpoint 时拒绝 progress-only，且不创建无根 V2 frame 或触发保存', async () => {
+    mocks.saveChat.mockClear();
+    mocks.saveChatStrict.mockClear();
+    const { persistTableMutationLogV2_ACU } = await import('../../../src/service/table/storage-frame-v2-persist');
+    const message = seedFrame({ checkpoint: undefined, logEntries: [], headRevision: null });
+    const beforeIsolatedData = JSON.parse(JSON.stringify(message.TavernDB_ACU_IsolatedData));
+
+    const result = await persistTableMutationLogV2_ACU({
+      targetMessageIndex: 0,
+      source: 'manual_fill',
+      afterData: { mate: { type: 'acu' }, sheet_a: sheetA } as any,
+      filledSheetKeys: [],
+      candidateChangedSheetKeys: [],
+      operations: [],
+      manualRefillProgress: {
+        kind: 'manual_refill', version: 2, status: 'stopped',
+        selectedSheetKeys: ['sheet_a'], contextMessageIndices: [0],
+        originalStartMessageIndex: 0, targetMessageIndex: 0, batchSize: 1,
+        completedUntilMessageIndex: 0, completedSheetMessageIndexByKey: {},
+        runId: 'catch-up-no-checkpoint', mode: 'catch_up', targetAiFloor: 1,
+        planSignature: 'plan-signature', waveIndex: 0, bucketIndex: 0,
+        totalWaves: 1, totalBuckets: 1, lastError: 'stopped', updatedAt: 2,
+      },
+      strictSave: true,
+      transactionContext: makeTransaction(), assumeCommitLock: true,
+    });
+
+    expect(result).toEqual({
+      saved: false,
+      error: 'V2 manualRefillProgress-only write requires an existing full checkpoint anchor.',
+    });
+    expect(message.TavernDB_ACU_IsolatedData).toEqual(beforeIsolatedData);
+    expect(mocks.saveChatStrict).not.toHaveBeenCalled();
+    expect(mocks.saveChat).not.toHaveBeenCalled();
+  });
+
+  it('progress-only 严格保存失败时恢复 frame metadata、headRevision 与 identity', async () => {
+    mocks.saveChat.mockClear();
+    mocks.saveChatStrict.mockReset().mockRejectedValueOnce(new Error('strict save failed'));
+    const { persistTableMutationLogV2_ACU } = await import('../../../src/service/table/storage-frame-v2-persist');
+    const message = seedFrame();
+    message.TavernDB_ACU_Identity = 'original-identity';
+    const beforeIsolatedData = JSON.parse(JSON.stringify(message.TavernDB_ACU_IsolatedData));
+
+    await expect(persistTableMutationLogV2_ACU({
+      targetMessageIndex: 0,
+      source: 'manual_fill',
+      afterData: beforeIsolatedData[''].storageFrame.checkpoint.data,
+      filledSheetKeys: [],
+      candidateChangedSheetKeys: [],
+      operations: [],
+      manualRefillProgress: {
+        kind: 'manual_refill', version: 2, status: 'failed',
+        selectedSheetKeys: ['sheet_a'], contextMessageIndices: [0],
+        originalStartMessageIndex: 0, targetMessageIndex: 0, batchSize: 1,
+        completedUntilMessageIndex: 0, completedSheetMessageIndexByKey: {},
+        runId: 'catch-up-save-failed', mode: 'catch_up', targetAiFloor: 1,
+        planSignature: 'plan-signature', waveIndex: 0, bucketIndex: 0,
+        totalWaves: 1, totalBuckets: 1, lastError: 'primary failure', updatedAt: 2,
+      },
+      strictSave: true,
+      transactionContext: makeTransaction(), assumeCommitLock: true,
+    })).rejects.toThrow('strict save failed');
+
+    expect(message.TavernDB_ACU_IsolatedData).toEqual(beforeIsolatedData);
+    expect(message.TavernDB_ACU_Identity).toBe('original-identity');
+    expect(mocks.saveChat).not.toHaveBeenCalled();
+  });
+});
+
+describe('persistTableMutationLogV2_ACU incremental replacement', () => {
+  beforeEach(() => {
+    mocks.chat.length = 0;
+    mocks.saveChat.mockReset().mockResolvedValue(undefined);
+    mocks.saveChatStrict.mockReset().mockResolvedValue(undefined);
+    mocks.settings.dataIsolationEnabled = false;
+    mocks.settings.dataIsolationCode = '';
+  });
+
+  function makeReplacementOptions(targetMessageIndex: number) {
+    return {
+      targetMessageIndex,
+      source: 'manual_fill' as const,
+      afterData: { mate: { type: 'acu' }, sheet_a: sheetA, sheet_b: sheetB } as any,
+      filledSheetKeys: ['sheet_a'],
+      candidateChangedSheetKeys: ['sheet_a'],
+      operations: [{ kind: 'sheet_replace' as const, sheetKey: 'sheet_a', sheet: sheetA, reason: 'system' as const }],
+      replaceExistingIncremental: { targetMessageIndices: [0, 1], targetSheetKeys: ['sheet_a'] },
+      transactionContext: makeTransaction(),
+      assumeCommitLock: true,
+    };
+  }
+
+  it('跨 replacement 范围裁剪旧 bucket 增量、追加新 entry，并只严格保存一次', async () => {
+    const first = seedFrame({
+      headRevision: '1:first-old',
+      logEntries: [makeEntry({ seq: 1, commitRevision: '1:first-old', filledSheetKeys: ['sheet_a'], changedSheetKeys: ['sheet_a'], groupKeys: ['sheet_a'], operations: [{ kind: 'sheet_replace', sheetKey: 'sheet_a', sheet: { ...sheetA, name: '旧 A' }, reason: 'system' }] })],
+    });
+    const second = {
+      is_user: false,
+      TavernDB_ACU_IsolatedData: {
+        '': {
+          _acu_storage_version: 2,
+          storageFrame: {
+            version: 2,
+            headRevision: '2:target-old',
+            checkpoint: { kind: 'full', createdAt: 1, reason: 'init', data: { mate: { type: 'acu' }, sheet_a: sheetA, sheet_b: sheetB } },
+            logEntries: [makeEntry({ seq: 2, entryId: 'target-old', commitRevision: '2:target-old', filledSheetKeys: ['sheet_a'], changedSheetKeys: ['sheet_a'], groupKeys: ['sheet_a'], operations: [{ kind: 'sheet_replace', sheetKey: 'sheet_a', sheet: { ...sheetA, name: '旧目标 A' }, reason: 'system' }] })],
+          },
+        },
+      },
+    };
+    mocks.chat.splice(0, mocks.chat.length, first, second);
+    const { persistTableMutationLogV2_ACU } = await import('../../../src/service/table/storage-frame-v2-persist');
+
+    const result = await persistTableMutationLogV2_ACU(makeReplacementOptions(1));
+
+    expect(result.saved).toBe(true);
+    expect(mocks.saveChatStrict).toHaveBeenCalledOnce();
+    expect(mocks.saveChat).not.toHaveBeenCalled();
+    const firstFrame = first.TavernDB_ACU_IsolatedData[''].storageFrame;
+    expect(firstFrame.logEntries).toEqual([]);
+    expect(firstFrame.headRevision).toBeNull();
+    const secondFrame = second.TavernDB_ACU_IsolatedData[''].storageFrame;
+    expect(secondFrame.logEntries).toHaveLength(1);
+    expect(secondFrame.logEntries[0]).toMatchObject({
+      seq: 1,
+      parentRevision: null,
+      filledSheetKeys: ['sheet_a'],
+      operations: [{ kind: 'sheet_replace', sheetKey: 'sheet_a', sheet: sheetA, reason: 'system' }],
+    });
+    expect(secondFrame.headRevision).toBe(secondFrame.logEntries[0].commitRevision);
+  });
+
+  it('replacement 的严格保存失败时恢复所有目标消息的内存状态', async () => {
+    const first = seedFrame({
+      headRevision: '1:first-old',
+      logEntries: [makeEntry({ seq: 1, commitRevision: '1:first-old', filledSheetKeys: ['sheet_a'], operations: [{ kind: 'sheet_replace', sheetKey: 'sheet_a', sheet: sheetA, reason: 'system' }] })],
+    });
+    const second = {
+      is_user: false,
+      TavernDB_ACU_IsolatedData: {
+        '': {
+          _acu_storage_version: 2,
+          storageFrame: {
+            version: 2,
+            headRevision: '2:target-old',
+            checkpoint: { kind: 'full', createdAt: 1, reason: 'init', data: { mate: { type: 'acu' }, sheet_a: sheetA, sheet_b: sheetB } },
+            logEntries: [makeEntry({ seq: 2, entryId: 'target-old', commitRevision: '2:target-old', filledSheetKeys: ['sheet_a'], operations: [{ kind: 'sheet_replace', sheetKey: 'sheet_a', sheet: sheetA, reason: 'system' }] })],
+          },
+        },
+      },
+    };
+    mocks.chat.splice(0, mocks.chat.length, first, second);
+    const firstBefore = first.TavernDB_ACU_IsolatedData;
+    const secondBefore = second.TavernDB_ACU_IsolatedData;
+    mocks.saveChatStrict.mockRejectedValueOnce(new Error('host save failed'));
+    const { persistTableMutationLogV2_ACU } = await import('../../../src/service/table/storage-frame-v2-persist');
+
+    await expect(persistTableMutationLogV2_ACU(makeReplacementOptions(1))).rejects.toThrow('host save failed');
+
+    expect(mocks.saveChatStrict).toHaveBeenCalledOnce();
+    expect(first.TavernDB_ACU_IsolatedData).toBe(firstBefore);
+    expect(second.TavernDB_ACU_IsolatedData).toBe(secondBefore);
+  });
+});
+
 
 describe('persistTableSheetCheckpointV2_ACU', () => {
   beforeEach(() => {
