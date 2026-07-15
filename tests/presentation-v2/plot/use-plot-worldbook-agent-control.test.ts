@@ -59,6 +59,7 @@ function createSettings() {
         agentPlotExecutionMode: 'sequential',
         agentApiPreset: '',
         agentSkillApiPreset: '',
+        agentDecisionConcurrency: 1,
         maxSkillifyConcurrency: 3,
         worldbookScope: { source: 'character', manualSelection: [] },
         contextSettings: { agentAiMaxRetries: 2 },
@@ -276,6 +277,19 @@ describe('usePlotWorldbookAgentControl', () => {
       maxAiRetries: 2,
       overwriteManual: false,
     }));
+  });
+
+  it('setAgentDecisionConcurrency 保存夹紧后的独立决策并发数', async () => {
+    const c = await getComposable();
+
+    await expect(c.setAgentDecisionConcurrency(9)).resolves.toBe(true);
+
+    expect(mockWriteControl).toHaveBeenCalledWith({ agentDecisionConcurrency: 5 });
+    expect(c.agentDecisionConcurrency.value).toBe(5);
+
+    mockWriteControl.mockClear();
+    await expect(c.setAgentDecisionConcurrency('not-a-number')).resolves.toBe(false);
+    expect(mockWriteControl).not.toHaveBeenCalled();
   });
 
   it('setMaxSkillifyConcurrency 保存夹紧后的并发数', async () => {

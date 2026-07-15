@@ -17,6 +17,7 @@ describe('Agent 出厂提示词', () => {
     expect(content).toContain('严格 JSON');
     expect(content).toContain('禁止编造、改写或补全');
     expect(content).toContain('禁止编造、改写或输出越界 index');
+    expect(content).toContain('完整接管范围的一个分片');
   });
 
   it('保留 Skill 化运行时占位符与抗注入约束', () => {

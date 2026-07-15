@@ -20,8 +20,9 @@ function control() {
     savePromptSegmentsToCurrentWorldbook: vi.fn(async () => true), savePromptSegmentsAsGlobalTemplate: vi.fn(async () => true),
     agentPlotExecutionMode: ref('sequential'), contextSettings: ref({ decisionRecentContextCharLimit: 2, decisionWorldbookCandidateLimit: 10, skillifyMaxEntries: 10, plotWorldbookScanMessageLimit: 2, agentAiMaxRetries: 2, greenlightMinTkBudget: 0, greenlightMaxTkBudget: 1000 }),
     contextSettingsLimits: Object.fromEntries(['decisionRecentContextCharLimit','decisionWorldbookCandidateLimit','skillifyMaxEntries','plotWorldbookScanMessageLimit','agentAiMaxRetries','greenlightMinTkBudget','greenlightMaxTkBudget'].map(key => [key, { min: 0, max: 200000 }])),
+    agentDecisionConcurrency: ref(1), agentDecisionConcurrencyLimits: { min: 1, max: 5 },
     maxSkillifyConcurrency: ref(3), maxSkillifyConcurrencyLimits: { min: 1, max: 5 },
-    setAgentPlotExecutionMode: vi.fn(), setContextSetting: vi.fn(), resetContextSettings: vi.fn(), setMaxSkillifyConcurrency: vi.fn(), retryInitialization: vi.fn(),
+    setAgentPlotExecutionMode: vi.fn(), setContextSetting: vi.fn(), resetContextSettings: vi.fn(), setAgentDecisionConcurrency: vi.fn(async () => true), setMaxSkillifyConcurrency: vi.fn(), retryInitialization: vi.fn(),
   };
 }
 async function mount() {
@@ -59,5 +60,16 @@ describe('WorldbookAgentAdvancedPanel', () => {
     await vi.waitFor(() => expect(x.closed).toHaveBeenCalledOnce());
     await nextTick();
     expect(saveButtons.every(button => button.disabled)).toBe(true);
+  });
+
+  it('Agent 决策并发输入调用独立 setter 并通知当前世界书变更', async () => {
+    const x = await mount();
+    const input = [...x.el.querySelectorAll('input')].find(item => item.value === '1') as HTMLInputElement;
+    expect(input).toBeTruthy();
+    input.value = '4';
+    input.dispatchEvent(new Event('change'));
+    await nextTick();
+    expect(x.agentControl.setAgentDecisionConcurrency).toHaveBeenCalledWith(4);
+    expect(x.current).toHaveBeenCalledOnce();
   });
 });

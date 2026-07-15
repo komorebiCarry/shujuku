@@ -62,6 +62,32 @@
       <section class="acu-agent-advanced__section">
         <header class="acu-agent-advanced__section-head">
           <div>
+            <h4>{{ plotCopy.agentControl.decisionSettings.title }}</h4>
+            <p>{{ plotCopy.agentControl.decisionSettings.description }}</p>
+          </div>
+        </header>
+        <div class="acu-agent-advanced__grid">
+          <AcuFormRow
+            :label="plotCopy.agentControl.decisionSettings.concurrency.label"
+            :hint="plotCopy.agentControl.decisionSettings.concurrency.hint"
+          >
+            <AcuInput
+              type="number"
+              size="sm"
+              :model-value="agentControl.agentDecisionConcurrency.value"
+              :min="agentControl.agentDecisionConcurrencyLimits.min"
+              :max="agentControl.agentDecisionConcurrencyLimits.max"
+              :step="1"
+              :disabled="!agentControl.isReady.value"
+              @change="onAgentDecisionConcurrencyChange"
+            />
+          </AcuFormRow>
+        </div>
+      </section>
+
+      <section class="acu-agent-advanced__section">
+        <header class="acu-agent-advanced__section-head">
+          <div>
             <h4>{{ plotCopy.agentControl.skillifySettings.title }}</h4>
             <p>{{ plotCopy.agentControl.skillifySettings.description }}</p>
           </div>
@@ -292,6 +318,10 @@ async function onContextChange(key: AgentContextSettingKey_ACU, value: string | 
 async function resetContextSettings(): Promise<void> {
   await agentControl.resetContextSettings();
   emit('current-worldbook-changed');
+}
+
+async function onAgentDecisionConcurrencyChange(value: string | number): Promise<void> {
+  if (await agentControl.setAgentDecisionConcurrency(value)) emit('current-worldbook-changed');
 }
 
 async function onMaxSkillifyConcurrencyChange(value: string | number): Promise<void> {

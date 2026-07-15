@@ -102,7 +102,15 @@ export const plotCopy = {
     advanced: {
       button: "Agent 高级设置",
       title: "Agent 世界书高级设置",
-      description: "编辑 Agent 决策、Skill 化提示词模板，并控制上下文层数、候选数量上限与 Skill 化调用并发。",
+      description: "编辑 Agent 决策、Skill 化提示词模板，并控制上下文层数、候选数量上限与各自独立的调用并发。",
+    },
+    decisionSettings: {
+      title: "Agent 决策执行参数",
+      description: "将当前接管条目分片后并发分析。请求数和最坏重试数会随并发数放大，别把 API 当免费算力池。",
+      concurrency: {
+        label: "Agent 决策并发数",
+        hint: "默认 1，范围 1-5。条目按份分片，绿灯最小 TK 预算随分片精确拆分；最大 TK 预算仍按一次最终汇总的全局上限裁剪。",
+      },
     },
     skillifySettings: {
       title: "Skill 化执行参数",

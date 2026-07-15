@@ -56,6 +56,7 @@ export type AgentPromptKind_ACU = 'decision' | 'skillify';
 export type AgentContextSettingKey_ACU = keyof AgentContextSettings_ACU;
 export type AgentPlotExecutionModeSetting_ACU = AgentPlotExecutionMode_ACU;
 
+const AGENT_DECISION_CONCURRENCY_LIMIT_ACU = { min: 1, max: 5 };
 const MAX_SKILLIFY_CONCURRENCY_LIMIT_ACU = { min: 1, max: 5 };
 
 function getPromptFallback_ACU(kind: AgentPromptKind_ACU): PromptSegment_ACU[] {
@@ -77,6 +78,13 @@ function normalizeContextPatch_ACU(
     ...(current as unknown as Record<string, number>),
     [key]: Math.trunc(raw),
   });
+}
+
+function normalizeAgentDecisionConcurrency_ACU(value: unknown): number | null {
+  const raw = Number(value);
+  if (!Number.isFinite(raw)) return null;
+  const truncated = Math.trunc(raw);
+  return Math.max(AGENT_DECISION_CONCURRENCY_LIMIT_ACU.min, Math.min(AGENT_DECISION_CONCURRENCY_LIMIT_ACU.max, truncated));
 }
 
 function normalizeMaxSkillifyConcurrency_ACU(value: unknown): number | null {
@@ -154,6 +162,7 @@ export function usePlotWorldbookAgentControl() {
   const agentPlotExecutionMode = ref<AgentPlotExecutionMode_ACU>('concurrent');
   const agentApiPreset = ref('');
   const agentSkillApiPreset = ref('');
+  const agentDecisionConcurrency = ref(1);
   const maxSkillifyConcurrency = ref(3);
   const worldbookScope = ref<AgentWorldbookScope_ACU>({ source: 'character', manualSelection: [] });
   const snapshot = ref<AgentWorldbookControlSnapshot_ACU>(getPlotAgentWorldbookSnapshot_ACU());
@@ -185,6 +194,7 @@ export function usePlotWorldbookAgentControl() {
     agentPlotExecutionMode.value = control.agentPlotExecutionMode;
     agentApiPreset.value = normalizeAgentApiPreset_ACU(control.agentApiPreset);
     agentSkillApiPreset.value = normalizeAgentApiPreset_ACU(control.agentSkillApiPreset);
+    agentDecisionConcurrency.value = normalizeAgentDecisionConcurrency_ACU(control.agentDecisionConcurrency) ?? 1;
     maxSkillifyConcurrency.value = normalizeMaxSkillifyConcurrency_ACU(control.maxSkillifyConcurrency) ?? 3;
     worldbookScope.value = cloneWorldbookScope_ACU(control.worldbookScope);
     contextSettings.value = cloneContextSettings_ACU(normalizeAgentContextSettings_ACU(control.contextSettings));
@@ -302,6 +312,12 @@ export function usePlotWorldbookAgentControl() {
     if (checked) selected.add(normalizedName);
     else selected.delete(normalizedName);
     return setWorldbookScope('manual', Array.from(selected));
+  }
+
+  async function setAgentDecisionConcurrency(value: unknown): Promise<boolean> {
+    const next = normalizeAgentDecisionConcurrency_ACU(value);
+    if (next === null) return false;
+    return Boolean(await writeControlPatch({ agentDecisionConcurrency: next }));
   }
 
   async function setMaxSkillifyConcurrency(value: unknown): Promise<boolean> {
@@ -603,6 +619,7 @@ export function usePlotWorldbookAgentControl() {
     agentPlotExecutionMode,
     agentApiPreset,
     agentSkillApiPreset,
+    agentDecisionConcurrency,
     maxSkillifyConcurrency,
     worldbookScope,
     snapshot,
@@ -613,6 +630,7 @@ export function usePlotWorldbookAgentControl() {
     configStatusText,
     contextSettings,
     contextSettingsLimits: AGENT_CONTEXT_SETTINGS_LIMITS_ACU,
+    agentDecisionConcurrencyLimits: AGENT_DECISION_CONCURRENCY_LIMIT_ACU,
     maxSkillifyConcurrencyLimits: MAX_SKILLIFY_CONCURRENCY_LIMIT_ACU,
     agentDecisionPromptSegments,
     agentSkillifyPromptSegments,
@@ -630,6 +648,7 @@ export function usePlotWorldbookAgentControl() {
     setAgentSkillApiPreset,
     setWorldbookScope,
     toggleWorldbookScopeBook,
+    setAgentDecisionConcurrency,
     setMaxSkillifyConcurrency,
     setContextSetting,
     resetContextSettings,

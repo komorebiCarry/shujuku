@@ -489,6 +489,62 @@ function normalizeTaskPlan_ACU(rawPlan: unknown, enabledTasks: any[], userOrdere
   return { plan, effectiveTasks: sortEffectiveTasks_ACU(effectiveTasks) };
 }
 
+interface AgentDecisionShard_ACU {
+  index: number;
+  summaries: AgentWorldbookSummary_ACU[];
+  allowedKeys: Set<string>;
+  minTkBudget: number;
+}
+
+interface AgentDecisionShardResult_ACU {
+  shard: AgentDecisionShard_ACU;
+  rawResponse: string;
+  parsed: any;
+}
+
+function createAgentDecisionShards_ACU(
+  summaries: AgentWorldbookSummary_ACU[],
+  candidateLimit: number,
+  configuredConcurrency: unknown,
+  minTkBudget: number,
+): AgentDecisionShard_ACU[] {
+  const candidates = summaries.slice(0, normalizePositiveInteger_ACU(candidateLimit, summaries.length || 1));
+  if (candidates.length === 0) return [];
+  const shardCount = Math.min(candidates.length, Math.max(1, Math.min(5, Math.trunc(Number(configuredConcurrency) || 1))));
+  const entriesPerShard = Math.floor(candidates.length / shardCount);
+  const entryRemainder = candidates.length % shardCount;
+  const totalMinBudget = normalizeTkBudgetNumber_ACU(minTkBudget, 0);
+  const budgetPerShard = Math.floor(totalMinBudget / shardCount);
+  const budgetRemainder = totalMinBudget % shardCount;
+  const shards: AgentDecisionShard_ACU[] = [];
+  let offset = 0;
+  for (let index = 0; index < shardCount; index++) {
+    const size = entriesPerShard + (index < entryRemainder ? 1 : 0);
+    const shardSummaries = candidates.slice(offset, offset + size).map((summary, localIndex) => ({ ...summary, index: localIndex + 1 }));
+    offset += size;
+    shards.push({
+      index,
+      summaries: shardSummaries,
+      allowedKeys: new Set(shardSummaries.map(summary => refKey_ACU(summary.bookName, summary.uid))),
+      minTkBudget: budgetPerShard + (index < budgetRemainder ? 1 : 0),
+    });
+  }
+  return shards;
+}
+
+function mergeWorldbookRefs_ACU(groups: AgentWorldbookRef_ACU[][]): AgentWorldbookRef_ACU[] {
+  const seen = new Set<string>();
+  const result: AgentWorldbookRef_ACU[] = [];
+  for (const refs of groups) {
+    for (const ref of refs) {
+      const key = refKey_ACU(ref.bookName, ref.uid);
+      if (seen.has(key)) continue;
+      seen.add(key);
+      result.push(ref);
+    }
+  }
+  return result;
+}
 
 function buildAgentDecisionPrompt_ACU(params: {
   plotSettings: Record<string, any>;
@@ -497,6 +553,9 @@ function buildAgentDecisionPrompt_ACU(params: {
   enabledTasks: any[];
   worldbookSummaries: AgentWorldbookSummary_ACU[];
   contextSettings: ReturnType<typeof normalizeAgentContextSettings_ACU>;
+  minTkBudget?: number;
+  shardIndex?: number;
+  shardCount?: number;
 }): Array<{ role: string; content: string }> {
   const taskSummaries = params.enabledTasks.map((task, index) => {
     const normalized = normalizePlotTask_ACU(task, { index, fallbackTask: task });
@@ -526,10 +585,13 @@ function buildAgentDecisionPrompt_ACU(params: {
     'agent.maxEntriesPerChannelJson': control.maxEntriesPerChannel || {},
     'agent.greenlightTkBudgetJson': {
       unit: 'Token',
-      min: params.contextSettings.greenlightMinTkBudget,
+      min: params.minTkBudget ?? params.contextSettings.greenlightMinTkBudget,
       max: params.contextSettings.greenlightMaxTkBudget,
       selectionRule: '每个通道和每个任务必须优先选择相关条目；相关条目足够时尽可能超过 min；相关条目总 Token 不足 min 时全选相关条目；任何情况下不得超过 max；不得为凑 min 选择无关条目。',
     },
+    'agent.shard.index': (params.shardIndex ?? 0) + 1,
+    'agent.shard.count': params.shardCount ?? 1,
+    'agent.shard.candidateCount': params.worldbookSummaries.length,
     'agent.outputSchemaJson': {
       taskPlan: [{ taskId: '...', run: true, effectiveStage: 1, effectiveOrder: 0, mode: 'sequential', reason: '...' }],
       plotGreenlights: { taskId: [{ entries: [1, 2], reason: '每个编号一句话说明；也兼容旧 bookName/uid 格式' }] },
@@ -556,16 +618,63 @@ function normalizePlotGreenlights_ACU(
   summaries: AgentWorldbookSummary_ACU[],
   maxBudget: number,
   maxEntriesPerChannel: Record<string, unknown>,
+  applyLimits = true,
 ): Record<string, AgentWorldbookRef_ACU[]> {
   const result: Record<string, AgentWorldbookRef_ACU[]> = {};
   if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return result;
   for (const [taskIdRaw, refs] of Object.entries(raw as Record<string, unknown>)) {
     const taskId = normalizeId_ACU(taskIdRaw);
     if (!enabledTaskIds.has(taskId)) continue;
-    const normalizedRefs = applyGreenlightTkBudget_ACU(normalizeWorldbookRefs_ACU(refs, allowedKeys, summaries), summaries, maxBudget, maxEntriesPerChannel.plot);
+    const resolvedRefs = normalizeWorldbookRefs_ACU(refs, allowedKeys, summaries);
+    const normalizedRefs = applyLimits
+      ? applyGreenlightTkBudget_ACU(resolvedRefs, summaries, maxBudget, maxEntriesPerChannel.plot)
+      : resolvedRefs;
     if (normalizedRefs.length > 0) result[taskId] = normalizedRefs;
   }
   return result;
+}
+
+async function runAgentDecisionShard_ACU(params: {
+  shard: AgentDecisionShard_ACU;
+  shardCount: number;
+  plotSettings: Record<string, any>;
+  userMessage: string;
+  sharedContext: Record<string, any>;
+  enabledTasks: any[];
+  contextSettings: ReturnType<typeof normalizeAgentContextSettings_ACU>;
+  presetName: string;
+  maxAiAttempts: number;
+}): Promise<AgentDecisionShardResult_ACU> {
+  const messages = buildAgentDecisionPrompt_ACU({
+    plotSettings: params.plotSettings,
+    userMessage: params.userMessage,
+    sharedContext: params.sharedContext,
+    enabledTasks: params.enabledTasks,
+    worldbookSummaries: params.shard.summaries,
+    contextSettings: params.contextSettings,
+    minTkBudget: params.shard.minTkBudget,
+    shardIndex: params.shard.index,
+    shardCount: params.shardCount,
+  });
+  let rawResponse = '';
+  let failureReason = 'empty_agent_response';
+  for (let attempt = 1; attempt <= params.maxAiAttempts; attempt++) {
+    try {
+      rawResponse = await callAIWithPreset_ACU(messages, params.presetName);
+    } catch (error: any) {
+      failureReason = 'agent_request_error';
+      logWarn_ACU(`[Agent决策] 分片 ${params.shard.index + 1}/${params.shardCount} 第 ${attempt}/${params.maxAiAttempts} 次请求失败；候选 ${params.shard.summaries.length} 条：${String(error?.message || 'unknown')}`);
+      continue;
+    }
+    if (!rawResponse) {
+      failureReason = 'empty_agent_response';
+      continue;
+    }
+    const parsed = parseAgentDecisionResponse_ACU(rawResponse);
+    if (parsed && parsed.fallbackMode !== true) return { shard: params.shard, rawResponse, parsed };
+    failureReason = parsed?.reason || 'invalid_agent_response';
+  }
+  throw new Error(`agent_decision_shard_${params.shard.index + 1}_failed:${failureReason}`);
 }
 
 export async function runAgentDecisionForPlot_ACU(params: {
@@ -585,41 +694,46 @@ export async function runAgentDecisionForPlot_ACU(params: {
     const contextSettings = normalizeAgentContextSettings_ACU(control.contextSettings);
     const maxAiAttempts = Math.max(1, Math.min(10, Math.trunc(Number(contextSettings.agentAiMaxRetries) || 1)));
     const readContext = params.sharedContext?.worldbookReadContext as StrictLorebookReadContext_ACU | undefined;
-    const { summaries, allowedKeys } = await collectWorldbookSummariesFromSnapshot_ACU(contextSettings, readContext);
-    if (allowedKeys.size === 0) return emptyDecision_ACU(originalTasks, 'empty_worldbook_scope');
+    const { summaries } = await collectWorldbookSummariesFromSnapshot_ACU(contextSettings, readContext);
+    const shards = createAgentDecisionShards_ACU(
+      summaries,
+      contextSettings.decisionWorldbookCandidateLimit,
+      control.agentDecisionConcurrency,
+      contextSettings.greenlightMinTkBudget,
+    );
+    if (shards.length === 0) return emptyDecision_ACU(originalTasks, 'empty_worldbook_scope');
     const agentDecidableTasks = originalTasks.filter(task => shouldSendPlotTaskToAgent_ACU(normalizePlotTask_ACU(task, { fallbackTask: task })));
     const userOrderedTasks = originalTasks.filter(task => !shouldSendPlotTaskToAgent_ACU(normalizePlotTask_ACU(task, { fallbackTask: task })) && task?.agentControl?.selectable !== false);
-
     const presetName = String(control.agentApiPreset || '').trim();
-    let rawResponse = '';
-    let parsed: ReturnType<typeof parseAgentDecisionResponse_ACU> = null;
-    let lastFailureReason = 'empty_agent_response';
-    const messages = buildAgentDecisionPrompt_ACU({
+    const settled = await Promise.allSettled(shards.map(shard => runAgentDecisionShard_ACU({
+      shard,
+      shardCount: shards.length,
       plotSettings: effectivePlotSettings,
       userMessage: params.userMessage,
       sharedContext: params.sharedContext,
       enabledTasks: agentDecidableTasks,
-      worldbookSummaries: summaries,
       contextSettings,
-    });
-    for (let attempt = 1; attempt <= maxAiAttempts; attempt++) {
-      rawResponse = await callAIWithPreset_ACU(messages, presetName);
-      if (!rawResponse) {
-        lastFailureReason = 'empty_agent_response';
-        continue;
-      }
-      parsed = parseAgentDecisionResponse_ACU(rawResponse);
-      if (parsed && parsed.fallbackMode !== true) break;
-      lastFailureReason = parsed?.reason || 'invalid_agent_response';
-      parsed = null;
+      presetName,
+      maxAiAttempts,
+    })));
+    const successfulShards = settled
+      .filter((result): result is PromiseFulfilledResult<AgentDecisionShardResult_ACU> => result.status === 'fulfilled')
+      .map(result => result.value)
+      .sort((left, right) => left.shard.index - right.shard.index);
+    if (successfulShards.length === 0) {
+      const firstFailure = settled.find((result): result is PromiseRejectedResult => result.status === 'rejected');
+      const reason = String(firstFailure?.reason?.message || 'agent_decision_error').split(':').pop() || 'agent_decision_error';
+      return emptyDecision_ACU(originalTasks, reason);
     }
-    if (!rawResponse) return emptyDecision_ACU(originalTasks, 'empty_agent_response');
-    if (!parsed) return emptyDecision_ACU(originalTasks, lastFailureReason);
+    if (successfulShards.length !== shards.length) {
+      logWarn_ACU(`[Agent决策] 分片部分失败，成功 ${successfulShards.length}/${shards.length}；仅合并成功分片结果。`);
+    }
 
-    const normalizedPlan = params.requireTaskPlan === false
+    const authority = successfulShards.find(result => result.shard.index === 0);
+    const normalizedPlan = params.requireTaskPlan === false || !authority
       ? { plan: [] as AgentTaskPlanItem_ACU[], effectiveTasks: originalTasks }
-      : normalizeTaskPlan_ACU(parsed.taskPlan, agentDecidableTasks, userOrderedTasks);
-    if (normalizedPlan.reason) return emptyDecision_ACU(originalTasks, normalizedPlan.reason);
+      : normalizeTaskPlan_ACU(authority.parsed.taskPlan, agentDecidableTasks, userOrderedTasks);
+    if (authority && params.requireTaskPlan !== false && normalizedPlan.reason) return emptyDecision_ACU(originalTasks, normalizedPlan.reason);
     const effectivePlan = normalizedPlan.reason
       ? { plan: [] as AgentTaskPlanItem_ACU[], effectiveTasks: originalTasks }
       : normalizedPlan;
@@ -634,12 +748,38 @@ export async function runAgentDecisionForPlot_ACU(params: {
       tableFill: 0,
       finalGeneration: 0,
     };
-    const plotGreenlights = normalizePlotGreenlights_ACU(parsed.plotGreenlights, allowedKeys, enabledTaskIds, summaries, contextSettings.greenlightMaxTkBudget, maxEntriesPerChannel);
-    const finalGenerationGreenlights = applyGreenlightTkBudget_ACU(normalizeWorldbookRefs_ACU(parsed.finalGenerationGreenlights, allowedKeys, summaries), summaries, contextSettings.greenlightMaxTkBudget, maxEntriesPerChannel.finalGeneration);
+    const plotRefsByTask: Record<string, AgentWorldbookRef_ACU[][]> = {};
+    const finalRefGroups: AgentWorldbookRef_ACU[][] = [];
+    for (const result of successfulShards) {
+      const shardPlotGreenlights = normalizePlotGreenlights_ACU(
+        result.parsed.plotGreenlights,
+        result.shard.allowedKeys,
+        enabledTaskIds,
+        result.shard.summaries,
+        contextSettings.greenlightMaxTkBudget,
+        maxEntriesPerChannel,
+        false,
+      );
+      for (const [taskId, refs] of Object.entries(shardPlotGreenlights)) {
+        (plotRefsByTask[taskId] ||= []).push(refs);
+      }
+      finalRefGroups.push(normalizeWorldbookRefs_ACU(result.parsed.finalGenerationGreenlights, result.shard.allowedKeys, result.shard.summaries));
+    }
+    const plotGreenlights: Record<string, AgentWorldbookRef_ACU[]> = {};
+    for (const [taskId, groups] of Object.entries(plotRefsByTask)) {
+      const refs = applyGreenlightTkBudget_ACU(mergeWorldbookRefs_ACU(groups), summaries, contextSettings.greenlightMaxTkBudget, maxEntriesPerChannel.plot);
+      if (refs.length > 0) plotGreenlights[taskId] = refs;
+    }
+    const finalGenerationGreenlights = applyGreenlightTkBudget_ACU(
+      mergeWorldbookRefs_ACU(finalRefGroups),
+      summaries,
+      contextSettings.greenlightMaxTkBudget,
+      maxEntriesPerChannel.finalGeneration,
+    );
 
     return {
       active: true,
-      rawResponse,
+      rawResponse: authority?.rawResponse || successfulShards[0].rawResponse,
       taskPlan: effectivePlan.plan,
       plotGreenlights,
       finalGenerationGreenlights,

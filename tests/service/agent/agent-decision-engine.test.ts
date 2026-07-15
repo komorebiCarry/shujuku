@@ -464,6 +464,254 @@ describe('runAgentDecisionForPlot_ACU', () => {
     expect(result.effectiveTasks[0].id).toBe('task_id');
   });
 
+  it('shards takeover candidates concurrently, splits only the min tk budget, and merges local greenlights deterministically', async () => {
+    mockRefreshPlotAgentWorldbookSnapshot.mockResolvedValueOnce({
+      active: true,
+      selectionSignature: 'scope',
+      createdAt: 1,
+      books: { '剧情书': [{ uid: 1 }, { uid: 2 }, { uid: 3 }, { uid: 4 }] },
+    });
+    const skillMetaBlock = (description: string) => `<!-- ACU_SKILL_META_START\n${JSON.stringify({ version: 1, description, triggerWhen: '分片触发', updatedAt: 1, updatedBy: 'agent-skillify' })}\nACU_SKILL_META_END -->`;
+    mockGetLorebookEntries.mockResolvedValueOnce([1, 2, 3, 4].map(uid => ({
+      uid,
+      comment: `条目${uid}\n\n${skillMetaBlock(`Skill${uid}`)}`,
+      keys: [`关键词${uid}`],
+      content: `内容${uid}`,
+      enabled: true,
+    })));
+    mockCallAIWithPreset
+      .mockResolvedValueOnce(JSON.stringify({
+        taskPlan: [{ taskId: 'task_id', run: false, effectiveStage: 9, effectiveOrder: 9 }],
+        plotGreenlights: { task_id: [{ entries: [1, 2], reason: '首片' }] },
+        finalGenerationGreenlights: [{ entries: [1], reason: '首片正文' }],
+        fallbackMode: false,
+      }))
+      .mockResolvedValueOnce(JSON.stringify({
+        taskPlan: [{ taskId: 'task_id', run: true, effectiveStage: 1, effectiveOrder: 0 }],
+        plotGreenlights: { task_id: [{ entries: [1, 2], reason: '次片' }] },
+        finalGenerationGreenlights: [{ entries: [1], reason: '次片正文' }],
+        fallbackMode: false,
+      }));
+
+    const result = await runAgentDecisionForPlot_ACU({
+      plotSettings: {
+        agentWorldbookControl: {
+          enabled: true,
+          mode: 'agent',
+          agentDecisionConcurrency: 2,
+          contextSettings: { decisionWorldbookCandidateLimit: 3, greenlightMinTkBudget: 101, greenlightMaxTkBudget: 999 },
+          maxEntriesPerChannel: { plot: 20, finalGeneration: 20 },
+          agentDecisionPromptSegments: [{ role: 'user', deletable: true, content: 'W={{agent.worldbookEntriesJson}}\nB={{agent.greenlightTkBudgetJson}}\nS={{agent.shard.index}}/{{agent.shard.count}}' }],
+        },
+      },
+      userMessage: '继续',
+      sharedContext: {},
+      enabledTasks: [{ id: 'task id', name: '默认任务', description: '需要判断', enabled: true, promptGroup: { messages: [] } }],
+    });
+
+    expect(mockCallAIWithPreset).toHaveBeenCalledTimes(2);
+    const prompts = mockCallAIWithPreset.mock.calls.map(([messages]) => messages[0].content);
+    expect(prompts[0]).toContain('"uid": 1');
+    expect(prompts[0]).toContain('"uid": 2');
+    expect(prompts[0]).not.toContain('"uid": 3');
+    expect(prompts[0]).toContain('"min": 51');
+    expect(prompts[0]).toContain('"max": 999');
+    expect(prompts[1]).toContain('"uid": 3');
+    expect(prompts[1]).not.toContain('"uid": 4');
+    expect(prompts[1]).toContain('"min": 50');
+    expect(prompts[1]).toContain('"max": 999');
+    expect(result.effectiveTasks).toEqual([]);
+    expect(result.plotGreenlights.task_id.map(ref => ref.uid)).toEqual([1, 2, 3]);
+    expect(result.finalGenerationGreenlights.map(ref => ref.uid)).toEqual([1, 3]);
+  });
+
+  it('keeps successful shard greenlights when the task-plan authority shard fails', async () => {
+    mockRefreshPlotAgentWorldbookSnapshot.mockResolvedValueOnce({
+      active: true,
+      selectionSignature: 'scope',
+      createdAt: 1,
+      books: { '剧情书': [{ uid: 1 }, { uid: 2 }] },
+    });
+    const skillMetaBlock = (description: string) => `<!-- ACU_SKILL_META_START\n${JSON.stringify({ version: 1, description, triggerWhen: '降级触发', updatedAt: 1, updatedBy: 'agent-skillify' })}\nACU_SKILL_META_END -->`;
+    mockGetLorebookEntries.mockResolvedValueOnce([1, 2].map(uid => ({
+      uid,
+      comment: `条目${uid}\n\n${skillMetaBlock(`Skill${uid}`)}`,
+      keys: [`关键词${uid}`],
+      content: `内容${uid}`,
+      enabled: true,
+    })));
+    mockCallAIWithPreset
+      .mockRejectedValueOnce(new Error('authority request failed'))
+      .mockResolvedValueOnce(JSON.stringify({
+        taskPlan: [{ taskId: 'task_id', run: false, effectiveStage: 9, effectiveOrder: 9 }],
+        plotGreenlights: { task_id: [{ entries: [1], reason: '次片可用' }] },
+        finalGenerationGreenlights: [{ entries: [1], reason: '次片正文' }],
+        fallbackMode: false,
+      }));
+    const originalTask = { id: 'task id', name: '默认任务', description: '需要判断', enabled: true, promptGroup: { messages: [] } };
+
+    const result = await runAgentDecisionForPlot_ACU({
+      plotSettings: { agentWorldbookControl: { enabled: true, mode: 'agent', agentDecisionConcurrency: 2, contextSettings: { agentAiMaxRetries: 1 } } },
+      userMessage: '继续',
+      sharedContext: {},
+      enabledTasks: [originalTask],
+    });
+
+    expect(result.active).toBe(true);
+    expect(result.taskPlan).toEqual([]);
+    expect(result.effectiveTasks).toEqual([originalTask]);
+    expect(result.plotGreenlights.task_id).toEqual([{ bookName: '剧情书', uid: 2, reason: '次片可用' }]);
+    expect(result.finalGenerationGreenlights).toEqual([{ bookName: '剧情书', uid: 2, reason: '次片正文' }]);
+  });
+
+  it('retries a rejected Agent request within the same shard before falling back', async () => {
+    mockCallAIWithPreset
+      .mockRejectedValueOnce(new Error('temporary network failure'))
+      .mockResolvedValueOnce(JSON.stringify({
+        taskPlan: [{ taskId: 'task_id', run: true, effectiveStage: 1, effectiveOrder: 0 }],
+        plotGreenlights: {},
+        finalGenerationGreenlights: [],
+        fallbackMode: false,
+      }));
+
+    const result = await runAgentDecisionForPlot_ACU({
+      plotSettings: { agentWorldbookControl: { enabled: true, mode: 'agent', contextSettings: { agentAiMaxRetries: 2 } } },
+      userMessage: '继续',
+      sharedContext: {},
+      enabledTasks: [{ id: 'task id', name: '默认任务', description: '需要判断', enabled: true, promptGroup: { messages: [] } }],
+    });
+
+    expect(mockCallAIWithPreset).toHaveBeenCalledTimes(2);
+    expect(result.active).toBe(true);
+    expect(result.effectiveTasks[0].id).toBe('task_id');
+  });
+
+  it('only applies plot tk limits after merging shards so later local refs can fill the global budget', async () => {
+    mockRefreshPlotAgentWorldbookSnapshot.mockResolvedValueOnce({
+      active: true,
+      selectionSignature: 'scope',
+      createdAt: 1,
+      books: { '剧情书': [{ uid: 1 }, { uid: 2 }, { uid: 3 }] },
+    });
+    const skillMetaBlock = (description: string) => `<!-- ACU_SKILL_META_START\n${JSON.stringify({ version: 1, description, triggerWhen: '预算补位', updatedAt: 1, updatedBy: 'agent-skillify' })}\nACU_SKILL_META_END -->`;
+    mockGetLorebookEntries.mockResolvedValueOnce([
+      { uid: 1, comment: `一号\n\n${skillMetaBlock('一号')}`, keys: ['一'], content: 'A'.repeat(30), enabled: true },
+      { uid: 2, comment: `二号\n\n${skillMetaBlock('二号')}`, keys: ['二'], content: 'B'.repeat(150), enabled: true },
+      { uid: 3, comment: `三号\n\n${skillMetaBlock('三号')}`, keys: ['三'], content: 'C'.repeat(30), enabled: true },
+    ]);
+    mockCallAIWithPreset
+      .mockResolvedValueOnce(JSON.stringify({
+        taskPlan: [{ taskId: 'task_id', run: true, effectiveStage: 1, effectiveOrder: 0 }],
+        plotGreenlights: { task_id: [{ entries: [1], reason: '首片低预算' }] },
+        finalGenerationGreenlights: [],
+        fallbackMode: false,
+      }))
+      .mockResolvedValueOnce(JSON.stringify({
+        plotGreenlights: { task_id: [{ entries: [1, 2], reason: '次片先高后低' }] },
+        finalGenerationGreenlights: [],
+        fallbackMode: false,
+      }));
+
+    const result = await runAgentDecisionForPlot_ACU({
+      plotSettings: { agentWorldbookControl: { enabled: true, mode: 'agent', agentDecisionConcurrency: 2, contextSettings: { greenlightMaxTkBudget: 100 } } },
+      userMessage: '继续',
+      sharedContext: {},
+      enabledTasks: [{ id: 'task id', name: '默认任务', description: '需要判断', enabled: true, promptGroup: { messages: [] } }],
+    });
+
+    expect(result.plotGreenlights.task_id.map(ref => ref.uid)).toEqual([1, 3]);
+  });
+
+  it('preserves the legacy inactive fallback when the authority task plan is invalid', async () => {
+    mockCallAIWithPreset.mockResolvedValueOnce(JSON.stringify({
+      taskPlan: [{ taskId: 'unknown_task', run: true, effectiveStage: 1, effectiveOrder: 0 }],
+      plotGreenlights: {},
+      finalGenerationGreenlights: [{ entries: [1], reason: '不应写入' }],
+      fallbackMode: false,
+    }));
+    const originalTask = { id: 'task id', name: '默认任务', description: '需要判断', enabled: true, promptGroup: { messages: [] } };
+
+    const result = await runAgentDecisionForPlot_ACU({
+      plotSettings: { agentWorldbookControl: { enabled: true, mode: 'agent' } },
+      userMessage: '继续',
+      sharedContext: {},
+      enabledTasks: [originalTask],
+    });
+
+    expect(result).toMatchObject({ active: false, fallbackReason: 'no_valid_task_plan_items', effectiveTasks: [originalTask] });
+    expect(result.finalGenerationGreenlights).toEqual([]);
+  });
+
+  it('falls back to the original task set when every decision shard fails', async () => {
+    mockRefreshPlotAgentWorldbookSnapshot.mockResolvedValueOnce({
+      active: true,
+      selectionSignature: 'scope',
+      createdAt: 1,
+      books: { '剧情书': [{ uid: 1 }, { uid: 2 }] },
+    });
+    const skillMetaBlock = (description: string) => `<!-- ACU_SKILL_META_START\n${JSON.stringify({ version: 1, description, triggerWhen: '全失败', updatedAt: 1, updatedBy: 'agent-skillify' })}\nACU_SKILL_META_END -->`;
+    mockGetLorebookEntries.mockResolvedValueOnce([1, 2].map(uid => ({
+      uid,
+      comment: `条目${uid}\n\n${skillMetaBlock(`Skill${uid}`)}`,
+      keys: [`关键词${uid}`],
+      content: `内容${uid}`,
+      enabled: true,
+    })));
+    mockCallAIWithPreset.mockRejectedValue(new Error('provider unavailable'));
+    const originalTask = { id: 'task id', name: '默认任务', description: '需要判断', enabled: true, promptGroup: { messages: [] } };
+
+    const result = await runAgentDecisionForPlot_ACU({
+      plotSettings: { agentWorldbookControl: { enabled: true, mode: 'agent', agentDecisionConcurrency: 2, contextSettings: { agentAiMaxRetries: 1 } } },
+      userMessage: '继续',
+      sharedContext: {},
+      enabledTasks: [originalTask],
+    });
+
+    expect(mockCallAIWithPreset).toHaveBeenCalledTimes(2);
+    expect(result).toMatchObject({ active: false, fallbackReason: 'agent_request_error', effectiveTasks: [originalTask] });
+    expect(result.plotGreenlights).toEqual({});
+    expect(result.finalGenerationGreenlights).toEqual([]);
+  });
+
+  it('rejects a direct worldbook reference that belongs to another shard', async () => {
+    mockRefreshPlotAgentWorldbookSnapshot.mockResolvedValueOnce({
+      active: true,
+      selectionSignature: 'scope',
+      createdAt: 1,
+      books: { '剧情书': [{ uid: 1 }, { uid: 2 }] },
+    });
+    const skillMetaBlock = (description: string) => `<!-- ACU_SKILL_META_START\n${JSON.stringify({ version: 1, description, triggerWhen: '跨片拒绝', updatedAt: 1, updatedBy: 'agent-skillify' })}\nACU_SKILL_META_END -->`;
+    mockGetLorebookEntries.mockResolvedValueOnce([1, 2].map(uid => ({
+      uid,
+      comment: `条目${uid}\n\n${skillMetaBlock(`Skill${uid}`)}`,
+      keys: [`关键词${uid}`],
+      content: `内容${uid}`,
+      enabled: true,
+    })));
+    mockCallAIWithPreset
+      .mockResolvedValueOnce(JSON.stringify({
+        taskPlan: [{ taskId: 'task_id', run: true, effectiveStage: 1, effectiveOrder: 0 }],
+        plotGreenlights: { task_id: [{ bookName: '剧情书', uid: 2, reason: '越界直引' }] },
+        finalGenerationGreenlights: [{ bookName: '剧情书', uid: 2, reason: '越界直引' }],
+        fallbackMode: false,
+      }))
+      .mockResolvedValueOnce(JSON.stringify({
+        plotGreenlights: {},
+        finalGenerationGreenlights: [],
+        fallbackMode: false,
+      }));
+
+    const result = await runAgentDecisionForPlot_ACU({
+      plotSettings: { agentWorldbookControl: { enabled: true, mode: 'agent', agentDecisionConcurrency: 2 } },
+      userMessage: '继续',
+      sharedContext: {},
+      enabledTasks: [{ id: 'task id', name: '默认任务', description: '需要判断', enabled: true, promptGroup: { messages: [] } }],
+    });
+
+    expect(result.plotGreenlights).toEqual({});
+    expect(result.finalGenerationGreenlights).toEqual([]);
+  });
+
   it('clips greenlights by max tk budget after resolving entry indexes', async () => {
     mockRefreshPlotAgentWorldbookSnapshot.mockResolvedValueOnce({ active: true, selectionSignature: 'scope', createdAt: 1, books: { '剧情书': [{ uid: 1 }, { uid: 2 }, { uid: 3 }] } });
     const skillMetaBlock = (description: string) => `<!-- ACU_SKILL_META_START\n${JSON.stringify({ version: 1, description, triggerWhen: '预算测试触发', updatedAt: 1, updatedBy: 'agent-skillify' })}\nACU_SKILL_META_END -->`;

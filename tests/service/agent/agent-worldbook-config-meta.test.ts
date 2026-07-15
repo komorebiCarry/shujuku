@@ -99,7 +99,23 @@ describe('agent worldbook config/state meta', () => {
     expect(result.control.mode).toBe('agent');
     expect(result.control.enabled).toBe(true);
     expect(result.control.agentApiPreset).toBe('preset-a');
+    expect(result.control.agentDecisionConcurrency).toBe(1);
     expect(result.snapshot).toEqual({ active: false, selectionSignature: '', createdAt: 0, books: {} });
+  });
+
+  it('clamps persisted Agent decision concurrency independently from Skillify concurrency', async () => {
+    mockEntriesByBook.set('主世界书', [configEntry({
+      version: 2,
+      kind: 'agent_worldbook_state',
+      updatedAt: 1,
+      control: { mode: 'agent', agentDecisionConcurrency: 99, maxSkillifyConcurrency: 2 },
+      snapshot: {},
+    })]);
+
+    const result = await readAgentWorldbookStateFromWorldbooks_ACU();
+
+    expect(result.control.agentDecisionConcurrency).toBe(5);
+    expect(result.control.maxSkillifyConcurrency).toBe(2);
   });
 
   it('reads version 2 state with normalized snapshot', async () => {

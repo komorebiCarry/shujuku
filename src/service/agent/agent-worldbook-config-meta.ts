@@ -214,6 +214,7 @@ function normalizeAgentWorldbookControlForCardConfig_ACU(value: unknown, promptT
       : defaults.managedEntryPrefix,
     finalInjectionMode: 'prompt_template',
     restoreOnDisable: source.restoreOnDisable !== false,
+    agentDecisionConcurrency: normalizePositiveInt_ACU(source.agentDecisionConcurrency, defaults.agentDecisionConcurrency, 1, 5),
     maxSkillifyConcurrency: normalizePositiveInt_ACU(source.maxSkillifyConcurrency, defaults.maxSkillifyConcurrency, 1, 5),
     contextSettings,
     contextSettingsConfigured: source.contextSettingsConfigured === true,

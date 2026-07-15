@@ -71,6 +71,7 @@ export interface AgentWorldbookControl_ACU {
   managedEntryPrefix: string;
   finalInjectionMode: 'prompt_template';
   restoreOnDisable: boolean;
+  agentDecisionConcurrency: number;
   maxSkillifyConcurrency: number;
   contextSettings: AgentContextSettings_ACU;
   contextSettingsConfigured?: boolean;
